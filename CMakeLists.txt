@@ -16,7 +16,7 @@ set(FOREVERVALIDATOR_BUILD_TESTS OFF CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG f45744128b6274df65c9be586ae46a1010d2cf8c
+    GIT_TAG 0a287aa7a0748faf5fffe9b8955505b8b500a5ce
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
