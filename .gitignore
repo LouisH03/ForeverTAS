@@ -1,0 +1,41 @@
+# CMake and build output
+/build/
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Editors and local machine configuration
+/.idea/
+/.vscode/
+/.vs/
+.DS_Store
+Thumbs.db
+*.suo
+*.swp
+*.user
+*~
+.env
+.env.*
+*.local
+
+# Profiling, benchmarks, and experimental output
+*.benchmark
+*.profdata
+*.profraw
+*.trace
+*.dump
+/results/
+/replays/
+/scratch/
+*.sandbox.json
+*.validation.json
+
+# Replays and game assets are local inputs, not repository content
+*.Replay.Gbx
+*.Pak
+*.pak
