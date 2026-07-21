@@ -8,6 +8,7 @@ cmake_install.cmake
 compile_commands.json
 CTestTestfile.cmake
 Testing/
+/CMakeUserPresets.json
 
 # Editors and local machine configuration
 /.idea/

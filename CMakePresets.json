@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "pinned",
+      "displayName": "Pinned ForeverValidator",
+      "description": "Build against the exact ForeverValidator commit pinned by CMakeLists.txt.",
+      "binaryDir": "${sourceDir}/build/pinned",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "pinned",
+      "configurePreset": "pinned"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "pinned",
+      "configurePreset": "pinned",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
+

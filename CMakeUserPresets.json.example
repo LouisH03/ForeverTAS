@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local-validator",
+      "displayName": "Local ForeverValidator",
+      "inherits": "pinned",
+      "binaryDir": "${sourceDir}/build/local",
+      "cacheVariables": {
+        "FETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR": "/path/to/ForeverValidator"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "local-validator",
+      "configurePreset": "local-validator"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "local-validator",
+      "configurePreset": "local-validator",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
+

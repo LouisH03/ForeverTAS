@@ -18,20 +18,31 @@ simulation library.
 
 ## Build
 
-```sh
-cmake -S . -B build
-cmake --build build -j
-ctest --test-dir build --output-on-failure
-```
-
-The pinned ForeverValidator commit must be available from its public remote.
-Validator developers can exercise an unpublished local commit without changing
-the pin:
+The pinned preset provides a reproducible build from the exact public
+ForeverValidator commit:
 
 ```sh
-cmake -S . -B build \
-  -DFETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR=/path/to/ForeverValidator
+cmake --preset pinned
+cmake --build --preset pinned
+ctest --preset pinned
 ```
+
+For day-to-day development, create `CMakeUserPresets.json` from
+`CMakeUserPresets.json.example` once and set
+`FETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR` to the local ForeverValidator
+checkout. This file is ignored because its path is machine-specific. The local
+preset has its own build tree and always uses the current Validator worktree,
+including uncommitted changes:
+
+```sh
+cmake --preset local-validator
+cmake --build --preset local-validator
+ctest --preset local-validator
+```
+
+The committed dependency hash only needs to change when ForeverTAS deliberately
+adopts a tested ForeverValidator revision. Use the pinned preset as the final
+pre-push check.
 
 ## Sandbox smoke exercise before full TAS functaionality is integrated.
 
@@ -39,7 +50,7 @@ Pass an installed TMUF `Packs` directory and a replay. No replay or game asset
 is copied into this repository.
 
 ```sh
-./build/forevertas \
+./build/local/forevertas \
   "/path/to/TmUnitedForever/Packs" \
   "/path/to/run.Replay.Gbx"
 ```
