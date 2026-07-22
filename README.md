@@ -44,7 +44,7 @@ The committed dependency hash only needs to change when ForeverTAS deliberately
 adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
-## Sandbox smoke exercise before full TAS functaionality is integrated.
+## Serial brute-force exercise
 
 Pass an installed TMUF `Packs` directory and a replay. No replay or game asset
 is copied into this repository.
@@ -55,6 +55,15 @@ is copied into this repository.
   "/path/to/run.Replay.Gbx"
 ```
 
-The executable creates a Reference sandbox, loads the replay-backed scenario,
-reads its input timeline and initial state, advances several ticks, snapshots,
-restores, repeats the same advance, and requires exact state equality.
+The executable creates a Reference sandbox and runs the first serial search
+implementation. The search captures one state immediately before its configured
+closed mutation window, establishes the unmodified replay as its baseline, then
+tests each steering mutation serially. It evaluates maximum speed on every tick
+of a separately configured closed evaluation window and restores the best state
+at the end.
+
+Mutation bounds, evaluation bounds, attempt count and deterministic seed are
+explicit `SerialBruteForceSettings` in `src/app/main.cpp`. The initial executable
+keeps concrete strategy selection equally direct: `RandomSteeringMutator`,
+`MaxSpeedEvaluator`, and `SerialBruteForceSearch`. It does not yet provide a TAS
+action model, scoring registry, pruning, or parallel search.
