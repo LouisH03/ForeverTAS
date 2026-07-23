@@ -81,6 +81,31 @@ int TimelineColorRow(RaceTimelineItem &timeline,
     return -1;
 }
 
+int TimelineGridRowCount(RaceTimelineItem &timeline,
+                         int minimumY,
+                         int maximumY) {
+    QImage image(252, 600, QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    timeline.paint(&painter);
+    painter.end();
+    const QRgb regular = QColor(QStringLiteral("#080a09")).rgba();
+    const QRgb tenth = QColor(QStringLiteral("#0d100e")).rgba();
+    const QRgb second = QColor(QStringLiteral("#171d19")).rgba();
+    const int firstY = std::clamp(minimumY, 0, image.height() - 1);
+    const int lastY = std::clamp(maximumY, firstY, image.height() - 1);
+    int rows = 0;
+    for (int y = firstY; y <= lastY; ++y) {
+        const auto *line = reinterpret_cast<const QRgb *>(
+                image.constScanLine(y));
+        if (line[60] == regular || line[60] == tenth ||
+            line[60] == second) {
+            ++rows;
+        }
+    }
+    return rows;
+}
+
 void SendTimelineMouseEvent(RaceTimelineItem &timeline,
                             QEvent::Type type,
                             Qt::MouseButton button,
@@ -205,19 +230,19 @@ int main(int argc, char **argv) {
                     viewer.setTimeMs(5010);
                     const int wholeTickLineY = TimelineColorRow(
                             timeline,
-                            QColor(QStringLiteral("#77847c")),
+                            QColor(QStringLiteral("#171d19")),
                             280,
                             320);
                     viewer.setTimeMs(5015);
                     const int halfTickLineY = TimelineColorRow(
                             timeline,
-                            QColor(QStringLiteral("#77847c")),
+                            QColor(QStringLiteral("#171d19")),
                             280,
                             320);
                     timeline.setPixelsPerTick(8.0);
                     const int zoomedHalfTickLineY = TimelineColorRow(
                             timeline,
-                            QColor(QStringLiteral("#77847c")),
+                            QColor(QStringLiteral("#171d19")),
                             270,
                             320);
                     const bool gridTracksScrollAndZoom =
@@ -240,11 +265,7 @@ int main(int argc, char **argv) {
                             Qt::LeftButton,
                             QPointF(126.0, 71.0));
                     const bool gridVisibleWhileDragging =
-                            TimelineColorRow(
-                                    timeline,
-                                    QColor(QStringLiteral("#39423c")),
-                                    301,
-                                    310) >= 0;
+                            TimelineGridRowCount(timeline, 301, 310) > 0;
                     SendTimelineMouseEvent(
                             timeline,
                             QEvent::MouseButtonRelease,
@@ -252,22 +273,20 @@ int main(int argc, char **argv) {
                             Qt::NoButton,
                             QPointF(126.0, 71.0));
                     const bool gridVisibleAfterDragging =
-                            TimelineColorRow(
-                                    timeline,
-                                    QColor(QStringLiteral("#39423c")),
-                                    301,
-                                    310) >= 0;
+                            TimelineGridRowCount(timeline, 301, 310) > 0;
                     timeline.setPixelsPerTick(1.0);
                     const bool gridVisibleAtMinimumZoom =
-                            TimelineColorRow(
-                                    timeline,
-                                    QColor(QStringLiteral("#39423c")),
-                                    301,
-                                    310) >= 0;
+                            TimelineGridRowCount(timeline, 301, 310) > 0;
+                    const int minimumZoomGridRows =
+                            TimelineGridRowCount(timeline, 250, 349);
+                    const bool minimumZoomGridStaysSparse =
+                            minimumZoomGridRows >= 25 &&
+                            minimumZoomGridRows <= 45;
                     const bool gridAlwaysVisible =
                             gridVisibleWhileDragging &&
                             gridVisibleAfterDragging &&
-                            gridVisibleAtMinimumZoom;
+                            gridVisibleAtMinimumZoom &&
+                            minimumZoomGridStaysSparse;
 
                     timeline.setPixelsPerTick(3.0);
                     DragTimeline(
@@ -329,6 +348,10 @@ int main(int argc, char **argv) {
                                 << gridVisibleAfterDragging
                                 << ", gridVisibleAtMinimumZoom="
                                 << gridVisibleAtMinimumZoom
+                                << ", minimumZoomGridRows="
+                                << minimumZoomGridRows
+                                << ", minimumZoomGridStaysSparse="
+                                << minimumZoomGridStaysSparse
                                 << ", rightDragZoomsIn="
                                 << rightDragZoomsIn
                                 << ", timeLabelUnambiguous="

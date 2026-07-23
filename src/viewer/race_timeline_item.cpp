@@ -229,15 +229,17 @@ void RaceTimelineItem::paint(QPainter *painter) {
     const qint64 firstBoundary = std::max<qint64>(0, firstVisible);
     const qint64 lastBoundary = std::min<qint64>(
             viewer_->tickCount(), lastVisible + 1);
-    QPen regularGridPen(QColor(QStringLiteral("#39423c")));
+    const qint64 regularBoundaryStride = std::max<qint64>(
+            1,
+            static_cast<qint64>(std::ceil(3.0 / pixelsPerTick_)));
+
+    QPen regularGridPen(QColor(QStringLiteral("#080a09")));
     regularGridPen.setCosmetic(true);
     regularGridPen.setWidthF(1.0);
-    regularGridPen.setDashPattern({1.0, 3.0});
-    QPen tenthGridPen(QColor(QStringLiteral("#56615a")));
+    QPen tenthGridPen(QColor(QStringLiteral("#0d100e")));
     tenthGridPen.setCosmetic(true);
     tenthGridPen.setWidthF(1.0);
-    tenthGridPen.setDashPattern({4.0, 2.0});
-    QPen secondGridPen(QColor(QStringLiteral("#77847c")));
+    QPen secondGridPen(QColor(QStringLiteral("#171d19")));
     secondGridPen.setCosmetic(true);
     secondGridPen.setWidthF(1.0);
 
@@ -252,20 +254,20 @@ void RaceTimelineItem::paint(QPainter *painter) {
 
         const bool secondBoundary = tick % 100 == 0;
         const bool tenthBoundary = tick % 10 == 0;
+        if (!secondBoundary && !tenthBoundary &&
+            tick % regularBoundaryStride != 0) {
+            continue;
+        }
         const QPen &gridPen = secondBoundary
                 ? secondGridPen
                 : tenthBoundary
                 ? tenthGridPen
                 : regularGridPen;
 
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(gridPen.color());
-        painter->drawRect(QRectF(45.0, std::floor(y), 24.0, 1.0));
-
         painter->setBrush(Qt::NoBrush);
         painter->setPen(gridPen);
         painter->drawLine(
-                QPointF(secondBoundary ? 0.0 : 69.0, alignedY),
+                QPointF(secondBoundary ? 0.0 : 45.0, alignedY),
                 QPointF(area.width(), alignedY));
 
         if (secondBoundary) {
