@@ -1,11 +1,13 @@
 #ifndef FOREVERTAS_APP_SEARCH_CONTROLLER_H
 #define FOREVERTAS_APP_SEARCH_CONTROLLER_H
 
-#include "searches/serial_search_runner.h"
+#include "searches/search_runner.h"
 
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include <atomic>
 #include <memory>
@@ -25,18 +27,26 @@ class SearchController final : public QObject {
                        autoDetectedPacksDirectoryChanged)
     Q_PROPERTY(QString replayPath READ replayPath WRITE setReplayPath NOTIFY
                        replayPathChanged)
-    Q_PROPERTY(QString minMutateMs READ minMutateMs WRITE setMinMutateMs NOTIFY
-                       minMutateMsChanged)
-    Q_PROPERTY(QString maxMutateMs READ maxMutateMs WRITE setMaxMutateMs NOTIFY
-                       maxMutateMsChanged)
-    Q_PROPERTY(QString minEvalTimeMs READ minEvalTimeMs WRITE setMinEvalTimeMs
-                       NOTIFY minEvalTimeMsChanged)
-    Q_PROPERTY(QString maxEvalTimeMs READ maxEvalTimeMs WRITE setMaxEvalTimeMs
-                       NOTIFY maxEvalTimeMsChanged)
-    Q_PROPERTY(QString attemptCount READ attemptCount WRITE setAttemptCount
-                       NOTIFY attemptCountChanged)
-    Q_PROPERTY(QString mutationSeed READ mutationSeed WRITE setMutationSeed
-                       NOTIFY mutationSeedChanged)
+    Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
+                       CONSTANT)
+    Q_PROPERTY(QVariantList mutationAlgorithmOptions READ
+                       mutationAlgorithmOptions CONSTANT)
+    Q_PROPERTY(QVariantList evaluationTargetOptions READ evaluationTargetOptions
+                       CONSTANT)
+    Q_PROPERTY(QString searchAlgorithmId READ searchAlgorithmId WRITE
+                       setSearchAlgorithmId NOTIFY searchAlgorithmIdChanged)
+    Q_PROPERTY(QString mutationAlgorithmId READ mutationAlgorithmId WRITE
+                       setMutationAlgorithmId NOTIFY mutationAlgorithmIdChanged)
+    Q_PROPERTY(QString evaluationTargetId READ evaluationTargetId WRITE
+                       setEvaluationTargetId NOTIFY evaluationTargetIdChanged)
+    Q_PROPERTY(QVariantMap searchAlgorithmSettings READ searchAlgorithmSettings
+                       NOTIFY searchAlgorithmSettingsChanged)
+    Q_PROPERTY(QVariantMap mutationAlgorithmSettings READ
+                       mutationAlgorithmSettings NOTIFY
+                       mutationAlgorithmSettingsChanged)
+    Q_PROPERTY(QVariantMap evaluationTargetSettings READ
+                       evaluationTargetSettings NOTIFY
+                       evaluationTargetSettingsChanged)
 
     Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
@@ -58,12 +68,15 @@ public:
     QString packsDirectory() const;
     QString autoDetectedPacksDirectory() const;
     QString replayPath() const;
-    QString minMutateMs() const;
-    QString maxMutateMs() const;
-    QString minEvalTimeMs() const;
-    QString maxEvalTimeMs() const;
-    QString attemptCount() const;
-    QString mutationSeed() const;
+    QVariantList searchAlgorithmOptions() const;
+    QVariantList mutationAlgorithmOptions() const;
+    QVariantList evaluationTargetOptions() const;
+    QString searchAlgorithmId() const;
+    QString mutationAlgorithmId() const;
+    QString evaluationTargetId() const;
+    QVariantMap searchAlgorithmSettings() const;
+    QVariantMap mutationAlgorithmSettings() const;
+    QVariantMap evaluationTargetSettings() const;
 
     bool canStart() const;
     bool running() const;
@@ -77,16 +90,19 @@ public:
 public slots:
     void setPacksDirectory(const QString &value);
     void setReplayPath(const QString &value);
-    void setMinMutateMs(const QString &value);
-    void setMaxMutateMs(const QString &value);
-    void setMinEvalTimeMs(const QString &value);
-    void setMaxEvalTimeMs(const QString &value);
-    void setAttemptCount(const QString &value);
-    void setMutationSeed(const QString &value);
+    void setSearchAlgorithmId(const QString &value);
+    void setMutationAlgorithmId(const QString &value);
+    void setEvaluationTargetId(const QString &value);
 
     Q_INVOKABLE void browseForPacksDirectory();
     Q_INVOKABLE void applyAutoDetectedPacksDirectory();
     Q_INVOKABLE void browseForReplay();
+    Q_INVOKABLE void setSearchAlgorithmSetting(const QString &key,
+                                               const QString &value);
+    Q_INVOKABLE void setMutationAlgorithmSetting(const QString &key,
+                                                 const QString &value);
+    Q_INVOKABLE void setEvaluationTargetSetting(const QString &key,
+                                                const QString &value);
     Q_INVOKABLE void startSearch();
     Q_INVOKABLE void cancelSearch();
 
@@ -94,12 +110,12 @@ signals:
     void packsDirectoryChanged();
     void autoDetectedPacksDirectoryChanged();
     void replayPathChanged();
-    void minMutateMsChanged();
-    void maxMutateMsChanged();
-    void minEvalTimeMsChanged();
-    void maxEvalTimeMsChanged();
-    void attemptCountChanged();
-    void mutationSeedChanged();
+    void searchAlgorithmIdChanged();
+    void mutationAlgorithmIdChanged();
+    void evaluationTargetIdChanged();
+    void searchAlgorithmSettingsChanged();
+    void mutationAlgorithmSettingsChanged();
+    void evaluationTargetSettingsChanged();
     void canStartChanged();
     void runningChanged();
     void cancellingChanged();
@@ -110,7 +126,7 @@ signals:
 
 private:
     struct ValidationResult {
-        std::optional<SerialSearchRequest> request;
+        std::optional<SearchRequest> request;
         QString error;
     };
 
@@ -126,18 +142,25 @@ private:
             const QStringList *packsSearchPatterns);
     void publishAutoDetectedPacksDirectory(const QString &detected);
     void clearAutoDetectedPacksDirectory();
+    void loadSearchAlgorithmSettings();
+    void loadMutationAlgorithmSettings();
+    void loadEvaluationTargetSettings();
+    void persistOptionSetting(const QString &category,
+                              const QString &optionId,
+                              const QString &key,
+                              const QString &value);
     void persist(const char *key, const QString &value);
     void waitForWorker();
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
-    QString minMutateMs_;
-    QString maxMutateMs_;
-    QString minEvalTimeMs_;
-    QString maxEvalTimeMs_;
-    QString attemptCount_;
-    QString mutationSeed_;
+    QString searchAlgorithmId_;
+    QString mutationAlgorithmId_;
+    QString evaluationTargetId_;
+    QVariantMap searchAlgorithmSettings_;
+    QVariantMap mutationAlgorithmSettings_;
+    QVariantMap evaluationTargetSettings_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString resultText_;

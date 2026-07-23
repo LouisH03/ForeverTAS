@@ -1,7 +1,7 @@
 #include "evaluators/max_speed_evaluator.h"
 #include "mutations/random_steering_mutator.h"
 #include "searches/serial_brute_force_search.h"
-#include "searches/serial_search_runner.h"
+#include "searches/search_runner.h"
 
 #include <cmath>
 #include <cstdint>
@@ -52,9 +52,9 @@ bool TestClosedMutationWindow() {
             Analog(2000, PhysicsSandboxInputAction::Steer, 0.4f),
             Analog(2010, PhysicsSandboxInputAction::Steer, 0.5f)};
 
-    const forevertas::RandomSteeringMutator mutator;
+    const forevertas::RandomSteeringMutator mutator({123u});
     const forevertas::MutationRequest request{
-            baseline, 1000, 2000, 123u, 7u};
+            baseline, 1000, 2000, 7u};
     const forevertas::MutationResult result = mutator.Mutate(request);
 
     bool okay = true;
@@ -80,7 +80,7 @@ bool TestClosedMutationWindow() {
     }
 
     const forevertas::MutationResult otherAttempt = mutator.Mutate({
-            baseline, 1000, 2000, 123u, 8u});
+            baseline, 1000, 2000, 8u});
     bool differs = false;
     for (std::size_t index = 0u; index < result.inputs.size(); ++index) {
         differs |= !SameEvent(result.inputs[index], otherAttempt.inputs[index]);
@@ -88,7 +88,7 @@ bool TestClosedMutationWindow() {
     okay &= Check(differs, "different attempt produced the same candidate");
 
     const forevertas::MutationResult noEligible = mutator.Mutate({
-            baseline, 3000, 4000, 123u, 9u});
+            baseline, 3000, 4000, 9u});
     okay &= Check(noEligible.mutationCount == 0u,
                   "empty mutation window reported changed inputs");
     return okay;
@@ -108,7 +108,7 @@ bool IsValid(const forevertas::SerialBruteForceSettings &settings) {
 
 bool TestSearchSettings() {
     const forevertas::SerialBruteForceSettings valid{
-            1000, 2000, 1500, 3000, 10u, 123u};
+            1000, 2000, 1500, 3000, 10u};
     bool okay = Check(IsValid(valid), "valid search settings were rejected");
 
     okay &= Check(
@@ -161,12 +161,12 @@ bool TestSearchSettings() {
     okay &= Check(!IsValid(changed), "zero attempts were accepted");
 
     const forevertas::SerialBruteForceSettings identical{
-            1000, 2000, 1000, 2000, 1u, 123u};
+            1000, 2000, 1000, 2000, 1u};
     okay &= Check(IsValid(identical),
                   "identical mutation and evaluation windows were rejected");
 
     const forevertas::SerialBruteForceSettings disjoint{
-            1000, 1500, 2000, 3000, 10000u, 123u};
+            1000, 1500, 2000, 3000, 10000u};
     okay &= Check(IsValid(disjoint),
                   "disjoint mutation and evaluation windows were rejected");
 
@@ -175,10 +175,58 @@ bool TestSearchSettings() {
             9223372036854775800LL,
             9223372036854775800LL,
             9223372036854775800LL,
-            std::numeric_limits<std::uint64_t>::max(),
-            std::numeric_limits<std::uint32_t>::max()};
+            std::numeric_limits<std::uint64_t>::max()};
     okay &= Check(IsValid(largeAligned),
                   "aligned integer boundary settings were rejected");
+    return okay;
+}
+
+bool TestAlgorithmRegistry() {
+    const auto *const search = forevertas::FindSearchAlgorithm(
+            forevertas::kSerialBruteForceSearchId);
+    const auto *const mutation = forevertas::FindMutationAlgorithm(
+            forevertas::kRandomSteeringMutationId);
+    const auto *const evaluation = forevertas::FindEvaluationTarget(
+            forevertas::kMaximumSpeedEvaluationId);
+    bool okay = Check(search != nullptr,
+                      "default search algorithm was not registered");
+    okay &= Check(mutation != nullptr,
+                  "default mutation algorithm was not registered");
+    okay &= Check(evaluation != nullptr,
+                  "default evaluation target was not registered");
+    if (search != nullptr) {
+        okay &= Check(search->validateSettings(
+                              search->defaultSettings, 10u) == std::nullopt,
+                      "default search settings were invalid");
+        okay &= Check(search->create(search->defaultSettings, 10u) != nullptr,
+                      "search registry factory returned null");
+        okay &= Check(!search->settingsComponent.empty(),
+                      "search registry did not define its settings UI");
+    }
+    if (mutation != nullptr) {
+        okay &= Check(mutation->validateSettings(
+                              mutation->defaultSettings) == std::nullopt,
+                      "default mutation settings were invalid");
+        okay &= Check(mutation->create(mutation->defaultSettings) != nullptr,
+                      "mutation registry factory returned null");
+        okay &= Check(!mutation->settingsComponent.empty(),
+                      "mutation registry did not define its settings UI");
+    }
+    if (evaluation != nullptr) {
+        okay &= Check(evaluation->validateSettings(
+                              evaluation->defaultSettings) == std::nullopt,
+                      "default evaluation settings were invalid");
+        okay &= Check(evaluation->create(evaluation->defaultSettings) != nullptr,
+                      "evaluation registry factory returned null");
+        okay &= Check(!evaluation->settingsComponent.empty(),
+                      "evaluation registry did not define its settings UI");
+    }
+    okay &= Check(forevertas::FindSearchAlgorithm("missing") == nullptr,
+                  "unknown search algorithm resolved");
+    okay &= Check(forevertas::FindMutationAlgorithm("missing") == nullptr,
+                  "unknown mutation algorithm resolved");
+    okay &= Check(forevertas::FindEvaluationTarget("missing") == nullptr,
+                  "unknown evaluation target resolved");
     return okay;
 }
 
@@ -186,10 +234,8 @@ bool TestImmediateCancellation() {
     forevertas::SearchRunControl control;
     control.cancellationRequested = []() { return true; };
     try {
-        static_cast<void>(forevertas::RunSerialSearch(
-                {"unused",
-                 "unused",
-                 forevertas::DefaultSerialBruteForceSettings()},
+        static_cast<void>(forevertas::RunSearch(
+                {"unused", "unused"},
                 &control));
     } catch (const forevertas::SearchCancelled &) {
         return true;
@@ -206,6 +252,7 @@ int main() {
     const bool okay = TestClosedMutationWindow() &&
                       TestMaxSpeedEvaluator() &&
                       TestSearchSettings() &&
+                      TestAlgorithmRegistry() &&
                       TestImmediateCancellation();
     return okay ? 0 : 1;
 }

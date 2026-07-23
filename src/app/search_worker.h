@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_APP_SEARCH_WORKER_H
 #define FOREVERTAS_APP_SEARCH_WORKER_H
 
-#include "searches/serial_search_runner.h"
+#include "searches/search_runner.h"
 
 #include <QObject>
 #include <QString>
@@ -15,7 +15,7 @@ class SearchWorker final : public QObject {
     Q_OBJECT
 
 public:
-    SearchWorker(SerialSearchRequest request,
+    SearchWorker(SearchRequest request,
                  std::shared_ptr<std::atomic_bool> cancellationRequested);
 
 public slots:
@@ -30,7 +30,7 @@ signals:
     void finished();
 
 private:
-    SerialSearchRequest request_;
+    SearchRequest request_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
 };
 

@@ -61,7 +61,7 @@ struct SearchResult {
     std::uint64_t executedAttempts = 0u;
     std::uint64_t skippedAttempts = 0u;
     std::uint64_t evaluatorCalls = 0u;
-    std::uint64_t improvementCount = 0u;
+    std::uint64_t mutationImprovementCount = 0u;
     std::uint64_t totalMutationCount = 0u;
     std::chrono::steady_clock::duration elapsed{};
     forevervalidator::experimental::PhysicsSandboxState bestSnapshot;

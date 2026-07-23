@@ -2,6 +2,7 @@
 
 #include "app/packs_directory_finder.h"
 #include "app/search_worker.h"
+#include "searches/algorithm_registry.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -9,70 +10,84 @@
 #include <QSettings>
 #include <QThread>
 #include <QTimer>
+#include <QVariantMap>
 
 #include <algorithm>
-#include <limits>
 
 namespace forevertas::app {
 namespace {
 
 constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
-constexpr char kMinMutateMsKey[] = "search/minMutateMs";
-constexpr char kMaxMutateMsKey[] = "search/maxMutateMs";
-constexpr char kMinEvalTimeMsKey[] = "search/minEvalTimeMs";
-constexpr char kMaxEvalTimeMsKey[] = "search/maxEvalTimeMs";
-constexpr char kAttemptCountKey[] = "search/attemptCount";
-constexpr char kMutationSeedKey[] = "search/mutationSeed";
+constexpr char kSearchAlgorithmKey[] = "selection/searchAlgorithm";
+constexpr char kMutationAlgorithmKey[] = "selection/mutationAlgorithm";
+constexpr char kEvaluationTargetKey[] = "selection/evaluationTarget";
 std::atomic_bool gAutomaticPacksSearchAttempted{false};
-
-bool IsDecimal(const QString &value) {
-    if (value.isEmpty()) {
-        return false;
-    }
-    for (const QChar character : value) {
-        if (!character.isDigit()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-std::optional<std::int64_t> ParseSigned(const QString &value) {
-    if (!IsDecimal(value)) {
-        return std::nullopt;
-    }
-    bool okay = false;
-    const qlonglong parsed = value.toLongLong(&okay, 10);
-    if (!okay) {
-        return std::nullopt;
-    }
-    return static_cast<std::int64_t>(parsed);
-}
-
-std::optional<std::uint64_t> ParseUnsigned64(const QString &value) {
-    if (!IsDecimal(value)) {
-        return std::nullopt;
-    }
-    bool okay = false;
-    const qulonglong parsed = value.toULongLong(&okay, 10);
-    if (!okay) {
-        return std::nullopt;
-    }
-    return static_cast<std::uint64_t>(parsed);
-}
-
-std::optional<std::uint32_t> ParseUnsigned32(const QString &value) {
-    const std::optional<std::uint64_t> parsed = ParseUnsigned64(value);
-    if (!parsed ||
-        *parsed > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
-    }
-    return static_cast<std::uint32_t>(*parsed);
-}
 
 QString StoredValue(const char *key, const QString &fallback) {
     return QSettings().value(QLatin1String(key), fallback).toString();
+}
+
+QString OptionSettingPath(const QString &category,
+                          const QString &optionId,
+                          const QString &key) {
+    return QStringLiteral("configuration/%1/%2/%3")
+            .arg(category, optionId, key);
+}
+
+OptionSettings ToOptionSettings(const QVariantMap &values) {
+    OptionSettings settings;
+    for (auto iterator = values.constBegin(); iterator != values.constEnd();
+         ++iterator) {
+        settings.emplace(iterator.key().toStdString(),
+                         iterator.value().toString().toStdString());
+    }
+    return settings;
+}
+
+template<typename Registration>
+QVariantMap LoadOptionSettings(const QString &category,
+                               const Registration &registration) {
+    QSettings storage;
+    QVariantMap values;
+    for (const auto &[key, defaultValue] : registration.defaultSettings) {
+        const QString qKey = QString::fromStdString(key);
+        const QString path = OptionSettingPath(
+                category,
+                QString::fromStdString(registration.id),
+                qKey);
+        QString value;
+        if (storage.contains(path)) {
+            value = storage.value(path).toString();
+        } else {
+            const auto legacy = registration.legacyPersistenceKeys.find(key);
+            if (legacy != registration.legacyPersistenceKeys.end() &&
+                storage.contains(QString::fromStdString(legacy->second))) {
+                value = storage.value(QString::fromStdString(legacy->second))
+                                .toString();
+            } else {
+                value = QString::fromStdString(defaultValue);
+            }
+        }
+        values.insert(qKey, value);
+    }
+    return values;
+}
+
+template<typename Registration>
+QVariantList OptionList(const std::vector<Registration> &registrations) {
+    QVariantList options;
+    options.reserve(static_cast<qsizetype>(registrations.size()));
+    for (const Registration &registration : registrations) {
+        options.push_back(QVariantMap{
+                {QStringLiteral("id"),
+                 QString::fromStdString(registration.id)},
+                {QStringLiteral("label"),
+                 QString::fromStdString(registration.displayName)},
+                {QStringLiteral("settingsComponent"),
+                 QString::fromStdString(registration.settingsComponent)}});
+    }
+    return options;
 }
 
 }  // namespace
@@ -89,26 +104,35 @@ SearchController::SearchController(const QStringList &packsSearchPatterns,
 }
 
 void SearchController::initialize(const QStringList *packsSearchPatterns) {
-    const SerialBruteForceSettings defaults =
-            DefaultSerialBruteForceSettings();
+    const OptionConfiguration defaultSearch =
+            DefaultSearchAlgorithmConfiguration();
+    const OptionConfiguration defaultMutation =
+            DefaultMutationAlgorithmConfiguration();
+    const OptionConfiguration defaultEvaluation =
+            DefaultEvaluationTargetConfiguration();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
-    minMutateMs_ = StoredValue(
-            kMinMutateMsKey, QString::number(defaults.minMutateMs));
-    maxMutateMs_ = StoredValue(
-            kMaxMutateMsKey, QString::number(defaults.maxMutateMs));
-    minEvalTimeMs_ = StoredValue(
-            kMinEvalTimeMsKey, QString::number(defaults.minEvalTimeMs));
-    maxEvalTimeMs_ = StoredValue(
-            kMaxEvalTimeMsKey, QString::number(defaults.maxEvalTimeMs));
-    attemptCount_ = StoredValue(
-            kAttemptCountKey,
-            QString::number(static_cast<qulonglong>(
-                    defaults.attemptCount)));
-    mutationSeed_ = StoredValue(
-            kMutationSeedKey,
-            QString::number(static_cast<qulonglong>(
-                    defaults.mutationSeed)));
+    searchAlgorithmId_ = StoredValue(
+            kSearchAlgorithmKey,
+            QString::fromStdString(defaultSearch.id));
+    mutationAlgorithmId_ = StoredValue(
+            kMutationAlgorithmKey,
+            QString::fromStdString(defaultMutation.id));
+    evaluationTargetId_ = StoredValue(
+            kEvaluationTargetKey,
+            QString::fromStdString(defaultEvaluation.id));
+    if (FindSearchAlgorithm(searchAlgorithmId_.toStdString()) == nullptr) {
+        searchAlgorithmId_ = QString::fromStdString(defaultSearch.id);
+    }
+    if (FindMutationAlgorithm(mutationAlgorithmId_.toStdString()) == nullptr) {
+        mutationAlgorithmId_ = QString::fromStdString(defaultMutation.id);
+    }
+    if (FindEvaluationTarget(evaluationTargetId_.toStdString()) == nullptr) {
+        evaluationTargetId_ = QString::fromStdString(defaultEvaluation.id);
+    }
+    loadSearchAlgorithmSettings();
+    loadMutationAlgorithmSettings();
+    loadEvaluationTargetSettings();
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
     refreshValidation();
 }
@@ -129,28 +153,40 @@ QString SearchController::replayPath() const {
     return replayPath_;
 }
 
-QString SearchController::minMutateMs() const {
-    return minMutateMs_;
+QVariantList SearchController::searchAlgorithmOptions() const {
+    return OptionList(SearchAlgorithmRegistry());
 }
 
-QString SearchController::maxMutateMs() const {
-    return maxMutateMs_;
+QVariantList SearchController::mutationAlgorithmOptions() const {
+    return OptionList(MutationAlgorithmRegistry());
 }
 
-QString SearchController::minEvalTimeMs() const {
-    return minEvalTimeMs_;
+QVariantList SearchController::evaluationTargetOptions() const {
+    return OptionList(EvaluationTargetRegistry());
 }
 
-QString SearchController::maxEvalTimeMs() const {
-    return maxEvalTimeMs_;
+QString SearchController::searchAlgorithmId() const {
+    return searchAlgorithmId_;
 }
 
-QString SearchController::attemptCount() const {
-    return attemptCount_;
+QString SearchController::mutationAlgorithmId() const {
+    return mutationAlgorithmId_;
 }
 
-QString SearchController::mutationSeed() const {
-    return mutationSeed_;
+QString SearchController::evaluationTargetId() const {
+    return evaluationTargetId_;
+}
+
+QVariantMap SearchController::searchAlgorithmSettings() const {
+    return searchAlgorithmSettings_;
+}
+
+QVariantMap SearchController::mutationAlgorithmSettings() const {
+    return mutationAlgorithmSettings_;
+}
+
+QVariantMap SearchController::evaluationTargetSettings() const {
+    return evaluationTargetSettings_;
 }
 
 bool SearchController::canStart() const {
@@ -198,32 +234,95 @@ QString SearchController::resultText() const {
 
 FOREVERTAS_DEFINE_STRING_SETTER(
         setReplayPath, replayPath_, replayPathChanged, kReplayPathKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setMinMutateMs, minMutateMs_, minMutateMsChanged, kMinMutateMsKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setMaxMutateMs, maxMutateMs_, maxMutateMsChanged, kMaxMutateMsKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setMinEvalTimeMs,
-        minEvalTimeMs_,
-        minEvalTimeMsChanged,
-        kMinEvalTimeMsKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setMaxEvalTimeMs,
-        maxEvalTimeMs_,
-        maxEvalTimeMsChanged,
-        kMaxEvalTimeMsKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setAttemptCount,
-        attemptCount_,
-        attemptCountChanged,
-        kAttemptCountKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setMutationSeed,
-        mutationSeed_,
-        mutationSeedChanged,
-        kMutationSeedKey)
 
 #undef FOREVERTAS_DEFINE_STRING_SETTER
+
+void SearchController::setSearchAlgorithmId(const QString &value) {
+    if (searchAlgorithmId_ == value) {
+        return;
+    }
+    searchAlgorithmId_ = value;
+    persist(kSearchAlgorithmKey, value);
+    loadSearchAlgorithmSettings();
+    emit searchAlgorithmIdChanged();
+    emit searchAlgorithmSettingsChanged();
+    refreshValidation();
+}
+
+void SearchController::setMutationAlgorithmId(const QString &value) {
+    if (mutationAlgorithmId_ == value) {
+        return;
+    }
+    mutationAlgorithmId_ = value;
+    persist(kMutationAlgorithmKey, value);
+    loadMutationAlgorithmSettings();
+    emit mutationAlgorithmIdChanged();
+    emit mutationAlgorithmSettingsChanged();
+    refreshValidation();
+}
+
+void SearchController::setEvaluationTargetId(const QString &value) {
+    if (evaluationTargetId_ == value) {
+        return;
+    }
+    evaluationTargetId_ = value;
+    persist(kEvaluationTargetKey, value);
+    loadEvaluationTargetSettings();
+    emit evaluationTargetIdChanged();
+    emit evaluationTargetSettingsChanged();
+    refreshValidation();
+}
+
+void SearchController::setSearchAlgorithmSetting(const QString &key,
+                                                 const QString &value) {
+    const SearchAlgorithmRegistration *const registration =
+            FindSearchAlgorithm(searchAlgorithmId_.toStdString());
+    if (registration == nullptr ||
+        registration->defaultSettings.find(key.toStdString()) ==
+                registration->defaultSettings.end() ||
+        searchAlgorithmSettings_.value(key).toString() == value) {
+        return;
+    }
+    searchAlgorithmSettings_.insert(key, value);
+    persistOptionSetting(
+            QStringLiteral("search"), searchAlgorithmId_, key, value);
+    emit searchAlgorithmSettingsChanged();
+    refreshValidation();
+}
+
+void SearchController::setMutationAlgorithmSetting(const QString &key,
+                                                   const QString &value) {
+    const MutationAlgorithmRegistration *const registration =
+            FindMutationAlgorithm(mutationAlgorithmId_.toStdString());
+    if (registration == nullptr ||
+        registration->defaultSettings.find(key.toStdString()) ==
+                registration->defaultSettings.end() ||
+        mutationAlgorithmSettings_.value(key).toString() == value) {
+        return;
+    }
+    mutationAlgorithmSettings_.insert(key, value);
+    persistOptionSetting(
+            QStringLiteral("mutation"), mutationAlgorithmId_, key, value);
+    emit mutationAlgorithmSettingsChanged();
+    refreshValidation();
+}
+
+void SearchController::setEvaluationTargetSetting(const QString &key,
+                                                  const QString &value) {
+    const EvaluationTargetRegistration *const registration =
+            FindEvaluationTarget(evaluationTargetId_.toStdString());
+    if (registration == nullptr ||
+        registration->defaultSettings.find(key.toStdString()) ==
+                registration->defaultSettings.end() ||
+        evaluationTargetSettings_.value(key).toString() == value) {
+        return;
+    }
+    evaluationTargetSettings_.insert(key, value);
+    persistOptionSetting(
+            QStringLiteral("evaluation"), evaluationTargetId_, key, value);
+    emit evaluationTargetSettingsChanged();
+    refreshValidation();
+}
 
 void SearchController::setPacksDirectory(const QString &value) {
     clearAutoDetectedPacksDirectory();
@@ -382,61 +481,48 @@ SearchController::ValidationResult SearchController::validate() const {
                             "The replay path must be a readable file.")};
     }
 
-    const auto minMutateMs = ParseSigned(minMutateMs_);
-    if (!minMutateMs) {
-        return {{}, QStringLiteral(
-                            "Minimum mutation time must be a non-negative "
-                            "64-bit decimal integer.")};
+    const SearchAlgorithmRegistration *const searchRegistration =
+            FindSearchAlgorithm(searchAlgorithmId_.toStdString());
+    if (searchRegistration == nullptr) {
+        return {{}, QStringLiteral("Select a valid search algorithm.")};
     }
-    const auto maxMutateMs = ParseSigned(maxMutateMs_);
-    if (!maxMutateMs) {
-        return {{}, QStringLiteral(
-                            "Maximum mutation time must be a non-negative "
-                            "64-bit decimal integer.")};
+    const MutationAlgorithmRegistration *const mutationRegistration =
+            FindMutationAlgorithm(mutationAlgorithmId_.toStdString());
+    if (mutationRegistration == nullptr) {
+        return {{}, QStringLiteral("Select a valid mutation algorithm.")};
     }
-    const auto minEvalTimeMs = ParseSigned(minEvalTimeMs_);
-    if (!minEvalTimeMs) {
-        return {{}, QStringLiteral(
-                            "Minimum evaluation time must be a non-negative "
-                            "64-bit decimal integer.")};
-    }
-    const auto maxEvalTimeMs = ParseSigned(maxEvalTimeMs_);
-    if (!maxEvalTimeMs) {
-        return {{}, QStringLiteral(
-                            "Maximum evaluation time must be a non-negative "
-                            "64-bit decimal integer.")};
-    }
-    const auto attemptCount = ParseUnsigned64(attemptCount_);
-    if (!attemptCount) {
-        return {{}, QStringLiteral(
-                            "Attempt count must be an unsigned 64-bit "
-                            "decimal integer.")};
-    }
-    const auto mutationSeed = ParseUnsigned32(mutationSeed_);
-    if (!mutationSeed) {
-        return {{}, QStringLiteral(
-                            "Mutation seed must be an unsigned 32-bit "
-                            "decimal integer.")};
+    const EvaluationTargetRegistration *const evaluationRegistration =
+            FindEvaluationTarget(evaluationTargetId_.toStdString());
+    if (evaluationRegistration == nullptr) {
+        return {{}, QStringLiteral("Select a valid evaluation target.")};
     }
 
-    const SerialBruteForceSettings settings{
-            *minMutateMs,
-            *maxMutateMs,
-            *minEvalTimeMs,
-            *maxEvalTimeMs,
-            *attemptCount,
-            *mutationSeed,
-    };
-    if (const auto error = ValidateSerialBruteForceSettings(
-                settings, kSearchTickDurationMs)) {
+    const OptionSettings searchSettings =
+            ToOptionSettings(searchAlgorithmSettings_);
+    const OptionSettings mutationSettings =
+            ToOptionSettings(mutationAlgorithmSettings_);
+    const OptionSettings evaluationSettings =
+            ToOptionSettings(evaluationTargetSettings_);
+    if (const auto error = searchRegistration->validateSettings(
+                searchSettings, kSearchTickDurationMs)) {
+        return {{}, QString::fromStdString(*error)};
+    }
+    if (const auto error =
+                mutationRegistration->validateSettings(mutationSettings)) {
+        return {{}, QString::fromStdString(*error)};
+    }
+    if (const auto error =
+                evaluationRegistration->validateSettings(evaluationSettings)) {
         return {{}, QString::fromStdString(*error)};
     }
 
     return {
-            SerialSearchRequest{
+            SearchRequest{
                     packsInfo.absoluteFilePath().toStdString(),
                     replayInfo.absoluteFilePath().toStdString(),
-                    settings},
+                    {searchAlgorithmId_.toStdString(), searchSettings},
+                    {mutationAlgorithmId_.toStdString(), mutationSettings},
+                    {evaluationTargetId_.toStdString(), evaluationSettings}},
             {}};
 }
 
@@ -565,6 +651,37 @@ void SearchController::clearAutoDetectedPacksDirectory() {
     }
     autoDetectedPacksDirectory_.clear();
     emit autoDetectedPacksDirectoryChanged();
+}
+
+void SearchController::loadSearchAlgorithmSettings() {
+    const SearchAlgorithmRegistration *const registration =
+            FindSearchAlgorithm(searchAlgorithmId_.toStdString());
+    searchAlgorithmSettings_ = registration == nullptr
+            ? QVariantMap{}
+            : LoadOptionSettings(QStringLiteral("search"), *registration);
+}
+
+void SearchController::loadMutationAlgorithmSettings() {
+    const MutationAlgorithmRegistration *const registration =
+            FindMutationAlgorithm(mutationAlgorithmId_.toStdString());
+    mutationAlgorithmSettings_ = registration == nullptr
+            ? QVariantMap{}
+            : LoadOptionSettings(QStringLiteral("mutation"), *registration);
+}
+
+void SearchController::loadEvaluationTargetSettings() {
+    const EvaluationTargetRegistration *const registration =
+            FindEvaluationTarget(evaluationTargetId_.toStdString());
+    evaluationTargetSettings_ = registration == nullptr
+            ? QVariantMap{}
+            : LoadOptionSettings(QStringLiteral("evaluation"), *registration);
+}
+
+void SearchController::persistOptionSetting(const QString &category,
+                                            const QString &optionId,
+                                            const QString &key,
+                                            const QString &value) {
+    QSettings().setValue(OptionSettingPath(category, optionId, key), value);
 }
 
 void SearchController::persist(const char *key, const QString &value) {

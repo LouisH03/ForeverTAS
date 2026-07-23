@@ -15,7 +15,6 @@ struct MutationRequest {
             &baselineInputs;
     std::int64_t minMutateMs = 0;
     std::int64_t maxMutateMs = 0;
-    std::uint32_t seed = 0u;
     std::uint64_t attemptIndex = 0u;
 };
 

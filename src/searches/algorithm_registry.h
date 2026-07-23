@@ -1,0 +1,69 @@
+#ifndef FOREVERTAS_SEARCHES_ALGORITHM_REGISTRY_H
+#define FOREVERTAS_SEARCHES_ALGORITHM_REGISTRY_H
+
+#include "evaluators/candidate_evaluator.h"
+#include "mutations/input_mutator.h"
+#include "searches/option_configuration.h"
+#include "searches/search_algorithm.h"
+
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace forevertas {
+
+inline constexpr char kSerialBruteForceSearchId[] = "serial-brute-force";
+inline constexpr char kRandomSteeringMutationId[] = "random-steering";
+inline constexpr char kMaximumSpeedEvaluationId[] = "maximum-speed";
+
+struct SearchAlgorithmRegistration {
+    std::string id;
+    std::string displayName;
+    std::string settingsComponent;
+    OptionSettings defaultSettings;
+    OptionSettings legacyPersistenceKeys;
+    std::optional<std::string> (*validateSettings)(
+            const OptionSettings &, std::uint32_t);
+    std::unique_ptr<SearchAlgorithm> (*create)(
+            const OptionSettings &, std::uint32_t);
+};
+
+struct MutationAlgorithmRegistration {
+    std::string id;
+    std::string displayName;
+    std::string settingsComponent;
+    OptionSettings defaultSettings;
+    OptionSettings legacyPersistenceKeys;
+    std::optional<std::string> (*validateSettings)(const OptionSettings &);
+    std::unique_ptr<InputMutator> (*create)(const OptionSettings &);
+};
+
+struct EvaluationTargetRegistration {
+    std::string id;
+    std::string displayName;
+    std::string settingsComponent;
+    OptionSettings defaultSettings;
+    OptionSettings legacyPersistenceKeys;
+    std::optional<std::string> (*validateSettings)(const OptionSettings &);
+    std::unique_ptr<CandidateEvaluator> (*create)(const OptionSettings &);
+};
+
+const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry();
+const std::vector<MutationAlgorithmRegistration> &MutationAlgorithmRegistry();
+const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry();
+
+const SearchAlgorithmRegistration *FindSearchAlgorithm(
+        const std::string &id);
+const MutationAlgorithmRegistration *FindMutationAlgorithm(
+        const std::string &id);
+const EvaluationTargetRegistration *FindEvaluationTarget(
+        const std::string &id);
+
+OptionConfiguration DefaultSearchAlgorithmConfiguration();
+OptionConfiguration DefaultMutationAlgorithmConfiguration();
+OptionConfiguration DefaultEvaluationTargetConfiguration();
+
+}  // namespace forevertas
+
+#endif

@@ -1,5 +1,7 @@
 #include "searches/serial_brute_force_search.h"
 
+#include "searches/option_settings_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -129,7 +131,72 @@ struct BestCandidate {
     std::optional<PhysicsSandboxState> snapshot;
 };
 
+std::optional<SerialBruteForceSettings> ParseSerialBruteForceSettings(
+        const OptionSettings &settings,
+        std::string *error) {
+    const OptionSettings defaults = DefaultSerialBruteForceOptionSettings();
+    if (const auto keyError = ValidateOptionSettingKeys(settings, defaults)) {
+        *error = *keyError;
+        return std::nullopt;
+    }
+
+    const auto minMutateMs = ParseSignedDecimal(settings.at("minMutateMs"));
+    if (!minMutateMs) {
+        *error = "minimum mutation time must be a non-negative 64-bit "
+                 "decimal integer";
+        return std::nullopt;
+    }
+    const auto maxMutateMs = ParseSignedDecimal(settings.at("maxMutateMs"));
+    if (!maxMutateMs) {
+        *error = "maximum mutation time must be a non-negative 64-bit "
+                 "decimal integer";
+        return std::nullopt;
+    }
+    const auto minEvalTimeMs =
+            ParseSignedDecimal(settings.at("minEvalTimeMs"));
+    if (!minEvalTimeMs) {
+        *error = "minimum evaluation time must be a non-negative 64-bit "
+                 "decimal integer";
+        return std::nullopt;
+    }
+    const auto maxEvalTimeMs =
+            ParseSignedDecimal(settings.at("maxEvalTimeMs"));
+    if (!maxEvalTimeMs) {
+        *error = "maximum evaluation time must be a non-negative 64-bit "
+                 "decimal integer";
+        return std::nullopt;
+    }
+    const auto attemptCount =
+            ParseUnsignedDecimal64(settings.at("attemptCount"));
+    if (!attemptCount) {
+        *error = "attempt count must be an unsigned 64-bit decimal integer";
+        return std::nullopt;
+    }
+
+    return SerialBruteForceSettings{
+            *minMutateMs,
+            *maxMutateMs,
+            *minEvalTimeMs,
+            *maxEvalTimeMs,
+            *attemptCount};
+}
+
 }  // namespace
+
+SerialBruteForceSettings DefaultSerialBruteForceSettings() {
+    return {1000, 6000, 1000, 6000, 10u};
+}
+
+OptionSettings DefaultSerialBruteForceOptionSettings() {
+    const SerialBruteForceSettings defaults =
+            DefaultSerialBruteForceSettings();
+    return {
+            {"minMutateMs", std::to_string(defaults.minMutateMs)},
+            {"maxMutateMs", std::to_string(defaults.maxMutateMs)},
+            {"minEvalTimeMs", std::to_string(defaults.minEvalTimeMs)},
+            {"maxEvalTimeMs", std::to_string(defaults.maxEvalTimeMs)},
+            {"attemptCount", std::to_string(defaults.attemptCount)}};
+}
 
 std::optional<std::string> ValidateSerialBruteForceSettings(
         const SerialBruteForceSettings &settings,
@@ -161,6 +228,32 @@ std::optional<std::string> ValidateSerialBruteForceSettings(
         return "mutation and evaluation times must align to whole ticks";
     }
     return std::nullopt;
+}
+
+std::optional<std::string> ValidateSerialBruteForceOptionSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    std::string parseError;
+    const auto parsed = ParseSerialBruteForceSettings(settings, &parseError);
+    if (!parsed) {
+        return parseError;
+    }
+    return ValidateSerialBruteForceSettings(*parsed, tickDurationMs);
+}
+
+std::unique_ptr<SearchAlgorithm> CreateSerialBruteForceSearch(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    std::string parseError;
+    const auto parsed = ParseSerialBruteForceSettings(settings, &parseError);
+    if (!parsed) {
+        throw std::invalid_argument(parseError);
+    }
+    if (const auto error =
+                ValidateSerialBruteForceSettings(*parsed, tickDurationMs)) {
+        throw std::invalid_argument(*error);
+    }
+    return std::make_unique<SerialBruteForceSearch>(*parsed);
 }
 
 SerialBruteForceSearch::SerialBruteForceSearch(
@@ -203,7 +296,7 @@ SearchResult SerialBruteForceSearch::Run(
 
     BestCandidate best;
     std::uint64_t evaluatorCalls = 0u;
-    std::uint64_t improvementCount = 0u;
+    std::uint64_t mutationImprovementCount = 0u;
     std::uint64_t executedAttempts = 0u;
     std::uint64_t skippedAttempts = 0u;
     std::uint64_t totalMutationCount = 0u;
@@ -238,7 +331,9 @@ SearchResult SerialBruteForceSearch::Run(
             best.view = state;
             best.snapshot = Require(context.sandbox.CaptureState(),
                                     "capturing improved state");
-            ++improvementCount;
+            if (source == SearchWinnerSource::Mutation) {
+                ++mutationImprovementCount;
+            }
         }
     };
 
@@ -262,7 +357,6 @@ SearchResult SerialBruteForceSearch::Run(
                 baselineInputs,
                 settings_.minMutateMs,
                 settings_.maxMutateMs,
-                settings_.mutationSeed,
                 attempt});
         CheckCancellation(context.control);
         if (mutation.mutationCount == 0u) {
@@ -298,6 +392,11 @@ SearchResult SerialBruteForceSearch::Run(
         throw std::runtime_error(
                 "restored global best does not match its captured state");
     }
+    const bool mutationWon = best.source == SearchWinnerSource::Mutation;
+    if (mutationWon != (mutationImprovementCount > 0u)) {
+        throw std::runtime_error(
+                "mutation winner and improvement count are inconsistent");
+    }
 
     const auto elapsed = std::chrono::steady_clock::now() - started;
     return SearchResult{
@@ -310,7 +409,7 @@ SearchResult SerialBruteForceSearch::Run(
             executedAttempts,
             skippedAttempts,
             evaluatorCalls,
-            improvementCount,
+            mutationImprovementCount,
             totalMutationCount,
             elapsed,
             *best.snapshot};

@@ -41,14 +41,15 @@ QString FormatResult(const SearchResult &result) {
             .arg(static_cast<qulonglong>(result.executedAttempts))
             .arg(static_cast<qulonglong>(result.requestedAttempts))
             .arg(static_cast<qulonglong>(result.skippedAttempts))
-            .arg(static_cast<qulonglong>(result.improvementCount))
+            .arg(static_cast<qulonglong>(
+                    result.mutationImprovementCount))
             .arg(elapsedMs, 0, 'f', 1);
 }
 
 }  // namespace
 
 SearchWorker::SearchWorker(
-        SerialSearchRequest request,
+        SearchRequest request,
         std::shared_ptr<std::atomic_bool> cancellationRequested)
     : request_(std::move(request)),
       cancellationRequested_(std::move(cancellationRequested)) {}
@@ -82,7 +83,7 @@ void SearchWorker::run() {
     };
 
     try {
-        emit succeeded(FormatResult(RunSerialSearch(request_, &control)));
+        emit succeeded(FormatResult(RunSearch(request_, &control)));
     } catch (const SearchCancelled &) {
         emit cancelled();
     } catch (const std::exception &error) {

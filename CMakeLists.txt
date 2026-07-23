@@ -43,8 +43,14 @@ FetchContent_MakeAvailable(ForeverValidator)
 add_library(forevertas_core STATIC
     src/evaluators/max_speed_evaluator.cpp
     src/mutations/random_steering_mutator.cpp
+    src/searches/algorithm_registry.cpp
+    src/searches/algorithm_registry.h
+    src/searches/option_configuration.h
+    src/searches/option_settings_utils.h
     src/searches/serial_brute_force_search.cpp
-    src/searches/serial_search_runner.cpp)
+    src/searches/serial_brute_force_search.h
+    src/searches/search_runner.cpp
+    src/searches/search_runner.h)
 target_include_directories(forevertas_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(forevertas_core PUBLIC
@@ -80,7 +86,11 @@ qt_add_qml_module(forevertas
     URI ForeverTAS
     VERSION 1.0
     QML_FILES
-        qml/Main.qml)
+        qml/Main.qml
+        qml/settings/AlgorithmSelector.qml
+        qml/settings/SerialBruteForceSearchSettings.qml
+        qml/settings/RandomSteeringMutationSettings.qml
+        qml/settings/MaximumSpeedEvaluationSettings.qml)
 target_link_libraries(forevertas PRIVATE
     forevertas_gui
     Qt6::Gui

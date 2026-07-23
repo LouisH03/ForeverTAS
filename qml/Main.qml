@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
 import QtQuick3D
+import "settings"
 import ForeverTAS.Viewer 1.0
 
 ApplicationWindow {
@@ -841,103 +842,46 @@ ApplicationWindow {
                         color: "#d3d8d1"
                     }
 
-                    GridLayout {
+                    AlgorithmSelector {
+                        objectName: "searchAlgorithmSelector"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        columns: 2
-                        columnSpacing: 12
-                        rowSpacing: 9
+                        title: qsTr("Search algorithm")
+                        comboObjectName: "searchAlgorithmCombo"
+                        options: window.controller.searchAlgorithmOptions
+                        selectedId: window.controller.searchAlgorithmId
+                        controller: window.controller
+                        onSelectionRequested: id =>
+                            window.controller.searchAlgorithmId = id
+                    }
 
-                        Label {
-                            text: qsTr("Minimum mutation (ms)")
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            horizontalAlignment: TextInput.AlignRight
-                            text: window.controller.minMutateMs
-                            enabled: !window.controller.running
-                            selectByMouse: true
-                            validator: RegularExpressionValidator {
-                                regularExpression: /[0-9]*/
-                            }
-                            onTextEdited: window.controller.minMutateMs = text
-                        }
+                    AlgorithmSelector {
+                        objectName: "mutationAlgorithmSelector"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        title: qsTr("Mutation algorithm")
+                        comboObjectName: "mutationAlgorithmCombo"
+                        options: window.controller.mutationAlgorithmOptions
+                        selectedId: window.controller.mutationAlgorithmId
+                        controller: window.controller
+                        onSelectionRequested: id =>
+                            window.controller.mutationAlgorithmId = id
+                    }
 
-                        Label {
-                            text: qsTr("Maximum mutation (ms)")
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            horizontalAlignment: TextInput.AlignRight
-                            text: window.controller.maxMutateMs
-                            enabled: !window.controller.running
-                            selectByMouse: true
-                            validator: RegularExpressionValidator {
-                                regularExpression: /[0-9]*/
-                            }
-                            onTextEdited: window.controller.maxMutateMs = text
-                        }
-
-                        Label {
-                            text: qsTr("Minimum evaluation (ms)")
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            horizontalAlignment: TextInput.AlignRight
-                            text: window.controller.minEvalTimeMs
-                            enabled: !window.controller.running
-                            selectByMouse: true
-                            validator: RegularExpressionValidator {
-                                regularExpression: /[0-9]*/
-                            }
-                            onTextEdited: window.controller.minEvalTimeMs = text
-                        }
-
-                        Label {
-                            text: qsTr("Maximum evaluation (ms)")
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            horizontalAlignment: TextInput.AlignRight
-                            text: window.controller.maxEvalTimeMs
-                            enabled: !window.controller.running
-                            selectByMouse: true
-                            validator: RegularExpressionValidator {
-                                regularExpression: /[0-9]*/
-                            }
-                            onTextEdited: window.controller.maxEvalTimeMs = text
-                        }
-
-                        Label {
-                            text: qsTr("Attempt count")
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            horizontalAlignment: TextInput.AlignRight
-                            text: window.controller.attemptCount
-                            enabled: !window.controller.running
-                            selectByMouse: true
-                            validator: RegularExpressionValidator {
-                                regularExpression: /[0-9]*/
-                            }
-                            onTextEdited: window.controller.attemptCount = text
-                        }
-
-                        Label {
-                            text: qsTr("Mutation seed")
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            horizontalAlignment: TextInput.AlignRight
-                            text: window.controller.mutationSeed
-                            enabled: !window.controller.running
-                            selectByMouse: true
-                            validator: RegularExpressionValidator {
-                                regularExpression: /[0-9]*/
-                            }
-                            onTextEdited: window.controller.mutationSeed = text
-                        }
+                    AlgorithmSelector {
+                        objectName: "evaluationTargetSelector"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        title: qsTr("Evaluation target")
+                        comboObjectName: "evaluationTargetCombo"
+                        options: window.controller.evaluationTargetOptions
+                        selectedId: window.controller.evaluationTargetId
+                        controller: window.controller
+                        onSelectionRequested: id =>
+                            window.controller.evaluationTargetId = id
                     }
 
                     Label {

@@ -227,6 +227,24 @@ int main(int argc, char **argv) {
                                     "autoPacksSuggestionText"));
                     QObject *const applyAutoPacks = root->findChild<QObject *>(
                             QStringLiteral("applyAutoPacksButton"));
+                    QObject *const searchAlgorithmCombo =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("searchAlgorithmCombo"));
+                    QObject *const mutationAlgorithmCombo =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("mutationAlgorithmCombo"));
+                    QObject *const evaluationTargetCombo =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("evaluationTargetCombo"));
+                    QObject *const serialBruteForceSettings =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "serialBruteForceSearchSettings"));
+                    QObject *const randomSteeringSettings =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "randomSteeringMutationSettings"));
+                    QObject *const maximumSpeedSettings =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "maximumSpeedEvaluationSettings"));
                     const qint64 keyboardStartTick =
                             std::clamp<qint64>(
                                     viewer.tickCount() / 2,
@@ -290,12 +308,34 @@ int main(int argc, char **argv) {
                             applyAutoPacks != nullptr &&
                             applyAutoPacks->property("text").toString() ==
                                     QStringLiteral("Apply");
+                    const bool algorithmSelectorsValid =
+                            searchAlgorithmCombo != nullptr &&
+                            mutationAlgorithmCombo != nullptr &&
+                            evaluationTargetCombo != nullptr &&
+                            searchAlgorithmCombo->property("count").toInt() ==
+                                    1 &&
+                            mutationAlgorithmCombo->property("count").toInt() ==
+                                    1 &&
+                            evaluationTargetCombo->property("count").toInt() ==
+                                    1 &&
+                            searchAlgorithmCombo->property("currentValue")
+                                            .toString() ==
+                                    QStringLiteral("serial-brute-force") &&
+                            mutationAlgorithmCombo->property("currentValue")
+                                            .toString() ==
+                                    QStringLiteral("random-steering") &&
+                            evaluationTargetCombo->property("currentValue")
+                                            .toString() ==
+                                    QStringLiteral("maximum-speed") &&
+                            serialBruteForceSettings != nullptr &&
+                            randomSteeringSettings != nullptr &&
+                            maximumSpeedSettings != nullptr;
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
                             fpsCounterValid && wireframeTextIsWhite &&
-                            automaticPacksUi &&
+                            automaticPacksUi && algorithmSelectorsValid &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
                             playPause->property("enabled").toBool() &&
