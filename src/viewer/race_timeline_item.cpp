@@ -15,16 +15,107 @@ namespace {
 constexpr qreal kMinimumPixelsPerTick = 1.0;
 constexpr qreal kMaximumPixelsPerTick = 12.0;
 
-QString FormatTimelineSecond(qint64 tick) {
+struct TimelineScale {
+    qint64 majorTicks = 100;
+    qint64 minorTicks = 10;
+    qint64 smallestTicks = 10;
+};
+
+qreal InterpolationProgress(qreal value, qreal start, qreal end) {
+    return std::clamp((value - start) / (end - start), 0.0, 1.0);
+}
+
+qreal CentisecondTickLength(qreal pixelsPerTick) {
+    constexpr qreal revealStart = 5.0;
+    constexpr qreal microAnchor = 7.0;
+    constexpr qreal fullAnchor = 12.0;
+    constexpr qreal microLength = 3.0;
+    constexpr qreal fullLength = 7.0;
+
+    if (pixelsPerTick <= microAnchor) {
+        return microLength * InterpolationProgress(
+                pixelsPerTick, revealStart, microAnchor);
+    }
+    return microLength +
+            (fullLength - microLength) * InterpolationProgress(
+                    pixelsPerTick, microAnchor, fullAnchor);
+}
+
+QColor InterpolateColor(const QColor &start,
+                        const QColor &end,
+                        qreal progress) {
+    progress = std::clamp(progress, 0.0, 1.0);
+    return QColor::fromRgbF(
+            start.redF() + (end.redF() - start.redF()) * progress,
+            start.greenF() + (end.greenF() - start.greenF()) * progress,
+            start.blueF() + (end.blueF() - start.blueF()) * progress,
+            start.alphaF() + (end.alphaF() - start.alphaF()) * progress);
+}
+
+QColor CentisecondTickColor(qreal pixelsPerTick) {
+    const QColor microColor(QStringLiteral("#343b37"));
+    const QColor minorColor(QStringLiteral("#59635d"));
+    if (pixelsPerTick <= 7.0) {
+        QColor color = microColor;
+        color.setAlphaF(InterpolationProgress(pixelsPerTick, 5.0, 7.0));
+        return color;
+    }
+    return InterpolateColor(
+            microColor,
+            minorColor,
+            InterpolationProgress(pixelsPerTick, 7.0, 12.0));
+}
+
+TimelineScale SelectTimelineScale(qreal pixelsPerTick) {
+    constexpr qreal targetMajorPixels = 120.0;
+    constexpr qint64 majorCandidates[] = {1, 2, 5, 10, 20, 50, 100};
+
+    TimelineScale scale;
+    for (const qint64 candidate : majorCandidates) {
+        if (static_cast<qreal>(candidate) * pixelsPerTick >=
+            targetMajorPixels) {
+            scale.majorTicks = candidate;
+            break;
+        }
+    }
+
+    scale.minorTicks = scale.majorTicks >= 20 ? 10 : 1;
+    scale.smallestTicks = CentisecondTickLength(pixelsPerTick) > 0.0
+            ? 1
+            : scale.minorTicks;
+    return scale;
+}
+
+QString FormatTimelineTime(qint64 tick) {
+    tick = std::max<qint64>(0, tick);
     const qint64 totalSeconds = tick / 100;
     const qint64 minutes = totalSeconds / 60;
     const qint64 seconds = totalSeconds % 60;
-    if (minutes == 0) {
-        return QStringLiteral("%1 s").arg(seconds);
+    const qint64 centiseconds = tick % 100;
+
+    if (centiseconds == 0) {
+        if (minutes == 0) {
+            return QString::number(totalSeconds);
+        }
+        return QStringLiteral("%1:%2")
+                .arg(minutes)
+                .arg(seconds, 2, 10, QLatin1Char('0'));
     }
-    return QStringLiteral("%1:%2")
+
+    const bool tenthsOnly = centiseconds % 10 == 0;
+    const int decimals = tenthsOnly ? 1 : 2;
+    const qint64 fraction = tenthsOnly
+            ? centiseconds / 10
+            : centiseconds;
+    if (minutes == 0) {
+        return QStringLiteral("%1.%2")
+                .arg(totalSeconds)
+                .arg(fraction, decimals, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2.%3")
             .arg(minutes)
-            .arg(seconds, 2, 10, QLatin1Char('0'));
+            .arg(seconds, 2, 10, QLatin1Char('0'))
+            .arg(fraction, decimals, 10, QLatin1Char('0'));
 }
 
 }  // namespace
@@ -105,6 +196,8 @@ void RaceTimelineItem::paint(QPainter *painter) {
 
     const qreal centerY = area.height() * 0.5;
     const qreal centerX = area.width() * 0.5;
+    constexpr qreal rulerWidth = 52.0;
+    constexpr qreal rulerRight = 50.0;
     constexpr qreal accelerationWidth = 24.0;
     constexpr qreal brakeWidth = accelerationWidth * 0.5;
     constexpr qreal controlWidth = accelerationWidth + 2.0 * brakeWidth;
@@ -112,8 +205,15 @@ void RaceTimelineItem::paint(QPainter *painter) {
     const qreal controlRight = controlLeft + controlWidth;
     const qreal steeringWidth = std::max<qreal>(
             0.0,
-            std::min(controlLeft - 48.0,
+            std::min(controlLeft - rulerWidth - 2.0,
                      area.width() - controlRight - 10.0));
+
+    painter->fillRect(
+            QRectF(0.0, 0.0, rulerWidth, area.height()),
+            QColor(QStringLiteral("#0c100e")));
+    painter->setPen(QColor(QStringLiteral("#2b332f")));
+    painter->drawLine(QPointF(rulerRight, 0.0),
+                      QPointF(rulerRight, area.height()));
 
     painter->fillRect(
             QRectF(controlLeft, 0.0, controlWidth, area.height()),
@@ -142,23 +242,18 @@ void RaceTimelineItem::paint(QPainter *painter) {
             static_cast<qint64>(std::ceil(
                     currentTickPosition +
                     (area.height() - centerY) / pixelsPerTick_)) + 1);
-    const qreal rowInset = std::min<qreal>(0.18, pixelsPerTick_ * 0.08);
-    const qreal rowHeight = std::max<qreal>(0.6,
-                                                   pixelsPerTick_ -
-                                                           2.0 * rowInset);
+    const qreal rowHeight = pixelsPerTick_;
 
     QVector<QRectF> leftSteering;
     QVector<QRectF> rightSteering;
     QVector<QRectF> acceleration;
     QVector<QRectF> brakeLeft;
     QVector<QRectF> brakeRight;
-    QPolygonF steeringCurve;
     leftSteering.reserve(static_cast<qsizetype>(lastVisible - firstVisible + 1));
     rightSteering.reserve(leftSteering.capacity());
     acceleration.reserve(leftSteering.capacity());
     brakeLeft.reserve(leftSteering.capacity());
     brakeRight.reserve(leftSteering.capacity());
-    steeringCurve.reserve(leftSteering.capacity());
 
     QFont timeFont = painter->font();
     timeFont.setPixelSize(10);
@@ -168,25 +263,20 @@ void RaceTimelineItem::paint(QPainter *painter) {
         const qreal boundaryY = centerY +
                 (static_cast<qreal>(tick) - currentTickPosition) *
                         pixelsPerTick_;
-        const qreal y = boundaryY + pixelsPerTick_ * 0.5;
         const RaceViewerInputSample sample = viewer_->inputSample(tick);
-        const qreal top = boundaryY + rowInset;
+        const qreal top = boundaryY;
         const qreal steering = std::clamp<qreal>(sample.steering, -1.0, 1.0);
-        qreal steeringCurveX = centerX;
         if (steering < 0.0) {
             const qreal length = -steering * steeringWidth;
-            steeringCurveX = controlLeft - length;
             leftSteering.push_back(
                     QRectF(controlLeft - length, top, length, rowHeight));
         } else if (steering > 0.0) {
-            steeringCurveX = controlRight + steering * steeringWidth;
             rightSteering.push_back(
                     QRectF(controlRight,
                            top,
                            steering * steeringWidth,
                            rowHeight));
         }
-        steeringCurve.push_back(QPointF(steeringCurveX, y));
         if (sample.accelerate > 0.0f) {
             acceleration.push_back(
                     QRectF(controlLeft + brakeWidth,
@@ -205,17 +295,6 @@ void RaceTimelineItem::paint(QPainter *painter) {
         }
     }
 
-    if (steeringCurve.size() > 1) {
-        QColor curveColor(QStringLiteral("#72aed8"));
-        curveColor.setAlpha(58);
-        QPen curvePen(curveColor, 1.0);
-        curvePen.setJoinStyle(Qt::MiterJoin);
-        curvePen.setCapStyle(Qt::FlatCap);
-        painter->setBrush(Qt::NoBrush);
-        painter->setPen(curvePen);
-        painter->drawPolyline(steeringCurve);
-    }
-
     painter->setPen(Qt::NoPen);
     painter->setBrush(QColor(QStringLiteral("#4f9ddd")));
     painter->drawRects(leftSteering);
@@ -226,24 +305,28 @@ void RaceTimelineItem::paint(QPainter *painter) {
     painter->drawRects(brakeLeft);
     painter->drawRects(brakeRight);
 
-    const qint64 firstBoundary = std::max<qint64>(0, firstVisible);
-    const qint64 lastBoundary = std::min<qint64>(
+    const TimelineScale scale = SelectTimelineScale(pixelsPerTick_);
+    const qint64 firstScaleTick =
+            ((std::max<qint64>(0, firstVisible) + scale.smallestTicks - 1) /
+             scale.smallestTicks) * scale.smallestTicks;
+    const qint64 lastScaleTick = std::min<qint64>(
             viewer_->tickCount(), lastVisible + 1);
-    const qint64 regularBoundaryStride = std::max<qint64>(
-            1,
-            static_cast<qint64>(std::ceil(3.0 / pixelsPerTick_)));
 
-    QPen regularGridPen(QColor(QStringLiteral("#080a09")));
-    regularGridPen.setCosmetic(true);
-    regularGridPen.setWidthF(1.0);
-    QPen tenthGridPen(QColor(QStringLiteral("#0d100e")));
-    tenthGridPen.setCosmetic(true);
-    tenthGridPen.setWidthF(1.0);
-    QPen secondGridPen(QColor(QStringLiteral("#171d19")));
-    secondGridPen.setCosmetic(true);
-    secondGridPen.setWidthF(1.0);
+    QPen majorTickPen(QColor(QStringLiteral("#9aa69e")));
+    majorTickPen.setCosmetic(true);
+    majorTickPen.setWidthF(1.0);
+    QPen minorTickPen(QColor(QStringLiteral("#59635d")));
+    minorTickPen.setCosmetic(true);
+    minorTickPen.setWidthF(1.0);
+    const qreal centisecondTickLength =
+            CentisecondTickLength(pixelsPerTick_);
+    QPen centisecondTickPen(CentisecondTickColor(pixelsPerTick_));
+    centisecondTickPen.setCosmetic(true);
+    centisecondTickPen.setWidthF(1.0);
 
-    for (qint64 tick = firstBoundary; tick <= lastBoundary; ++tick) {
+    for (qint64 tick = firstScaleTick;
+         tick <= lastScaleTick;
+         tick += scale.smallestTicks) {
         const qreal y = centerY +
                 (static_cast<qreal>(tick) - currentTickPosition) *
                         pixelsPerTick_;
@@ -252,30 +335,32 @@ void RaceTimelineItem::paint(QPainter *painter) {
             continue;
         }
 
-        const bool secondBoundary = tick % 100 == 0;
-        const bool tenthBoundary = tick % 10 == 0;
-        if (!secondBoundary && !tenthBoundary &&
-            tick % regularBoundaryStride != 0) {
-            continue;
-        }
-        const QPen &gridPen = secondBoundary
-                ? secondGridPen
-                : tenthBoundary
-                ? tenthGridPen
-                : regularGridPen;
+        const bool majorTick = tick % scale.majorTicks == 0;
+        const bool centisecondTick = tick % 10 != 0;
+        const bool minorTick = tick % scale.minorTicks == 0;
+        const qreal tickStartX = majorTick
+                ? 38.0
+                : centisecondTick
+                ? rulerRight - centisecondTickLength
+                : minorTick
+                ? 43.0
+                : 47.0;
+        painter->setPen(majorTick
+                                ? majorTickPen
+                                : centisecondTick
+                                ? centisecondTickPen
+                                : minorTick
+                                ? minorTickPen
+                                : centisecondTickPen);
+        painter->drawLine(QPointF(tickStartX, alignedY),
+                          QPointF(rulerRight, alignedY));
 
-        painter->setBrush(Qt::NoBrush);
-        painter->setPen(gridPen);
-        painter->drawLine(
-                QPointF(secondBoundary ? 0.0 : 45.0, alignedY),
-                QPointF(area.width(), alignedY));
-
-        if (secondBoundary) {
-            painter->setPen(QColor(QStringLiteral("#9aa69e")));
+        if (majorTick) {
+            painter->setPen(QColor(QStringLiteral("#aeb8b0")));
             painter->drawText(
-                    QRectF(5.0, alignedY - 8.0, 44.0, 16.0),
-                    Qt::AlignLeft | Qt::AlignVCenter,
-                    FormatTimelineSecond(tick));
+                    QRectF(2.0, alignedY - 8.0, 34.0, 16.0),
+                    Qt::AlignRight | Qt::AlignVCenter,
+                    FormatTimelineTime(tick));
         }
     }
 

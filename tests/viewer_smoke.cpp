@@ -59,51 +59,43 @@ bool TimelinePaintsColor(RaceTimelineItem &timeline,
     return false;
 }
 
-int TimelineColorRow(RaceTimelineItem &timeline,
-                     const QColor &color,
-                     int minimumY,
-                     int maximumY) {
+QImage RenderTimeline(RaceTimelineItem &timeline) {
     QImage image(252, 600, QImage::Format_ARGB32);
     image.fill(Qt::transparent);
     QPainter painter(&image);
     timeline.paint(&painter);
     painter.end();
-    const QRgb expected = color.rgba();
-    const int firstY = std::clamp(minimumY, 0, image.height() - 1);
-    const int lastY = std::clamp(maximumY, firstY, image.height() - 1);
-    for (int y = firstY; y <= lastY; ++y) {
-        const auto *line = reinterpret_cast<const QRgb *>(
-                image.constScanLine(y));
-        if (line[60] == expected) {
-            return y;
-        }
-    }
-    return -1;
+    return image;
 }
 
-int TimelineGridRowCount(RaceTimelineItem &timeline,
-                         int minimumY,
-                         int maximumY) {
-    QImage image(252, 600, QImage::Format_ARGB32);
-    image.fill(Qt::transparent);
-    QPainter painter(&image);
-    timeline.paint(&painter);
-    painter.end();
-    const QRgb regular = QColor(QStringLiteral("#080a09")).rgba();
-    const QRgb tenth = QColor(QStringLiteral("#0d100e")).rgba();
-    const QRgb second = QColor(QStringLiteral("#171d19")).rgba();
-    const int firstY = std::clamp(minimumY, 0, image.height() - 1);
-    const int lastY = std::clamp(maximumY, firstY, image.height() - 1);
-    int rows = 0;
-    for (int y = firstY; y <= lastY; ++y) {
-        const auto *line = reinterpret_cast<const QRgb *>(
-                image.constScanLine(y));
-        if (line[60] == regular || line[60] == tenth ||
-            line[60] == second) {
-            ++rows;
+bool PixelIs(const QImage &image, int x, int y, const QColor &color) {
+    return image.pixelColor(x, y) == color;
+}
+
+bool PixelIsAnyRulerMark(const QImage &image, int x, int y) {
+    const QColor pixel = image.pixelColor(x, y);
+    return pixel == QColor(QStringLiteral("#9aa69e")) ||
+            pixel == QColor(QStringLiteral("#59635d")) ||
+            pixel == QColor(QStringLiteral("#343b37"));
+}
+
+int RulerMarkLengthNear(const QImage &image, int expectedY) {
+    const QColor rulerBackground(QStringLiteral("#0c100e"));
+    int longest = 0;
+    for (int y = expectedY - 1; y <= expectedY + 1; ++y) {
+        if (y < 0 || y >= image.height()) {
+            continue;
         }
+        int leftmost = 50;
+        for (int x = 35; x < 50; ++x) {
+            if (image.pixelColor(x, y) != rulerBackground) {
+                leftmost = x;
+                break;
+            }
+        }
+        longest = std::max(longest, 50 - leftmost);
     }
-    return rows;
+    return longest;
 }
 
 void SendTimelineMouseEvent(RaceTimelineItem &timeline,
@@ -226,67 +218,75 @@ int main(int argc, char **argv) {
                     const bool naturalScrubDirection =
                             viewer.timeMs() < dragStartTimeMs;
 
-                    timeline.setPixelsPerTick(4.0);
-                    viewer.setTimeMs(5010);
-                    const int wholeTickLineY = TimelineColorRow(
-                            timeline,
-                            QColor(QStringLiteral("#171d19")),
-                            280,
-                            320);
-                    viewer.setTimeMs(5015);
-                    const int halfTickLineY = TimelineColorRow(
-                            timeline,
-                            QColor(QStringLiteral("#171d19")),
-                            280,
-                            320);
-                    timeline.setPixelsPerTick(8.0);
-                    const int zoomedHalfTickLineY = TimelineColorRow(
-                            timeline,
-                            QColor(QStringLiteral("#171d19")),
-                            270,
-                            320);
-                    const bool gridTracksScrollAndZoom =
-                            wholeTickLineY == 296 &&
-                            halfTickLineY == 294 &&
-                            zoomedHalfTickLineY == 288;
+                    viewer.setTimeMs(5000);
+                    timeline.setPixelsPerTick(1.0);
+                    const QImage baseScaleImage = RenderTimeline(timeline);
+                    const bool baseScaleReadable =
+                            PixelIs(baseScaleImage,
+                                    49,
+                                    400,
+                                    QColor(QStringLiteral("#9aa69e"))) &&
+                            PixelIs(baseScaleImage,
+                                    49,
+                                    310,
+                                    QColor(QStringLiteral("#59635d"))) &&
+                            !PixelIsAnyRulerMark(baseScaleImage, 49, 301) &&
+                            !PixelIs(baseScaleImage,
+                                     60,
+                                     310,
+                                     QColor(QStringLiteral("#59635d")));
 
                     timeline.setPixelsPerTick(3.0);
-                    viewer.setTimeMs(5020);
-                    SendTimelineMouseEvent(
-                            timeline,
-                            QEvent::MouseButtonPress,
-                            Qt::LeftButton,
-                            Qt::LeftButton,
-                            QPointF(126.0, 70.0));
-                    SendTimelineMouseEvent(
-                            timeline,
-                            QEvent::MouseMove,
-                            Qt::NoButton,
-                            Qt::LeftButton,
-                            QPointF(126.0, 71.0));
-                    const bool gridVisibleWhileDragging =
-                            TimelineGridRowCount(timeline, 301, 310) > 0;
-                    SendTimelineMouseEvent(
-                            timeline,
-                            QEvent::MouseButtonRelease,
-                            Qt::LeftButton,
-                            Qt::NoButton,
-                            QPointF(126.0, 71.0));
-                    const bool gridVisibleAfterDragging =
-                            TimelineGridRowCount(timeline, 301, 310) > 0;
-                    timeline.setPixelsPerTick(1.0);
-                    const bool gridVisibleAtMinimumZoom =
-                            TimelineGridRowCount(timeline, 301, 310) > 0;
-                    const int minimumZoomGridRows =
-                            TimelineGridRowCount(timeline, 250, 349);
-                    const bool minimumZoomGridStaysSparse =
-                            minimumZoomGridRows >= 25 &&
-                            minimumZoomGridRows <= 45;
-                    const bool gridAlwaysVisible =
-                            gridVisibleWhileDragging &&
-                            gridVisibleAfterDragging &&
-                            gridVisibleAtMinimumZoom &&
-                            minimumZoomGridStaysSparse;
+                    const QImage mediumScaleImage = RenderTimeline(timeline);
+                    const bool mediumScaleReadable =
+                            PixelIs(mediumScaleImage,
+                                    49,
+                                    450,
+                                    QColor(QStringLiteral("#9aa69e"))) &&
+                            PixelIs(mediumScaleImage,
+                                    49,
+                                    330,
+                                    QColor(QStringLiteral("#59635d"))) &&
+                            !PixelIsAnyRulerMark(mediumScaleImage, 49, 303);
+
+                    timeline.setPixelsPerTick(12.0);
+                    const QImage fineScaleImage = RenderTimeline(timeline);
+                    const bool fineScaleReadable =
+                            PixelIs(fineScaleImage,
+                                    49,
+                                    312,
+                                    QColor(QStringLiteral("#59635d"))) &&
+                            PixelIs(fineScaleImage,
+                                    49,
+                                    420,
+                                    QColor(QStringLiteral("#9aa69e"))) &&
+                            !PixelIs(fineScaleImage,
+                                     60,
+                                     312,
+                                     QColor(QStringLiteral("#59635d")));
+                    const bool dynamicRulerScale = baseScaleReadable &&
+                            mediumScaleReadable && fineScaleReadable;
+
+                    timeline.setPixelsPerTick(5.0);
+                    const int fineLengthAt5 = RulerMarkLengthNear(
+                            RenderTimeline(timeline), 305);
+                    timeline.setPixelsPerTick(6.0);
+                    const int fineLengthAt6 = RulerMarkLengthNear(
+                            RenderTimeline(timeline), 306);
+                    timeline.setPixelsPerTick(7.0);
+                    const int fineLengthAt7 = RulerMarkLengthNear(
+                            RenderTimeline(timeline), 307);
+                    timeline.setPixelsPerTick(9.5);
+                    const int fineLengthAt95 = RulerMarkLengthNear(
+                            RenderTimeline(timeline), 309);
+                    const int fineLengthAt12 = RulerMarkLengthNear(
+                            fineScaleImage, 312);
+                    const bool fineMarksGrowSmoothly =
+                            fineLengthAt5 == 0 &&
+                            fineLengthAt6 > fineLengthAt5 &&
+                            fineLengthAt7 > fineLengthAt6 &&
+                            fineLengthAt95 > fineLengthAt7 &&
+                            fineLengthAt12 > fineLengthAt95;
 
                     timeline.setPixelsPerTick(3.0);
                     DragTimeline(
@@ -309,8 +309,8 @@ int main(int argc, char **argv) {
                                                     viewer.tickDurationMs() +
                                             1 &&
                             timelineInputs && naturalScrubDirection &&
-                            leftPressDoesNotSnap && gridTracksScrollAndZoom &&
-                            gridAlwaysVisible &&
+                            leftPressDoesNotSnap && dynamicRulerScale &&
+                            fineMarksGrowSmoothly &&
                             rightDragZoomsIn && timeLabelUnambiguous;
                     if (!sceneValid) {
                         std::cerr
@@ -334,24 +334,22 @@ int main(int argc, char **argv) {
                                 << naturalScrubDirection
                                 << ", leftPressDoesNotSnap="
                                 << leftPressDoesNotSnap
-                                << ", wholeTickLineY="
-                                << wholeTickLineY
-                                << ", halfTickLineY="
-                                << halfTickLineY
-                                << ", zoomedHalfTickLineY="
-                                << zoomedHalfTickLineY
-                                << ", gridTracksScrollAndZoom="
-                                << gridTracksScrollAndZoom
-                                << ", gridVisibleWhileDragging="
-                                << gridVisibleWhileDragging
-                                << ", gridVisibleAfterDragging="
-                                << gridVisibleAfterDragging
-                                << ", gridVisibleAtMinimumZoom="
-                                << gridVisibleAtMinimumZoom
-                                << ", minimumZoomGridRows="
-                                << minimumZoomGridRows
-                                << ", minimumZoomGridStaysSparse="
-                                << minimumZoomGridStaysSparse
+                                << ", baseScaleReadable="
+                                << baseScaleReadable
+                                << ", mediumScaleReadable="
+                                << mediumScaleReadable
+                                << ", fineScaleReadable="
+                                << fineScaleReadable
+                                << ", fineLengthAt5="
+                                << fineLengthAt5
+                                << ", fineLengthAt6="
+                                << fineLengthAt6
+                                << ", fineLengthAt7="
+                                << fineLengthAt7
+                                << ", fineLengthAt95="
+                                << fineLengthAt95
+                                << ", fineLengthAt12="
+                                << fineLengthAt12
                                 << ", rightDragZoomsIn="
                                 << rightDragZoomsIn
                                 << ", timeLabelUnambiguous="
