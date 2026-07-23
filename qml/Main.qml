@@ -381,13 +381,57 @@ ApplicationWindow {
 
                             ToolButton {
                                 objectName: "jumpStartButton"
-                                text: "⏮"
+                                Layout.preferredWidth: 42
+                                Layout.preferredHeight: 42
+                                implicitWidth: 42
+                                implicitHeight: 42
+                                text: ""
                                 enabled: window.viewer.loaded
-                                font.pixelSize: 20
                                 palette.buttonText: "#e6ebe7"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to start")
                                 onClicked: window.viewer.jumpToStart()
+
+                                contentItem: Item {
+                                    Item {
+                                        objectName: "jumpStartTransportIcon"
+                                        anchors.centerIn: parent
+                                        width: 18
+                                        height: 18
+
+                                        Rectangle {
+                                            x: 2
+                                            y: 2
+                                            width: 3
+                                            height: 14
+                                            radius: 1
+                                            color: "#e6ebe7"
+                                        }
+
+                                        Shape {
+                                            anchors.fill: parent
+
+                                            ShapePath {
+                                                strokeWidth: -1
+                                                fillColor: "#e6ebe7"
+                                                startX: 15
+                                                startY: 2
+                                                PathLine {
+                                                    x: 6
+                                                    y: 9
+                                                }
+                                                PathLine {
+                                                    x: 15
+                                                    y: 16
+                                                }
+                                                PathLine {
+                                                    x: 15
+                                                    y: 2
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             ToolButton {
@@ -463,13 +507,57 @@ ApplicationWindow {
 
                             ToolButton {
                                 objectName: "jumpEndButton"
-                                text: "⏭"
+                                Layout.preferredWidth: 42
+                                Layout.preferredHeight: 42
+                                implicitWidth: 42
+                                implicitHeight: 42
+                                text: ""
                                 enabled: window.viewer.loaded
-                                font.pixelSize: 20
                                 palette.buttonText: "#e6ebe7"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to end")
                                 onClicked: window.viewer.jumpToEnd()
+
+                                contentItem: Item {
+                                    Item {
+                                        objectName: "jumpEndTransportIcon"
+                                        anchors.centerIn: parent
+                                        width: 18
+                                        height: 18
+
+                                        Shape {
+                                            anchors.fill: parent
+
+                                            ShapePath {
+                                                strokeWidth: -1
+                                                fillColor: "#e6ebe7"
+                                                startX: 3
+                                                startY: 2
+                                                PathLine {
+                                                    x: 12
+                                                    y: 9
+                                                }
+                                                PathLine {
+                                                    x: 3
+                                                    y: 16
+                                                }
+                                                PathLine {
+                                                    x: 3
+                                                    y: 2
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            x: 13
+                                            y: 2
+                                            width: 3
+                                            height: 14
+                                            radius: 1
+                                            color: "#e6ebe7"
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

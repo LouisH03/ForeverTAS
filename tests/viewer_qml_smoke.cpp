@@ -178,8 +178,14 @@ int main(int argc, char **argv) {
                                     QStringLiteral("pauseTransportIcon")));
                     QObject *const jumpStart = root->findChild<QObject *>(
                             QStringLiteral("jumpStartButton"));
+                    auto *const jumpStartIcon = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("jumpStartTransportIcon")));
                     QObject *const jumpEnd = root->findChild<QObject *>(
                             QStringLiteral("jumpEndButton"));
+                    auto *const jumpEndIcon = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("jumpEndTransportIcon")));
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
                             timelinePanel != nullptr && viewport != nullptr &&
@@ -191,8 +197,18 @@ int main(int argc, char **argv) {
                                      42.0) < 0.1 &&
                             std::abs(playPause->property("height").toReal() -
                                      42.0) < 0.1 &&
+                            std::abs(jumpStart->property("width").toReal() -
+                                     42.0) < 0.1 &&
+                            std::abs(jumpStart->property("height").toReal() -
+                                     42.0) < 0.1 &&
+                            std::abs(jumpEnd->property("width").toReal() -
+                                     42.0) < 0.1 &&
+                            std::abs(jumpEnd->property("height").toReal() -
+                                     42.0) < 0.1 &&
                             IsCenteredIcon(playIcon, 18.0) &&
                             IsCenteredIcon(pauseIcon, 18.0) &&
+                            IsCenteredIcon(jumpStartIcon, 18.0) &&
+                            IsCenteredIcon(jumpEndIcon, 18.0) &&
                             playIcon->isVisible() && !pauseIcon->isVisible() &&
                             !ContainsStandardSlider(root);
                     const QList<QObject *> carFilledModels =
