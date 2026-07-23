@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import QtQuick3D
 import ForeverTAS.Viewer 1.0
 
@@ -391,15 +392,73 @@ ApplicationWindow {
 
                             ToolButton {
                                 objectName: "playPauseButton"
-                                text: window.viewer.playing ? "⏸" : "▶"
+                                Layout.preferredWidth: 42
+                                Layout.preferredHeight: 42
+                                implicitWidth: 42
+                                implicitHeight: 42
+                                text: ""
                                 enabled: window.viewer.loaded
-                                font.pixelSize: 24
                                 palette.buttonText: "#ffffff"
                                 ToolTip.visible: hovered
                                 ToolTip.text: window.viewer.playing
                                               ? qsTr("Pause")
                                               : qsTr("Play")
                                 onClicked: window.viewer.togglePlayback()
+
+                                contentItem: Item {
+                                    Shape {
+                                        objectName: "playTransportIcon"
+                                        anchors.centerIn: parent
+                                        width: 18
+                                        height: 18
+                                        visible: !window.viewer.playing
+
+                                        ShapePath {
+                                            strokeWidth: -1
+                                            fillColor: "#ffffff"
+                                            startX: 4
+                                            startY: 2
+                                            PathLine {
+                                                x: 16
+                                                y: 9
+                                            }
+                                            PathLine {
+                                                x: 4
+                                                y: 16
+                                            }
+                                            PathLine {
+                                                x: 4
+                                                y: 2
+                                            }
+                                        }
+                                    }
+
+                                    Item {
+                                        objectName: "pauseTransportIcon"
+                                        anchors.centerIn: parent
+                                        width: 18
+                                        height: 18
+                                        visible: window.viewer.playing
+
+                                        Rectangle {
+                                            x: 3
+                                            y: 2
+                                            width: 4
+                                            height: 14
+                                            radius: 1
+                                            color: "#ffffff"
+                                        }
+
+                                        Rectangle {
+                                            x: 11
+                                            y: 2
+                                            width: 4
+                                            height: 14
+                                            radius: 1
+                                            color: "#ffffff"
+                                        }
+                                    }
+                                }
                             }
 
                             ToolButton {

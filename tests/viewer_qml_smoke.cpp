@@ -14,6 +14,7 @@
 #include <QUrl>
 #include <QVariant>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 
@@ -77,6 +78,20 @@ bool ContainsStandardSlider(QObject *root) {
         }
     }
     return false;
+}
+
+bool IsCenteredIcon(QQuickItem *item, qreal expectedSize) {
+    if (item == nullptr || item->parentItem() == nullptr) {
+        return false;
+    }
+    const QQuickItem *const parent = item->parentItem();
+    constexpr qreal tolerance = 0.1;
+    return std::abs(item->width() - expectedSize) < tolerance &&
+            std::abs(item->height() - expectedSize) < tolerance &&
+            std::abs(item->x() + item->width() * 0.5 -
+                     parent->width() * 0.5) < tolerance &&
+            std::abs(item->y() + item->height() * 0.5 -
+                     parent->height() * 0.5) < tolerance;
 }
 
 }  // namespace
@@ -155,6 +170,12 @@ int main(int argc, char **argv) {
                                     QStringLiteral("raceViewport")));
                     QObject *const playPause = root->findChild<QObject *>(
                             QStringLiteral("playPauseButton"));
+                    auto *const playIcon = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("playTransportIcon")));
+                    auto *const pauseIcon = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("pauseTransportIcon")));
                     QObject *const jumpStart = root->findChild<QObject *>(
                             QStringLiteral("jumpStartButton"));
                     QObject *const jumpEnd = root->findChild<QObject *>(
@@ -166,6 +187,13 @@ int main(int argc, char **argv) {
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
                             playPause->property("enabled").toBool() &&
+                            std::abs(playPause->property("width").toReal() -
+                                     42.0) < 0.1 &&
+                            std::abs(playPause->property("height").toReal() -
+                                     42.0) < 0.1 &&
+                            IsCenteredIcon(playIcon, 18.0) &&
+                            IsCenteredIcon(pauseIcon, 18.0) &&
+                            playIcon->isVisible() && !pauseIcon->isVisible() &&
                             !ContainsStandardSlider(root);
                     const QList<QObject *> carFilledModels =
                             root->findChildren<QObject *>(
