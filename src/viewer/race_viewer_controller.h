@@ -1,0 +1,127 @@
+#ifndef FOREVERTAS_VIEWER_RACE_VIEWER_CONTROLLER_H
+#define FOREVERTAS_VIEWER_RACE_VIEWER_CONTROLLER_H
+
+#include "viewer/race_geometry.h"
+
+#include <QObject>
+#include <QQuaternion>
+#include <QString>
+#include <QVariantList>
+#include <QVector3D>
+
+#include <cstdint>
+#include <vector>
+
+class QThread;
+
+namespace forevertas::viewer {
+
+struct RaceViewerFrame {
+    std::int64_t timeMs = 0;
+    QVector3D position{};
+    QQuaternion rotation{};
+};
+
+struct RaceViewerMeshBuffers {
+    QByteArray filled;
+    QByteArray wire;
+    QVector3D boundsMin{};
+    QVector3D boundsMax{};
+};
+
+struct RaceViewerLoadResult {
+    QString error;
+    RaceViewerMeshBuffers track;
+    std::vector<RaceViewerFrame> frames;
+    QVariantList carEllipsoids;
+    std::int64_t durationMs = 0;
+    std::int64_t triangleCount = 0;
+};
+
+class RaceViewerController final : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(QQuick3DGeometry *trackFilledGeometry READ
+                       trackFilledGeometry CONSTANT)
+    Q_PROPERTY(QQuick3DGeometry *trackWireGeometry READ
+                       trackWireGeometry CONSTANT)
+    Q_PROPERTY(QQuick3DGeometry *ellipsoidFilledGeometry READ
+                       ellipsoidFilledGeometry CONSTANT)
+    Q_PROPERTY(QQuick3DGeometry *ellipsoidWireGeometry READ
+                       ellipsoidWireGeometry CONSTANT)
+    Q_PROPERTY(QVariantList carEllipsoids READ carEllipsoids NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(QVector3D carPosition READ carPosition NOTIFY poseChanged)
+    Q_PROPERTY(QQuaternion carRotation READ carRotation NOTIFY poseChanged)
+    Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY timelineChanged)
+    Q_PROPERTY(qint64 timeMs READ timeMs WRITE setTimeMs NOTIFY timeChanged)
+    Q_PROPERTY(QString timeText READ timeText NOTIFY timeChanged)
+    Q_PROPERTY(bool loaded READ loaded NOTIFY stateChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
+    Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
+    Q_PROPERTY(qint64 triangleCount READ triangleCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 ellipsoidCount READ ellipsoidCount NOTIFY sceneChanged)
+    Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY sceneChanged)
+
+public:
+    explicit RaceViewerController(QObject *parent = nullptr);
+    ~RaceViewerController() override;
+
+    QQuick3DGeometry *trackFilledGeometry();
+    QQuick3DGeometry *trackWireGeometry();
+    QQuick3DGeometry *ellipsoidFilledGeometry();
+    QQuick3DGeometry *ellipsoidWireGeometry();
+    QVariantList carEllipsoids() const;
+    QVector3D carPosition() const;
+    QQuaternion carRotation() const;
+    qint64 durationMs() const;
+    qint64 timeMs() const;
+    QString timeText() const;
+    bool loaded() const;
+    bool loading() const;
+    QString statusText() const;
+    qint64 triangleCount() const;
+    qint64 ellipsoidCount() const;
+    double sceneRadius() const;
+
+public slots:
+    void setTimeMs(qint64 value);
+    Q_INVOKABLE void loadReplay(const QString &packsDirectory,
+                                const QString &replayPath);
+
+signals:
+    void sceneChanged();
+    void poseChanged();
+    void timelineChanged();
+    void timeChanged();
+    void stateChanged();
+
+private:
+    void applyLoadResult(RaceViewerLoadResult result);
+    void setLoading(bool value);
+    void setStatusText(const QString &value);
+    void clearLoadedScene();
+    void waitForWorker();
+    void updatePose();
+
+    RaceGeometry trackFilledGeometry_;
+    RaceGeometry trackWireGeometry_;
+    RaceGeometry ellipsoidFilledGeometry_;
+    RaceGeometry ellipsoidWireGeometry_;
+    std::vector<RaceViewerFrame> frames_;
+    QVariantList carEllipsoids_;
+    QVector3D carPosition_{};
+    QQuaternion carRotation_{};
+    QString statusText_ = QStringLiteral("No replay loaded");
+    qint64 durationMs_ = 0;
+    qint64 timeMs_ = 0;
+    qint64 triangleCount_ = 0;
+    double sceneRadius_ = 1.0;
+    bool loaded_ = false;
+    bool loading_ = false;
+    QThread *workerThread_ = nullptr;
+};
+
+}  // namespace forevertas::viewer
+
+#endif

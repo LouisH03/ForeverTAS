@@ -14,6 +14,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Gui
     Qml
     Quick
+    Quick3D
     QuickControls2
     Widgets)
 if(BUILD_TESTING)
@@ -31,7 +32,12 @@ FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
     GIT_TAG 0a287aa7a0748faf5fffe9b8955505b8b500a5ce
-    GIT_SHALLOW FALSE)
+    GIT_SHALLOW FALSE
+    PATCH_COMMAND
+        ${CMAKE_COMMAND}
+            -DDEPENDENCY_SOURCE_DIR=<SOURCE_DIR>
+            -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-race-viewer.patch
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyForeverValidatorPatch.cmake)
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
@@ -46,6 +52,10 @@ target_link_libraries(forevertas_core PUBLIC
     ForeverValidator::native)
 
 add_library(forevertas_gui STATIC
+    src/viewer/race_geometry.cpp
+    src/viewer/race_geometry.h
+    src/viewer/race_viewer_controller.cpp
+    src/viewer/race_viewer_controller.h
     src/app/search_controller.cpp
     src/app/search_controller.h
     src/app/search_worker.cpp
@@ -55,6 +65,8 @@ target_include_directories(forevertas_gui PUBLIC
 target_link_libraries(forevertas_gui PUBLIC
     forevertas_core
     Qt6::Core
+    Qt6::Gui
+    Qt6::Quick3D
     Qt6::Widgets)
 
 qt_add_executable(forevertas
@@ -69,6 +81,7 @@ target_link_libraries(forevertas PRIVATE
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
+    Qt6::Quick3D
     Qt6::QuickControls2)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -120,5 +133,46 @@ if(BUILD_TESTING)
                  COMMAND forevertas-search-smoke
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
+
+        add_executable(forevertas-viewer-smoke
+            tests/viewer_smoke.cpp)
+        target_link_libraries(forevertas-viewer-smoke PRIVATE
+            forevertas_gui
+            Qt6::Gui)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-viewer-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-viewer
+                 COMMAND forevertas-viewer-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-viewer PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 180)
+
+        add_executable(forevertas-viewer-qml-smoke
+            tests/viewer_qml_smoke.cpp)
+        target_compile_definitions(forevertas-viewer-qml-smoke PRIVATE
+            FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(forevertas-viewer-qml-smoke PRIVATE
+            forevertas_gui
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::Quick3D
+            Qt6::QuickControls2
+            Qt6::Widgets)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-viewer-qml-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-viewer-qml
+                 COMMAND forevertas-viewer-qml-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-viewer-qml PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software"
+            TIMEOUT 180)
     endif()
 endif()

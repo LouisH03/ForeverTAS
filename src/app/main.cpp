@@ -1,4 +1,5 @@
 #include "app/search_controller.h"
+#include "viewer/race_viewer_controller.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -16,10 +17,13 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName(QStringLiteral("ForeverTAS"));
 
     forevertas::app::SearchController controller;
+    forevertas::viewer::RaceViewerController viewer;
     QQmlApplicationEngine engine;
     engine.setInitialProperties({
             {QStringLiteral("controller"),
-             QVariant::fromValue(static_cast<QObject *>(&controller))}});
+             QVariant::fromValue(static_cast<QObject *>(&controller))},
+            {QStringLiteral("viewer"),
+             QVariant::fromValue(static_cast<QObject *>(&viewer))}});
     QObject::connect(
             &engine,
             &QQmlApplicationEngine::objectCreationFailed,

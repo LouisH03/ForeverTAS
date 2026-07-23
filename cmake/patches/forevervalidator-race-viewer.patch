@@ -1,0 +1,415 @@
+diff --git a/include/forevervalidator/experimental/physics_sandbox.h b/include/forevervalidator/experimental/physics_sandbox.h
+index 87c8427..978cced 100644
+--- a/include/forevervalidator/experimental/physics_sandbox.h
++++ b/include/forevervalidator/experimental/physics_sandbox.h
+@@ -91,9 +91,30 @@ struct PhysicsSandboxCarState {
+     Vector3 torque{};
+ };
+ 
++struct PhysicsSandboxCollisionTriangle {
++    Vector3 a{};
++    Vector3 b{};
++    Vector3 c{};
++};
++
++struct PhysicsSandboxEllipsoid {
++    float rotationX = 0.0f;
++    float rotationY = 0.0f;
++    float rotationZ = 0.0f;
++    float rotationW = 1.0f;
++    Vector3 position{};
++    Vector3 radii{};
++};
++
++struct PhysicsSandboxSceneView {
++    std::vector<PhysicsSandboxCollisionTriangle> collisionTriangles;
++    std::vector<PhysicsSandboxEllipsoid> carEllipsoids;
++};
++
+ struct PhysicsSandboxStateView {
+     std::uint64_t tick = 0u;
+     std::uint64_t timeMs = 0u;
++    std::uint64_t durationMs = 0u;
+     MapEnvironment mapEnvironment = MapEnvironment::Unknown;
+     VehicleModel vehicleModel = VehicleModel::Unknown;
+     std::optional<PlayMode> playMode;
+@@ -152,6 +173,7 @@ public:
+     PhysicsSandboxResult<PhysicsSandboxStateView> RestoreState(
+             const PhysicsSandboxState &state) noexcept;
+     PhysicsSandboxResult<PhysicsSandboxStateView> ReadState() const noexcept;
++    PhysicsSandboxResult<PhysicsSandboxSceneView> ReadScene() const noexcept;
+ 
+ private:
+     struct Impl;
+diff --git a/src/simulation/runtime/replay_simulation_session.cpp b/src/simulation/runtime/replay_simulation_session.cpp
+index a428b6c..3bc7bec 100644
+--- a/src/simulation/runtime/replay_simulation_session.cpp
++++ b/src/simulation/runtime/replay_simulation_session.cpp
+@@ -1,8 +1,13 @@
+ #include "simulation/runtime/replay_simulation_session.h"
++#include <array>
++#include <cmath>
+ #include <new>
+ #include <utility>
+ 
+ #include "engine/core/binary32_math.h"
++#include "engine/physics/geometry/gm_surface.h"
++#include "engine/physics/geometry/plug_surface.h"
++#include "engine/scene/plug_solid.h"
+ #include "simulation/replay/replay_map_scene.h"
+ #include "simulation/runtime/replay_environment.h"
+ #include "simulation/runtime/replay_physics_world.h"
+@@ -13,6 +18,173 @@
+ #include "simulation/runtime/replay_deterministic_execution.h"
+ namespace {
+ 
++GmVec3 TransformPoint(const GmVec3 &point, const GmIso4 &iso) {
++    GmVec3 transformed;
++    transformed.SetMult(point, iso);
++    return transformed;
++}
++
++void AppendTriangle(std::vector<ReplayStaticCollisionTriangle> &triangles,
++                    const GmVec3 &a,
++                    const GmVec3 &b,
++                    const GmVec3 &c,
++                    const GmIso4 &iso) {
++    triangles.push_back({
++            TransformPoint(a, iso),
++            TransformPoint(b, iso),
++            TransformPoint(c, iso)});
++}
++
++void AppendBox(std::vector<ReplayStaticCollisionTriangle> &triangles,
++               const GmSurfBox &box,
++               const GmIso4 &iso) {
++    const GmVec3 &c = box.center;
++    const GmVec3 &h = box.halfExtents;
++    const std::array<GmVec3, 8u> vertices{{
++            {c.x - h.x, c.y - h.y, c.z - h.z},
++            {c.x + h.x, c.y - h.y, c.z - h.z},
++            {c.x + h.x, c.y + h.y, c.z - h.z},
++            {c.x - h.x, c.y + h.y, c.z - h.z},
++            {c.x - h.x, c.y - h.y, c.z + h.z},
++            {c.x + h.x, c.y - h.y, c.z + h.z},
++            {c.x + h.x, c.y + h.y, c.z + h.z},
++            {c.x - h.x, c.y + h.y, c.z + h.z},
++    }};
++    constexpr std::array<std::array<unsigned, 3u>, 12u> Faces{{
++            {{0u, 2u, 1u}}, {{0u, 3u, 2u}},
++            {{4u, 5u, 6u}}, {{4u, 6u, 7u}},
++            {{0u, 1u, 5u}}, {{0u, 5u, 4u}},
++            {{3u, 7u, 6u}}, {{3u, 6u, 2u}},
++            {{0u, 4u, 7u}}, {{0u, 7u, 3u}},
++            {{1u, 2u, 6u}}, {{1u, 6u, 5u}},
++    }};
++    for (const auto &face : Faces) {
++        AppendTriangle(triangles,
++                       vertices[face[0]],
++                       vertices[face[1]],
++                       vertices[face[2]],
++                       iso);
++    }
++}
++
++void AppendEllipsoid(std::vector<ReplayStaticCollisionTriangle> &triangles,
++                     const GmVec3 &radii,
++                     const GmIso4 &iso) {
++    constexpr unsigned Latitudes = 8u;
++    constexpr unsigned Longitudes = 12u;
++    constexpr float Pi = 3.14159265358979323846f;
++    const auto point = [&](unsigned latitude, unsigned longitude) {
++        const float phi = -0.5f * Pi +
++                Pi * static_cast<float>(latitude) /
++                        static_cast<float>(Latitudes);
++        const float theta = 2.0f * Pi * static_cast<float>(longitude) /
++                static_cast<float>(Longitudes);
++        const float ring = std::cos(phi);
++        return GmVec3{
++                radii.x * ring * std::cos(theta),
++                radii.y * std::sin(phi),
++                radii.z * ring * std::sin(theta)};
++    };
++    for (unsigned latitude = 0u; latitude < Latitudes; ++latitude) {
++        for (unsigned longitude = 0u; longitude < Longitudes; ++longitude) {
++            const unsigned nextLongitude = (longitude + 1u) % Longitudes;
++            const GmVec3 a = point(latitude, longitude);
++            const GmVec3 b = point(latitude, nextLongitude);
++            const GmVec3 c = point(latitude + 1u, nextLongitude);
++            const GmVec3 d = point(latitude + 1u, longitude);
++            if (latitude != 0u) {
++                AppendTriangle(triangles, a, c, b, iso);
++            }
++            if (latitude + 1u != Latitudes) {
++                AppendTriangle(triangles, a, d, c, iso);
++            }
++        }
++    }
++}
++
++void AppendSurface(std::vector<ReplayStaticCollisionTriangle> &triangles,
++                   const GmSurf &surface,
++                   const GmIso4 &iso) {
++    if (const auto *mesh = dynamic_cast<const GmSurfMesh *>(&surface)) {
++        for (u32 index = 0u; index < mesh->TriangleCount(); ++index) {
++            const GmSurfMeshTriangle &triangle = mesh->Triangle(index);
++            AppendTriangle(triangles,
++                           mesh->Vertex(triangle.vertexIndex[0]),
++                           mesh->Vertex(triangle.vertexIndex[1]),
++                           mesh->Vertex(triangle.vertexIndex[2]),
++                           iso);
++        }
++        return;
++    }
++    if (const auto *polygon = dynamic_cast<const GmSurfPolygon *>(&surface)) {
++        for (std::uint8_t index = 1u;
++             index + 1u < polygon->vertexCount;
++             ++index) {
++            AppendTriangle(triangles,
++                           polygon->vertices[0],
++                           polygon->vertices[index],
++                           polygon->vertices[index + 1u],
++                           iso);
++        }
++        return;
++    }
++    if (const auto *box = dynamic_cast<const GmSurfBox *>(&surface)) {
++        AppendBox(triangles, *box, iso);
++        return;
++    }
++    if (const auto *ellipsoid =
++                dynamic_cast<const GmSurfEllipsoid *>(&surface)) {
++        AppendEllipsoid(triangles, ellipsoid->radii, iso);
++        return;
++    }
++    if (const auto *sphere = dynamic_cast<const GmSurfSphere *>(&surface)) {
++        AppendEllipsoid(triangles,
++                        {sphere->radius, sphere->radius, sphere->radius},
++                        iso);
++    }
++}
++
++void AppendTree(std::vector<ReplayStaticCollisionTriangle> &triangles,
++                const CPlugTree &tree,
++                const GmIso4 &parentIso) {
++    GmIso4 iso;
++    tree.ComposeCollisionIso(parentIso, iso);
++    if (tree.AllowsSurfaceCollision()) {
++        const CPlugSurface *surface = tree.Surface();
++        if (surface != nullptr && surface->Geometry() != nullptr) {
++            AppendSurface(triangles, *surface->Geometry(), iso);
++        }
++    }
++    for (u32 index = 0u; index < tree.GetChildCount(); ++index) {
++        const CPlugTree *child = tree.GetChild(index);
++        if (child != nullptr) {
++            AppendTree(triangles, *child, iso);
++        }
++    }
++}
++
++bool BuildStaticCollisionTriangles(
++        const StaticSceneModelCollection &models,
++        std::vector<ReplayStaticCollisionTriangle> &triangles) {
++    try {
++        for (const StaticSceneModel &model : models.Models()) {
++            if (model.Purpose() ==
++                    StaticScenePurpose::DedicatedInitialCollision) {
++                continue;
++            }
++            CPlugSolid *solid = model.Prototype().SourceSolid();
++            CPlugTree *tree = solid != nullptr ? solid->CollisionTree() : nullptr;
++            if (tree != nullptr) {
++                AppendTree(triangles, *tree, model.WorldIso());
++            }
++        }
++    } catch (const std::bad_alloc &) {
++        triangles.clear();
++        return false;
++    }
++    return true;
++}
++
+ ReplayTrajectoryObservation ObserveReplayTrajectory(
+         const ReplaySimulationStepExecution &execution,
+         const ReplayControlTick &tick) {
+@@ -56,6 +228,7 @@ struct ReplaySimulationInstance {
+ struct ReplaySimulationSession::Impl {
+     ReplayMapScene mapScene;
+     ReplaySimulationInstance instance;
++    std::vector<ReplayStaticCollisionTriangle> staticCollisionTriangles;
+ 
+     void ResetRuntime() { instance.ResetRuntime(); }
+ };
+@@ -78,8 +251,14 @@ bool ReplaySimulationSession::PreloadChallenge(
+ 
+ bool ReplaySimulationSession::InstallStaticScene(
+         StaticSceneModelCollection models) {
+-    return impl->mapScene.InstallModels(std::move(models)) ==
+-           ReplayMapSceneResult::Ready;
++    std::vector<ReplayStaticCollisionTriangle> triangles;
++    if (!BuildStaticCollisionTriangles(models, triangles) ||
++        impl->mapScene.InstallModels(std::move(models)) !=
++                ReplayMapSceneResult::Ready) {
++        return false;
++    }
++    impl->staticCollisionTriangles = std::move(triangles);
++    return true;
+ }
+ 
+ void ReplaySimulationSession::ActivateStaticScene() {
+@@ -95,6 +274,11 @@ void ReplaySimulationSession::ConfigureReplayRace(
+             isLapRace ? lapCount : 1u);
+ }
+ 
++const std::vector<ReplayStaticCollisionTriangle> &
++ReplaySimulationSession::StaticCollisionTriangles() const noexcept {
++    return impl->staticCollisionTriangles;
++}
++
+ ReplaySimulationTimelineResult ReplaySimulationSession::SimulateTimeline(
+         const ReplaySimulationDefinition &simulationDefinition,
+         const std::vector<ReplayControlTick> &controlTicks,
+diff --git a/src/simulation/runtime/replay_simulation_session.h b/src/simulation/runtime/replay_simulation_session.h
+index 2037631..507804b 100644
+--- a/src/simulation/runtime/replay_simulation_session.h
++++ b/src/simulation/runtime/replay_simulation_session.h
+@@ -35,6 +35,12 @@ struct ReplaySimulationStateView {
+     std::uint32_t respawnCount = 0u;
+ };
+ 
++struct ReplayStaticCollisionTriangle {
++    GmVec3 a{};
++    GmVec3 b{};
++    GmVec3 c{};
++};
++
+ struct ReplaySimulationInstanceClone {
+     CTrackManiaRace::RuntimeClone race;
+     ReplaySimulationRuntime::RuntimeClone runtime;
+@@ -70,6 +76,8 @@ public:
+             std::size_t begin,
+             std::size_t count);
+     std::optional<ReplaySimulationStateView> CurrentState() const;
++    const std::vector<ReplayStaticCollisionTriangle> &
++            StaticCollisionTriangles() const noexcept;
+     std::optional<std::uint32_t> ApplyReplayStuntTimePenalty(
+             std::uint32_t overtimeMs);
+     std::shared_ptr<const ReplaySimulationInstanceClone>
+diff --git a/src/validation/api/validation_api.cpp b/src/validation/api/validation_api.cpp
+index 21f3000..def7540 100644
+--- a/src/validation/api/validation_api.cpp
++++ b/src/validation/api/validation_api.cpp
+@@ -1109,6 +1109,51 @@ PhysicsSandboxInputValue ToSandboxValue(
+     return result;
+ }
+ 
++PhysicsSandboxSceneView BuildSandboxScene(
++        const ReplaySimulationSession &session,
++        const ReplaySimulationDefinition &definition) {
++    PhysicsSandboxSceneView scene;
++    const std::vector<ReplayStaticCollisionTriangle> &triangles =
++            session.StaticCollisionTriangles();
++    scene.collisionTriangles.reserve(triangles.size());
++    for (const ReplayStaticCollisionTriangle &triangle : triangles) {
++        scene.collisionTriangles.push_back({
++                ToPublicVector(triangle.a),
++                ToPublicVector(triangle.b),
++                ToPublicVector(triangle.c)});
++    }
++
++    const std::vector<VehicleCollisionShapeEntry> &shapes =
++            definition.vehicle.collisionModel.ShapesInArchiveOrder();
++    std::vector<GmIso4> absolutePoses;
++    absolutePoses.reserve(shapes.size());
++    scene.carEllipsoids.reserve(shapes.size());
++    for (const VehicleCollisionShapeEntry &entry : shapes) {
++        GmIso4 absolutePose = entry.shape.localPose;
++        if (entry.parentShapeIndex.has_value()) {
++            absolutePose.Mult(absolutePoses[*entry.parentShapeIndex]);
++        }
++        absolutePoses.push_back(absolutePose);
++
++        GmVec3 center;
++        center.SetMult(entry.shape.localBounds.center, absolutePose);
++        GmQuat rotation;
++        rotation.Set(absolutePose.rotation);
++        rotation.Normalize();
++        const GmVec3 &halfExtents = entry.shape.localBounds.halfExtents;
++        scene.carEllipsoids.push_back({
++                rotation.x,
++                rotation.y,
++                rotation.z,
++                rotation.w,
++                ToPublicVector(center),
++                {std::fabs(halfExtents.x),
++                 std::fabs(halfExtents.y),
++                 std::fabs(halfExtents.z)}});
++    }
++    return scene;
++}
++
+ ReplayInputActionValue FromSandboxValue(
+         const PhysicsSandboxInputValue &value) {
+     switch (value.kind) {
+@@ -1183,6 +1228,7 @@ struct PhysicsSandbox::Impl {
+     ReplayAssetRoute route{};
+     ReplayIdentity identity{};
+     std::uint64_t scenarioFingerprint = 0u;
++    PhysicsSandboxSceneView scene{};
+     std::size_t cursor = 0u;
+     std::size_t prestartTicks = 0u;
+     bool loaded = false;
+@@ -1322,6 +1368,7 @@ struct PhysicsSandbox::Impl {
+         PhysicsSandboxStateView view;
+         view.tick = cursor - prestartTicks;
+         view.timeMs = view.tick * options.tickDurationMs;
++        view.durationMs = inputMetadata.durationMs;
+         view.mapEnvironment = ToPublicMapEnvironment(route.mapEnvironment);
+         view.vehicleModel = ToPublicVehicleModel(route.vehicleModel);
+         view.playMode = ToPublicPlayMode(
+@@ -1475,6 +1522,8 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
+                     ToSandboxValue(event.value)});
+         }
+ 
++        PhysicsSandboxSceneView scene = BuildSandboxScene(
++                *session, definition.Value());
+         impl_->session = std::move(session);
+         impl_->definition = std::move(definition).Value();
+         impl_->inputMetadata = replay.InputTimeline().Metadata();
+@@ -1484,6 +1533,7 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
+         impl_->route = route;
+         impl_->identity = identity;
+         impl_->scenarioFingerprint = Fingerprint(replayBytes);
++        impl_->scene = std::move(scene);
+         impl_->inputs = std::move(inputs);
+         impl_->prestartTicks =
+                 impl_->options.prestartDurationMs /
+@@ -1739,6 +1789,27 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::ReadState()
+     }
+ }
+ 
++PhysicsSandboxResult<PhysicsSandboxSceneView> PhysicsSandbox::ReadScene()
++        const noexcept {
++    try {
++        if (!impl_ || !impl_->loaded) {
++            return PhysicsSandboxResult<PhysicsSandboxSceneView>::Failure(
++                    SandboxError(PhysicsSandboxErrorCode::InvalidSandbox,
++                                 "sandbox has no loaded scene"));
++        }
++        return PhysicsSandboxResult<PhysicsSandboxSceneView>::Success(
++                impl_->scene);
++    } catch (const std::bad_alloc &) {
++        return PhysicsSandboxResult<PhysicsSandboxSceneView>::Failure(
++                SandboxError(PhysicsSandboxErrorCode::AllocationFailed,
++                             "could not copy sandbox scene"));
++    } catch (...) {
++        return PhysicsSandboxResult<PhysicsSandboxSceneView>::Failure(
++                SandboxError(PhysicsSandboxErrorCode::UnexpectedFailure,
++                             "unexpected sandbox scene read failure"));
++    }
++}
++
+ PhysicsSandboxResult<PhysicsSandbox> CreatePhysicsSandbox(
+         AssetSource source,
+         const PhysicsSandboxOptions &options) noexcept {

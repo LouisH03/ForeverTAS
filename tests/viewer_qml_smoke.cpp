@@ -1,0 +1,263 @@
+#include "app/search_controller.h"
+#include "viewer/race_viewer_controller.h"
+
+#include <QApplication>
+#include <QCoreApplication>
+#include <QImage>
+#include <QQmlApplicationEngine>
+#include <QQuickWindow>
+#include <QQuickStyle>
+#include <QStandardPaths>
+#include <QTimer>
+#include <QUrl>
+#include <QVariant>
+
+#include <cstdlib>
+#include <iostream>
+
+#ifndef FOREVERTAS_SOURCE_DIR
+#error "FOREVERTAS_SOURCE_DIR must be defined"
+#endif
+
+namespace {
+
+qsizetype DifferentPixelCount(const QImage &leftSource,
+                              const QImage &rightSource) {
+    if (leftSource.isNull() || rightSource.isNull() ||
+        leftSource.size() != rightSource.size()) {
+        return 0;
+    }
+    const QImage left = leftSource.convertToFormat(QImage::Format_RGBA8888);
+    const QImage right = rightSource.convertToFormat(QImage::Format_RGBA8888);
+    qsizetype different = 0;
+    for (int y = 52; y < left.height() - 78; ++y) {
+        const int viewportWidth = left.width() * 2 / 3;
+        for (int x = 0; x < viewportWidth; ++x) {
+            const int byteOffset = x * 4;
+            const uchar *const leftPixel = left.constScanLine(y) + byteOffset;
+            const uchar *const rightPixel = right.constScanLine(y) + byteOffset;
+            const int difference =
+                    std::abs(static_cast<int>(leftPixel[0]) -
+                             static_cast<int>(rightPixel[0])) +
+                    std::abs(static_cast<int>(leftPixel[1]) -
+                             static_cast<int>(rightPixel[1])) +
+                    std::abs(static_cast<int>(leftPixel[2]) -
+                             static_cast<int>(rightPixel[2]));
+            if (difference > 6) {
+                ++different;
+            }
+        }
+    }
+    return different;
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        std::cerr << "usage: forevertas-viewer-qml-smoke <Packs> <replay>\n";
+        return 2;
+    }
+
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    QApplication application(argc, argv);
+    QCoreApplication::setOrganizationName(QStringLiteral("ForeverTASTests"));
+    QCoreApplication::setApplicationName(
+            QStringLiteral("ViewerQmlSmoke"));
+    QStandardPaths::setTestModeEnabled(true);
+
+    forevertas::app::SearchController controller;
+    forevertas::viewer::RaceViewerController viewer;
+    QQmlApplicationEngine engine;
+    engine.setInitialProperties({
+            {QStringLiteral("controller"),
+             QVariant::fromValue(static_cast<QObject *>(&controller))},
+            {QStringLiteral("viewer"),
+             QVariant::fromValue(static_cast<QObject *>(&viewer))}});
+
+    int exitCode = 1;
+    bool completed = false;
+    QObject::connect(
+            &engine,
+            &QQmlApplicationEngine::objectCreationFailed,
+            &application,
+            [&]() {
+                completed = true;
+                application.quit();
+            },
+            Qt::QueuedConnection);
+
+    const QUrl mainQml = QUrl::fromLocalFile(
+            QStringLiteral(FOREVERTAS_SOURCE_DIR "/qml/Main.qml"));
+    engine.load(mainQml);
+    if (engine.rootObjects().isEmpty()) {
+        std::cerr << "failed to create Main.qml\n";
+        return 1;
+    }
+    QObject *const root = engine.rootObjects().front();
+
+    QObject::connect(
+            &viewer,
+            &forevertas::viewer::RaceViewerController::stateChanged,
+            &application,
+            [&]() {
+                if (completed || viewer.loading() || !viewer.loaded()) {
+                    return;
+                }
+                QTimer::singleShot(500, &application, [&]() {
+                    if (completed) {
+                        return;
+                    }
+                    QObject *const filled = root->findChild<QObject *>(
+                            QStringLiteral("trackFilledModel"));
+                    QObject *const wire = root->findChild<QObject *>(
+                            QStringLiteral("trackWireModel"));
+                    QObject *const car = root->findChild<QObject *>(
+                            QStringLiteral("carCollisionRoot"));
+                    if (filled == nullptr || wire == nullptr ||
+                        car == nullptr) {
+                        std::cerr << "track models were not created\n";
+                        completed = true;
+                        application.quit();
+                        return;
+                    }
+                    QQuickWindow *const window =
+                            qobject_cast<QQuickWindow *>(root);
+                    if (window == nullptr) {
+                        std::cerr << "Main.qml root is not a window\n";
+                        completed = true;
+                        application.quit();
+                        return;
+                    }
+
+                    const QVariant filledGeometry =
+                            filled->property("geometry");
+                    const QVariant wireGeometry = wire->property("geometry");
+                    const bool filledAttached = filledGeometry.isValid() &&
+                            !filledGeometry.isNull();
+                    const bool wireAttached = wireGeometry.isValid() &&
+                            !wireGeometry.isNull();
+                    const bool filledVisible =
+                            filled->property("visible").toBool();
+                    const QImage withCar = window->grabWindow();
+                    car->setProperty("visible", false);
+                    QTimer::singleShot(
+                            150,
+                            &application,
+                            [&, filledAttached, wireAttached, filledVisible,
+                             withCar, car, filled, wire, window]() {
+                                const QImage withoutCar =
+                                        window->grabWindow();
+                                const qsizetype carPixels =
+                                        DifferentPixelCount(
+                                                withCar, withoutCar);
+                                car->setProperty("visible", true);
+                                const QImage withFilled =
+                                        window->grabWindow();
+                                filled->setProperty("visible", false);
+                                QTimer::singleShot(
+                                        150,
+                                        &application,
+                                        [&, filledAttached, wireAttached,
+                                         filledVisible, carPixels,
+                                         withFilled, wire, window]() {
+                                const QImage withoutFilled =
+                                        window->grabWindow();
+                                const qsizetype filledPixels =
+                                        DifferentPixelCount(
+                                                withFilled, withoutFilled);
+
+                                root->setProperty("wireframeMode", true);
+                                QTimer::singleShot(
+                                        150,
+                                        &application,
+                                        [&, filledAttached, wireAttached,
+                                         filledVisible, carPixels,
+                                         filledPixels,
+                                         wire, window]() {
+                                            const bool wireVisible =
+                                                    wire->property("visible")
+                                                            .toBool();
+                                            const QImage withWire =
+                                                    window->grabWindow();
+                                            wire->setProperty(
+                                                    "visible", false);
+                                            QTimer::singleShot(
+                                                    150,
+                                                    &application,
+                                                    [&, filledAttached,
+                                                     wireAttached,
+                                                     filledVisible,
+                                                     carPixels,
+                                                     filledPixels,
+                                                     wireVisible,
+                                                     withWire, window]() {
+                                                        const QImage
+                                                                withoutWire =
+                                                                        window->grabWindow();
+                                                        const qsizetype
+                                                                wirePixels =
+                                                                        DifferentPixelCount(
+                                                                                withWire,
+                                                                                withoutWire);
+                                                        const bool
+                                                                pixelCaptureAvailable =
+                                                                        carPixels > 100;
+                                                        const bool
+                                                                renderedTrackVisible =
+                                                                        !pixelCaptureAvailable ||
+                                                                        (filledPixels >
+                                                                                 100 &&
+                                                                         wirePixels >
+                                                                                 100);
+                                                        completed = true;
+                                                        exitCode =
+                                                                filledAttached &&
+                                                                        wireAttached &&
+                                                                        filledVisible &&
+                                                                        wireVisible &&
+                                                                        renderedTrackVisible
+                                                                ? 0
+                                                                : 1;
+                                                        if (exitCode != 0) {
+                                                            std::cerr
+                                                                    << "track rendering failed: filledAttached="
+                                                                    << filledAttached
+                                                                    << ", wireAttached="
+                                                                    << wireAttached
+                                                                    << ", filledVisible="
+                                                                    << filledVisible
+                                                                    << ", wireVisible="
+                                                                    << wireVisible
+                                                                    << ", carPixels="
+                                                                    << carPixels
+                                                                    << ", pixelCaptureAvailable="
+                                                                    << pixelCaptureAvailable
+                                                                    << ", filledPixels="
+                                                                    << filledPixels
+                                                                    << ", wirePixels="
+                                                                    << wirePixels
+                                                                    << '\n';
+                                                        }
+                                                        application.quit();
+                                                    });
+                                        });
+                                        });
+                            });
+                });
+            });
+
+    QTimer::singleShot(170000, &application, [&]() {
+        if (completed) {
+            return;
+        }
+        completed = true;
+        std::cerr << "viewer QML smoke test timed out\n";
+        application.quit();
+    });
+
+    viewer.loadReplay(QString::fromLocal8Bit(argv[1]),
+                      QString::fromLocal8Bit(argv[2]));
+    application.exec();
+    return exitCode;
+}
