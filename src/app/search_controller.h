@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include <atomic>
 #include <memory>
@@ -19,6 +20,9 @@ class SearchController final : public QObject {
 
     Q_PROPERTY(QString packsDirectory READ packsDirectory WRITE
                        setPacksDirectory NOTIFY packsDirectoryChanged)
+    Q_PROPERTY(QString autoDetectedPacksDirectory READ
+                       autoDetectedPacksDirectory NOTIFY
+                       autoDetectedPacksDirectoryChanged)
     Q_PROPERTY(QString replayPath READ replayPath WRITE setReplayPath NOTIFY
                        replayPathChanged)
     Q_PROPERTY(QString minMutateMs READ minMutateMs WRITE setMinMutateMs NOTIFY
@@ -47,9 +51,12 @@ class SearchController final : public QObject {
 
 public:
     explicit SearchController(QObject *parent = nullptr);
+    explicit SearchController(const QStringList &packsSearchPatterns,
+                              QObject *parent = nullptr);
     ~SearchController() override;
 
     QString packsDirectory() const;
+    QString autoDetectedPacksDirectory() const;
     QString replayPath() const;
     QString minMutateMs() const;
     QString maxMutateMs() const;
@@ -78,12 +85,14 @@ public slots:
     void setMutationSeed(const QString &value);
 
     Q_INVOKABLE void browseForPacksDirectory();
+    Q_INVOKABLE void applyAutoDetectedPacksDirectory();
     Q_INVOKABLE void browseForReplay();
     Q_INVOKABLE void startSearch();
     Q_INVOKABLE void cancelSearch();
 
 signals:
     void packsDirectoryChanged();
+    void autoDetectedPacksDirectoryChanged();
     void replayPathChanged();
     void minMutateMsChanged();
     void maxMutateMsChanged();
@@ -112,10 +121,16 @@ private:
     void setStatusText(const QString &value);
     void setResultText(const QString &value);
     void setProgress(bool indeterminate, double value);
+    void initialize(const QStringList *packsSearchPatterns);
+    void scheduleAutoDetectPacksDirectory(
+            const QStringList *packsSearchPatterns);
+    void publishAutoDetectedPacksDirectory(const QString &detected);
+    void clearAutoDetectedPacksDirectory();
     void persist(const char *key, const QString &value);
     void waitForWorker();
 
     QString packsDirectory_;
+    QString autoDetectedPacksDirectory_;
     QString replayPath_;
     QString minMutateMs_;
     QString maxMutateMs_;
@@ -130,7 +145,9 @@ private:
     bool running_ = false;
     bool cancelling_ = false;
     bool progressIndeterminate_ = false;
+    bool autoDetectionAttempted_ = false;
     double progressValue_ = 0.0;
+    QThread *autoDetectionThread_ = nullptr;
     QThread *workerThread_ = nullptr;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
 };

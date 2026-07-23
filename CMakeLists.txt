@@ -60,6 +60,8 @@ add_library(forevertas_gui STATIC
     src/viewer/race_viewer_controller.h
     src/app/search_controller.cpp
     src/app/search_controller.h
+    src/app/packs_directory_finder.cpp
+    src/app/packs_directory_finder.h
     src/app/search_worker.cpp
     src/app/search_worker.h)
 target_include_directories(forevertas_gui PUBLIC

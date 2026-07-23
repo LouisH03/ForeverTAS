@@ -1,10 +1,15 @@
 #include "app/search_controller.h"
+#include "app/packs_directory_finder.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTest>
+#include <QThread>
 
 #include <iostream>
 
@@ -145,6 +150,121 @@ bool TestPersistence(const QString &packsDirectory,
     return okay;
 }
 
+bool TestAutomaticPacksDetection() {
+    using forevertas::app::FindInstalledPacksDirectory;
+    using forevertas::app::SearchController;
+
+    QTemporaryDir searchRoot;
+    if (!searchRoot.isValid()) {
+        return Check(false, "failed to create automatic search root");
+    }
+    const QString detectedPacks = searchRoot.filePath(QStringLiteral(
+            "Games/tmuf-prefix/drive_c/Program Files (x86)/"
+            "TmUnitedForever/Packs"));
+    if (!QDir().mkpath(detectedPacks)) {
+        return Check(false, "failed to create detected Packs directory");
+    }
+    QFile packList(QDir(detectedPacks).filePath(
+            QStringLiteral("packlist.dat")));
+    if (!packList.open(QIODevice::WriteOnly)) {
+        return Check(false, "failed to create packlist.dat");
+    }
+    packList.write("test");
+    packList.close();
+
+    const QString pattern = searchRoot.filePath(QStringLiteral(
+            "Games/*/drive_c/Program Files (x86)/"
+            "TmUnitedForever/Packs"));
+    const QString canonical = QFileInfo(detectedPacks).canonicalFilePath();
+    bool okay = Check(
+            FindInstalledPacksDirectory({pattern}) == canonical,
+            "wildcard Packs search did not find the candidate");
+
+    QSettings().clear();
+    {
+        SearchController controller(QStringList{pattern});
+        QSignalSpy detectedSpy(
+                &controller,
+                &SearchController::autoDetectedPacksDirectoryChanged);
+        QThread *publicationThread = nullptr;
+        QObject::connect(
+                &controller,
+                &SearchController::autoDetectedPacksDirectoryChanged,
+                &controller,
+                [&]() { publicationThread = QThread::currentThread(); });
+        okay &= Check(controller.packsDirectory().isEmpty(),
+                      "automatic detection changed the active path");
+        okay &= Check(controller.autoDetectedPacksDirectory().isEmpty(),
+                      "automatic detection blocked construction");
+        okay &= Check(detectedSpy.wait(2000),
+                      "automatic detection did not publish asynchronously");
+        okay &= Check(controller.autoDetectedPacksDirectory() == canonical,
+                      "automatic detection did not propose the path");
+        okay &= Check(publicationThread == controller.thread(),
+                      "automatic detection published off the controller thread");
+        okay &= Check(!QSettings().contains(
+                              QStringLiteral("paths/packsDirectory")),
+                      "automatic detection persisted before Apply");
+        controller.applyAutoDetectedPacksDirectory();
+        QSettings().sync();
+        okay &= Check(controller.packsDirectory() == canonical,
+                      "Apply did not activate the detected path");
+        okay &= Check(controller.autoDetectedPacksDirectory().isEmpty(),
+                      "Apply did not hide the automatic suggestion");
+        okay &= Check(
+                QSettings()
+                                .value(QStringLiteral("paths/packsDirectory"))
+                                .toString() == canonical,
+                "Apply did not persist the detected path");
+    }
+
+    QSettings().clear();
+    QSettings().setValue(
+            QStringLiteral("paths/packsDirectory"), detectedPacks);
+    {
+        SearchController controller(QStringList{pattern});
+        QSignalSpy detectedSpy(
+                &controller,
+                &SearchController::autoDetectedPacksDirectoryChanged);
+        QTest::qWait(50);
+        okay &= Check(controller.autoDetectedPacksDirectory().isEmpty(),
+                      "saved Packs path did not suppress detection");
+        okay &= Check(detectedSpy.isEmpty(),
+                      "saved Packs path still launched detection");
+    }
+
+    QSettings().clear();
+    {
+        SearchController controller(QStringList{pattern});
+        QSignalSpy detectedSpy(
+                &controller,
+                &SearchController::autoDetectedPacksDirectoryChanged);
+        controller.setPacksDirectory(searchRoot.path());
+        QTest::qWait(100);
+        okay &= Check(controller.autoDetectedPacksDirectory().isEmpty(),
+                      "pending detection overrode a manual path");
+        okay &= Check(detectedSpy.isEmpty(),
+                      "pending detection published after a manual path");
+    }
+
+    QSettings().clear();
+    {
+        SearchController controller(QStringList{pattern});
+        QSignalSpy detectedSpy(
+                &controller,
+                &SearchController::autoDetectedPacksDirectoryChanged);
+        okay &= Check(detectedSpy.wait(2000),
+                      "manual-clear test did not receive a suggestion");
+        okay &= Check(!controller.autoDetectedPacksDirectory().isEmpty(),
+                      "manual-clear test did not start with a suggestion");
+        controller.setPacksDirectory(searchRoot.path());
+        okay &= Check(controller.autoDetectedPacksDirectory().isEmpty(),
+                      "manual path change did not hide the suggestion");
+    }
+    QSettings().clear();
+    return okay;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -171,7 +291,7 @@ int main(int argc, char **argv) {
     replay.write("test");
     replay.close();
 
-    const bool okay =
+    const bool okay = TestAutomaticPacksDetection() &&
             TestValidation(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath);
     QSettings().clear();

@@ -709,6 +709,59 @@ ApplicationWindow {
                             font.weight: Font.Medium
                         }
 
+                        Rectangle {
+                            objectName: "autoPacksSuggestion"
+                            Layout.fillWidth: true
+                            implicitHeight: autoPacksSuggestionLayout.implicitHeight
+                                            + 16
+                            radius: 8
+                            color: "#e7f2eb"
+                            border.width: 1
+                            border.color: "#8eb49d"
+                            visible:
+                                window.controller.autoDetectedPacksDirectory.length
+                                > 0
+
+                            RowLayout {
+                                id: autoPacksSuggestionLayout
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 8
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    Label {
+                                        objectName: "autoPacksSuggestionText"
+                                        Layout.fillWidth: true
+                                        text: qsTr("This location was found automatically and should work. Apply?")
+                                        color: "#284d35"
+                                        wrapMode: Text.WordWrap
+                                        font.pixelSize: 11
+                                        font.weight: Font.Medium
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: window.controller.autoDetectedPacksDirectory
+                                        color: "#42654c"
+                                        elide: Text.ElideMiddle
+                                        font.family: "monospace"
+                                        font.pixelSize: 9
+                                    }
+                                }
+
+                                Button {
+                                    objectName: "applyAutoPacksButton"
+                                    text: qsTr("Apply")
+                                    enabled: !window.controller.running
+                                    onClicked:
+                                        window.controller.applyAutoDetectedPacksDirectory()
+                                }
+                            }
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8

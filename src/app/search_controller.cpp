@@ -1,5 +1,6 @@
 #include "app/search_controller.h"
 
+#include "app/packs_directory_finder.h"
 #include "app/search_worker.h"
 
 #include <QDir>
@@ -7,6 +8,7 @@
 #include <QFileDialog>
 #include <QSettings>
 #include <QThread>
+#include <QTimer>
 
 #include <algorithm>
 #include <limits>
@@ -22,6 +24,7 @@ constexpr char kMinEvalTimeMsKey[] = "search/minEvalTimeMs";
 constexpr char kMaxEvalTimeMsKey[] = "search/maxEvalTimeMs";
 constexpr char kAttemptCountKey[] = "search/attemptCount";
 constexpr char kMutationSeedKey[] = "search/mutationSeed";
+std::atomic_bool gAutomaticPacksSearchAttempted{false};
 
 bool IsDecimal(const QString &value) {
     if (value.isEmpty()) {
@@ -76,6 +79,16 @@ QString StoredValue(const char *key, const QString &fallback) {
 
 SearchController::SearchController(QObject *parent)
     : QObject(parent) {
+    initialize(nullptr);
+}
+
+SearchController::SearchController(const QStringList &packsSearchPatterns,
+                                   QObject *parent)
+    : QObject(parent) {
+    initialize(&packsSearchPatterns);
+}
+
+void SearchController::initialize(const QStringList *packsSearchPatterns) {
     const SerialBruteForceSettings defaults =
             DefaultSerialBruteForceSettings();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
@@ -96,6 +109,7 @@ SearchController::SearchController(QObject *parent)
             kMutationSeedKey,
             QString::number(static_cast<qulonglong>(
                     defaults.mutationSeed)));
+    scheduleAutoDetectPacksDirectory(packsSearchPatterns);
     refreshValidation();
 }
 
@@ -105,6 +119,10 @@ SearchController::~SearchController() {
 
 QString SearchController::packsDirectory() const {
     return packsDirectory_;
+}
+
+QString SearchController::autoDetectedPacksDirectory() const {
+    return autoDetectedPacksDirectory_;
 }
 
 QString SearchController::replayPath() const {
@@ -179,11 +197,6 @@ QString SearchController::resultText() const {
     }
 
 FOREVERTAS_DEFINE_STRING_SETTER(
-        setPacksDirectory,
-        packsDirectory_,
-        packsDirectoryChanged,
-        kPacksDirectoryKey)
-FOREVERTAS_DEFINE_STRING_SETTER(
         setReplayPath, replayPath_, replayPathChanged, kReplayPathKey)
 FOREVERTAS_DEFINE_STRING_SETTER(
         setMinMutateMs, minMutateMs_, minMutateMsChanged, kMinMutateMsKey)
@@ -212,8 +225,21 @@ FOREVERTAS_DEFINE_STRING_SETTER(
 
 #undef FOREVERTAS_DEFINE_STRING_SETTER
 
+void SearchController::setPacksDirectory(const QString &value) {
+    clearAutoDetectedPacksDirectory();
+    if (packsDirectory_ == value) {
+        return;
+    }
+    packsDirectory_ = value;
+    persist(kPacksDirectoryKey, value);
+    emit packsDirectoryChanged();
+    refreshValidation();
+}
+
 void SearchController::browseForPacksDirectory() {
-    const QFileInfo current(packsDirectory_);
+    const QFileInfo current(packsDirectory_.isEmpty()
+                                    ? autoDetectedPacksDirectory_
+                                    : packsDirectory_);
     const QString initialDirectory = current.isDir()
             ? current.absoluteFilePath()
             : QDir::homePath();
@@ -225,6 +251,14 @@ void SearchController::browseForPacksDirectory() {
     if (!selected.isEmpty()) {
         setPacksDirectory(selected);
     }
+}
+
+void SearchController::applyAutoDetectedPacksDirectory() {
+    if (autoDetectedPacksDirectory_.isEmpty()) {
+        return;
+    }
+    const QString detected = autoDetectedPacksDirectory_;
+    setPacksDirectory(detected);
 }
 
 void SearchController::browseForReplay() {
@@ -468,11 +502,82 @@ void SearchController::setProgress(bool indeterminate, double value) {
     emit progressChanged();
 }
 
+void SearchController::scheduleAutoDetectPacksDirectory(
+        const QStringList *packsSearchPatterns) {
+    if (autoDetectionAttempted_ || !packsDirectory_.trimmed().isEmpty()) {
+        return;
+    }
+    if (packsSearchPatterns == nullptr &&
+        gAutomaticPacksSearchAttempted.exchange(
+                true, std::memory_order_relaxed)) {
+        return;
+    }
+    autoDetectionAttempted_ = true;
+    const std::optional<QStringList> patterns = packsSearchPatterns == nullptr
+            ? std::nullopt
+            : std::optional<QStringList>(*packsSearchPatterns);
+
+    QTimer::singleShot(0, this, [this, patterns]() {
+        if (!packsDirectory_.trimmed().isEmpty() ||
+            autoDetectionThread_ != nullptr) {
+            return;
+        }
+
+        QThread *const thread = QThread::create([this, patterns]() {
+            const QString detected = patterns
+                    ? FindInstalledPacksDirectory(*patterns)
+                    : FindInstalledPacksDirectory();
+            QMetaObject::invokeMethod(
+                    this,
+                    [this, detected]() {
+                        publishAutoDetectedPacksDirectory(detected);
+                    },
+                    Qt::QueuedConnection);
+        });
+        autoDetectionThread_ = thread;
+        connect(
+                thread,
+                &QThread::finished,
+                this,
+                [this, thread]() {
+                    if (autoDetectionThread_ == thread) {
+                        autoDetectionThread_ = nullptr;
+                    }
+                    thread->deleteLater();
+                },
+                Qt::QueuedConnection);
+        thread->start();
+    });
+}
+
+void SearchController::publishAutoDetectedPacksDirectory(
+        const QString &detected) {
+    if (detected.isEmpty() || !packsDirectory_.trimmed().isEmpty()) {
+        return;
+    }
+    autoDetectedPacksDirectory_ = detected;
+    emit autoDetectedPacksDirectoryChanged();
+}
+
+void SearchController::clearAutoDetectedPacksDirectory() {
+    if (autoDetectedPacksDirectory_.isEmpty()) {
+        return;
+    }
+    autoDetectedPacksDirectory_.clear();
+    emit autoDetectedPacksDirectoryChanged();
+}
+
 void SearchController::persist(const char *key, const QString &value) {
     QSettings().setValue(QLatin1String(key), value);
 }
 
 void SearchController::waitForWorker() {
+    if (autoDetectionThread_ != nullptr) {
+        disconnect(autoDetectionThread_, nullptr, this, nullptr);
+        autoDetectionThread_->wait();
+        delete autoDetectionThread_;
+        autoDetectionThread_ = nullptr;
+    }
     if (cancellationRequested_) {
         cancellationRequested_->store(true, std::memory_order_relaxed);
     }

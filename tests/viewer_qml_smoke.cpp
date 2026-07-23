@@ -219,6 +219,14 @@ int main(int argc, char **argv) {
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
                             QStringLiteral("stepForwardShortcut"));
+                    QObject *const autoPacksSuggestion =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("autoPacksSuggestion"));
+                    QObject *const autoPacksSuggestionText =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "autoPacksSuggestionText"));
+                    QObject *const applyAutoPacks = root->findChild<QObject *>(
+                            QStringLiteral("applyAutoPacksButton"));
                     const qint64 keyboardStartTick =
                             std::clamp<qint64>(
                                     viewer.tickCount() / 2,
@@ -270,11 +278,24 @@ int main(int argc, char **argv) {
                             wireframeLabel != nullptr &&
                             wireframeLabel->property("color").value<QColor>() ==
                                     QColor(QStringLiteral("#ffffff"));
+                    const bool automaticPacksUi =
+                            autoPacksSuggestion != nullptr &&
+                            autoPacksSuggestionText != nullptr &&
+                            autoPacksSuggestionText->property("text")
+                                    .toString() ==
+                                    QStringLiteral(
+                                            "This location was found "
+                                            "automatically and should work. "
+                                            "Apply?") &&
+                            applyAutoPacks != nullptr &&
+                            applyAutoPacks->property("text").toString() ==
+                                    QStringLiteral("Apply");
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
                             fpsCounterValid && wireframeTextIsWhite &&
+                            automaticPacksUi &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
                             playPause->property("enabled").toBool() &&
