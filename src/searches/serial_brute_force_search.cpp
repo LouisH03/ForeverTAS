@@ -1,5 +1,6 @@
 #include "searches/serial_brute_force_search.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -64,33 +65,59 @@ bool SameState(const PhysicsSandboxStateView &left,
            left.stuntsScore == right.stuntsScore;
 }
 
-std::uint32_t TickCount(std::uint64_t durationMs,
+void CheckCancellation(const SearchRunControl *control) {
+    if (control != nullptr && control->cancellationRequested &&
+        control->cancellationRequested()) {
+        throw SearchCancelled();
+    }
+}
+
+void ReportProgress(const SearchRunControl *control,
+                    SearchProgressStage stage,
+                    std::uint64_t completedAttempts,
+                    std::uint64_t requestedAttempts) {
+    if (control != nullptr && control->progressChanged) {
+        control->progressChanged(
+                {stage, completedAttempts, requestedAttempts});
+    }
+}
+
+std::uint64_t TickCount(std::uint64_t durationMs,
                         std::uint32_t tickDurationMs) {
     if (durationMs % tickDurationMs != 0u) {
         throw std::runtime_error(
                 "sandbox state time is not aligned to the tick duration");
     }
-    const std::uint64_t count = durationMs / tickDurationMs;
-    if (count > std::numeric_limits<std::uint32_t>::max()) {
-        throw std::runtime_error("advance exceeds the sandbox tick range");
-    }
-    return static_cast<std::uint32_t>(count);
+    return durationMs / tickDurationMs;
 }
 
 PhysicsSandboxStateView AdvanceTo(PhysicsSandbox &sandbox,
                                   std::uint64_t currentTimeMs,
                                   std::uint64_t targetTimeMs,
-                                  std::uint32_t tickDurationMs) {
+                                  std::uint32_t tickDurationMs,
+                                  const SearchRunControl *control) {
     if (currentTimeMs > targetTimeMs) {
         throw std::runtime_error("sandbox is already past the requested time");
     }
     if (currentTimeMs == targetTimeMs) {
         return Require(sandbox.ReadState(), "reading sandbox state");
     }
-    return Require(
-            sandbox.AdvanceTicks(TickCount(targetTimeMs - currentTimeMs,
-                                           tickDurationMs)),
-            "advancing sandbox");
+
+    constexpr std::uint32_t maxTicksPerAdvance = 128u;
+    std::uint64_t ticksRemaining =
+            TickCount(targetTimeMs - currentTimeMs, tickDurationMs);
+    PhysicsSandboxStateView state;
+    while (ticksRemaining != 0u) {
+        CheckCancellation(control);
+        const std::uint32_t ticks =
+                static_cast<std::uint32_t>(
+                        std::min<std::uint64_t>(ticksRemaining,
+                                                maxTicksPerAdvance));
+        state = Require(sandbox.AdvanceTicks(ticks), "advancing sandbox");
+        ticksRemaining -= ticks;
+    }
+    CheckCancellation(control);
+    return state;
 }
 
 struct BestCandidate {
@@ -148,6 +175,7 @@ SearchResult SerialBruteForceSearch::Run(
         throw std::invalid_argument(*error);
     }
 
+    CheckCancellation(context.control);
     PhysicsSandboxStateView current = Require(
             context.sandbox.ReadState(), "reading initial sandbox state");
     const std::uint64_t branchTimeMs =
@@ -156,7 +184,8 @@ SearchResult SerialBruteForceSearch::Run(
     current = AdvanceTo(context.sandbox,
                         current.timeMs,
                         branchTimeMs,
-                        context.tickDurationMs);
+                        context.tickDurationMs,
+                        context.control);
 
     const std::vector<PhysicsSandboxInputEvent> baselineInputs = Require(
             context.sandbox.ReadInputs(), "reading baseline inputs");
@@ -186,8 +215,10 @@ SearchResult SerialBruteForceSearch::Run(
                 context.sandbox,
                 branchTimeMs,
                 preEvaluationTimeMs,
-                context.tickDurationMs);
+                context.tickDurationMs,
+                context.control);
         for (std::uint64_t tick = 0u; tick < evaluationTicks; ++tick) {
+            CheckCancellation(context.control);
             state = Require(context.sandbox.AdvanceTicks(1u),
                             "advancing evaluation tick");
             const double score = context.evaluator.Evaluate(state);
@@ -211,11 +242,20 @@ SearchResult SerialBruteForceSearch::Run(
         }
     };
 
+    ReportProgress(context.control,
+                   SearchProgressStage::Baseline,
+                   0u,
+                   settings_.attemptCount);
     evaluateTimeline(SearchWinnerSource::Baseline, std::nullopt, 0u);
+    ReportProgress(context.control,
+                   SearchProgressStage::Mutations,
+                   0u,
+                   settings_.attemptCount);
 
     for (std::uint64_t attempt = 0u;
          attempt < settings_.attemptCount;
          ++attempt) {
+        CheckCancellation(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");
         MutationResult mutation = context.mutator.Mutate(MutationRequest{
@@ -224,8 +264,13 @@ SearchResult SerialBruteForceSearch::Run(
                 settings_.maxMutateMs,
                 settings_.mutationSeed,
                 attempt});
+        CheckCancellation(context.control);
         if (mutation.mutationCount == 0u) {
             ++skippedAttempts;
+            ReportProgress(context.control,
+                           SearchProgressStage::Mutations,
+                           attempt + 1u,
+                           settings_.attemptCount);
             continue;
         }
 
@@ -236,8 +281,13 @@ SearchResult SerialBruteForceSearch::Run(
         evaluateTimeline(SearchWinnerSource::Mutation,
                          attempt,
                          mutation.mutationCount);
+        ReportProgress(context.control,
+                       SearchProgressStage::Mutations,
+                       attempt + 1u,
+                       settings_.attemptCount);
     }
 
+    CheckCancellation(context.control);
     if (!best.snapshot) {
         throw std::runtime_error("search produced no evaluated state");
     }

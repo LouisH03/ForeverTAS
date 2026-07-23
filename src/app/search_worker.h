@@ -1,0 +1,39 @@
+#ifndef FOREVERTAS_APP_SEARCH_WORKER_H
+#define FOREVERTAS_APP_SEARCH_WORKER_H
+
+#include "searches/serial_search_runner.h"
+
+#include <QObject>
+#include <QString>
+
+#include <atomic>
+#include <memory>
+
+namespace forevertas::app {
+
+class SearchWorker final : public QObject {
+    Q_OBJECT
+
+public:
+    SearchWorker(SerialSearchRequest request,
+                 std::shared_ptr<std::atomic_bool> cancellationRequested);
+
+public slots:
+    void run();
+
+signals:
+    void stageChanged(const QString &status, bool indeterminate);
+    void progressChanged(double value, const QString &status);
+    void succeeded(const QString &summary);
+    void cancelled();
+    void failed(const QString &message);
+    void finished();
+
+private:
+    SerialSearchRequest request_;
+    std::shared_ptr<std::atomic_bool> cancellationRequested_;
+};
+
+}  // namespace forevertas::app
+
+#endif

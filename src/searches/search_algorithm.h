@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <functional>
 #include <optional>
 
 #include <forevervalidator/experimental/physics_sandbox.h>
@@ -18,11 +20,35 @@ enum class SearchWinnerSource : std::uint8_t {
     Mutation,
 };
 
+enum class SearchProgressStage : std::uint8_t {
+    Baseline,
+    Mutations,
+};
+
+struct SearchProgress {
+    SearchProgressStage stage = SearchProgressStage::Baseline;
+    std::uint64_t completedAttempts = 0u;
+    std::uint64_t requestedAttempts = 0u;
+};
+
+struct SearchRunControl {
+    std::function<bool()> cancellationRequested;
+    std::function<void(const SearchProgress &)> progressChanged;
+};
+
+class SearchCancelled final : public std::exception {
+public:
+    const char *what() const noexcept override {
+        return "search cancelled";
+    }
+};
+
 struct SearchExecutionContext {
     forevervalidator::experimental::PhysicsSandbox &sandbox;
     std::uint32_t tickDurationMs;
     const InputMutator &mutator;
     const CandidateEvaluator &evaluator;
+    const SearchRunControl *control = nullptr;
 };
 
 struct SearchResult {

@@ -1,6 +1,7 @@
 #include "evaluators/max_speed_evaluator.h"
 #include "mutations/random_steering_mutator.h"
 #include "searches/serial_brute_force_search.h"
+#include "searches/serial_search_runner.h"
 
 #include <cmath>
 #include <cstdint>
@@ -110,7 +111,17 @@ bool TestSearchSettings() {
             1000, 2000, 1500, 3000, 10u, 123u};
     bool okay = Check(IsValid(valid), "valid search settings were rejected");
 
+    okay &= Check(
+            forevertas::ValidateSerialBruteForceSettings(valid, 0u)
+                    .has_value(),
+            "zero tick duration was accepted");
+
     auto changed = valid;
+    changed.minMutateMs = 0;
+    okay &= Check(!IsValid(changed),
+                  "mutation before the first tick was accepted");
+
+    changed = valid;
     changed.minEvalTimeMs = 990;
     okay &= Check(!IsValid(changed),
                   "evaluation before mutation was accepted");
@@ -128,7 +139,22 @@ bool TestSearchSettings() {
     changed = valid;
     changed.minMutateMs = 1001;
     okay &= Check(!IsValid(changed),
-                  "unaligned mutation time was accepted");
+                  "unaligned minimum mutation time was accepted");
+
+    changed = valid;
+    changed.maxMutateMs = 2001;
+    okay &= Check(!IsValid(changed),
+                  "unaligned maximum mutation time was accepted");
+
+    changed = valid;
+    changed.minEvalTimeMs = 1501;
+    okay &= Check(!IsValid(changed),
+                  "unaligned minimum evaluation time was accepted");
+
+    changed = valid;
+    changed.maxEvalTimeMs = 3001;
+    okay &= Check(!IsValid(changed),
+                  "unaligned maximum evaluation time was accepted");
 
     changed = valid;
     changed.attemptCount = 0u;
@@ -143,7 +169,35 @@ bool TestSearchSettings() {
             1000, 1500, 2000, 3000, 10000u, 123u};
     okay &= Check(IsValid(disjoint),
                   "disjoint mutation and evaluation windows were rejected");
+
+    const forevertas::SerialBruteForceSettings largeAligned{
+            9223372036854775800LL,
+            9223372036854775800LL,
+            9223372036854775800LL,
+            9223372036854775800LL,
+            std::numeric_limits<std::uint64_t>::max(),
+            std::numeric_limits<std::uint32_t>::max()};
+    okay &= Check(IsValid(largeAligned),
+                  "aligned integer boundary settings were rejected");
     return okay;
+}
+
+bool TestImmediateCancellation() {
+    forevertas::SearchRunControl control;
+    control.cancellationRequested = []() { return true; };
+    try {
+        static_cast<void>(forevertas::RunSerialSearch(
+                {"unused",
+                 "unused",
+                 forevertas::DefaultSerialBruteForceSettings()},
+                &control));
+    } catch (const forevertas::SearchCancelled &) {
+        return true;
+    } catch (...) {
+        return Check(false,
+                     "immediate cancellation returned the wrong failure");
+    }
+    return Check(false, "immediate cancellation was ignored");
 }
 
 }  // namespace
@@ -151,6 +205,7 @@ bool TestSearchSettings() {
 int main() {
     const bool okay = TestClosedMutationWindow() &&
                       TestMaxSpeedEvaluator() &&
-                      TestSearchSettings();
+                      TestSearchSettings() &&
+                      TestImmediateCancellation();
     return okay ? 0 : 1;
 }

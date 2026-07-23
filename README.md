@@ -44,26 +44,23 @@ The committed dependency hash only needs to change when ForeverTAS deliberately
 adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
-## Serial brute-force exercise
+## Desktop application
 
-Pass an installed TMUF `Packs` directory and a replay. No replay or game asset
-is copied into this repository.
+Build and launch the Qt 6 Quick application:
 
 ```sh
-./build/local/forevertas \
-  "/path/to/TmUnitedForever/Packs" \
-  "/path/to/run.Replay.Gbx"
+./build/local/forevertas
 ```
 
-The executable creates a Reference sandbox and runs the first serial search
-implementation. The search captures one state immediately before its configured
-closed mutation window, establishes the unmodified replay as its baseline, then
-tests each steering mutation serially. It evaluates maximum speed on every tick
-of a separately configured closed evaluation window and restores the best state
-at the end.
+Select an installed TMUF `Packs` directory and a replay, configure the mutation
+and evaluation windows, then start the serial search. The application persists
+paths and search settings with the platform-native Qt settings store. Search,
+replay loading, and validation stay in C++; the QML layer only presents the
+controls and the future Race Viewer placeholder.
 
-Mutation bounds, evaluation bounds, attempt count and deterministic seed are
-explicit `SerialBruteForceSettings` in `src/app/main.cpp`. The initial executable
-keeps concrete strategy selection equally direct: `RandomSteeringMutator`,
-`MaxSpeedEvaluator`, and `SerialBruteForceSearch`. It does not yet provide a TAS
-action model, scoring registry, pruning, or parallel search.
+The search runs on a worker thread and can be cancelled without blocking the
+interface. It captures one state immediately before its configured closed
+mutation window, establishes the unmodified replay as its baseline, then tests
+each steering mutation serially. It evaluates maximum speed on every tick of a
+separately configured closed evaluation window and restores the best state at
+the end.
