@@ -12,6 +12,15 @@ ApplicationWindow {
     required property var viewer
 
     property bool wireframeMode: false
+    property int viewerFps: 0
+
+    function stepViewerTick(delta) {
+        if (!window.viewer.loaded) {
+            return
+        }
+        window.viewer.pause()
+        window.viewer.currentTick = window.viewer.currentTick + delta
+    }
 
     width: 1420
     height: 820
@@ -31,6 +40,36 @@ ApplicationWindow {
         buttonText: "#202421"
         highlight: "#26734d"
         highlightedText: "#ffffff"
+    }
+
+    Shortcut {
+        objectName: "stepBackwardShortcut"
+        sequence: "Left"
+        context: Qt.ApplicationShortcut
+        autoRepeat: true
+        enabled: window.viewer.loaded
+        onActivated: window.stepViewerTick(-1)
+    }
+
+    FrameAnimation {
+        id: fpsAnimation
+        objectName: "fpsFrameAnimation"
+        running: window.visible
+
+        onTriggered: {
+            if (currentFrame % 15 === 0 && smoothFrameTime > 0) {
+                window.viewerFps = Math.round(1 / smoothFrameTime)
+            }
+        }
+    }
+
+    Shortcut {
+        objectName: "stepForwardShortcut"
+        sequence: "Right"
+        context: Qt.ApplicationShortcut
+        autoRepeat: true
+        enabled: window.viewer.loaded
+        onActivated: window.stepViewerTick(1)
     }
 
     SplitView {
@@ -61,7 +100,7 @@ ApplicationWindow {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 70
+                            Layout.preferredHeight: 52
                             color: "#151a17"
 
                             ColumnLayout {
@@ -71,14 +110,6 @@ ApplicationWindow {
                                 anchors.topMargin: 8
                                 anchors.bottomMargin: 8
                                 spacing: 2
-
-                                Label {
-                                    text: qsTr("INPUT TIMELINE · MM:SS.mmm")
-                                    color: "#89948c"
-                                    font.pixelSize: 10
-                                    font.letterSpacing: 1.1
-                                    font.weight: Font.DemiBold
-                                }
 
                                 Label {
                                     objectName: "timelineTimeLabel"
@@ -311,6 +342,8 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        id: raceViewerHeader
+                        objectName: "raceViewerHeader"
                         anchors.top: parent.top
                         anchors.left: parent.left
                         anchors.right: parent.right
@@ -342,12 +375,24 @@ ApplicationWindow {
                             }
 
                             Switch {
+                                id: wireframeSwitch
+                                objectName: "wireframeSwitch"
                                 text: qsTr("Wireframe")
                                 checked: window.wireframeMode
                                 enabled: window.viewer.loaded
-                                palette.text: "#eef2ee"
                                 onToggled:
                                     window.wireframeMode = checked
+
+                                contentItem: Text {
+                                    objectName: "wireframeLabel"
+                                    leftPadding:
+                                        wireframeSwitch.indicator.width
+                                        + wireframeSwitch.spacing
+                                    text: wireframeSwitch.text
+                                    font: wireframeSwitch.font
+                                    color: "#ffffff"
+                                    verticalAlignment: Text.AlignVCenter
+                                }
                             }
 
                             Button {
@@ -358,6 +403,28 @@ ApplicationWindow {
                                     viewport.orbitPitch = -20
                                     viewport.orbitDistance = 38
                                 }
+                            }
+                        }
+
+                        Rectangle {
+                            objectName: "fpsCounter"
+                            anchors.centerIn: parent
+                            width: fpsCounterLabel.implicitWidth + 16
+                            height: 28
+                            radius: 8
+                            color: "#99111412"
+                            border.width: 1
+                            border.color: "#39423d"
+
+                            Label {
+                                id: fpsCounterLabel
+                                objectName: "fpsCounterLabel"
+                                anchors.centerIn: parent
+                                text: qsTr("%1 FPS").arg(window.viewerFps)
+                                color: "#ffffff"
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
                             }
                         }
                     }

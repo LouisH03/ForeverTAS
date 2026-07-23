@@ -80,6 +80,17 @@ bool ContainsStandardSlider(QObject *root) {
     return false;
 }
 
+bool ContainsText(QObject *root, const QString &needle) {
+    const QList<QObject *> objects = root->findChildren<QObject *>();
+    for (const QObject *object : objects) {
+        const QVariant text = object->property("text");
+        if (text.isValid() && text.toString().contains(needle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool IsCenteredIcon(QQuickItem *item, qreal expectedSize) {
     if (item == nullptr || item->parentItem() == nullptr) {
         return false;
@@ -168,6 +179,24 @@ int main(int argc, char **argv) {
                     auto *const viewport = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("raceViewport")));
+                    auto *const raceViewerHeader = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("raceViewerHeader")));
+                    auto *const fpsCounter = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("fpsCounter")));
+                    QObject *const fpsCounterLabel =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("fpsCounterLabel"));
+                    QObject *const fpsFrameAnimation =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("fpsFrameAnimation"));
+                    QObject *const wireframeSwitch =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("wireframeSwitch"));
+                    QObject *const wireframeLabel =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("wireframeLabel"));
                     QObject *const playPause = root->findChild<QObject *>(
                             QStringLiteral("playPauseButton"));
                     auto *const playIcon = qobject_cast<QQuickItem *>(
@@ -186,10 +215,66 @@ int main(int argc, char **argv) {
                     auto *const jumpEndIcon = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("jumpEndTransportIcon")));
+                    QObject *const stepBackward = root->findChild<QObject *>(
+                            QStringLiteral("stepBackwardShortcut"));
+                    QObject *const stepForward = root->findChild<QObject *>(
+                            QStringLiteral("stepForwardShortcut"));
+                    const qint64 keyboardStartTick =
+                            std::clamp<qint64>(
+                                    viewer.tickCount() / 2,
+                                    1,
+                                    viewer.tickCount() - 2);
+                    viewer.setCurrentTick(keyboardStartTick);
+                    const bool backwardInvoked =
+                            stepBackward != nullptr &&
+                            QMetaObject::invokeMethod(
+                                    stepBackward,
+                                    "activated",
+                                    Qt::DirectConnection);
+                    const bool steppedBackward = backwardInvoked &&
+                            !viewer.playing() &&
+                            viewer.currentTick() == keyboardStartTick - 1;
+                    const bool forwardInvoked =
+                            stepForward != nullptr &&
+                            QMetaObject::invokeMethod(
+                                    stepForward,
+                                    "activated",
+                                    Qt::DirectConnection);
+                    const bool steppedForward = forwardInvoked &&
+                            !viewer.playing() &&
+                            viewer.currentTick() == keyboardStartTick;
+                    const bool keyboardStepping =
+                            steppedBackward && steppedForward &&
+                            stepBackward->property("enabled").toBool() &&
+                            stepForward->property("enabled").toBool() &&
+                            stepBackward->property("sequence").toString() ==
+                                    QStringLiteral("Left") &&
+                            stepForward->property("sequence").toString() ==
+                                    QStringLiteral("Right");
+                    const bool fpsCounterValid =
+                            raceViewerHeader != nullptr &&
+                            fpsCounter != nullptr &&
+                            fpsCounter->parentItem() == raceViewerHeader &&
+                            std::abs(fpsCounter->x() +
+                                             fpsCounter->width() * 0.5 -
+                                     raceViewerHeader->width() * 0.5) < 0.1 &&
+                            fpsCounterLabel != nullptr &&
+                            fpsCounterLabel->property("text")
+                                    .toString()
+                                    .endsWith(QStringLiteral(" FPS")) &&
+                            root->property("viewerFps").toInt() > 0 &&
+                            fpsFrameAnimation != nullptr &&
+                            fpsFrameAnimation->property("running").toBool();
+                    const bool wireframeTextIsWhite =
+                            wireframeSwitch != nullptr &&
+                            wireframeLabel != nullptr &&
+                            wireframeLabel->property("color").value<QColor>() ==
+                                    QColor(QStringLiteral("#ffffff"));
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
+                            fpsCounterValid && wireframeTextIsWhite &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
                             playPause->property("enabled").toBool() &&
@@ -210,7 +295,11 @@ int main(int argc, char **argv) {
                             IsCenteredIcon(jumpStartIcon, 18.0) &&
                             IsCenteredIcon(jumpEndIcon, 18.0) &&
                             playIcon->isVisible() && !pauseIcon->isVisible() &&
-                            !ContainsStandardSlider(root);
+                            !ContainsStandardSlider(root) &&
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("INPUT TIMELINE")) &&
+                            keyboardStepping;
                     const QList<QObject *> carFilledModels =
                             root->findChildren<QObject *>(
                                     QStringLiteral("carFilledModel"));
