@@ -48,12 +48,11 @@ private:
         Zoom,
     };
 
-    qint64 tickAtY(qreal y) const;
     void disconnectViewer();
 
     QPointer<RaceViewerController> viewer_;
     qreal pixelsPerTick_ = 3.0;
-    qint64 dragAnchorTick_ = 0;
+    qint64 dragAnchorTimeMs_ = 0;
     qreal dragAnchorY_ = 0.0;
     qreal zoomAnchorPixelsPerTick_ = 3.0;
     DragMode dragMode_ = DragMode::None;

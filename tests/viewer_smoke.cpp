@@ -59,36 +59,53 @@ bool TimelinePaintsColor(RaceTimelineItem &timeline,
     return false;
 }
 
+int TimelineColorRow(RaceTimelineItem &timeline,
+                     const QColor &color,
+                     int minimumY,
+                     int maximumY) {
+    QImage image(252, 600, QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    timeline.paint(&painter);
+    painter.end();
+    const QRgb expected = color.rgba();
+    const int firstY = std::clamp(minimumY, 0, image.height() - 1);
+    const int lastY = std::clamp(maximumY, firstY, image.height() - 1);
+    for (int y = firstY; y <= lastY; ++y) {
+        const auto *line = reinterpret_cast<const QRgb *>(
+                image.constScanLine(y));
+        if (line[60] == expected) {
+            return y;
+        }
+    }
+    return -1;
+}
+
+void SendTimelineMouseEvent(RaceTimelineItem &timeline,
+                            QEvent::Type type,
+                            Qt::MouseButton button,
+                            Qt::MouseButtons buttons,
+                            const QPointF &position) {
+    QMouseEvent event(
+            type,
+            position,
+            position,
+            button,
+            buttons,
+            Qt::NoModifier);
+    QCoreApplication::sendEvent(&timeline, &event);
+}
+
 void DragTimeline(RaceTimelineItem &timeline,
                   Qt::MouseButton button,
                   const QPointF &start,
                   const QPointF &end) {
-    QMouseEvent press(
-            QEvent::MouseButtonPress,
-            start,
-            start,
-            button,
-            button,
-            Qt::NoModifier);
-    QCoreApplication::sendEvent(&timeline, &press);
-
-    QMouseEvent move(
-            QEvent::MouseMove,
-            end,
-            end,
-            Qt::NoButton,
-            button,
-            Qt::NoModifier);
-    QCoreApplication::sendEvent(&timeline, &move);
-
-    QMouseEvent release(
-            QEvent::MouseButtonRelease,
-            end,
-            end,
-            button,
-            Qt::NoButton,
-            Qt::NoModifier);
-    QCoreApplication::sendEvent(&timeline, &release);
+    SendTimelineMouseEvent(
+            timeline, QEvent::MouseButtonPress, button, button, start);
+    SendTimelineMouseEvent(
+            timeline, QEvent::MouseMove, Qt::NoButton, button, end);
+    SendTimelineMouseEvent(
+            timeline, QEvent::MouseButtonRelease, button, Qt::NoButton, end);
 }
 
 }  // namespace
@@ -160,14 +177,97 @@ int main(int argc, char **argv) {
                     viewer.setCurrentTick(
                             std::min<qint64>(500, viewer.tickCount() - 1));
                     timeline.setPixelsPerTick(3.0);
-                    const qint64 dragStartTick = viewer.currentTick();
-                    DragTimeline(
+                    const qint64 dragStartTimeMs = viewer.timeMs();
+                    SendTimelineMouseEvent(
                             timeline,
+                            QEvent::MouseButtonPress,
                             Qt::LeftButton,
-                            QPointF(126.0, 300.0),
-                            QPointF(126.0, 330.0));
+                            Qt::LeftButton,
+                            QPointF(126.0, 70.0));
+                    const bool leftPressDoesNotSnap =
+                            viewer.timeMs() == dragStartTimeMs;
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseMove,
+                            Qt::NoButton,
+                            Qt::LeftButton,
+                            QPointF(126.0, 100.0));
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseButtonRelease,
+                            Qt::LeftButton,
+                            Qt::NoButton,
+                            QPointF(126.0, 100.0));
                     const bool naturalScrubDirection =
-                            viewer.currentTick() < dragStartTick;
+                            viewer.timeMs() < dragStartTimeMs;
+
+                    timeline.setPixelsPerTick(4.0);
+                    viewer.setTimeMs(5010);
+                    const int wholeTickLineY = TimelineColorRow(
+                            timeline,
+                            QColor(QStringLiteral("#77847c")),
+                            280,
+                            320);
+                    viewer.setTimeMs(5015);
+                    const int halfTickLineY = TimelineColorRow(
+                            timeline,
+                            QColor(QStringLiteral("#77847c")),
+                            280,
+                            320);
+                    timeline.setPixelsPerTick(8.0);
+                    const int zoomedHalfTickLineY = TimelineColorRow(
+                            timeline,
+                            QColor(QStringLiteral("#77847c")),
+                            270,
+                            320);
+                    const bool gridTracksScrollAndZoom =
+                            wholeTickLineY == 296 &&
+                            halfTickLineY == 294 &&
+                            zoomedHalfTickLineY == 288;
+
+                    timeline.setPixelsPerTick(3.0);
+                    viewer.setTimeMs(5020);
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseButtonPress,
+                            Qt::LeftButton,
+                            Qt::LeftButton,
+                            QPointF(126.0, 70.0));
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseMove,
+                            Qt::NoButton,
+                            Qt::LeftButton,
+                            QPointF(126.0, 71.0));
+                    const bool gridVisibleWhileDragging =
+                            TimelineColorRow(
+                                    timeline,
+                                    QColor(QStringLiteral("#39423c")),
+                                    301,
+                                    310) >= 0;
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseButtonRelease,
+                            Qt::LeftButton,
+                            Qt::NoButton,
+                            QPointF(126.0, 71.0));
+                    const bool gridVisibleAfterDragging =
+                            TimelineColorRow(
+                                    timeline,
+                                    QColor(QStringLiteral("#39423c")),
+                                    301,
+                                    310) >= 0;
+                    timeline.setPixelsPerTick(1.0);
+                    const bool gridVisibleAtMinimumZoom =
+                            TimelineColorRow(
+                                    timeline,
+                                    QColor(QStringLiteral("#39423c")),
+                                    301,
+                                    310) >= 0;
+                    const bool gridAlwaysVisible =
+                            gridVisibleWhileDragging &&
+                            gridVisibleAfterDragging &&
+                            gridVisibleAtMinimumZoom;
 
                     timeline.setPixelsPerTick(3.0);
                     DragTimeline(
@@ -190,7 +290,50 @@ int main(int argc, char **argv) {
                                                     viewer.tickDurationMs() +
                                             1 &&
                             timelineInputs && naturalScrubDirection &&
+                            leftPressDoesNotSnap && gridTracksScrollAndZoom &&
+                            gridAlwaysVisible &&
                             rightDragZoomsIn && timeLabelUnambiguous;
+                    if (!sceneValid) {
+                        std::cerr
+                                << "viewer scene checks failed: leftSteeringTick="
+                                << leftSteeringTick
+                                << ", rightSteeringTick="
+                                << rightSteeringTick
+                                << ", accelerationTick="
+                                << accelerationTick
+                                << ", brakeTick="
+                                << brakeTick
+                                << ", leftSteeringPainted="
+                                << leftSteeringPainted
+                                << ", rightSteeringPainted="
+                                << rightSteeringPainted
+                                << ", accelerationPainted="
+                                << accelerationPainted
+                                << ", brakePainted="
+                                << brakePainted
+                                << ", naturalScrubDirection="
+                                << naturalScrubDirection
+                                << ", leftPressDoesNotSnap="
+                                << leftPressDoesNotSnap
+                                << ", wholeTickLineY="
+                                << wholeTickLineY
+                                << ", halfTickLineY="
+                                << halfTickLineY
+                                << ", zoomedHalfTickLineY="
+                                << zoomedHalfTickLineY
+                                << ", gridTracksScrollAndZoom="
+                                << gridTracksScrollAndZoom
+                                << ", gridVisibleWhileDragging="
+                                << gridVisibleWhileDragging
+                                << ", gridVisibleAfterDragging="
+                                << gridVisibleAfterDragging
+                                << ", gridVisibleAtMinimumZoom="
+                                << gridVisibleAtMinimumZoom
+                                << ", rightDragZoomsIn="
+                                << rightDragZoomsIn
+                                << ", timeLabelUnambiguous="
+                                << timeLabelUnambiguous << '\n';
+                    }
 
                     viewer.jumpToStart();
                     viewer.play();
@@ -226,30 +369,8 @@ int main(int argc, char **argv) {
                                             : 1;
                                     if (exitCode != 0) {
                                         std::cerr
-                                                << "viewer controls failed: sceneValid="
+                                                << "viewer playback failed: sceneValid="
                                                 << sceneValid
-                                                << ", leftSteeringTick="
-                                                << leftSteeringTick
-                                                << ", rightSteeringTick="
-                                                << rightSteeringTick
-                                                << ", accelerationTick="
-                                                << accelerationTick
-                                                << ", brakeTick="
-                                                << brakeTick
-                                                << ", leftSteeringPainted="
-                                                << leftSteeringPainted
-                                                << ", rightSteeringPainted="
-                                                << rightSteeringPainted
-                                                << ", accelerationPainted="
-                                                << accelerationPainted
-                                                << ", brakePainted="
-                                                << brakePainted
-                                                << ", naturalScrubDirection="
-                                                << naturalScrubDirection
-                                                << ", rightDragZoomsIn="
-                                                << rightDragZoomsIn
-                                                << ", timeLabelUnambiguous="
-                                                << timeLabelUnambiguous
                                                 << ", playbackAdvanced="
                                                 << playbackAdvanced
                                                 << ", endPaused="

@@ -130,19 +130,22 @@ void RaceTimelineItem::paint(QPainter *painter) {
     painter->drawLine(QPointF(controlRight, 0.0),
                       QPointF(controlRight, area.height()));
 
-    const qint64 currentTick = viewer_->currentTick();
+    const qreal currentTickPosition =
+            static_cast<qreal>(viewer_->timeMs()) /
+            static_cast<qreal>(viewer_->tickDurationMs());
     const qint64 firstVisible = std::max<qint64>(
             0,
-            currentTick -
-                    static_cast<qint64>(std::ceil(centerY / pixelsPerTick_)) -
-                    1);
+            static_cast<qint64>(std::floor(
+                    currentTickPosition - centerY / pixelsPerTick_)) - 1);
     const qint64 lastVisible = std::min<qint64>(
             viewer_->tickCount() - 1,
-            currentTick + static_cast<qint64>(
-                                  std::ceil((area.height() - centerY) /
-                                            pixelsPerTick_)) +
-                    1);
-    const qreal rowHeight = std::max<qreal>(1.0, pixelsPerTick_ - 0.35);
+            static_cast<qint64>(std::ceil(
+                    currentTickPosition +
+                    (area.height() - centerY) / pixelsPerTick_)) + 1);
+    const qreal rowInset = std::min<qreal>(0.18, pixelsPerTick_ * 0.08);
+    const qreal rowHeight = std::max<qreal>(0.6,
+                                                   pixelsPerTick_ -
+                                                           2.0 * rowInset);
 
     QVector<QRectF> leftSteering;
     QVector<QRectF> rightSteering;
@@ -162,23 +165,12 @@ void RaceTimelineItem::paint(QPainter *painter) {
     painter->setFont(timeFont);
 
     for (qint64 tick = firstVisible; tick <= lastVisible; ++tick) {
-        const qreal y = centerY +
-                static_cast<qreal>(tick - currentTick) * pixelsPerTick_;
-        if (tick % 100 == 0) {
-            painter->setPen(QColor(QStringLiteral("#39433d")));
-            painter->drawLine(QPointF(0.0, y), QPointF(area.width(), y));
-            painter->setPen(QColor(QStringLiteral("#7f8b83")));
-            painter->drawText(
-                    QRectF(5.0, y - 8.0, 44.0, 16.0),
-                    Qt::AlignLeft | Qt::AlignVCenter,
-                    FormatTimelineSecond(tick));
-        } else if (tick % 10 == 0) {
-            painter->setPen(QColor(QStringLiteral("#202722")));
-            painter->drawLine(QPointF(45.0, y), QPointF(area.width(), y));
-        }
-
+        const qreal boundaryY = centerY +
+                (static_cast<qreal>(tick) - currentTickPosition) *
+                        pixelsPerTick_;
+        const qreal y = boundaryY + pixelsPerTick_ * 0.5;
         const RaceViewerInputSample sample = viewer_->inputSample(tick);
-        const qreal top = y - rowHeight * 0.5;
+        const qreal top = boundaryY + rowInset;
         const qreal steering = std::clamp<qreal>(sample.steering, -1.0, 1.0);
         qreal steeringCurveX = centerX;
         if (steering < 0.0) {
@@ -213,6 +205,17 @@ void RaceTimelineItem::paint(QPainter *painter) {
         }
     }
 
+    if (steeringCurve.size() > 1) {
+        QColor curveColor(QStringLiteral("#72aed8"));
+        curveColor.setAlpha(58);
+        QPen curvePen(curveColor, 1.0);
+        curvePen.setJoinStyle(Qt::MiterJoin);
+        curvePen.setCapStyle(Qt::FlatCap);
+        painter->setBrush(Qt::NoBrush);
+        painter->setPen(curvePen);
+        painter->drawPolyline(steeringCurve);
+    }
+
     painter->setPen(Qt::NoPen);
     painter->setBrush(QColor(QStringLiteral("#4f9ddd")));
     painter->drawRects(leftSteering);
@@ -223,15 +226,55 @@ void RaceTimelineItem::paint(QPainter *painter) {
     painter->drawRects(brakeLeft);
     painter->drawRects(brakeRight);
 
-    if (steeringCurve.size() > 1) {
-        QColor curveColor(QStringLiteral("#9bcdf1"));
-        curveColor.setAlpha(145);
-        QPen curvePen(curveColor, 2.0);
-        curvePen.setJoinStyle(Qt::MiterJoin);
-        curvePen.setCapStyle(Qt::SquareCap);
+    const qint64 firstBoundary = std::max<qint64>(0, firstVisible);
+    const qint64 lastBoundary = std::min<qint64>(
+            viewer_->tickCount(), lastVisible + 1);
+    QPen regularGridPen(QColor(QStringLiteral("#39423c")));
+    regularGridPen.setCosmetic(true);
+    regularGridPen.setWidthF(1.0);
+    regularGridPen.setDashPattern({1.0, 3.0});
+    QPen tenthGridPen(QColor(QStringLiteral("#56615a")));
+    tenthGridPen.setCosmetic(true);
+    tenthGridPen.setWidthF(1.0);
+    tenthGridPen.setDashPattern({4.0, 2.0});
+    QPen secondGridPen(QColor(QStringLiteral("#77847c")));
+    secondGridPen.setCosmetic(true);
+    secondGridPen.setWidthF(1.0);
+
+    for (qint64 tick = firstBoundary; tick <= lastBoundary; ++tick) {
+        const qreal y = centerY +
+                (static_cast<qreal>(tick) - currentTickPosition) *
+                        pixelsPerTick_;
+        const qreal alignedY = std::floor(y) + 0.5;
+        if (alignedY < 0.0 || alignedY >= area.height()) {
+            continue;
+        }
+
+        const bool secondBoundary = tick % 100 == 0;
+        const bool tenthBoundary = tick % 10 == 0;
+        const QPen &gridPen = secondBoundary
+                ? secondGridPen
+                : tenthBoundary
+                ? tenthGridPen
+                : regularGridPen;
+
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(gridPen.color());
+        painter->drawRect(QRectF(45.0, std::floor(y), 24.0, 1.0));
+
         painter->setBrush(Qt::NoBrush);
-        painter->setPen(curvePen);
-        painter->drawPolyline(steeringCurve);
+        painter->setPen(gridPen);
+        painter->drawLine(
+                QPointF(secondBoundary ? 0.0 : 69.0, alignedY),
+                QPointF(area.width(), alignedY));
+
+        if (secondBoundary) {
+            painter->setPen(QColor(QStringLiteral("#9aa69e")));
+            painter->drawText(
+                    QRectF(5.0, alignedY - 8.0, 44.0, 16.0),
+                    Qt::AlignLeft | Qt::AlignVCenter,
+                    FormatTimelineSecond(tick));
+        }
     }
 
     painter->setPen(QPen(QColor(QStringLiteral("#f3c85b")), 2.0));
@@ -256,9 +299,8 @@ void RaceTimelineItem::mousePressEvent(QMouseEvent *event) {
         zoomAnchorPixelsPerTick_ = pixelsPerTick_;
         dragMode_ = DragMode::Zoom;
     } else {
-        dragAnchorTick_ = tickAtY(event->position().y());
+        dragAnchorTimeMs_ = viewer_->timeMs();
         dragMode_ = DragMode::Scrub;
-        viewer_->setCurrentTick(dragAnchorTick_);
     }
     event->accept();
 }
@@ -273,9 +315,10 @@ void RaceTimelineItem::mouseMoveEvent(QMouseEvent *event) {
         setPixelsPerTick(
                 zoomAnchorPixelsPerTick_ * std::exp(-deltaY / 120.0));
     } else {
-        const qint64 deltaTicks = static_cast<qint64>(std::llround(
-                deltaY / pixelsPerTick_));
-        viewer_->setCurrentTick(dragAnchorTick_ - deltaTicks);
+        const qreal deltaTimeMs =
+                deltaY / pixelsPerTick_ * viewer_->tickDurationMs();
+        viewer_->setTimeMs(static_cast<qint64>(std::llround(
+                static_cast<qreal>(dragAnchorTimeMs_) - deltaTimeMs)));
     }
     event->accept();
 }
@@ -300,15 +343,6 @@ void RaceTimelineItem::wheelEvent(QWheelEvent *event) {
                 static_cast<qint64>(std::llround(steps * 10.0)));
     }
     event->accept();
-}
-
-qint64 RaceTimelineItem::tickAtY(qreal y) const {
-    if (viewer_ == nullptr) {
-        return 0;
-    }
-    const qreal offset = y - height() * 0.5;
-    return viewer_->currentTick() +
-            static_cast<qint64>(std::llround(offset / pixelsPerTick_));
 }
 
 void RaceTimelineItem::disconnectViewer() {
