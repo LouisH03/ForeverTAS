@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick3D
+import ForeverTAS.Viewer 1.0
 
 ApplicationWindow {
     id: window
@@ -11,9 +12,9 @@ ApplicationWindow {
 
     property bool wireframeMode: false
 
-    width: 1180
-    height: 720
-    minimumWidth: 900
+    width: 1420
+    height: 820
+    minimumWidth: 1050
     minimumHeight: 580
     visible: true
     title: qsTr("ForeverTAS")
@@ -37,15 +38,137 @@ ApplicationWindow {
 
         Rectangle {
             SplitView.fillWidth: true
-            SplitView.minimumWidth: 500
+            SplitView.minimumWidth: 680
             color: "#181b19"
 
-            ColumnLayout {
+            RowLayout {
                 anchors.fill: parent
                 spacing: 0
 
+                Rectangle {
+                    id: timelinePanel
+                    objectName: "timelinePanel"
+                    Layout.preferredWidth: 252
+                    Layout.minimumWidth: 220
+                    Layout.maximumWidth: 300
+                    Layout.fillHeight: true
+                    color: "#101412"
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 0
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 70
+                            color: "#151a17"
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+                                anchors.topMargin: 8
+                                anchors.bottomMargin: 8
+                                spacing: 2
+
+                                Label {
+                                    text: qsTr("INPUT TIMELINE · MM:SS.mmm")
+                                    color: "#89948c"
+                                    font.pixelSize: 10
+                                    font.letterSpacing: 1.1
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Label {
+                                    objectName: "timelineTimeLabel"
+                                    text: window.viewer.timeText
+                                    color: "#f0f3ef"
+                                    font.family: "monospace"
+                                    font.pixelSize: 15
+                                    font.weight: Font.Medium
+                                }
+
+                                Label {
+                                    text: window.viewer.loaded
+                                          ? qsTr("Tick %1 / %2 · 100 Hz")
+                                                .arg(window.viewer.currentTick)
+                                                .arg(Math.max(0,
+                                                              window.viewer.tickCount - 1))
+                                          : qsTr("100 physics ticks / second")
+                                    color: "#747f77"
+                                    font.pixelSize: 10
+                                }
+                            }
+                        }
+
+                        RaceTimeline {
+                            id: raceTimeline
+                            objectName: "raceTimeline"
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            viewer: window.viewer
+                            pixelsPerTick: 3
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 50
+                            color: "#151a17"
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 10
+
+                                Rectangle {
+                                    Layout.preferredWidth: 10
+                                    Layout.preferredHeight: 10
+                                    radius: 2
+                                    color: "#4f9ddd"
+                                }
+                                Label {
+                                    text: qsTr("Steer")
+                                    color: "#9fa9a2"
+                                    font.pixelSize: 10
+                                }
+                                Rectangle {
+                                    Layout.preferredWidth: 10
+                                    Layout.preferredHeight: 10
+                                    radius: 2
+                                    color: "#3dbd73"
+                                }
+                                Label {
+                                    text: qsTr("Gas")
+                                    color: "#9fa9a2"
+                                    font.pixelSize: 10
+                                }
+                                Rectangle {
+                                    Layout.preferredWidth: 10
+                                    Layout.preferredHeight: 10
+                                    radius: 2
+                                    color: "#df5555"
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Brake")
+                                    color: "#9fa9a2"
+                                    font.pixelSize: 10
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 1
+                    Layout.fillHeight: true
+                    color: "#2b322e"
+                }
+
                 Item {
                     id: viewport
+                    objectName: "raceViewport"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
@@ -238,6 +361,60 @@ ApplicationWindow {
                         }
                     }
 
+                    Rectangle {
+                        id: playbackDock
+                        objectName: "playbackDock"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 20
+                        width: 190
+                        height: 58
+                        radius: 16
+                        color: "#e6111513"
+                        border.width: 1
+                        border.color: "#465049"
+
+                        RowLayout {
+                            anchors.centerIn: parent
+                            spacing: 8
+
+                            ToolButton {
+                                objectName: "jumpStartButton"
+                                text: "⏮"
+                                enabled: window.viewer.loaded
+                                font.pixelSize: 20
+                                palette.buttonText: "#e6ebe7"
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Go to start")
+                                onClicked: window.viewer.jumpToStart()
+                            }
+
+                            ToolButton {
+                                objectName: "playPauseButton"
+                                text: window.viewer.playing ? "⏸" : "▶"
+                                enabled: window.viewer.loaded
+                                font.pixelSize: 24
+                                palette.buttonText: "#ffffff"
+                                ToolTip.visible: hovered
+                                ToolTip.text: window.viewer.playing
+                                              ? qsTr("Pause")
+                                              : qsTr("Play")
+                                onClicked: window.viewer.togglePlayback()
+                            }
+
+                            ToolButton {
+                                objectName: "jumpEndButton"
+                                text: "⏭"
+                                enabled: window.viewer.loaded
+                                font.pixelSize: 20
+                                palette.buttonText: "#e6ebe7"
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Go to end")
+                                onClicked: window.viewer.jumpToEnd()
+                            }
+                        }
+                    }
+
                     Column {
                         anchors.centerIn: parent
                         width: Math.min(parent.width - 60, 430)
@@ -271,37 +448,6 @@ ApplicationWindow {
                             color: "#e19b9b"
                             wrapMode: Text.WordWrap
                             font.pixelSize: 12
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 78
-                    color: "#111412"
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        spacing: 14
-
-                        Label {
-                            text: window.viewer.timeText
-                            color: "#d9ded9"
-                            font.family: "monospace"
-                        }
-
-                        Slider {
-                            id: timeline
-                            Layout.fillWidth: true
-                            from: 0
-                            to: Math.max(1, window.viewer.durationMs)
-                            value: window.viewer.timeMs
-                            enabled: window.viewer.loaded
-                            live: true
-                            onMoved:
-                                window.viewer.timeMs = Math.round(value)
                         }
                     }
                 }

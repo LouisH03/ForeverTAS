@@ -254,7 +254,10 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
                     QQuaternion(view.car.rotationW,
                                 view.car.rotationX,
                                 view.car.rotationY,
-                                view.car.rotationZ).normalized()});
+                                view.car.rotationZ).normalized(),
+                    view.accelerate,
+                    view.brake,
+                    view.steering});
         };
         appendFrame(state);
         for (std::uint64_t index = 1u; index < frameCount; ++index) {
@@ -276,7 +279,7 @@ QString FormatTime(qint64 milliseconds) {
     const qint64 seconds = (milliseconds / 1000) % 60;
     const qint64 millis = milliseconds % 1000;
     return QStringLiteral("%1:%2.%3")
-            .arg(minutes)
+            .arg(minutes, 2, 10, QLatin1Char('0'))
             .arg(seconds, 2, 10, QLatin1Char('0'))
             .arg(millis, 3, 10, QLatin1Char('0'));
 }
@@ -285,6 +288,13 @@ QString FormatTime(qint64 milliseconds) {
 
 RaceViewerController::RaceViewerController(QObject *parent)
     : QObject(parent) {
+    playbackTimer_.setInterval(5);
+    playbackTimer_.setTimerType(Qt::PreciseTimer);
+    connect(&playbackTimer_,
+            &QTimer::timeout,
+            this,
+            &RaceViewerController::advancePlayback);
+
     const RaceViewerMeshBuffers ellipsoid =
             BuildMeshBuffers(UnitEllipsoidTriangles(), true);
     ellipsoidFilledGeometry_.setMesh(
@@ -304,6 +314,7 @@ RaceViewerController::RaceViewerController(QObject *parent)
 }
 
 RaceViewerController::~RaceViewerController() {
+    playbackTimer_.stop();
     waitForWorker();
 }
 
@@ -343,9 +354,31 @@ qint64 RaceViewerController::timeMs() const {
     return timeMs_;
 }
 
+qint64 RaceViewerController::currentTick() const {
+    if (frames_.empty()) {
+        return 0;
+    }
+    return std::clamp<qint64>(
+            timeMs_ / static_cast<qint64>(kViewerTickDurationMs),
+            0,
+            tickCount() - 1);
+}
+
+qint64 RaceViewerController::tickCount() const {
+    return static_cast<qint64>(frames_.size());
+}
+
+int RaceViewerController::tickDurationMs() const {
+    return static_cast<int>(kViewerTickDurationMs);
+}
+
 QString RaceViewerController::timeText() const {
     return FormatTime(timeMs_) + QStringLiteral(" / ") +
             FormatTime(durationMs_);
+}
+
+bool RaceViewerController::playing() const {
+    return playing_;
 }
 
 bool RaceViewerController::loaded() const {
@@ -372,6 +405,15 @@ double RaceViewerController::sceneRadius() const {
     return sceneRadius_;
 }
 
+RaceViewerInputSample RaceViewerController::inputSample(qint64 tick) const
+        noexcept {
+    if (tick < 0 || tick >= tickCount()) {
+        return {};
+    }
+    const RaceViewerFrame &frame = frames_[static_cast<std::size_t>(tick)];
+    return {frame.accelerate, frame.brake, frame.steering};
+}
+
 void RaceViewerController::setTimeMs(qint64 value) {
     const qint64 clamped = std::clamp<qint64>(value, 0, durationMs_);
     if (timeMs_ == clamped) {
@@ -380,6 +422,55 @@ void RaceViewerController::setTimeMs(qint64 value) {
     timeMs_ = clamped;
     updatePose();
     emit timeChanged();
+}
+
+void RaceViewerController::setCurrentTick(qint64 tick) {
+    if (frames_.empty()) {
+        setTimeMs(0);
+        return;
+    }
+    const qint64 clamped = std::clamp<qint64>(tick, 0, tickCount() - 1);
+    setTimeMs(std::min<qint64>(
+            durationMs_,
+            clamped * static_cast<qint64>(kViewerTickDurationMs)));
+}
+
+void RaceViewerController::play() {
+    if (!loaded_ || frames_.empty() || playing_) {
+        return;
+    }
+    if (timeMs_ >= durationMs_) {
+        setCurrentTick(0);
+    } else {
+        setCurrentTick(currentTick());
+    }
+    playbackStartTick_ = currentTick();
+    playbackClock_.restart();
+    playbackTimer_.start();
+    setPlaying(true);
+}
+
+void RaceViewerController::pause() {
+    playbackTimer_.stop();
+    setPlaying(false);
+}
+
+void RaceViewerController::togglePlayback() {
+    if (playing_) {
+        pause();
+    } else {
+        play();
+    }
+}
+
+void RaceViewerController::jumpToStart() {
+    pause();
+    setCurrentTick(0);
+}
+
+void RaceViewerController::jumpToEnd() {
+    pause();
+    setTimeMs(durationMs_);
 }
 
 void RaceViewerController::loadReplay(const QString &packsDirectory,
@@ -426,6 +517,7 @@ void RaceViewerController::loadReplay(const QString &packsDirectory,
 }
 
 void RaceViewerController::applyLoadResult(RaceViewerLoadResult result) {
+    pause();
     if (!result.error.isEmpty()) {
         setStatusText(result.error);
         setLoading(false);
@@ -486,6 +578,7 @@ void RaceViewerController::setStatusText(const QString &value) {
 }
 
 void RaceViewerController::clearLoadedScene() {
+    pause();
     loaded_ = false;
     frames_.clear();
     carEllipsoids_.clear();
@@ -544,6 +637,29 @@ void RaceViewerController::updatePose() {
                 before.rotation, after.rotation, blend);
     }
     emit poseChanged();
+}
+
+void RaceViewerController::advancePlayback() {
+    if (!playing_ || frames_.empty()) {
+        return;
+    }
+    const qint64 elapsedTicks = playbackClock_.elapsed() /
+            static_cast<qint64>(kViewerTickDurationMs);
+    const qint64 targetTick = playbackStartTick_ + elapsedTicks;
+    if (targetTick >= tickCount() - 1) {
+        setTimeMs(durationMs_);
+        pause();
+        return;
+    }
+    setCurrentTick(targetTick);
+}
+
+void RaceViewerController::setPlaying(bool value) {
+    if (playing_ == value) {
+        return;
+    }
+    playing_ = value;
+    emit playbackChanged();
 }
 
 }  // namespace forevertas::viewer

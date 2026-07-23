@@ -54,6 +54,8 @@ target_link_libraries(forevertas_core PUBLIC
 add_library(forevertas_gui STATIC
     src/viewer/race_geometry.cpp
     src/viewer/race_geometry.h
+    src/viewer/race_timeline_item.cpp
+    src/viewer/race_timeline_item.h
     src/viewer/race_viewer_controller.cpp
     src/viewer/race_viewer_controller.h
     src/app/search_controller.cpp
@@ -66,6 +68,7 @@ target_link_libraries(forevertas_gui PUBLIC
     forevertas_core
     Qt6::Core
     Qt6::Gui
+    Qt6::Quick
     Qt6::Quick3D
     Qt6::Widgets)
 

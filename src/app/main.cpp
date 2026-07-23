@@ -1,4 +1,5 @@
 #include "app/search_controller.h"
+#include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
 
 #include <QApplication>
@@ -18,6 +19,7 @@ int main(int argc, char **argv) {
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
     engine.setInitialProperties({
             {QStringLiteral("controller"),

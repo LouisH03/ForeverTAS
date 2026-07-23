@@ -3,9 +3,11 @@
 
 #include "viewer/race_geometry.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QQuaternion>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 #include <QVector3D>
 
@@ -20,6 +22,15 @@ struct RaceViewerFrame {
     std::int64_t timeMs = 0;
     QVector3D position{};
     QQuaternion rotation{};
+    float accelerate = 0.0f;
+    float brake = 0.0f;
+    float steering = 0.0f;
+};
+
+struct RaceViewerInputSample {
+    float accelerate = 0.0f;
+    float brake = 0.0f;
+    float steering = 0.0f;
 };
 
 struct RaceViewerMeshBuffers {
@@ -55,7 +66,12 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(QQuaternion carRotation READ carRotation NOTIFY poseChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY timelineChanged)
     Q_PROPERTY(qint64 timeMs READ timeMs WRITE setTimeMs NOTIFY timeChanged)
+    Q_PROPERTY(qint64 currentTick READ currentTick WRITE setCurrentTick NOTIFY
+                       timeChanged)
+    Q_PROPERTY(qint64 tickCount READ tickCount NOTIFY timelineChanged)
+    Q_PROPERTY(int tickDurationMs READ tickDurationMs CONSTANT)
     Q_PROPERTY(QString timeText READ timeText NOTIFY timeChanged)
+    Q_PROPERTY(bool playing READ playing NOTIFY playbackChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY stateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
@@ -76,16 +92,27 @@ public:
     QQuaternion carRotation() const;
     qint64 durationMs() const;
     qint64 timeMs() const;
+    qint64 currentTick() const;
+    qint64 tickCount() const;
+    int tickDurationMs() const;
     QString timeText() const;
+    bool playing() const;
     bool loaded() const;
     bool loading() const;
     QString statusText() const;
     qint64 triangleCount() const;
     qint64 ellipsoidCount() const;
     double sceneRadius() const;
+    RaceViewerInputSample inputSample(qint64 tick) const noexcept;
 
 public slots:
     void setTimeMs(qint64 value);
+    void setCurrentTick(qint64 tick);
+    Q_INVOKABLE void play();
+    Q_INVOKABLE void pause();
+    Q_INVOKABLE void togglePlayback();
+    Q_INVOKABLE void jumpToStart();
+    Q_INVOKABLE void jumpToEnd();
     Q_INVOKABLE void loadReplay(const QString &packsDirectory,
                                 const QString &replayPath);
 
@@ -94,6 +121,7 @@ signals:
     void poseChanged();
     void timelineChanged();
     void timeChanged();
+    void playbackChanged();
     void stateChanged();
 
 private:
@@ -103,6 +131,8 @@ private:
     void clearLoadedScene();
     void waitForWorker();
     void updatePose();
+    void advancePlayback();
+    void setPlaying(bool value);
 
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
@@ -117,8 +147,12 @@ private:
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;
     double sceneRadius_ = 1.0;
+    qint64 playbackStartTick_ = 0;
     bool loaded_ = false;
     bool loading_ = false;
+    bool playing_ = false;
+    QTimer playbackTimer_;
+    QElapsedTimer playbackClock_;
     QThread *workerThread_ = nullptr;
 };
 

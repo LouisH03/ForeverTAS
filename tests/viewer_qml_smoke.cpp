@@ -1,10 +1,12 @@
 #include "app/search_controller.h"
+#include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
 
 #include <QApplication>
 #include <QCoreApplication>
 #include <QImage>
 #include <QQmlApplicationEngine>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QStandardPaths>
@@ -67,6 +69,16 @@ bool ModelsHaveState(const QList<QObject *> &models,
     return true;
 }
 
+bool ContainsStandardSlider(QObject *root) {
+    const QList<QObject *> objects = root->findChildren<QObject *>();
+    for (const QObject *object : objects) {
+        if (QByteArray(object->metaObject()->className()).contains("Slider")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -84,6 +96,7 @@ int main(int argc, char **argv) {
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
     engine.setInitialProperties({
             {QStringLiteral("controller"),
@@ -93,6 +106,7 @@ int main(int argc, char **argv) {
 
     int exitCode = 1;
     bool completed = false;
+    bool editorStructure = false;
     QObject::connect(
             &engine,
             &QQmlApplicationEngine::objectCreationFailed,
@@ -130,6 +144,29 @@ int main(int argc, char **argv) {
                             QStringLiteral("trackWireModel"));
                     QObject *const car = root->findChild<QObject *>(
                             QStringLiteral("carCollisionRoot"));
+                    auto *const timeline = root->findChild<
+                            forevertas::viewer::RaceTimelineItem *>(
+                            QStringLiteral("raceTimeline"));
+                    auto *const timelinePanel = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("timelinePanel")));
+                    auto *const viewport = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("raceViewport")));
+                    QObject *const playPause = root->findChild<QObject *>(
+                            QStringLiteral("playPauseButton"));
+                    QObject *const jumpStart = root->findChild<QObject *>(
+                            QStringLiteral("jumpStartButton"));
+                    QObject *const jumpEnd = root->findChild<QObject *>(
+                            QStringLiteral("jumpEndButton"));
+                    editorStructure = timeline != nullptr &&
+                            timeline->viewer() == &viewer &&
+                            timelinePanel != nullptr && viewport != nullptr &&
+                            timelinePanel->x() < viewport->x() &&
+                            playPause != nullptr && jumpStart != nullptr &&
+                            jumpEnd != nullptr &&
+                            playPause->property("enabled").toBool() &&
+                            !ContainsStandardSlider(root);
                     const QList<QObject *> carFilledModels =
                             root->findChildren<QObject *>(
                                     QStringLiteral("carFilledModel"));
@@ -327,7 +364,8 @@ int main(int argc, char **argv) {
                                                                                                 initialCarState &&
                                                                                                 wireCarState &&
                                                                                                 restoredCarState &&
-                                                                                                renderedSceneVisible
+                                                                                                renderedSceneVisible &&
+                                                                                                editorStructure
                                                                                         ? 0
                                                                                         : 1;
                                                                                 if (exitCode !=
@@ -347,6 +385,8 @@ int main(int argc, char **argv) {
                                                                                             << wireCarState
                                                                                             << ", restoredCarState="
                                                                                             << restoredCarState
+                                                                                            << ", editorStructure="
+                                                                                            << editorStructure
                                                                                             << ", carPixels="
                                                                                             << carPixels
                                                                                             << ", pixelCaptureAvailable="
