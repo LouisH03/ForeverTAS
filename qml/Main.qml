@@ -114,25 +114,39 @@ ApplicationWindow {
                             Repeater3D {
                                 model: window.viewer.carEllipsoids
 
-                                delegate: Model {
+                                delegate: Node {
                                     required property var modelData
 
                                     position: modelData.position
                                     rotation: modelData.rotation
                                     scale: modelData.radii
-                                    geometry: window.wireframeMode
-                                              ? window.viewer.ellipsoidWireGeometry
-                                              : window.viewer.ellipsoidFilledGeometry
-                                    materials: DefaultMaterial {
-                                        lighting: DefaultMaterial.NoLighting
-                                        vertexColorsEnabled:
-                                            !window.wireframeMode
-                                        diffuseColor: window.wireframeMode
-                                                      ? "#ff8a3d"
-                                                      : "white"
-                                        cullMode: window.wireframeMode
-                                                  ? Material.NoCulling
-                                                  : Material.BackFaceCulling
+
+                                    Model {
+                                        objectName: "carFilledModel"
+                                        visible: !window.wireframeMode
+                                        geometry:
+                                            window.viewer.ellipsoidFilledGeometry
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            vertexColorsEnabled: true
+                                            diffuseColor: "white"
+                                            cullMode:
+                                                Material.BackFaceCulling
+                                        }
+                                    }
+
+                                    Model {
+                                        objectName: "carWireModel"
+                                        visible: window.wireframeMode
+                                        geometry:
+                                            window.viewer.ellipsoidWireGeometry
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#ff8a3d"
+                                            cullMode: Material.NoCulling
+                                        }
                                     }
                                 }
                             }

@@ -51,6 +51,22 @@ qsizetype DifferentPixelCount(const QImage &leftSource,
     return different;
 }
 
+bool ModelsHaveState(const QList<QObject *> &models,
+                     int expectedCount,
+                     bool visible) {
+    if (models.size() != expectedCount) {
+        return false;
+    }
+    for (const QObject *model : models) {
+        const QVariant geometry = model->property("geometry");
+        if (model->property("visible").toBool() != visible ||
+            !geometry.isValid() || geometry.isNull()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -114,6 +130,12 @@ int main(int argc, char **argv) {
                             QStringLiteral("trackWireModel"));
                     QObject *const car = root->findChild<QObject *>(
                             QStringLiteral("carCollisionRoot"));
+                    const QList<QObject *> carFilledModels =
+                            root->findChildren<QObject *>(
+                                    QStringLiteral("carFilledModel"));
+                    const QList<QObject *> carWireModels =
+                            root->findChildren<QObject *>(
+                                    QStringLiteral("carWireModel"));
                     if (filled == nullptr || wire == nullptr ||
                         car == nullptr) {
                         std::cerr << "track models were not created\n";
@@ -139,13 +161,21 @@ int main(int argc, char **argv) {
                             !wireGeometry.isNull();
                     const bool filledVisible =
                             filled->property("visible").toBool();
+                    const int expectedCarModels =
+                            static_cast<int>(viewer.ellipsoidCount());
+                    const bool initialCarState = ModelsHaveState(
+                            carFilledModels, expectedCarModels, true) &&
+                            ModelsHaveState(
+                                    carWireModels, expectedCarModels, false);
                     const QImage withCar = window->grabWindow();
                     car->setProperty("visible", false);
                     QTimer::singleShot(
                             150,
                             &application,
                             [&, filledAttached, wireAttached, filledVisible,
-                             withCar, car, filled, wire, window]() {
+                             initialCarState, expectedCarModels,
+                             carFilledModels, carWireModels, withCar, car,
+                             filled, wire, window]() {
                                 const QImage withoutCar =
                                         window->grabWindow();
                                 const qsizetype carPixels =
@@ -159,8 +189,10 @@ int main(int argc, char **argv) {
                                         150,
                                         &application,
                                         [&, filledAttached, wireAttached,
-                                         filledVisible, carPixels,
-                                         withFilled, wire, window]() {
+                                         filledVisible, initialCarState,
+                                         expectedCarModels, carFilledModels,
+                                         carWireModels, carPixels, withFilled,
+                                         car, wire, window]() {
                                 const QImage withoutFilled =
                                         window->grabWindow();
                                 const qsizetype filledPixels =
@@ -172,12 +204,22 @@ int main(int argc, char **argv) {
                                         150,
                                         &application,
                                         [&, filledAttached, wireAttached,
-                                         filledVisible, carPixels,
-                                         filledPixels,
-                                         wire, window]() {
+                                         filledVisible, initialCarState,
+                                         expectedCarModels, carFilledModels,
+                                         carWireModels, carPixels,
+                                         filledPixels, car, wire, window]() {
                                             const bool wireVisible =
                                                     wire->property("visible")
                                                             .toBool();
+                                            const bool wireCarState =
+                                                    ModelsHaveState(
+                                                            carFilledModels,
+                                                            expectedCarModels,
+                                                            false) &&
+                                                    ModelsHaveState(
+                                                            carWireModels,
+                                                            expectedCarModels,
+                                                            true);
                                             const QImage withWire =
                                                     window->grabWindow();
                                             wire->setProperty(
@@ -188,10 +230,14 @@ int main(int argc, char **argv) {
                                                     [&, filledAttached,
                                                      wireAttached,
                                                      filledVisible,
-                                                     carPixels,
-                                                     filledPixels,
+                                                     initialCarState,
+                                                     expectedCarModels,
+                                                     carFilledModels,
+                                                     carWireModels,
+                                                     carPixels, filledPixels,
                                                      wireVisible,
-                                                     withWire, window]() {
+                                                     wireCarState, withWire,
+                                                     car, wire, window]() {
                                                         const QImage
                                                                 withoutWire =
                                                                         window->grabWindow();
@@ -200,46 +246,122 @@ int main(int argc, char **argv) {
                                                                         DifferentPixelCount(
                                                                                 withWire,
                                                                                 withoutWire);
-                                                        const bool
-                                                                pixelCaptureAvailable =
-                                                                        carPixels > 100;
-                                                        const bool
-                                                                renderedTrackVisible =
-                                                                        !pixelCaptureAvailable ||
-                                                                        (filledPixels >
-                                                                                 100 &&
-                                                                         wirePixels >
-                                                                                 100);
-                                                        completed = true;
-                                                        exitCode =
-                                                                filledAttached &&
-                                                                        wireAttached &&
-                                                                        filledVisible &&
-                                                                        wireVisible &&
-                                                                        renderedTrackVisible
-                                                                ? 0
-                                                                : 1;
-                                                        if (exitCode != 0) {
-                                                            std::cerr
-                                                                    << "track rendering failed: filledAttached="
-                                                                    << filledAttached
-                                                                    << ", wireAttached="
-                                                                    << wireAttached
-                                                                    << ", filledVisible="
-                                                                    << filledVisible
-                                                                    << ", wireVisible="
-                                                                    << wireVisible
-                                                                    << ", carPixels="
-                                                                    << carPixels
-                                                                    << ", pixelCaptureAvailable="
-                                                                    << pixelCaptureAvailable
-                                                                    << ", filledPixels="
-                                                                    << filledPixels
-                                                                    << ", wirePixels="
-                                                                    << wirePixels
-                                                                    << '\n';
-                                                        }
-                                                        application.quit();
+                                                        wire->setProperty(
+                                                                "visible",
+                                                                true);
+                                                        root->setProperty(
+                                                                "wireframeMode",
+                                                                false);
+                                                        QTimer::singleShot(
+                                                                150,
+                                                                &application,
+                                                                [&, filledAttached,
+                                                                 wireAttached,
+                                                                 filledVisible,
+                                                                 initialCarState,
+                                                                 expectedCarModels,
+                                                                 carFilledModels,
+                                                                 carWireModels,
+                                                                 carPixels,
+                                                                 filledPixels,
+                                                                 wireVisible,
+                                                                 wireCarState,
+                                                                 wirePixels,
+                                                                 car, window]() {
+                                                                    const bool
+                                                                            restoredCarState =
+                                                                                    ModelsHaveState(
+                                                                                            carFilledModels,
+                                                                                            expectedCarModels,
+                                                                                            true) &&
+                                                                                    ModelsHaveState(
+                                                                                            carWireModels,
+                                                                                            expectedCarModels,
+                                                                                            false);
+                                                                    const QImage
+                                                                            restoredCar =
+                                                                                    window->grabWindow();
+                                                                    car->setProperty(
+                                                                            "visible",
+                                                                            false);
+                                                                    QTimer::singleShot(
+                                                                            150,
+                                                                            &application,
+                                                                            [&, filledAttached,
+                                                                             wireAttached,
+                                                                             filledVisible,
+                                                                             initialCarState,
+                                                                             carPixels,
+                                                                             filledPixels,
+                                                                             wireVisible,
+                                                                             wireCarState,
+                                                                             wirePixels,
+                                                                             restoredCarState,
+                                                                             restoredCar,
+                                                                             window]() {
+                                                                                const qsizetype
+                                                                                        restoredCarPixels =
+                                                                                                DifferentPixelCount(
+                                                                                                        restoredCar,
+                                                                                                        window->grabWindow());
+                                                                                const bool
+                                                                                        pixelCaptureAvailable =
+                                                                                                carPixels >
+                                                                                                100;
+                                                                                const bool
+                                                                                        renderedSceneVisible =
+                                                                                                !pixelCaptureAvailable ||
+                                                                                                (filledPixels >
+                                                                                                         100 &&
+                                                                                                 wirePixels >
+                                                                                                         100 &&
+                                                                                                 restoredCarPixels >
+                                                                                                         100);
+                                                                                completed =
+                                                                                        true;
+                                                                                exitCode =
+                                                                                        filledAttached &&
+                                                                                                wireAttached &&
+                                                                                                filledVisible &&
+                                                                                                wireVisible &&
+                                                                                                initialCarState &&
+                                                                                                wireCarState &&
+                                                                                                restoredCarState &&
+                                                                                                renderedSceneVisible
+                                                                                        ? 0
+                                                                                        : 1;
+                                                                                if (exitCode !=
+                                                                                    0) {
+                                                                                    std::cerr
+                                                                                            << "viewer rendering failed: filledAttached="
+                                                                                            << filledAttached
+                                                                                            << ", wireAttached="
+                                                                                            << wireAttached
+                                                                                            << ", filledVisible="
+                                                                                            << filledVisible
+                                                                                            << ", wireVisible="
+                                                                                            << wireVisible
+                                                                                            << ", initialCarState="
+                                                                                            << initialCarState
+                                                                                            << ", wireCarState="
+                                                                                            << wireCarState
+                                                                                            << ", restoredCarState="
+                                                                                            << restoredCarState
+                                                                                            << ", carPixels="
+                                                                                            << carPixels
+                                                                                            << ", pixelCaptureAvailable="
+                                                                                            << pixelCaptureAvailable
+                                                                                            << ", filledPixels="
+                                                                                            << filledPixels
+                                                                                            << ", wirePixels="
+                                                                                            << wirePixels
+                                                                                            << ", restoredCarPixels="
+                                                                                            << restoredCarPixels
+                                                                                            << '\n';
+                                                                                }
+                                                                                application.quit();
+                                                                            });
+                                                                });
                                                     });
                                         });
                                         });
