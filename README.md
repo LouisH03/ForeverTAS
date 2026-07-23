@@ -53,7 +53,7 @@ Build and launch the Qt 6 Quick application:
 ```
 
 Select an installed TMUF `Packs` directory and a replay, configure the mutation
-and evaluation windows, then start the serial search. The application persists
+and evaluation windows, then start the basic search. The application persists
 paths and search settings with the platform-native Qt settings store. Search,
 replay loading, and validation stay in C++; the QML layer only presents the
 controls and the future Race Viewer placeholder.
@@ -61,6 +61,6 @@ controls and the future Race Viewer placeholder.
 The search runs on a worker thread and can be cancelled without blocking the
 interface. It captures one state immediately before its configured closed
 mutation window, establishes the unmodified replay as its baseline, then tests
-each steering mutation serially. It evaluates maximum speed on every tick of a
+each steering mutation one at a time. It evaluates maximum speed on every tick of a
 separately configured closed evaluation window and restores the best state at
 the end.

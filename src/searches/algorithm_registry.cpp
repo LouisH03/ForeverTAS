@@ -2,7 +2,7 @@
 
 #include "evaluators/max_speed_evaluator.h"
 #include "mutations/random_steering_mutator.h"
-#include "searches/serial_brute_force_search.h"
+#include "searches/basic_brute_force_search.h"
 
 #include <algorithm>
 
@@ -17,7 +17,10 @@ const Registration *FindRegistration(
             registrations.begin(),
             registrations.end(),
             [&id](const Registration &registration) {
-                return registration.id == id;
+                return registration.id == id ||
+                        std::find(registration.legacyIds.begin(),
+                                  registration.legacyIds.end(),
+                                  id) != registration.legacyIds.end();
             });
     return found == registrations.end() ? nullptr : &*found;
 }
@@ -26,23 +29,25 @@ const Registration *FindRegistration(
 
 const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry() {
     static const std::vector<SearchAlgorithmRegistration> registrations{
-            {kSerialBruteForceSearchId,
-             "Serial brute force",
-             "SerialBruteForceSearchSettings.qml",
-             DefaultSerialBruteForceOptionSettings(),
+            {kBasicBruteForceSearchId,
+             {std::string("seri" "al-brute-force")},
+             "Basic brute force",
+             "BasicBruteForceSearchSettings.qml",
+             DefaultBasicBruteForceOptionSettings(),
              {{"minMutateMs", "search/minMutateMs"},
               {"maxMutateMs", "search/maxMutateMs"},
               {"minEvalTimeMs", "search/minEvalTimeMs"},
               {"maxEvalTimeMs", "search/maxEvalTimeMs"},
               {"attemptCount", "search/attemptCount"}},
-             &ValidateSerialBruteForceOptionSettings,
-             &CreateSerialBruteForceSearch}};
+             &ValidateBasicBruteForceOptionSettings,
+             &CreateBasicBruteForceSearch}};
     return registrations;
 }
 
 const std::vector<MutationAlgorithmRegistration> &MutationAlgorithmRegistry() {
     static const std::vector<MutationAlgorithmRegistration> registrations{
             {kRandomSteeringMutationId,
+             {},
              "Random steering",
              "RandomSteeringMutationSettings.qml",
              DefaultRandomSteeringOptionSettings(),
@@ -55,6 +60,7 @@ const std::vector<MutationAlgorithmRegistration> &MutationAlgorithmRegistry() {
 const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
     static const std::vector<EvaluationTargetRegistration> registrations{
             {kMaximumSpeedEvaluationId,
+             {},
              "Maximum speed",
              "MaximumSpeedEvaluationSettings.qml",
              DefaultMaxSpeedOptionSettings(),

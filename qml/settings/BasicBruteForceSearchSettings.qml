@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 GridLayout {
-    objectName: "serialBruteForceSearchSettings"
+    objectName: "basicBruteForceSearchSettings"
     property var controller
 
     columns: 2

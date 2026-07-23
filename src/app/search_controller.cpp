@@ -57,16 +57,37 @@ QVariantMap LoadOptionSettings(const QString &category,
                 QString::fromStdString(registration.id),
                 qKey);
         QString value;
+        bool loaded = false;
         if (storage.contains(path)) {
             value = storage.value(path).toString();
+            loaded = true;
         } else {
-            const auto legacy = registration.legacyPersistenceKeys.find(key);
-            if (legacy != registration.legacyPersistenceKeys.end() &&
-                storage.contains(QString::fromStdString(legacy->second))) {
-                value = storage.value(QString::fromStdString(legacy->second))
-                                .toString();
-            } else {
-                value = QString::fromStdString(defaultValue);
+            for (const std::string &legacyId : registration.legacyIds) {
+                const QString legacyPath = OptionSettingPath(
+                        category,
+                        QString::fromStdString(legacyId),
+                        qKey);
+                if (storage.contains(legacyPath)) {
+                    value = storage.value(legacyPath).toString();
+                    storage.setValue(path, value);
+                    loaded = true;
+                    break;
+                }
+            }
+            if (!loaded) {
+                const auto legacyKey =
+                        registration.legacyPersistenceKeys.find(key);
+                if (legacyKey != registration.legacyPersistenceKeys.end() &&
+                    storage.contains(
+                            QString::fromStdString(legacyKey->second))) {
+                    value = storage.value(
+                                           QString::fromStdString(
+                                                   legacyKey->second))
+                                    .toString();
+                    loaded = true;
+                } else {
+                    value = QString::fromStdString(defaultValue);
+                }
             }
         }
         values.insert(qKey, value);
@@ -121,7 +142,14 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     evaluationTargetId_ = StoredValue(
             kEvaluationTargetKey,
             QString::fromStdString(defaultEvaluation.id));
-    if (FindSearchAlgorithm(searchAlgorithmId_.toStdString()) == nullptr) {
+    if (const SearchAlgorithmRegistration *const registration =
+                FindSearchAlgorithm(searchAlgorithmId_.toStdString())) {
+        const QString canonical = QString::fromStdString(registration->id);
+        if (searchAlgorithmId_ != canonical) {
+            searchAlgorithmId_ = canonical;
+            persist(kSearchAlgorithmKey, canonical);
+        }
+    } else {
         searchAlgorithmId_ = QString::fromStdString(defaultSearch.id);
     }
     if (FindMutationAlgorithm(mutationAlgorithmId_.toStdString()) == nullptr) {
@@ -238,11 +266,16 @@ FOREVERTAS_DEFINE_STRING_SETTER(
 #undef FOREVERTAS_DEFINE_STRING_SETTER
 
 void SearchController::setSearchAlgorithmId(const QString &value) {
-    if (searchAlgorithmId_ == value) {
+    const SearchAlgorithmRegistration *const registration =
+            FindSearchAlgorithm(value.toStdString());
+    const QString canonical = registration == nullptr
+            ? value
+            : QString::fromStdString(registration->id);
+    if (searchAlgorithmId_ == canonical) {
         return;
     }
-    searchAlgorithmId_ = value;
-    persist(kSearchAlgorithmKey, value);
+    searchAlgorithmId_ = canonical;
+    persist(kSearchAlgorithmKey, canonical);
     loadSearchAlgorithmSettings();
     emit searchAlgorithmIdChanged();
     emit searchAlgorithmSettingsChanged();

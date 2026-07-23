@@ -236,9 +236,9 @@ int main(int argc, char **argv) {
                     QObject *const evaluationTargetCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationTargetCombo"));
-                    QObject *const serialBruteForceSettings =
+                    QObject *const basicBruteForceSettings =
                             root->findChild<QObject *>(QStringLiteral(
-                                    "serialBruteForceSearchSettings"));
+                                    "basicBruteForceSearchSettings"));
                     QObject *const randomSteeringSettings =
                             root->findChild<QObject *>(QStringLiteral(
                                     "randomSteeringMutationSettings"));
@@ -320,14 +320,14 @@ int main(int argc, char **argv) {
                                     1 &&
                             searchAlgorithmCombo->property("currentValue")
                                             .toString() ==
-                                    QStringLiteral("serial-brute-force") &&
+                                    QStringLiteral("basic-brute-force") &&
                             mutationAlgorithmCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("random-steering") &&
                             evaluationTargetCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("maximum-speed") &&
-                            serialBruteForceSettings != nullptr &&
+                            basicBruteForceSettings != nullptr &&
                             randomSteeringSettings != nullptr &&
                             maximumSpeedSettings != nullptr;
                     editorStructure = timeline != nullptr &&

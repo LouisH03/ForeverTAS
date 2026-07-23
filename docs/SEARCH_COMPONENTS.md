@@ -40,8 +40,8 @@ ForeverTAS/
 │   │   ├── search_algorithm.h
 │   │   ├── search_runner.h
 │   │   ├── search_runner.cpp
-│   │   ├── serial_brute_force_search.h
-│   │   └── serial_brute_force_search.cpp
+│   │   ├── basic_brute_force_search.h
+│   │   └── basic_brute_force_search.cpp
 │   │
 │   ├── mutations/
 │   │   ├── input_mutator.h
@@ -63,7 +63,7 @@ ForeverTAS/
 │   ├── Main.qml
 │   └── settings/
 │       ├── AlgorithmSelector.qml
-│       ├── SerialBruteForceSearchSettings.qml
+│       ├── BasicBruteForceSearchSettings.qml
 │       ├── RandomSteeringMutationSettings.qml
 │       └── MaximumSpeedEvaluationSettings.qml
 │
@@ -136,7 +136,7 @@ selected mutation configuration when the registry factory constructs it.
 ### Evaluation interface
 
 `CandidateEvaluator::Evaluate` receives a physics-sandbox state and returns a
-numeric score. Higher scores are currently treated as better by the serial
+numeric score. Higher scores are currently treated as better by the basic
 brute-force implementation.
 
 Evaluation-specific configuration belongs in the concrete evaluator instance.
@@ -172,7 +172,7 @@ them as stable public identifiers.
 Use lowercase, hyphen-separated IDs:
 
 ```text
-serial-brute-force
+basic-brute-force
 random-steering
 maximum-speed
 ```
@@ -288,7 +288,7 @@ configuration/evaluation/<option-id>/<setting-key>
 Examples:
 
 ```text
-configuration/search/serial-brute-force/attemptCount
+configuration/search/basic-brute-force/attemptCount
 configuration/mutation/random-steering/seed
 ```
 
@@ -484,7 +484,7 @@ Before committing a new selectable component:
 
 ### Search algorithms
 
-- `serial-brute-force` — evaluates the baseline and independently mutated
+- `basic-brute-force` — evaluates the baseline and independently mutated
   attempts over a configurable time range.
 
 ### Mutation algorithms

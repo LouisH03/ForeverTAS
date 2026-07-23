@@ -47,8 +47,8 @@ add_library(forevertas_core STATIC
     src/searches/algorithm_registry.h
     src/searches/option_configuration.h
     src/searches/option_settings_utils.h
-    src/searches/serial_brute_force_search.cpp
-    src/searches/serial_brute_force_search.h
+    src/searches/basic_brute_force_search.cpp
+    src/searches/basic_brute_force_search.h
     src/searches/search_runner.cpp
     src/searches/search_runner.h)
 target_include_directories(forevertas_core PUBLIC
@@ -88,7 +88,7 @@ qt_add_qml_module(forevertas
     QML_FILES
         qml/Main.qml
         qml/settings/AlgorithmSelector.qml
-        qml/settings/SerialBruteForceSearchSettings.qml
+        qml/settings/BasicBruteForceSearchSettings.qml
         qml/settings/RandomSteeringMutationSettings.qml
         qml/settings/MaximumSpeedEvaluationSettings.qml)
 target_link_libraries(forevertas PRIVATE

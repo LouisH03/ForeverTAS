@@ -55,9 +55,9 @@ bool TestValidation(const QString &packsDirectory,
                       "valid defaults and paths did not enable Start");
     okay &= Check(
             HasOption(controller.searchAlgorithmOptions(),
-                      QStringLiteral("serial-brute-force"),
-                      QStringLiteral("Serial brute force"),
-                      QStringLiteral("SerialBruteForceSearchSettings.qml")),
+                      QStringLiteral("basic-brute-force"),
+                      QStringLiteral("Basic brute force"),
+                      QStringLiteral("BasicBruteForceSearchSettings.qml")),
             "search algorithm registry metadata was not exposed");
     okay &= Check(
             HasOption(controller.mutationAlgorithmOptions(),
@@ -75,7 +75,7 @@ bool TestValidation(const QString &packsDirectory,
     controller.setSearchAlgorithmId(QStringLiteral("missing-search"));
     okay &= Check(!controller.canStart(),
                   "unknown search algorithm enabled Start");
-    controller.setSearchAlgorithmId(QStringLiteral("serial-brute-force"));
+    controller.setSearchAlgorithmId(QStringLiteral("basic-brute-force"));
     controller.setMutationAlgorithmId(QStringLiteral("missing-mutation"));
     okay &= Check(!controller.canStart(),
                   "unknown mutation algorithm enabled Start");
@@ -211,7 +211,7 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setMutationAlgorithmSetting(
                 QStringLiteral("seed"), QStringLiteral("4294967295"));
         controller.setSearchAlgorithmId(QStringLiteral("missing-search"));
-        controller.setSearchAlgorithmId(QStringLiteral("serial-brute-force"));
+        controller.setSearchAlgorithmId(QStringLiteral("basic-brute-force"));
         controller.setMutationAlgorithmId(QStringLiteral("missing-mutation"));
         controller.setMutationAlgorithmId(QStringLiteral("random-steering"));
         controller.setEvaluationTargetId(QStringLiteral("missing-evaluation"));
@@ -251,7 +251,7 @@ bool TestPersistence(const QString &packsDirectory,
                           QStringLiteral("4294967295"),
                   "mutation seed was not persisted");
     okay &= Check(restored.searchAlgorithmId() ==
-                          QStringLiteral("serial-brute-force"),
+                          QStringLiteral("basic-brute-force"),
                   "search algorithm selection was not persisted");
     okay &= Check(restored.mutationAlgorithmId() ==
                           QStringLiteral("random-steering"),
@@ -264,7 +264,7 @@ bool TestPersistence(const QString &packsDirectory,
     okay &= Check(
             QSettings()
                             .value(QStringLiteral(
-                                    "configuration/search/serial-brute-force/"
+                                    "configuration/search/basic-brute-force/"
                                     "attemptCount"))
                             .toString() == QStringLiteral("42"),
             "search option setting was not namespaced");
@@ -280,6 +280,14 @@ bool TestPersistence(const QString &packsDirectory,
 
 bool TestLegacySettingsMigration() {
     QSettings().clear();
+    const QString previousSearchId =
+            QStringLiteral("seri" "al-brute-force");
+    QSettings().setValue(QStringLiteral("selection/searchAlgorithm"),
+                         previousSearchId);
+    QSettings().setValue(
+            QStringLiteral("configuration/search/%1/attemptCount")
+                    .arg(previousSearchId),
+            QStringLiteral("88"));
     QSettings().setValue(QStringLiteral("search/minMutateMs"),
                          QStringLiteral("1200"));
     QSettings().setValue(QStringLiteral("search/maxMutateMs"),
@@ -302,13 +310,27 @@ bool TestLegacySettingsMigration() {
     okay &= Check(
             controller.searchAlgorithmSettings()
                             .value(QStringLiteral("attemptCount"))
-                            .toString() == QStringLiteral("77"),
-            "legacy attempt count was not loaded");
+                            .toString() == QStringLiteral("88"),
+            "previous namespaced attempt count was not loaded");
     okay &= Check(
             controller.mutationAlgorithmSettings()
                             .value(QStringLiteral("seed"))
                             .toString() == QStringLiteral("987"),
             "legacy mutation settings were not loaded");
+    okay &= Check(controller.searchAlgorithmId() ==
+                          QStringLiteral("basic-brute-force"),
+                  "previous search ID was not canonicalized");
+    okay &= Check(
+            QSettings().value(QStringLiteral("selection/searchAlgorithm"))
+                            .toString() == QStringLiteral("basic-brute-force"),
+            "canonical search ID was not persisted");
+    okay &= Check(
+            QSettings()
+                            .value(QStringLiteral(
+                                    "configuration/search/basic-brute-force/"
+                                    "attemptCount"))
+                            .toString() == QStringLiteral("88"),
+            "previous namespaced setting was not promoted");
     QSettings().clear();
     return okay;
 }

@@ -13,12 +13,13 @@
 
 namespace forevertas {
 
-inline constexpr char kSerialBruteForceSearchId[] = "serial-brute-force";
+inline constexpr char kBasicBruteForceSearchId[] = "basic-brute-force";
 inline constexpr char kRandomSteeringMutationId[] = "random-steering";
 inline constexpr char kMaximumSpeedEvaluationId[] = "maximum-speed";
 
 struct SearchAlgorithmRegistration {
     std::string id;
+    std::vector<std::string> legacyIds;
     std::string displayName;
     std::string settingsComponent;
     OptionSettings defaultSettings;
@@ -31,6 +32,7 @@ struct SearchAlgorithmRegistration {
 
 struct MutationAlgorithmRegistration {
     std::string id;
+    std::vector<std::string> legacyIds;
     std::string displayName;
     std::string settingsComponent;
     OptionSettings defaultSettings;
@@ -41,6 +43,7 @@ struct MutationAlgorithmRegistration {
 
 struct EvaluationTargetRegistration {
     std::string id;
+    std::vector<std::string> legacyIds;
     std::string displayName;
     std::string settingsComponent;
     OptionSettings defaultSettings;

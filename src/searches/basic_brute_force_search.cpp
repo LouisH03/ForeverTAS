@@ -1,4 +1,4 @@
-#include "searches/serial_brute_force_search.h"
+#include "searches/basic_brute_force_search.h"
 
 #include "searches/option_settings_utils.h"
 
@@ -131,10 +131,10 @@ struct BestCandidate {
     std::optional<PhysicsSandboxState> snapshot;
 };
 
-std::optional<SerialBruteForceSettings> ParseSerialBruteForceSettings(
+std::optional<BasicBruteForceSettings> ParseBasicBruteForceSettings(
         const OptionSettings &settings,
         std::string *error) {
-    const OptionSettings defaults = DefaultSerialBruteForceOptionSettings();
+    const OptionSettings defaults = DefaultBasicBruteForceOptionSettings();
     if (const auto keyError = ValidateOptionSettingKeys(settings, defaults)) {
         *error = *keyError;
         return std::nullopt;
@@ -173,7 +173,7 @@ std::optional<SerialBruteForceSettings> ParseSerialBruteForceSettings(
         return std::nullopt;
     }
 
-    return SerialBruteForceSettings{
+    return BasicBruteForceSettings{
             *minMutateMs,
             *maxMutateMs,
             *minEvalTimeMs,
@@ -183,13 +183,13 @@ std::optional<SerialBruteForceSettings> ParseSerialBruteForceSettings(
 
 }  // namespace
 
-SerialBruteForceSettings DefaultSerialBruteForceSettings() {
+BasicBruteForceSettings DefaultBasicBruteForceSettings() {
     return {1000, 6000, 1000, 6000, 10u};
 }
 
-OptionSettings DefaultSerialBruteForceOptionSettings() {
-    const SerialBruteForceSettings defaults =
-            DefaultSerialBruteForceSettings();
+OptionSettings DefaultBasicBruteForceOptionSettings() {
+    const BasicBruteForceSettings defaults =
+            DefaultBasicBruteForceSettings();
     return {
             {"minMutateMs", std::to_string(defaults.minMutateMs)},
             {"maxMutateMs", std::to_string(defaults.maxMutateMs)},
@@ -198,8 +198,8 @@ OptionSettings DefaultSerialBruteForceOptionSettings() {
             {"attemptCount", std::to_string(defaults.attemptCount)}};
 }
 
-std::optional<std::string> ValidateSerialBruteForceSettings(
-        const SerialBruteForceSettings &settings,
+std::optional<std::string> ValidateBasicBruteForceSettings(
+        const BasicBruteForceSettings &settings,
         std::uint32_t tickDurationMs) {
     if (tickDurationMs == 0u) {
         return "tick duration must be greater than zero";
@@ -230,40 +230,40 @@ std::optional<std::string> ValidateSerialBruteForceSettings(
     return std::nullopt;
 }
 
-std::optional<std::string> ValidateSerialBruteForceOptionSettings(
+std::optional<std::string> ValidateBasicBruteForceOptionSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     std::string parseError;
-    const auto parsed = ParseSerialBruteForceSettings(settings, &parseError);
+    const auto parsed = ParseBasicBruteForceSettings(settings, &parseError);
     if (!parsed) {
         return parseError;
     }
-    return ValidateSerialBruteForceSettings(*parsed, tickDurationMs);
+    return ValidateBasicBruteForceSettings(*parsed, tickDurationMs);
 }
 
-std::unique_ptr<SearchAlgorithm> CreateSerialBruteForceSearch(
+std::unique_ptr<SearchAlgorithm> CreateBasicBruteForceSearch(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     std::string parseError;
-    const auto parsed = ParseSerialBruteForceSettings(settings, &parseError);
+    const auto parsed = ParseBasicBruteForceSettings(settings, &parseError);
     if (!parsed) {
         throw std::invalid_argument(parseError);
     }
     if (const auto error =
-                ValidateSerialBruteForceSettings(*parsed, tickDurationMs)) {
+                ValidateBasicBruteForceSettings(*parsed, tickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    return std::make_unique<SerialBruteForceSearch>(*parsed);
+    return std::make_unique<BasicBruteForceSearch>(*parsed);
 }
 
-SerialBruteForceSearch::SerialBruteForceSearch(
-        SerialBruteForceSettings settings)
+BasicBruteForceSearch::BasicBruteForceSearch(
+        BasicBruteForceSettings settings)
     : settings_(settings) {}
 
-SearchResult SerialBruteForceSearch::Run(
+SearchResult BasicBruteForceSearch::Run(
         const SearchExecutionContext &context) const {
     const auto started = std::chrono::steady_clock::now();
-    if (const auto error = ValidateSerialBruteForceSettings(
+    if (const auto error = ValidateBasicBruteForceSettings(
                 settings_, context.tickDurationMs)) {
         throw std::invalid_argument(*error);
     }

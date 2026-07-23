@@ -1,6 +1,6 @@
 #include "evaluators/max_speed_evaluator.h"
 #include "mutations/random_steering_mutator.h"
-#include "searches/serial_brute_force_search.h"
+#include "searches/basic_brute_force_search.h"
 #include "searches/search_runner.h"
 
 #include <cmath>
@@ -102,17 +102,17 @@ bool TestMaxSpeedEvaluator() {
                  "max-speed evaluator returned the wrong magnitude");
 }
 
-bool IsValid(const forevertas::SerialBruteForceSettings &settings) {
-    return !forevertas::ValidateSerialBruteForceSettings(settings, 10u);
+bool IsValid(const forevertas::BasicBruteForceSettings &settings) {
+    return !forevertas::ValidateBasicBruteForceSettings(settings, 10u);
 }
 
 bool TestSearchSettings() {
-    const forevertas::SerialBruteForceSettings valid{
+    const forevertas::BasicBruteForceSettings valid{
             1000, 2000, 1500, 3000, 10u};
     bool okay = Check(IsValid(valid), "valid search settings were rejected");
 
     okay &= Check(
-            forevertas::ValidateSerialBruteForceSettings(valid, 0u)
+            forevertas::ValidateBasicBruteForceSettings(valid, 0u)
                     .has_value(),
             "zero tick duration was accepted");
 
@@ -160,17 +160,17 @@ bool TestSearchSettings() {
     changed.attemptCount = 0u;
     okay &= Check(!IsValid(changed), "zero attempts were accepted");
 
-    const forevertas::SerialBruteForceSettings identical{
+    const forevertas::BasicBruteForceSettings identical{
             1000, 2000, 1000, 2000, 1u};
     okay &= Check(IsValid(identical),
                   "identical mutation and evaluation windows were rejected");
 
-    const forevertas::SerialBruteForceSettings disjoint{
+    const forevertas::BasicBruteForceSettings disjoint{
             1000, 1500, 2000, 3000, 10000u};
     okay &= Check(IsValid(disjoint),
                   "disjoint mutation and evaluation windows were rejected");
 
-    const forevertas::SerialBruteForceSettings largeAligned{
+    const forevertas::BasicBruteForceSettings largeAligned{
             9223372036854775800LL,
             9223372036854775800LL,
             9223372036854775800LL,
@@ -183,7 +183,7 @@ bool TestSearchSettings() {
 
 bool TestAlgorithmRegistry() {
     const auto *const search = forevertas::FindSearchAlgorithm(
-            forevertas::kSerialBruteForceSearchId);
+            forevertas::kBasicBruteForceSearchId);
     const auto *const mutation = forevertas::FindMutationAlgorithm(
             forevertas::kRandomSteeringMutationId);
     const auto *const evaluation = forevertas::FindEvaluationTarget(
