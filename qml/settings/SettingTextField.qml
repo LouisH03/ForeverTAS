@@ -9,6 +9,12 @@ RowLayout {
     property string value
     property bool running: false
     property string fieldObjectName: ""
+    property real dragStep: 1
+    property int decimals: 0
+    property bool integer: true
+    property real minimum: -Number.MAX_VALUE
+    property real maximum: Number.MAX_VALUE
+    readonly property bool scrubbable: true
     signal edited(string value)
 
     Layout.fillWidth: true
@@ -20,16 +26,16 @@ RowLayout {
         wrapMode: Text.WordWrap
     }
 
-    TextField {
+    ScrubNumberField {
         objectName: root.fieldObjectName
         Layout.preferredWidth: 126
-        horizontalAlignment: TextInput.AlignRight
-        text: root.value
+        value: root.value
         enabled: !root.running
-        selectByMouse: true
-        onEditingFinished: {
-            if (text !== root.value)
-                root.edited(text)
-        }
+        dragStep: root.dragStep
+        decimals: root.decimals
+        integer: root.integer
+        minimum: root.minimum
+        maximum: root.maximum
+        onEdited: value => root.edited(value)
     }
 }

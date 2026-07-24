@@ -32,10 +32,15 @@ ColumnLayout {
         zKey: "rollDegrees"
     }
 
-    SettingTextField {
+    SettingSlider {
+        sliderObjectName: "rotationWeightSlider"
         label: qsTr("Rotation weight (%)")
         value: parent.settings["rotationWeightPercent"] ?? ""
         running: controller.running
+        from: 0
+        to: 100
+        stepSize: 1
+        suffix: "%"
         onEdited: value =>
             controller.setEvaluationTargetSetting(
                 "rotationWeightPercent", value)

@@ -26,5 +26,6 @@ ColumnLayout {
         xKey: "sizeX"
         yKey: "sizeY"
         zKey: "sizeZ"
+        minimum: 0.001
     }
 }

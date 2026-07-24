@@ -20,6 +20,8 @@ ColumnLayout {
         label: root.minimumLabel
         value: root.settings[root.minimumKey] ?? ""
         running: root.running
+        dragStep: 10
+        minimum: 0
         onEdited: value => root.updateSetting(root.minimumKey, value)
     }
 
@@ -28,6 +30,8 @@ ColumnLayout {
         label: root.maximumLabel
         value: root.settings[root.maximumKey] ?? ""
         running: root.running
+        dragStep: 10
+        minimum: 0
         onEdited: value => root.updateSetting(root.maximumKey, value)
     }
 }

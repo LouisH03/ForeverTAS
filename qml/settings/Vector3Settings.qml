@@ -12,6 +12,10 @@ ColumnLayout {
     property string xKey: "x"
     property string yKey: "y"
     property string zKey: "z"
+    property real dragStep: 0.1
+    property int decimals: 3
+    property real minimum: -Number.MAX_VALUE
+    property real maximum: Number.MAX_VALUE
 
     Layout.fillWidth: true
     spacing: 4
@@ -27,32 +31,41 @@ ColumnLayout {
         columns: 3
         columnSpacing: 6
 
-        TextField {
+        ScrubNumberField {
             Layout.fillWidth: true
-            placeholderText: "X"
-            text: root.settings[root.xKey] ?? ""
+            scrubLabel: "X"
+            value: root.settings[root.xKey] ?? ""
             enabled: !root.running
-            horizontalAlignment: TextInput.AlignRight
-            selectByMouse: true
-            onTextEdited: root.updateSetting(root.xKey, text)
+            integer: false
+            dragStep: root.dragStep
+            decimals: root.decimals
+            minimum: root.minimum
+            maximum: root.maximum
+            onEdited: value => root.updateSetting(root.xKey, value)
         }
-        TextField {
+        ScrubNumberField {
             Layout.fillWidth: true
-            placeholderText: "Y"
-            text: root.settings[root.yKey] ?? ""
+            scrubLabel: "Y"
+            value: root.settings[root.yKey] ?? ""
             enabled: !root.running
-            horizontalAlignment: TextInput.AlignRight
-            selectByMouse: true
-            onTextEdited: root.updateSetting(root.yKey, text)
+            integer: false
+            dragStep: root.dragStep
+            decimals: root.decimals
+            minimum: root.minimum
+            maximum: root.maximum
+            onEdited: value => root.updateSetting(root.yKey, value)
         }
-        TextField {
+        ScrubNumberField {
             Layout.fillWidth: true
-            placeholderText: "Z"
-            text: root.settings[root.zKey] ?? ""
+            scrubLabel: "Z"
+            value: root.settings[root.zKey] ?? ""
             enabled: !root.running
-            horizontalAlignment: TextInput.AlignRight
-            selectByMouse: true
-            onTextEdited: root.updateSetting(root.zKey, text)
+            integer: false
+            dragStep: root.dragStep
+            decimals: root.decimals
+            minimum: root.minimum
+            maximum: root.maximum
+            onEdited: value => root.updateSetting(root.zKey, value)
         }
     }
 }

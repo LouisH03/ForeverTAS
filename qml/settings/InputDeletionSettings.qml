@@ -22,6 +22,7 @@ ColumnLayout {
         label: qsTr("Seed")
         value: root.settings["seed"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("seed", value)
     }
 
@@ -36,6 +37,7 @@ ColumnLayout {
         label: qsTr("Maximum steering deletions")
         value: root.settings["steerMaxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("steerMaxCount", value)
     }
     SettingSwitch {
@@ -49,6 +51,7 @@ ColumnLayout {
         label: qsTr("Maximum accelerate deletions")
         value: root.settings["accelerateMaxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("accelerateMaxCount", value)
     }
     SettingSwitch {
@@ -62,6 +65,7 @@ ColumnLayout {
         label: qsTr("Maximum brake deletions")
         value: root.settings["brakeMaxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("brakeMaxCount", value)
     }
 }

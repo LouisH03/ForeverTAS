@@ -39,7 +39,7 @@ const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry() {
     static const std::vector<SearchAlgorithmRegistration> registrations{
             {kBasicBruteForceSearchId,
              {std::string("seri" "al-brute-force")},
-             "Basic brute force",
+             "Basic bruteforce",
              "BasicBruteForceSearchSettings.qml",
              DefaultBasicBruteForceOptionSettings(),
              {{"minMutateMs", "search/minMutateMs"},

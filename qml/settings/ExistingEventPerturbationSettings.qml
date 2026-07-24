@@ -22,27 +22,33 @@ ColumnLayout {
         label: qsTr("Seed")
         value: root.settings["seed"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("seed", value)
     }
     SettingTextField {
         label: qsTr("Minimum event count")
         value: root.settings["minCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("minCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum event count")
         value: root.settings["maxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("maxCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum timing shift (ms)")
         value: root.settings["maxTimeShiftMs"] ?? ""
         running: root.running
+        dragStep: 10
+        minimum: 0
         onEdited: value => root.updateSetting("maxTimeShiftMs", value)
     }
     SettingCombo {
+        comboObjectName: "perturbationSteeringModeCombo"
         label: qsTr("Steering perturbation")
         options: [
             { label: qsTr("Delta"), value: "delta" },
@@ -56,24 +62,40 @@ ColumnLayout {
         label: qsTr("Steering delta minimum")
         value: root.settings["steerDeltaMin"] ?? ""
         running: root.running
+        integer: false
+        decimals: 3
+        dragStep: 0.01
         onEdited: value => root.updateSetting("steerDeltaMin", value)
     }
     SettingTextField {
         label: qsTr("Steering delta maximum")
         value: root.settings["steerDeltaMax"] ?? ""
         running: root.running
+        integer: false
+        decimals: 3
+        dragStep: 0.01
         onEdited: value => root.updateSetting("steerDeltaMax", value)
     }
-    SettingTextField {
+    SettingSlider {
+        sliderObjectName: "perturbationAbsoluteMinimumSlider"
         label: qsTr("Steering absolute minimum")
         value: root.settings["steerAbsoluteMin"] ?? ""
         running: root.running
+        from: -1
+        to: 1
+        stepSize: 0.01
+        decimals: 2
         onEdited: value => root.updateSetting("steerAbsoluteMin", value)
     }
-    SettingTextField {
+    SettingSlider {
+        sliderObjectName: "perturbationAbsoluteMaximumSlider"
         label: qsTr("Steering absolute maximum")
         value: root.settings["steerAbsoluteMax"] ?? ""
         running: root.running
+        from: -1
+        to: 1
+        stepSize: 0.01
+        decimals: 2
         onEdited: value => root.updateSetting("steerAbsoluteMax", value)
     }
     SettingSwitch {

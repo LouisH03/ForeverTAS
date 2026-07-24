@@ -48,7 +48,8 @@ ColumnLayout {
         valueRole: "id"
         currentIndex: root.optionIndex(root.selectedId)
         enabled: !root.controller.running
-        onActivated: root.selectionRequested(currentValue.toString())
+        onActivated: selectedIndex =>
+            root.selectionRequested(valueAt(selectedIndex).toString())
     }
 
     Loader {

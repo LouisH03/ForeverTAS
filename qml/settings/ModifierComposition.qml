@@ -86,6 +86,8 @@ ColumnLayout {
         model: passModel
 
         delegate: Rectangle {
+            id: passDelegate
+
             required property int index
             required property string passId
             required property var passSettings
@@ -133,9 +135,10 @@ ColumnLayout {
                         valueRole: "id"
                         currentIndex: root.optionIndex(passId)
                         enabled: !root.controller.running
-                        onActivated:
+                        onActivated: selectedIndex =>
                             root.controller.setModifierPassId(
-                                index, currentValue.toString())
+                                passDelegate.index,
+                                valueAt(selectedIndex).toString())
                     }
 
                     ToolButton {
@@ -211,7 +214,8 @@ ColumnLayout {
                      && !root.controller.running
             onClicked:
                 root.controller.addModifierPass(
-                    addModifierCombo.currentValue.toString())
+                    addModifierCombo.valueAt(
+                        addModifierCombo.currentIndex).toString())
         }
     }
 }

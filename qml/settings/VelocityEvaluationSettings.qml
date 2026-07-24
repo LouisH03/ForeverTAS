@@ -16,6 +16,7 @@ ColumnLayout {
     }
 
     SettingCombo {
+        comboObjectName: "velocityModeCombo"
         label: qsTr("Velocity objective")
         options: [
             { label: qsTr("Total speed"), value: "total" },
@@ -47,10 +48,15 @@ ColumnLayout {
         zKey: "directionZ"
     }
 
-    SettingTextField {
+    SettingSlider {
+        sliderObjectName: "minimumAlignmentSlider"
         label: qsTr("Minimum alignment (%)")
         value: parent.settings["minAlignmentPercent"] ?? ""
         running: controller.running
+        from: -100
+        to: 100
+        stepSize: 1
+        suffix: "%"
         onEdited: value =>
             controller.setEvaluationTargetSetting(
                 "minAlignmentPercent", value)

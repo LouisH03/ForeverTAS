@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QImage>
+#include <QInputDevice>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -231,6 +232,11 @@ int main(int argc, char **argv) {
                     QObject *const searchAlgorithmCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("searchAlgorithmCombo"));
+                    QObject *const settingsScroll = root->findChild<QObject *>(
+                            QStringLiteral("settingsScroll"));
+                    QObject *const settingsWheelHandler =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("settingsWheelHandler"));
                     auto *const evaluationSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationSection")));
@@ -341,6 +347,9 @@ int main(int argc, char **argv) {
                             searchAlgorithmCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("basic-brute-force") &&
+                            searchAlgorithmCombo->property("displayText")
+                                            .toString() ==
+                                    QStringLiteral("Basic bruteforce") &&
                             modifierComposition
                                             ->property("firstPassSelectedId")
                                             .toString() ==
@@ -379,6 +388,48 @@ int main(int argc, char **argv) {
                             addModifierCombo->property("slotStyled").toBool() &&
                             modifierComposition
                                     ->property("firstPassSlotStyled").toBool();
+                    bool wheelScrollingValid =
+                            settingsScroll != nullptr &&
+                            settingsWheelHandler != nullptr &&
+                            settingsWheelHandler->property("blocking").toBool();
+                    if (wheelScrollingValid) {
+                        QObject *const flickable =
+                                settingsScroll->property("contentItem")
+                                        .value<QObject *>();
+                        const int acceptedDevices =
+                                settingsWheelHandler
+                                        ->property("acceptedDevices")
+                                        .toInt();
+                        const int mouseDevice = static_cast<int>(
+                                QInputDevice::DeviceType::Mouse);
+                        const int touchPadDevice = static_cast<int>(
+                                QInputDevice::DeviceType::TouchPad);
+                        wheelScrollingValid &= flickable != nullptr &&
+                                (acceptedDevices & mouseDevice) != 0 &&
+                                (acceptedDevices & touchPadDevice) != 0;
+                        if (wheelScrollingValid) {
+                            QVariant angleDelta;
+                            const bool angleInvoked = QMetaObject::invokeMethod(
+                                    settingsScroll,
+                                    "wheelDeltaPixels",
+                                    Qt::DirectConnection,
+                                    Q_RETURN_ARG(QVariant, angleDelta),
+                                    Q_ARG(QVariant, QVariant(0.0)),
+                                    Q_ARG(QVariant, QVariant(-15.0)));
+                            QVariant pixelDelta;
+                            const bool pixelInvoked = QMetaObject::invokeMethod(
+                                    settingsScroll,
+                                    "wheelDeltaPixels",
+                                    Qt::DirectConnection,
+                                    Q_RETURN_ARG(QVariant, pixelDelta),
+                                    Q_ARG(QVariant, QVariant(-9.0)),
+                                    Q_ARG(QVariant, QVariant(-120.0)));
+                            wheelScrollingValid &= angleInvoked &&
+                                    angleDelta.toDouble() == -30.0 &&
+                                    pixelInvoked &&
+                                    pixelDelta.toDouble() == -9.0;
+                        }
+                    }
                     bool everyOwnedPanelLoaded =
                             evaluationTargetSelector != nullptr &&
                             modifierComposition != nullptr;
@@ -437,6 +488,133 @@ int main(int argc, char **argv) {
                                                 .toString() ==
                                         QString::fromLatin1(objectName);
                     }
+
+                    const auto activateCombo = [](QObject *combo, int index) {
+                        return combo != nullptr && QMetaObject::invokeMethod(
+                                combo,
+                                "activated",
+                                Qt::DirectConnection,
+                                Q_ARG(int, index));
+                    };
+                    QObject *const firstPassForCombo =
+                            modifierComposition
+                                    ->property("firstRenderedPass")
+                                    .value<QObject *>();
+                    QObject *const modifierPassCombo =
+                            firstPassForCombo == nullptr
+                            ? nullptr
+                            : firstPassForCombo->findChild<QObject *>(
+                                      QStringLiteral("modifierPassCombo0"));
+
+                    bool dropdownStateUpdates =
+                            activateCombo(modifierPassCombo, 2);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    dropdownStateUpdates &=
+                            controller.modifierPasses()
+                                            .front()
+                                            .toMap()
+                                            .value(QStringLiteral("id"))
+                                            .toString() ==
+                                    QStringLiteral("smooth-steering") &&
+                            modifierComposition
+                                            ->property(
+                                                    "firstPassSettingsObjectName")
+                                            .toString() ==
+                                    QStringLiteral("smoothSteeringSettings");
+
+                    dropdownStateUpdates &=
+                            activateCombo(modifierPassCombo, 3);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QObject *const insertionSettings =
+                            modifierComposition
+                                    ->property("firstPassSettingsItem")
+                                    .value<QObject *>();
+                    QObject *const insertionModeCombo =
+                            insertionSettings == nullptr
+                            ? nullptr
+                            : insertionSettings->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "insertionSteeringModeCombo"));
+                    QObject *const insertionMinimumSlider =
+                            insertionSettings == nullptr
+                            ? nullptr
+                            : insertionSettings->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "insertionAbsoluteMinimumSlider"));
+                    QObject *const insertionMaximumSlider =
+                            insertionSettings == nullptr
+                            ? nullptr
+                            : insertionSettings->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "insertionAbsoluteMaximumSlider"));
+                    dropdownStateUpdates &=
+                            activateCombo(insertionModeCombo, 1);
+                    QCoreApplication::processEvents();
+                    const QVariantMap insertionPass =
+                            controller.modifierPasses().front().toMap();
+                    dropdownStateUpdates &=
+                            insertionPass.value(QStringLiteral("settings"))
+                                            .toMap()
+                                            .value(QStringLiteral("steerMode"))
+                                            .toString() ==
+                                    QStringLiteral("absolute");
+
+                    const bool insertionSlidersValid =
+                            insertionMinimumSlider != nullptr &&
+                            insertionMaximumSlider != nullptr &&
+                            insertionMinimumSlider->property("from").toReal() ==
+                                    -1.0 &&
+                            insertionMinimumSlider->property("to").toReal() ==
+                                    1.0 &&
+                            insertionMaximumSlider->property("from").toReal() ==
+                                    -1.0 &&
+                            insertionMaximumSlider->property("to").toReal() ==
+                                    1.0;
+
+                    dropdownStateUpdates &=
+                            activateCombo(evaluationTargetCombo, 3);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    dropdownStateUpdates &=
+                            controller.evaluationTargetId() ==
+                                    QStringLiteral("point-target") &&
+                            evaluationTargetSelector
+                                            ->property("settingsObjectName")
+                                            .toString() ==
+                                    QStringLiteral(
+                                            "pointTargetEvaluationSettings");
+
+                    dropdownStateUpdates &=
+                            activateCombo(evaluationTargetCombo, 4);
+                    QCoreApplication::processEvents();
+                    QObject *const rotationWeightSlider =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("rotationWeightSlider"));
+                    const bool poseSliderValid =
+                            rotationWeightSlider != nullptr &&
+                            rotationWeightSlider->property("from").toReal() ==
+                                    0.0 &&
+                            rotationWeightSlider->property("to").toReal() ==
+                                    100.0;
+
+                    dropdownStateUpdates &=
+                            activateCombo(evaluationTargetCombo, 0);
+                    dropdownStateUpdates &=
+                            activateCombo(modifierPassCombo, 0);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QObject *const minimumAlignmentSlider =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("minimumAlignmentSlider"));
+                    const bool velocitySliderValid =
+                            minimumAlignmentSlider != nullptr &&
+                            minimumAlignmentSlider->property("from").toReal() ==
+                                    -100.0 &&
+                            minimumAlignmentSlider->property("to").toReal() ==
+                                    100.0;
+
                     controller.setModifierPassId(
                             0, QStringLiteral("random-steering"));
                     controller.setEvaluationTargetId(
@@ -491,6 +669,9 @@ int main(int argc, char **argv) {
                                             .value(QStringLiteral("minTimeMs"))
                                             .toString() ==
                                     QStringLiteral("1010");
+                    const bool unboundedFieldsScrubbable =
+                            minimumTimeField != nullptr &&
+                            minimumTimeField->property("scrubbable").toBool();
                     controller.setModifierPassSetting(
                             0,
                             QStringLiteral("minTimeMs"),
@@ -565,7 +746,10 @@ int main(int argc, char **argv) {
                             fpsCounterValid && wireframeTextIsWhite &&
                             automaticPacksUi && algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
-                            comboSlotsStyled && modifierFocusStable &&
+                            comboSlotsStyled && wheelScrollingValid &&
+                            dropdownStateUpdates && insertionSlidersValid &&
+                            poseSliderValid && velocitySliderValid &&
+                            modifierFocusStable && unboundedFieldsScrubbable &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
                             playPause->property("enabled").toBool() &&
@@ -586,7 +770,7 @@ int main(int argc, char **argv) {
                             IsCenteredIcon(jumpStartIcon, 18.0) &&
                             IsCenteredIcon(jumpEndIcon, 18.0) &&
                             playIcon->isVisible() && !pauseIcon->isVisible() &&
-                            !ContainsStandardSlider(root) &&
+                            ContainsStandardSlider(root) &&
                             !ContainsText(
                                     root,
                                     QStringLiteral("INPUT TIMELINE")) &&

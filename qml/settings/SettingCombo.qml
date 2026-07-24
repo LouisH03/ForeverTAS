@@ -9,6 +9,7 @@ RowLayout {
     property var options: []
     property string value
     property bool running: false
+    property string comboObjectName: ""
     signal selected(string value)
 
     Layout.fillWidth: true
@@ -28,12 +29,14 @@ RowLayout {
     }
 
     StyledComboBox {
+        objectName: root.comboObjectName
         Layout.preferredWidth: 160
         model: root.options
         textRole: "label"
         valueRole: "value"
         currentIndex: root.valueIndex()
         enabled: !root.running
-        onActivated: root.selected(currentValue.toString())
+        onActivated: selectedIndex =>
+            root.selected(valueAt(selectedIndex).toString())
     }
 }

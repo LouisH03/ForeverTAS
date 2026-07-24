@@ -22,6 +22,7 @@ ColumnLayout {
         label: qsTr("Seed")
         value: root.settings["seed"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("seed", value)
     }
 }

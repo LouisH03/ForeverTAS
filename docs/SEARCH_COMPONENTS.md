@@ -161,7 +161,7 @@ or extra maps received outside the controller.
 - The selected `CandidateEvaluator`.
 - Progress and cancellation callbacks.
 
-The Basic brute-force implementation owns only attempt scheduling and global
+The Basic bruteforce implementation owns only attempt scheduling and global
 winner selection. It does not own modifier windows, seeds, evaluation windows,
 or comparison direction.
 

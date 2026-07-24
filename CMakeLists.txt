@@ -126,7 +126,9 @@ qt_add_qml_module(forevertas
         qml/settings/PointTargetEvaluationSettings.qml
         qml/settings/PoseTargetEvaluationSettings.qml
         qml/settings/RandomSteeringMutationSettings.qml
+        qml/settings/ScrubNumberField.qml
         qml/settings/SettingCombo.qml
+        qml/settings/SettingSlider.qml
         qml/settings/SettingSwitch.qml
         qml/settings/SettingTextField.qml
         qml/settings/SmoothSteeringSettings.qml

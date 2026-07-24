@@ -1,28 +1,19 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
-GridLayout {
+ColumnLayout {
     objectName: "basicBruteForceSearchSettings"
     property var controller
 
-    columns: 2
-    columnSpacing: 12
-    rowSpacing: 9
+    Layout.fillWidth: true
 
-    Label {
-        text: qsTr("Attempt count")
-    }
-    TextField {
-        Layout.fillWidth: true
-        horizontalAlignment: TextInput.AlignRight
-        text: controller.searchAlgorithmSettings["attemptCount"] ?? ""
-        enabled: !controller.running
-        selectByMouse: true
-        validator: RegularExpressionValidator {
-            regularExpression: /[0-9]*/
-        }
-        onTextEdited:
-            controller.setSearchAlgorithmSetting("attemptCount", text)
+    SettingTextField {
+        fieldObjectName: "attemptCountField"
+        label: qsTr("Attempt count")
+        value: controller.searchAlgorithmSettings["attemptCount"] ?? ""
+        running: controller.running
+        minimum: 1
+        onEdited: value =>
+            controller.setSearchAlgorithmSetting("attemptCount", value)
     }
 }

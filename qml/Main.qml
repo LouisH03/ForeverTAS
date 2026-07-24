@@ -677,10 +677,44 @@ ApplicationWindow {
 
             ScrollView {
                 id: settingsScroll
+
+                objectName: "settingsScroll"
                 anchors.fill: parent
                 clip: true
                 contentWidth: availableWidth
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                property real angleDeltaPixelScale: 2.0
+
+                function wheelDeltaPixels(pixelDeltaY, angleDeltaY) {
+                    if (pixelDeltaY !== 0)
+                        return pixelDeltaY
+                    return angleDeltaY * angleDeltaPixelScale
+                }
+
+                function scrollByWheelInput(pixelDeltaY, angleDeltaY) {
+                    if (!contentItem)
+                        return
+                    const deltaY = wheelDeltaPixels(pixelDeltaY, angleDeltaY)
+                    if (deltaY === 0)
+                        return
+                    const maximum = Math.max(
+                        0, contentItem.contentHeight - availableHeight)
+                    contentItem.contentY = Math.max(
+                        0,
+                        Math.min(
+                            maximum, contentItem.contentY - deltaY))
+                }
+
+                WheelHandler {
+                    objectName: "settingsWheelHandler"
+                    target: null
+                    acceptedDevices:
+                        PointerDevice.Mouse | PointerDevice.TouchPad
+                    blocking: true
+                    onWheel: wheel =>
+                        settingsScroll.scrollByWheelInput(
+                            wheel.pixelDelta.y, wheel.angleDelta.y)
+                }
 
                 ColumnLayout {
                     width: settingsScroll.availableWidth

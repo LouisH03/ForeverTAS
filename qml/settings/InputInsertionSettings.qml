@@ -22,6 +22,7 @@ ColumnLayout {
         label: qsTr("Seed")
         value: root.settings["seed"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("seed", value)
     }
 
@@ -34,6 +35,7 @@ ColumnLayout {
             root.updateSetting("steerEnabled", checked ? "true" : "false")
     }
     SettingCombo {
+        comboObjectName: "insertionSteeringModeCombo"
         label: qsTr("Steering value mode")
         options: [
             { label: qsTr("Offset"), value: "offset" },
@@ -47,42 +49,62 @@ ColumnLayout {
         label: qsTr("Minimum steering insertions")
         value: root.settings["steerMinCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("steerMinCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum steering insertions")
         value: root.settings["steerMaxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("steerMaxCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum steering hold (ms)")
         value: root.settings["steerMaxHoldMs"] ?? ""
         running: root.running
+        dragStep: 10
+        minimum: 0
         onEdited: value => root.updateSetting("steerMaxHoldMs", value)
     }
-    SettingTextField {
+    SettingSlider {
+        sliderObjectName: "insertionAbsoluteMinimumSlider"
         label: qsTr("Absolute steering minimum")
         value: root.settings["steerAbsoluteMin"] ?? ""
         running: root.running
+        from: -1
+        to: 1
+        stepSize: 0.01
+        decimals: 2
         onEdited: value => root.updateSetting("steerAbsoluteMin", value)
     }
-    SettingTextField {
+    SettingSlider {
+        sliderObjectName: "insertionAbsoluteMaximumSlider"
         label: qsTr("Absolute steering maximum")
         value: root.settings["steerAbsoluteMax"] ?? ""
         running: root.running
+        from: -1
+        to: 1
+        stepSize: 0.01
+        decimals: 2
         onEdited: value => root.updateSetting("steerAbsoluteMax", value)
     }
     SettingTextField {
         label: qsTr("Steering offset minimum")
         value: root.settings["steerOffsetMin"] ?? ""
         running: root.running
+        integer: false
+        decimals: 3
+        dragStep: 0.01
         onEdited: value => root.updateSetting("steerOffsetMin", value)
     }
     SettingTextField {
         label: qsTr("Steering offset maximum")
         value: root.settings["steerOffsetMax"] ?? ""
         running: root.running
+        integer: false
+        decimals: 3
+        dragStep: 0.01
         onEdited: value => root.updateSetting("steerOffsetMax", value)
     }
 
@@ -98,18 +120,22 @@ ColumnLayout {
         label: qsTr("Minimum accelerate insertions")
         value: root.settings["accelerateMinCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("accelerateMinCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum accelerate insertions")
         value: root.settings["accelerateMaxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("accelerateMaxCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum accelerate hold (ms)")
         value: root.settings["accelerateMaxHoldMs"] ?? ""
         running: root.running
+        dragStep: 10
+        minimum: 0
         onEdited: value => root.updateSetting("accelerateMaxHoldMs", value)
     }
 
@@ -125,18 +151,22 @@ ColumnLayout {
         label: qsTr("Minimum brake insertions")
         value: root.settings["brakeMinCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("brakeMinCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum brake insertions")
         value: root.settings["brakeMaxCount"] ?? ""
         running: root.running
+        minimum: 0
         onEdited: value => root.updateSetting("brakeMaxCount", value)
     }
     SettingTextField {
         label: qsTr("Maximum brake hold (ms)")
         value: root.settings["brakeMaxHoldMs"] ?? ""
         running: root.running
+        dragStep: 10
+        minimum: 0
         onEdited: value => root.updateSetting("brakeMaxHoldMs", value)
     }
 }
