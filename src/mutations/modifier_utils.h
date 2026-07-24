@@ -37,14 +37,6 @@ Integer RandomInteger(std::mt19937 &random, Integer minimum, Integer maximum) {
     return distribution(random);
 }
 
-inline double RandomDouble(std::mt19937 &random,
-                           double minimum,
-                           double maximum) {
-    if (minimum > maximum) std::swap(minimum, maximum);
-    std::uniform_real_distribution<double> distribution(minimum, maximum);
-    return distribution(random);
-}
-
 inline std::optional<ModifierWindow> ParseModifierWindow(
         const OptionSettings &settings) {
     const auto minimum = ParseSignedDecimal(settings.at("minTimeMs"));
@@ -78,7 +70,7 @@ inline bool IsSteerAction(SandboxInputAction action) {
 
 inline SandboxInputEvent AnalogEvent(std::int64_t timeMs,
                                      SandboxInputAction action,
-                                     float value) {
+                                     AnalogInputState value) {
     SandboxInputEvent event;
     event.timeMs = timeMs;
     event.action = action;

@@ -22,10 +22,10 @@ struct Settings {
     ChannelSettings accelerate;
     ChannelSettings brake;
     bool steeringOffset = false;
-    double steeringAbsoluteMinimum = -1.0;
-    double steeringAbsoluteMaximum = 1.0;
-    double steeringOffsetMinimum = -0.2;
-    double steeringOffsetMaximum = 0.2;
+    AnalogInputState steeringAbsoluteMinimum = kAnalogInputMinimum;
+    AnalogInputState steeringAbsoluteMaximum = kAnalogInputMaximum;
+    AnalogInputState steeringOffsetMinimum = 0;
+    AnalogInputState steeringOffsetMaximum = 0;
 };
 
 std::optional<ChannelSettings> ParseChannel(const OptionSettings &settings,
@@ -59,12 +59,14 @@ std::optional<Settings> ParseSettings(const OptionSettings &settings) {
                                     "brakeMinCount",
                                     "brakeMaxCount",
                                     "brakeMaxHoldMs");
-    const auto absoluteMinimum = ParseFiniteDouble(
-            settings.at("steerAbsoluteMin"));
-    const auto absoluteMaximum = ParseFiniteDouble(
-            settings.at("steerAbsoluteMax"));
-    const auto offsetMinimum = ParseFiniteDouble(settings.at("steerOffsetMin"));
-    const auto offsetMaximum = ParseFiniteDouble(settings.at("steerOffsetMax"));
+    const auto absoluteMinimum =
+            ParseNormalizedAnalogInput(settings.at("steerAbsoluteMin"));
+    const auto absoluteMaximum =
+            ParseNormalizedAnalogInput(settings.at("steerAbsoluteMax"));
+    const auto offsetMinimum =
+            ParseNormalizedAnalogInput(settings.at("steerOffsetMin"));
+    const auto offsetMaximum =
+            ParseNormalizedAnalogInput(settings.at("steerOffsetMax"));
     const std::string &mode = settings.at("steerMode");
     if (!window || !steering || !accelerate || !brake || !absoluteMinimum ||
         !absoluteMaximum || !offsetMinimum || !offsetMaximum ||
@@ -128,19 +130,21 @@ public:
             const std::int64_t end = std::min(
                     settings_.window.maximumTimeMs,
                     start + randomHold(settings_.steering.maximumHoldMs));
-            const float previous = SteeringStateAt(inputs, start);
-            const float value = ClampSteering(static_cast<float>(
-                    settings_.steeringOffset
-                            ? previous + RandomDouble(
-                                         random,
-                                         settings_.steeringOffsetMinimum,
-                                         settings_.steeringOffsetMaximum)
-                            : RandomDouble(
+            const AnalogInputState previous = SteeringStateAt(inputs, start);
+            const AnalogInputState value = settings_.steeringOffset
+                    ? SaturateAnalogInputState(
+                              static_cast<std::int64_t>(previous) +
+                              RandomInteger<AnalogInputState>(
                                       random,
-                                      settings_.steeringAbsoluteMinimum,
-                                      settings_.steeringAbsoluteMaximum)));
+                                      settings_.steeringOffsetMinimum,
+                                      settings_.steeringOffsetMaximum))
+                    : RandomInteger<AnalogInputState>(
+                              random,
+                              settings_.steeringAbsoluteMinimum,
+                              settings_.steeringAbsoluteMaximum);
             RemoveChannelEvents(inputs, SandboxInputAction::Steer, start, end);
-            inputs.push_back(AnalogEvent(start, SandboxInputAction::Steer, value));
+            inputs.push_back(AnalogEvent(start, SandboxInputAction::Steer,
+                                         value));
             if (end > start) {
                 inputs.push_back(AnalogEvent(
                         end,
@@ -237,9 +241,8 @@ std::optional<std::string> ValidateInputInsertionSettings(
                 parsed->accelerate, tickDurationMs, "accelerate")) return error;
     if (const auto error = ValidateChannel(
                 parsed->brake, tickDurationMs, "brake")) return error;
-    if (parsed->steeringAbsoluteMinimum > parsed->steeringAbsoluteMaximum ||
-        parsed->steeringAbsoluteMinimum < -1.0 ||
-        parsed->steeringAbsoluteMaximum > 1.0 ||
+    if (parsed->steeringAbsoluteMinimum >
+                parsed->steeringAbsoluteMaximum ||
         parsed->steeringOffsetMinimum > parsed->steeringOffsetMaximum) {
         return "input insertion steering ranges are invalid";
     }

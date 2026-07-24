@@ -28,7 +28,8 @@ ApplicationWindow {
                                     "runIndex": 0,
                                     "runPosition": Qt.vector3d(0, 0, 0),
                                     "runRotation": Qt.quaternion(1, 0, 0, 0),
-                                    "runSelected": false
+                                    "runSelected": false,
+                                    "runGeometry": null
                                 })
         }
         while (runPoseModel.count > poses.length)
@@ -41,11 +42,12 @@ ApplicationWindow {
             runPoseModel.setProperty(index, "runPosition", pose.position)
             runPoseModel.setProperty(index, "runRotation", pose.rotation)
             runPoseModel.setProperty(index, "runSelected", pose.selected)
+            runPoseModel.setProperty(index, "runGeometry", pose.geometry)
         }
     }
 
     function runColor(index) {
-        const colors = ["#ff8a3d", "#4f9ddd", "#63c77b", "#c57aeb",
+        const colors = ["#ff8a3d", "#3d8dff", "#63c77b", "#c57aeb",
                         "#e7c24f", "#54c7c1"]
         return colors[index % colors.length]
     }
@@ -313,11 +315,11 @@ ApplicationWindow {
                                 required property var runPosition
                                 required property var runRotation
                                 required property bool runSelected
+                                required property var runGeometry
 
                                 objectName: "runCarRoot"
                                 position: runPosition
                                 rotation: runRotation
-                                opacity: runSelected ? 1.0 : 0.72
 
                                 Repeater3D {
                                     model: window.viewer.carEllipsoids
@@ -332,13 +334,13 @@ ApplicationWindow {
                                         Model {
                                             objectName: "runCarFilledModel"
                                             visible: !window.wireframeMode
-                                            geometry:
-                                                window.viewer.ellipsoidFilledGeometry
+                                            geometry: runCarRoot.runGeometry
                                             materials: DefaultMaterial {
+                                                objectName: "runCarFilledMaterial"
                                                 lighting:
                                                     DefaultMaterial.NoLighting
-                                                diffuseColor: window.runColor(
-                                                    runCarRoot.runIndex)
+                                                vertexColorsEnabled: true
+                                                diffuseColor: "white"
                                                 cullMode:
                                                     Material.BackFaceCulling
                                             }
@@ -1119,7 +1121,7 @@ ApplicationWindow {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: qsTr("Best inputs (TMInterface)")
+                                    text: qsTr("Best input script")
                                     font.weight: Font.Medium
                                 }
 

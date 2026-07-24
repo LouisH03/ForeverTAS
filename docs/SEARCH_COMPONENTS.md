@@ -192,8 +192,28 @@ target-required window without retaining complete candidate traces. The worker
 reports this pass as `SearchProgressStage::FinalSampling`.
 
 `input_event_formatter.*` converts the retained timeline into invariant,
-copy-ready TMInterface script syntax. Formatting always uses `.` decimals and
-does not depend on `LC_NUMERIC`.
+copy-ready input script syntax. Timestamps always use `.` decimals and do
+not depend on `LC_NUMERIC`; analog states are already canonical integers and are
+serialized verbatim.
+
+### Canonical analog input representation
+
+All replay, sandbox, mutation, winner-retention, and script-export layers use
+`AnalogInputState`, a signed integer constrained to `[-65536, 65536]`. Its sign
+convention is explicit: negative steering is left, positive steering is right;
+analog gas uses negative values for accelerate and positive values for brake. Replay decoding converts the game's signed-24
+storage representation directly into this canonical form.
+
+Modifier settings remain normalized decimal strings in `[-1, 1]` for UI and
+persistence compatibility. `ParseNormalizedAnalogInput` quantizes each setting
+once to an integer state. Mutators subsequently use integer sampling, addition,
+comparison, and saturation only; candidate timelines never carry arbitrary
+floating-point analog values.
+
+The only integer-to-float conversion occurs when ForeverValidator builds the
+normalized vehicle-control state consumed by physics. Physics state snapshots,
+search samples, and Race Viewer channels intentionally remain floats because
+they describe applied simulation controls rather than editable input events.
 
 ## Modifier Contract
 
@@ -215,7 +235,7 @@ Modifier passes run in displayed order. Each pass receives the previous pass's
 output. After the final pass, the composite mutator performs one normalization
 step:
 
-- Clamp steering to `[-1, 1]`.
+- Saturate every analog state to the exact integer range `[-65536, 65536]`.
 - Align event times to whole simulation ticks.
 - Sort events chronologically with stable ordering.
 - For multiple events with the same action and tick, keep the last pass value.
@@ -307,7 +327,12 @@ to QML through `runPoses`, so the preview renders one car hierarchy per run.
 `runOptions` and `selectedRunId` drive the centered run selector.
 
 QML mirrors `runPoses` into a stable `ListModel` and updates roles in place.
-Binding `Repeater3D` directly to a rebuilt `QVariantList` would destroy and
+Each run pose also carries its prebuilt car geometry. The Baseline geometry uses
+the original orange per-face vertex colors exactly; Best and future runs use
+separate baked palettes with the same flat-shading formula. Filled materials stay
+white with vertex colors enabled, avoiding color multiplication that would darken
+or distort the baked shading. Binding `Repeater3D` directly to a rebuilt
+`QVariantList` would destroy and
 recreate every car model whenever the time changes.
 
 ## Persistence

@@ -1,3 +1,4 @@
+#include "mutations/input_event_formatter.h"
 #include "searches/search_runner.h"
 
 #include <exception>
@@ -29,6 +30,24 @@ int main(int argc, char **argv) {
         }
         if (result.bestInputs.empty()) {
             std::cerr << "best input timeline was not retained\n";
+            return 1;
+        }
+        for (const forevertas::SandboxInputEvent &event :
+             result.bestInputs) {
+            if (event.value.kind == forevervalidator::experimental::
+                            PhysicsSandboxInputValueKind::Analog &&
+                !forevervalidator::IsAnalogInputStateValid(
+                        event.value.analog)) {
+                std::cerr << "best inputs contain an out-of-range analog state\n";
+                return 1;
+            }
+        }
+        const std::string inputScript =
+                forevertas::FormatInputScript(result.bestInputs);
+        if (inputScript.rfind("0.00 ", 0u) != 0u ||
+            inputScript.find(" release ") != std::string::npos ||
+            inputScript.find(" rel ") == std::string::npos) {
+            std::cerr << "best inputs were not exported as an input script\n";
             return 1;
         }
         if (!sawFinalSampling || result.bestTimeline.empty()) {

@@ -74,8 +74,10 @@ void ExpandBounds(const QVector3D &point,
     maximum.setZ(std::max(maximum.z(), point.z()));
 }
 
+constexpr int kCarPaletteCount = 6;
+
 std::array<float, 4u> FaceColor(const ViewerTriangle &triangle,
-                                bool car) {
+                                int carPalette) {
     QVector3D normal = QVector3D::crossProduct(
             triangle.b - triangle.a, triangle.c - triangle.a);
     if (normal.lengthSquared() > 0.0f) {
@@ -84,21 +86,49 @@ std::array<float, 4u> FaceColor(const ViewerTriangle &triangle,
     const float x = std::fabs(normal.x());
     const float y = std::fabs(normal.y());
     const float z = std::fabs(normal.z());
-    if (car) {
+    switch (carPalette) {
+    case 0:
+        // Preserve the original orange collision-car palette exactly.
         return {0.78f + 0.16f * y,
                 0.26f + 0.16f * z,
                 0.08f + 0.10f * x,
                 1.0f};
+    case 1:
+        return {0.08f + 0.10f * x,
+                0.26f + 0.16f * z,
+                0.78f + 0.16f * y,
+                1.0f};
+    case 2:
+        return {0.10f + 0.10f * x,
+                0.65f + 0.22f * y,
+                0.20f + 0.14f * z,
+                1.0f};
+    case 3:
+        return {0.55f + 0.20f * y,
+                0.18f + 0.10f * x,
+                0.72f + 0.18f * z,
+                1.0f};
+    case 4:
+        return {0.72f + 0.18f * y,
+                0.58f + 0.18f * z,
+                0.08f + 0.08f * x,
+                1.0f};
+    case 5:
+        return {0.08f + 0.08f * x,
+                0.62f + 0.20f * y,
+                0.68f + 0.18f * z,
+                1.0f};
+    default:
+        return {0.26f + 0.20f * x,
+                0.36f + 0.26f * y,
+                0.43f + 0.20f * z,
+                1.0f};
     }
-    return {0.26f + 0.20f * x,
-            0.36f + 0.26f * y,
-            0.43f + 0.20f * z,
-            1.0f};
 }
 
 RaceViewerMeshBuffers BuildMeshBuffers(
         const std::vector<ViewerTriangle> &triangles,
-        bool car) {
+        int carPalette) {
     RaceViewerMeshBuffers result;
     if (triangles.empty()) {
         return result;
@@ -126,7 +156,8 @@ RaceViewerMeshBuffers BuildMeshBuffers(
         *wire++ = {point.x(), point.y(), point.z()};
     };
     for (const ViewerTriangle &triangle : triangles) {
-        const std::array<float, 4u> color = FaceColor(triangle, car);
+        const std::array<float, 4u> color =
+                FaceColor(triangle, carPalette);
         const std::array<QVector3D, 3u> points{
                 triangle.a, triangle.b, triangle.c};
         for (const QVector3D &point : points) {
@@ -229,7 +260,7 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
             triangles.push_back({
                     ToQt(triangle.a), ToQt(triangle.b), ToQt(triangle.c)});
         }
-        result.track = BuildMeshBuffers(triangles, false);
+        result.track = BuildMeshBuffers(triangles, -1);
         result.triangleCount = static_cast<qint64>(triangles.size());
 
         for (const PhysicsSandboxEllipsoid &ellipsoid :
@@ -353,22 +384,31 @@ RaceViewerController::RaceViewerController(QObject *parent)
             this,
             &RaceViewerController::advancePlayback);
 
-    const RaceViewerMeshBuffers ellipsoid =
-            BuildMeshBuffers(UnitEllipsoidTriangles(), true);
-    ellipsoidFilledGeometry_.setMesh(
-            ellipsoid.filled,
-            static_cast<int>(sizeof(FilledVertex)),
-            QQuick3DGeometry::PrimitiveType::Triangles,
-            true,
-            ellipsoid.boundsMin,
-            ellipsoid.boundsMax);
-    ellipsoidWireGeometry_.setMesh(
-            ellipsoid.wire,
-            static_cast<int>(sizeof(WireVertex)),
-            QQuick3DGeometry::PrimitiveType::Lines,
-            false,
-            ellipsoid.boundsMin,
-            ellipsoid.boundsMax);
+    const std::vector<ViewerTriangle> ellipsoidTriangles =
+            UnitEllipsoidTriangles();
+    ellipsoidFilledGeometries_.reserve(kCarPaletteCount);
+    for (int palette = 0; palette < kCarPaletteCount; ++palette) {
+        const RaceViewerMeshBuffers ellipsoid =
+                BuildMeshBuffers(ellipsoidTriangles, palette);
+        auto geometry = std::make_unique<RaceGeometry>();
+        geometry->setMesh(
+                ellipsoid.filled,
+                static_cast<int>(sizeof(FilledVertex)),
+                QQuick3DGeometry::PrimitiveType::Triangles,
+                true,
+                ellipsoid.boundsMin,
+                ellipsoid.boundsMax);
+        if (palette == 0) {
+            ellipsoidWireGeometry_.setMesh(
+                    ellipsoid.wire,
+                    static_cast<int>(sizeof(WireVertex)),
+                    QQuick3DGeometry::PrimitiveType::Lines,
+                    false,
+                    ellipsoid.boundsMin,
+                    ellipsoid.boundsMax);
+        }
+        ellipsoidFilledGeometries_.push_back(std::move(geometry));
+    }
 }
 
 RaceViewerController::~RaceViewerController() {
@@ -385,7 +425,7 @@ QQuick3DGeometry *RaceViewerController::trackWireGeometry() {
 }
 
 QQuick3DGeometry *RaceViewerController::ellipsoidFilledGeometry() {
-    return &ellipsoidFilledGeometry_;
+    return ellipsoidFilledGeometries_.front().get();
 }
 
 QQuick3DGeometry *RaceViewerController::ellipsoidWireGeometry() {
@@ -422,6 +462,12 @@ QVariantList RaceViewerController::runPoses() const {
         pose.insert(QStringLiteral("rotation"), run.rotation);
         pose.insert(QStringLiteral("selected"),
                     run.id == selectedRunId_);
+        const std::size_t paletteIndex = index %
+                ellipsoidFilledGeometries_.size();
+        pose.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(static_cast<QObject *>(
+                        ellipsoidFilledGeometries_[paletteIndex].get())));
         poses.push_back(std::move(pose));
     }
     return poses;

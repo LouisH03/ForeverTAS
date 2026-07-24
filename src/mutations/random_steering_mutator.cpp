@@ -3,18 +3,15 @@
 #include "mutations/input_event_utils.h"
 #include "mutations/modifier_utils.h"
 
-#include <limits>
 #include <random>
 #include <stdexcept>
 
 namespace forevertas {
 namespace {
 
-float RandomSteering(std::mt19937 &random) {
-    const double unit = static_cast<double>(random()) /
-                        static_cast<double>(
-                                std::numeric_limits<std::uint32_t>::max());
-    return static_cast<float>(unit * 2.0 - 1.0);
+AnalogInputState RandomSteering(std::mt19937 &random) {
+    return RandomInteger<AnalogInputState>(
+            random, kAnalogInputMinimum, kAnalogInputMaximum);
 }
 
 std::optional<RandomSteeringSettings> ParseRandomSteeringSettings(
@@ -86,8 +83,6 @@ RandomSteeringMutator::RandomSteeringMutator(
 
 MutationResult RandomSteeringMutator::Mutate(
         const MutationRequest &request) const {
-    using forevervalidator::experimental::PhysicsSandboxInputAction;
-    using forevervalidator::experimental::PhysicsSandboxInputEvent;
     using forevervalidator::experimental::PhysicsSandboxInputValueKind;
 
     std::mt19937 random = ModifierRandom(
@@ -95,17 +90,19 @@ MutationResult RandomSteeringMutator::Mutate(
 
     MutationResult result;
     result.inputs = request.baselineInputs;
-    for (PhysicsSandboxInputEvent &event : result.inputs) {
+    for (SandboxInputEvent &event : result.inputs) {
         if (event.timeMs < settings_.minimumTimeMs ||
             event.timeMs > settings_.maximumTimeMs ||
-            event.action != PhysicsSandboxInputAction::Steer ||
+            event.action != SandboxInputAction::Steer ||
             event.value.kind != PhysicsSandboxInputValueKind::Analog) {
             continue;
         }
 
-        float value = RandomSteering(random);
+        AnalogInputState value = RandomSteering(random);
         if (value == event.value.analog) {
-            value = value == 1.0f ? -1.0f : 1.0f;
+            value = value == kAnalogInputMaximum
+                    ? kAnalogInputMinimum
+                    : kAnalogInputMaximum;
         }
         event.value.analog = value;
         ++result.mutationCount;

@@ -16,10 +16,10 @@ struct Settings {
     std::uint32_t maximumCount = 1u;
     std::int64_t maximumTimeShiftMs = 0;
     bool absoluteSteering = false;
-    double steeringDeltaMinimum = -0.1;
-    double steeringDeltaMaximum = 0.1;
-    double steeringAbsoluteMinimum = -1.0;
-    double steeringAbsoluteMaximum = 1.0;
+    AnalogInputState steeringDeltaMinimum = 0;
+    AnalogInputState steeringDeltaMaximum = 0;
+    AnalogInputState steeringAbsoluteMinimum = kAnalogInputMinimum;
+    AnalogInputState steeringAbsoluteMaximum = kAnalogInputMaximum;
     bool toggleAccelerate = true;
     bool toggleBrake = true;
 };
@@ -29,10 +29,14 @@ std::optional<Settings> ParseSettings(const OptionSettings &settings) {
     const auto minimumCount = ParseUnsignedDecimal32(settings.at("minCount"));
     const auto maximumCount = ParseUnsignedDecimal32(settings.at("maxCount"));
     const auto maximumShift = ParseSignedDecimal(settings.at("maxTimeShiftMs"));
-    const auto deltaMinimum = ParseFiniteDouble(settings.at("steerDeltaMin"));
-    const auto deltaMaximum = ParseFiniteDouble(settings.at("steerDeltaMax"));
-    const auto absoluteMinimum = ParseFiniteDouble(settings.at("steerAbsoluteMin"));
-    const auto absoluteMaximum = ParseFiniteDouble(settings.at("steerAbsoluteMax"));
+    const auto deltaMinimum =
+            ParseNormalizedAnalogInput(settings.at("steerDeltaMin"));
+    const auto deltaMaximum =
+            ParseNormalizedAnalogInput(settings.at("steerDeltaMax"));
+    const auto absoluteMinimum =
+            ParseNormalizedAnalogInput(settings.at("steerAbsoluteMin"));
+    const auto absoluteMaximum =
+            ParseNormalizedAnalogInput(settings.at("steerAbsoluteMax"));
     const auto toggleAccelerate = ParseBoolean(settings.at("toggleAccelerate"));
     const auto toggleBrake = ParseBoolean(settings.at("toggleBrake"));
     const std::string &mode = settings.at("steerMode");
@@ -66,11 +70,14 @@ public:
         for (std::size_t index = 0u; index < inputs.size(); ++index) {
             const SandboxInputEvent &event = inputs[index];
             if (event.timeMs < settings_.window.minimumTimeMs ||
-                event.timeMs > settings_.window.maximumTimeMs) continue;
+                event.timeMs > settings_.window.maximumTimeMs) {
+                continue;
+            }
             if ((IsSteerAction(event.action) &&
                  event.value.kind == forevervalidator::experimental::
                          PhysicsSandboxInputValueKind::Analog) ||
-                (settings_.toggleAccelerate && IsAccelerateAction(event.action)) ||
+                (settings_.toggleAccelerate &&
+                 IsAccelerateAction(event.action)) ||
                 (settings_.toggleBrake && IsBrakeAction(event.action))) {
                 candidates.push_back(index);
             }
@@ -82,8 +89,8 @@ public:
         std::shuffle(candidates.begin(), candidates.end(), random);
         const std::uint32_t requested = RandomInteger(
                 random, settings_.minimumCount, settings_.maximumCount);
-        const std::size_t count = std::min<std::size_t>(requested,
-                                                       candidates.size());
+        const std::size_t count = std::min<std::size_t>(
+                requested, candidates.size());
         const std::int64_t tick = request.tickDurationMs;
         const std::int64_t maximumShiftTicks = tick == 0
                 ? 0
@@ -92,20 +99,27 @@ public:
             SandboxInputEvent &event = inputs[candidates[n]];
             const std::int64_t shiftTicks = RandomInteger<std::int64_t>(
                     random, -maximumShiftTicks, maximumShiftTicks);
-            event.timeMs = std::clamp(
-                    event.timeMs + shiftTicks * tick,
+            event.timeMs = static_cast<std::int32_t>(std::clamp<std::int64_t>(
+                    static_cast<std::int64_t>(event.timeMs) +
+                            shiftTicks * tick,
                     settings_.window.minimumTimeMs,
-                    settings_.window.maximumTimeMs);
+                    settings_.window.maximumTimeMs));
             if (IsSteerAction(event.action)) {
-                const double value = settings_.absoluteSteering
-                        ? RandomDouble(random,
-                                       settings_.steeringAbsoluteMinimum,
-                                       settings_.steeringAbsoluteMaximum)
-                        : static_cast<double>(event.value.analog) +
-                                  RandomDouble(random,
-                                               settings_.steeringDeltaMinimum,
-                                               settings_.steeringDeltaMaximum);
-                event.value.analog = ClampSteering(static_cast<float>(value));
+                if (settings_.absoluteSteering) {
+                    event.value.analog = RandomInteger<AnalogInputState>(
+                            random,
+                            settings_.steeringAbsoluteMinimum,
+                            settings_.steeringAbsoluteMaximum);
+                } else {
+                    const AnalogInputState delta =
+                            RandomInteger<AnalogInputState>(
+                                    random,
+                                    settings_.steeringDeltaMinimum,
+                                    settings_.steeringDeltaMaximum);
+                    event.value.analog = SaturateAnalogInputState(
+                            static_cast<std::int64_t>(event.value.analog) +
+                            delta);
+                }
             } else if (event.value.kind == forevervalidator::experimental::
                                PhysicsSandboxInputValueKind::Switch) {
                 event.value.switchState =
@@ -171,9 +185,8 @@ std::optional<std::string> ValidateExistingEventPerturbationSettings(
         return "maximum timing shift must be a non-negative whole-tick value";
     }
     if (parsed->steeringDeltaMinimum > parsed->steeringDeltaMaximum ||
-        parsed->steeringAbsoluteMinimum > parsed->steeringAbsoluteMaximum ||
-        parsed->steeringAbsoluteMinimum < -1.0 ||
-        parsed->steeringAbsoluteMaximum > 1.0) {
+        parsed->steeringAbsoluteMinimum >
+                parsed->steeringAbsoluteMaximum) {
         return "steering ranges are invalid";
     }
     return std::nullopt;

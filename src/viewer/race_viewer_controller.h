@@ -13,6 +13,7 @@
 #include <QVector3D>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -173,7 +174,8 @@ private:
 
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
-    RaceGeometry ellipsoidFilledGeometry_;
+    std::vector<std::unique_ptr<RaceGeometry>>
+            ellipsoidFilledGeometries_;
     RaceGeometry ellipsoidWireGeometry_;
     struct PendingRun {
         QString packsDirectory;

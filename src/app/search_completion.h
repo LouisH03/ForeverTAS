@@ -16,9 +16,7 @@ struct SearchCompletion {
     QString inputsText;
     QString packsDirectory;
     QString replayPath;
-    std::vector<
-            forevervalidator::experimental::PhysicsSandboxInputEvent>
-            bestInputs;
+    std::vector<SandboxInputEvent> bestInputs;
     std::vector<SearchTimelineFrame> bestTimeline;
 };
 

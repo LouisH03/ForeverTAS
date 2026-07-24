@@ -75,9 +75,7 @@ struct SearchResult {
     double bestEvaluationTimeMs = 0.0;
     std::string bestEvaluationDescription;
     forevervalidator::experimental::PhysicsSandboxStateView bestState;
-    std::vector<
-            forevervalidator::experimental::PhysicsSandboxInputEvent>
-            bestInputs;
+    std::vector<SandboxInputEvent> bestInputs;
     std::vector<SearchTimelineFrame> bestTimeline;
     std::uint64_t requestedAttempts = 0u;
     std::uint64_t executedAttempts = 0u;

@@ -1,9 +1,7 @@
 #include "mutations/input_event_utils.h"
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
-#include <tuple>
 
 namespace forevertas {
 namespace {
@@ -35,8 +33,9 @@ std::int64_t AlignInputTime(std::int64_t timeMs,
     return (timeMs / tick) * tick;
 }
 
-float ClampSteering(float value) {
-    return std::clamp(value, -1.0f, 1.0f);
+AnalogInputState SaturateAnalogInputState(std::int64_t value) {
+    return static_cast<AnalogInputState>(std::clamp<std::int64_t>(
+            value, kAnalogInputMinimum, kAnalogInputMaximum));
 }
 
 bool SameInputEvent(const SandboxInputEvent &left,
@@ -49,9 +48,9 @@ void NormalizeInputEvents(std::vector<SandboxInputEvent> &events,
                           std::uint32_t tickDurationMs) {
     for (SandboxInputEvent &event : events) {
         event.timeMs = AlignInputTime(event.timeMs, tickDurationMs);
-        if (event.value.kind == PhysicsSandboxInputValueKind::Analog &&
-            event.action == SandboxInputAction::Steer) {
-            event.value.analog = ClampSteering(event.value.analog);
+        if (event.value.kind == PhysicsSandboxInputValueKind::Analog) {
+            event.value.analog =
+                    SaturateAnalogInputState(event.value.analog);
         } else if (event.value.kind == PhysicsSandboxInputValueKind::Switch) {
             event.value.switchState =
                     event.value.switchState !=
@@ -98,9 +97,10 @@ std::size_t EffectiveInputChangeCount(
     return count;
 }
 
-float SteeringStateAt(const std::vector<SandboxInputEvent> &events,
-                      std::int64_t timeMs) {
-    float state = 0.0f;
+AnalogInputState SteeringStateAt(
+        const std::vector<SandboxInputEvent> &events,
+        std::int64_t timeMs) {
+    AnalogInputState state = 0;
     std::int64_t bestTime = std::numeric_limits<std::int64_t>::min();
     for (const SandboxInputEvent &event : events) {
         if (event.action != SandboxInputAction::Steer ||

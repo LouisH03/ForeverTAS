@@ -1,26 +1,23 @@
 #ifndef FOREVERTAS_MUTATIONS_INPUT_MUTATOR_H
 #define FOREVERTAS_MUTATIONS_INPUT_MUTATOR_H
 
+#include "mutations/input_event_utils.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include <forevervalidator/experimental/physics_sandbox.h>
-
 namespace forevertas {
 
 struct MutationRequest {
-    const std::vector<
-            forevervalidator::experimental::PhysicsSandboxInputEvent>
-            &baselineInputs;
+    const std::vector<SandboxInputEvent> &baselineInputs;
     std::uint64_t attemptIndex = 0u;
     std::uint32_t passIndex = 0u;
     std::uint32_t tickDurationMs = 10u;
 };
 
 struct MutationResult {
-    std::vector<forevervalidator::experimental::PhysicsSandboxInputEvent>
-            inputs;
+    std::vector<SandboxInputEvent> inputs;
     std::size_t mutationCount = 0u;
 };
 

@@ -20,6 +20,7 @@
 
 namespace {
 
+using forevertas::AnalogInputState;
 using forevertas::EvaluationSample;
 using forevertas::InputMutator;
 using forevertas::MutationRequest;
@@ -98,13 +99,20 @@ bool EvaluatorAcceptsDotDecimals(
             registration->create(settings, 10u) != nullptr;
 }
 
-SandboxInputEvent Steering(std::int32_t timeMs, float value) {
+SandboxInputEvent Analog(std::int32_t timeMs,
+                         SandboxInputAction action,
+                         AnalogInputState value) {
     SandboxInputEvent event;
     event.timeMs = timeMs;
-    event.action = SandboxInputAction::Steer;
+    event.action = action;
     event.value.kind = PhysicsSandboxInputValueKind::Analog;
     event.value.analog = value;
     return event;
+}
+
+SandboxInputEvent Steering(std::int32_t timeMs,
+                           AnalogInputState value) {
+    return Analog(timeMs, SandboxInputAction::Steer, value);
 }
 
 SandboxInputEvent Switch(std::int32_t timeMs,
@@ -118,6 +126,18 @@ SandboxInputEvent Switch(std::int32_t timeMs,
             ? PhysicsSandboxSwitchState::Pressed
             : PhysicsSandboxSwitchState::Released;
     return event;
+}
+
+bool AllAnalogInputsValid(
+        const std::vector<SandboxInputEvent> &events) {
+    for (const SandboxInputEvent &event : events) {
+        if (event.value.kind == PhysicsSandboxInputValueKind::Analog &&
+            !forevervalidator::IsAnalogInputStateValid(
+                    event.value.analog)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool SameEvents(const std::vector<SandboxInputEvent> &left,
@@ -246,7 +266,8 @@ bool TestEvaluationTargets() {
 
 class AppendSteeringMutator final : public InputMutator {
 public:
-    explicit AppendSteeringMutator(float value) : value_(value) {}
+    explicit AppendSteeringMutator(AnalogInputState value)
+        : value_(value) {}
 
     MutationResult Mutate(const MutationRequest &request) const override {
         std::vector<SandboxInputEvent> inputs = request.baselineInputs;
@@ -257,7 +278,7 @@ public:
     std::int64_t EarliestMutationTimeMs() const override { return 1000; }
 
 private:
-    float value_;
+    AnalogInputState value_;
 };
 
 class NoOpMutator final : public InputMutator {
@@ -269,10 +290,10 @@ public:
 };
 
 bool TestModifierComposition() {
-    const std::vector<SandboxInputEvent> baseline{Steering(500, 0.1f)};
+    const std::vector<SandboxInputEvent> baseline{Steering(500, 6554)};
     std::vector<std::unique_ptr<InputMutator>> passes;
-    passes.push_back(std::make_unique<AppendSteeringMutator>(0.2f));
-    passes.push_back(std::make_unique<AppendSteeringMutator>(0.7f));
+    passes.push_back(std::make_unique<AppendSteeringMutator>(13107));
+    passes.push_back(std::make_unique<AppendSteeringMutator>(45875));
     forevertas::CompositeInputMutator composite(std::move(passes));
     const MutationResult result = composite.Mutate({baseline, 4u, 0u, 10u});
     bool okay = Check(result.mutationCount > 0u,
@@ -280,7 +301,7 @@ bool TestModifierComposition() {
     okay &= Check(result.inputs.size() == 2u,
                   "normalization did not merge same-tick steering events");
     okay &= Check(result.inputs.back().timeMs == 1000 &&
-                          result.inputs.back().value.analog == 0.7f,
+                          result.inputs.back().value.analog == 45875,
                   "normalization did not keep the last pass value");
 
     std::vector<std::unique_ptr<InputMutator>> noOpPasses;
@@ -304,11 +325,11 @@ bool TestModifierDeterminism() {
     settings["maxTimeMs"] = "2000";
     std::unique_ptr<InputMutator> modifier = registration->create(settings, 10u);
     const std::vector<SandboxInputEvent> baseline{
-            Steering(990, -0.1f),
-            Steering(1000, -0.2f),
-            Steering(1500, 0.3f),
-            Steering(2000, 0.4f),
-            Steering(2010, 0.5f)};
+            Steering(990, -6554),
+            Steering(1000, -13107),
+            Steering(1500, 19661),
+            Steering(2000, 26214),
+            Steering(2010, 32768)};
     const MutationResult first = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult repeated = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult otherAttempt = modifier->Mutate(
@@ -317,6 +338,9 @@ bool TestModifierDeterminism() {
                       "same seed and attempt were not deterministic");
     okay &= Check(!SameEvents(first.inputs, otherAttempt.inputs),
                   "different attempts produced identical candidates");
+    okay &= Check(AllAnalogInputsValid(first.inputs) &&
+                          AllAnalogInputsValid(otherAttempt.inputs),
+                  "random steering produced an out-of-range input state");
     okay &= Check(forevertas::SameInputEvent(first.inputs.front(),
                                              baseline.front()) &&
                           forevertas::SameInputEvent(first.inputs.back(),
@@ -325,28 +349,89 @@ bool TestModifierDeterminism() {
     return okay;
 }
 
-bool TestTmInterfaceInputFormatting() {
+bool TestInputScriptFormatting() {
     NumericLocaleGuard locale;
     if (!locale.ActivateCommaDecimalLocale()) {
         return Check(false, "no comma-decimal locale is installed for testing");
     }
     const std::vector<SandboxInputEvent> inputs{
-            Switch(0, SandboxInputAction::Accelerate, true),
-            Steering(10, -0.5f),
-            Switch(1230, SandboxInputAction::Brake, false),
-            Switch(1240, SandboxInputAction::SteerLeft, true),
-            Switch(1250, SandboxInputAction::Respawn, true),
-            Switch(1260, SandboxInputAction::RaceRunning, true)};
+            Switch(1350, SandboxInputAction::SteerLeft, true),
+            Analog(130, SandboxInputAction::Gas, -16384),
+            Switch(110, SandboxInputAction::Accelerate, true),
+            Steering(125, 32768),
+            Steering(140, -16384),
+            Steering(150, forevertas::kAnalogInputMaximum),
+            Switch(1340, SandboxInputAction::Brake, false),
+            Switch(1360, SandboxInputAction::SteerRight, false),
+            Switch(1370, SandboxInputAction::Respawn, true),
+            Switch(1380, SandboxInputAction::Respawn, false),
+            Switch(90, SandboxInputAction::Brake, true),
+            Switch(100, SandboxInputAction::RaceRunning, true),
+            Switch(1390, SandboxInputAction::FinishLine, true),
+            Switch(1400, SandboxInputAction::Accelerate, false)};
     const std::string formatted =
-            forevertas::FormatTmInterfaceInputs(inputs);
+            forevertas::FormatInputScript(inputs);
     return Check(
             formatted ==
                     "0.00 press up\n"
-                    "0.01 steer -32768\n"
-                    "1.23 release down\n"
+                    "0.02 steer 32768\n"
+                    "0.02 gas -16384\n"
+                    "0.03 steer -16384\n"
+                    "0.04 steer 65536\n"
+                    "1.23 rel down\n"
                     "1.24 press left\n"
-                    "1.25 press enter",
-            "TMInterface input formatting was incorrect or locale-sensitive");
+                    "1.25 rel right\n"
+                    "1.26 press enter",
+            "input script formatting was incorrect or locale-sensitive");
+}
+
+bool TestAnalogInputRepresentation() {
+    const auto half = forevertas::ParseNormalizedAnalogInput("0.5");
+    const auto quarterLeft =
+            forevertas::ParseNormalizedAnalogInput("-0.25");
+    bool okay = Check(half && *half == 32768 &&
+                              quarterLeft && *quarterLeft == -16384,
+                      "normalized settings were not quantized exactly");
+    okay &= Check(!forevertas::ParseNormalizedAnalogInput("1.0001") &&
+                          !forevertas::ParseNormalizedAnalogInput("-1.0001"),
+                  "out-of-range normalized analog settings were accepted");
+    okay &= Check(forevertas::SaturateAnalogInputState(70000) == 65536 &&
+                          forevertas::SaturateAnalogInputState(-70000) ==
+                                  -65536,
+                  "integer analog saturation was incorrect");
+
+    std::vector<SandboxInputEvent> events{
+            Steering(100, 70000), Steering(110, -70000)};
+    forevertas::NormalizeInputEvents(events, 10u);
+    okay &= Check(events.size() == 2u &&
+                          events[0].value.analog == 65536 &&
+                          events[1].value.analog == -65536 &&
+                          AllAnalogInputsValid(events),
+                  "input normalization did not enforce integer bounds");
+    return okay;
+}
+
+bool TestAllModifierAnalogInvariants() {
+    const std::vector<SandboxInputEvent> baseline{
+            Steering(1000, -32768),
+            Switch(1200, SandboxInputAction::Accelerate, true),
+            Steering(2000, 0),
+            Switch(2500, SandboxInputAction::Brake, true),
+            Steering(4000, 32768),
+            Switch(5000, SandboxInputAction::Brake, false)};
+    for (const auto &registration : forevertas::ModifierRegistry()) {
+        std::unique_ptr<InputMutator> modifier = registration.create(
+                registration.defaultSettings, 10u);
+        for (std::uint64_t attempt = 0u; attempt < 32u; ++attempt) {
+            const MutationResult result = modifier->Mutate(
+                    {baseline, attempt, 0u, 10u});
+            if (!AllAnalogInputsValid(result.inputs)) {
+                return Check(false,
+                             "modifier produced an out-of-range analog state");
+            }
+        }
+    }
+    return true;
 }
 
 bool TestRegistries() {
@@ -401,6 +486,13 @@ bool TestLocaleIndependentFloatingPointSettings() {
                   "comma decimal input was accepted");
     okay &= Check(!forevertas::ParseFiniteDouble("12.5x"),
                   "floating setting accepted trailing characters");
+
+    const auto analogQuarter =
+            forevertas::ParseNormalizedAnalogInput("0.25");
+    okay &= Check(analogQuarter && *analogQuarter == 16384,
+                  "analog setting quantization followed LC_NUMERIC");
+    okay &= Check(!forevertas::ParseNormalizedAnalogInput("0,25"),
+                  "comma-decimal analog setting was accepted");
 
     okay &= Check(
             ModifierAcceptsDotDecimals(
@@ -491,7 +583,9 @@ int main() {
     const bool okay = TestEvaluationTargets() &&
             TestModifierComposition() &&
             TestModifierDeterminism() &&
-            TestTmInterfaceInputFormatting() &&
+            TestInputScriptFormatting() &&
+            TestAnalogInputRepresentation() &&
+            TestAllModifierAnalogInvariants() &&
             TestRegistries() &&
             TestLocaleIndependentFloatingPointSettings() &&
             TestSearchSettingsAndCancellation();

@@ -98,7 +98,7 @@ void SearchWorker::run() {
         auto completion = std::make_shared<SearchCompletion>();
         completion->summary = FormatResult(result);
         completion->inputsText = QString::fromStdString(
-                FormatTmInterfaceInputs(result.bestInputs));
+                FormatInputScript(result.bestInputs));
         completion->packsDirectory =
                 QString::fromStdString(request_.packDirectory);
         completion->replayPath = QString::fromStdString(request_.replayPath);

@@ -8,7 +8,7 @@
 
 namespace forevertas {
 
-std::string FormatTmInterfaceInputs(
+std::string FormatInputScript(
         const std::vector<SandboxInputEvent> &events);
 
 }  // namespace forevertas

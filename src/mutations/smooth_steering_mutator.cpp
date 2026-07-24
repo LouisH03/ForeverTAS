@@ -13,16 +13,18 @@ struct Settings {
     ModifierWindow window;
     std::uint32_t deformationCount = 1u;
     std::int64_t radiusMs = 100;
-    double amplitudeMinimum = -0.2;
-    double amplitudeMaximum = 0.2;
+    AnalogInputState amplitudeMinimum = 0;
+    AnalogInputState amplitudeMaximum = 0;
 };
 
 std::optional<Settings> ParseSettings(const OptionSettings &settings) {
     const auto window = ParseModifierWindow(settings);
     const auto count = ParseUnsignedDecimal32(settings.at("deformationCount"));
     const auto radius = ParseSignedDecimal(settings.at("radiusMs"));
-    const auto amplitudeMinimum = ParseFiniteDouble(settings.at("amplitudeMin"));
-    const auto amplitudeMaximum = ParseFiniteDouble(settings.at("amplitudeMax"));
+    const auto amplitudeMinimum =
+            ParseNormalizedAnalogInput(settings.at("amplitudeMin"));
+    const auto amplitudeMaximum =
+            ParseNormalizedAnalogInput(settings.at("amplitudeMax"));
     if (!window || !count || !radius || !amplitudeMinimum ||
         !amplitudeMaximum) return std::nullopt;
     return Settings{*window,
@@ -49,10 +51,11 @@ public:
              ++deformation) {
             const std::int64_t center = RandomInteger<std::int64_t>(
                     random, minimumTick, maximumTick) * tick;
-            const double amplitude = RandomDouble(
-                    random,
-                    settings_.amplitudeMinimum,
-                    settings_.amplitudeMaximum);
+            const AnalogInputState amplitude =
+                    RandomInteger<AnalogInputState>(
+                            random,
+                            settings_.amplitudeMinimum,
+                            settings_.amplitudeMaximum);
             const std::int64_t start = std::max(
                     settings_.window.minimumTimeMs,
                     center - settings_.radiusMs);
@@ -69,10 +72,14 @@ public:
                         : 0.5 * (1.0 + std::cos(
                                   pi * distance /
                                   static_cast<double>(settings_.radiusMs)));
-                const float value = ClampSteering(
-                        SteeringStateAt(inputs, time) +
-                        static_cast<float>(amplitude * weight));
-                inputs.push_back(AnalogEvent(time, SandboxInputAction::Steer,
+                const std::int64_t weightedDelta = std::llround(
+                        static_cast<double>(amplitude) * weight);
+                const AnalogInputState value = SaturateAnalogInputState(
+                        static_cast<std::int64_t>(
+                                SteeringStateAt(inputs, time)) +
+                        weightedDelta);
+                inputs.push_back(AnalogEvent(time,
+                                             SandboxInputAction::Steer,
                                              value));
             }
             NormalizeInputEvents(inputs, request.tickDurationMs);

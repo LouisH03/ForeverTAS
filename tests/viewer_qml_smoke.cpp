@@ -43,6 +43,32 @@ bool ModelsHaveState(const QList<QObject *> &models,
     return true;
 }
 
+bool FilledModelsHaveBakedRunPalettes(
+        const QList<QObject *> &models,
+        const QList<QObject *> &materials,
+        int expectedCount) {
+    if (models.size() != expectedCount ||
+        materials.size() != expectedCount) {
+        return false;
+    }
+    QSet<QObject *> geometries;
+    for (const QObject *model : models) {
+        const QVariant geometry = model->property("geometry");
+        if (!geometry.canConvert<QObject *>()) return false;
+        QObject *const object = geometry.value<QObject *>();
+        if (object == nullptr) return false;
+        geometries.insert(object);
+    }
+    for (const QObject *material : materials) {
+        if (!material->property("vertexColorsEnabled").toBool() ||
+            material->property("diffuseColor").value<QColor>() !=
+                    QColor(Qt::white)) {
+            return false;
+        }
+    }
+    return geometries.size() >= 2;
+}
+
 bool ContainsStandardSlider(QObject *root) {
     const QList<QObject *> objects = root->findChildren<QObject *>();
     for (const QObject *object : objects) {
@@ -815,6 +841,10 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "runCarFilledModel"));
+                                const QList<QObject *> carFilledMaterials =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "runCarFilledMaterial"));
                                 const QList<QObject *> carWireModels =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
@@ -827,7 +857,11 @@ int main(int argc, char **argv) {
                                 for (const QObject *rootNode : carRoots) {
                                     rootsVisible &= rootNode
                                                             ->property("visible")
-                                                            .toBool();
+                                                            .toBool() &&
+                                            std::abs(rootNode
+                                                             ->property("opacity")
+                                                             .toReal() -
+                                                     1.0) < 0.001;
                                 }
 
                                 const QVariant filledGeometry =
@@ -845,6 +879,10 @@ int main(int argc, char **argv) {
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&
+                                        FilledModelsHaveBakedRunPalettes(
+                                                carFilledModels,
+                                                carFilledMaterials,
+                                                expectedCarModels) &&
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         false);
@@ -939,6 +977,8 @@ int main(int argc, char **argv) {
                                             << ", roots=" << carRoots.size()
                                             << ", filledModels="
                                             << carFilledModels.size()
+                                            << ", filledMaterials="
+                                            << carFilledMaterials.size()
                                             << ", wireModels="
                                             << carWireModels.size()
                                             << ", expectedModels="

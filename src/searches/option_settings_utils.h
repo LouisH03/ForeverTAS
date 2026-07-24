@@ -3,6 +3,8 @@
 
 #include "searches/option_configuration.h"
 
+#include <forevervalidator/input_state.h>
+
 #include <cstdint>
 #include <cmath>
 #include <limits>
@@ -106,6 +108,21 @@ inline std::optional<double> ParseFiniteDouble(const std::string &value) {
         return std::nullopt;
     }
     return parsed;
+}
+
+inline std::optional<forevervalidator::AnalogInputState>
+ParseNormalizedAnalogInput(const std::string &value) {
+    const std::optional<double> parsed = ParseFiniteDouble(value);
+    if (!parsed || *parsed < -1.0 || *parsed > 1.0) {
+        return std::nullopt;
+    }
+    const auto scaled = std::llround(
+            *parsed * forevervalidator::kAnalogInputScale);
+    if (scaled < forevervalidator::kAnalogInputMinimum ||
+        scaled > forevervalidator::kAnalogInputMaximum) {
+        return std::nullopt;
+    }
+    return static_cast<forevervalidator::AnalogInputState>(scaled);
 }
 
 inline std::optional<bool> ParseBoolean(const std::string &value) {
