@@ -1,7 +1,7 @@
 import QtQuick
 
 Item {
-    objectName: "maximumSpeedEvaluationSettings"
+    objectName: "finishTimeEvaluationSettings"
     property var controller
     implicitHeight: 0
 }

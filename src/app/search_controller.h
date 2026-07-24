@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_APP_SEARCH_CONTROLLER_H
 #define FOREVERTAS_APP_SEARCH_CONTROLLER_H
 
-#include "searches/search_runner.h"
+#include "app/search_configuration_model.h"
 
 #include <QObject>
 #include <QString>
@@ -29,21 +29,17 @@ class SearchController final : public QObject {
                        replayPathChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
                        CONSTANT)
-    Q_PROPERTY(QVariantList mutationAlgorithmOptions READ
-                       mutationAlgorithmOptions CONSTANT)
+    Q_PROPERTY(QVariantList modifierOptions READ modifierOptions CONSTANT)
     Q_PROPERTY(QVariantList evaluationTargetOptions READ evaluationTargetOptions
                        CONSTANT)
     Q_PROPERTY(QString searchAlgorithmId READ searchAlgorithmId WRITE
                        setSearchAlgorithmId NOTIFY searchAlgorithmIdChanged)
-    Q_PROPERTY(QString mutationAlgorithmId READ mutationAlgorithmId WRITE
-                       setMutationAlgorithmId NOTIFY mutationAlgorithmIdChanged)
     Q_PROPERTY(QString evaluationTargetId READ evaluationTargetId WRITE
                        setEvaluationTargetId NOTIFY evaluationTargetIdChanged)
     Q_PROPERTY(QVariantMap searchAlgorithmSettings READ searchAlgorithmSettings
                        NOTIFY searchAlgorithmSettingsChanged)
-    Q_PROPERTY(QVariantMap mutationAlgorithmSettings READ
-                       mutationAlgorithmSettings NOTIFY
-                       mutationAlgorithmSettingsChanged)
+    Q_PROPERTY(QVariantList modifierPasses READ modifierPasses NOTIFY
+                       modifierPassesChanged)
     Q_PROPERTY(QVariantMap evaluationTargetSettings READ
                        evaluationTargetSettings NOTIFY
                        evaluationTargetSettingsChanged)
@@ -69,13 +65,12 @@ public:
     QString autoDetectedPacksDirectory() const;
     QString replayPath() const;
     QVariantList searchAlgorithmOptions() const;
-    QVariantList mutationAlgorithmOptions() const;
+    QVariantList modifierOptions() const;
     QVariantList evaluationTargetOptions() const;
     QString searchAlgorithmId() const;
-    QString mutationAlgorithmId() const;
     QString evaluationTargetId() const;
     QVariantMap searchAlgorithmSettings() const;
-    QVariantMap mutationAlgorithmSettings() const;
+    QVariantList modifierPasses() const;
     QVariantMap evaluationTargetSettings() const;
 
     bool canStart() const;
@@ -91,7 +86,6 @@ public slots:
     void setPacksDirectory(const QString &value);
     void setReplayPath(const QString &value);
     void setSearchAlgorithmId(const QString &value);
-    void setMutationAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
 
     Q_INVOKABLE void browseForPacksDirectory();
@@ -99,8 +93,13 @@ public slots:
     Q_INVOKABLE void browseForReplay();
     Q_INVOKABLE void setSearchAlgorithmSetting(const QString &key,
                                                const QString &value);
-    Q_INVOKABLE void setMutationAlgorithmSetting(const QString &key,
-                                                 const QString &value);
+    Q_INVOKABLE void addModifierPass(const QString &id);
+    Q_INVOKABLE void removeModifierPass(int index);
+    Q_INVOKABLE void moveModifierPass(int fromIndex, int toIndex);
+    Q_INVOKABLE void setModifierPassId(int index, const QString &id);
+    Q_INVOKABLE void setModifierPassSetting(int index,
+                                            const QString &key,
+                                            const QString &value);
     Q_INVOKABLE void setEvaluationTargetSetting(const QString &key,
                                                 const QString &value);
     Q_INVOKABLE void startSearch();
@@ -111,10 +110,9 @@ signals:
     void autoDetectedPacksDirectoryChanged();
     void replayPathChanged();
     void searchAlgorithmIdChanged();
-    void mutationAlgorithmIdChanged();
     void evaluationTargetIdChanged();
     void searchAlgorithmSettingsChanged();
-    void mutationAlgorithmSettingsChanged();
+    void modifierPassesChanged();
     void evaluationTargetSettingsChanged();
     void canStartChanged();
     void runningChanged();
@@ -142,25 +140,13 @@ private:
             const QStringList *packsSearchPatterns);
     void publishAutoDetectedPacksDirectory(const QString &detected);
     void clearAutoDetectedPacksDirectory();
-    void loadSearchAlgorithmSettings();
-    void loadMutationAlgorithmSettings();
-    void loadEvaluationTargetSettings();
-    void persistOptionSetting(const QString &category,
-                              const QString &optionId,
-                              const QString &key,
-                              const QString &value);
     void persist(const char *key, const QString &value);
     void waitForWorker();
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
-    QString searchAlgorithmId_;
-    QString mutationAlgorithmId_;
-    QString evaluationTargetId_;
-    QVariantMap searchAlgorithmSettings_;
-    QVariantMap mutationAlgorithmSettings_;
-    QVariantMap evaluationTargetSettings_;
+    SearchConfigurationModel configuration_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString resultText_;

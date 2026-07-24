@@ -123,7 +123,7 @@ PhysicsSandboxStateView AdvanceTo(PhysicsSandbox &sandbox,
 }
 
 struct BestCandidate {
-    double score = -std::numeric_limits<double>::infinity();
+    std::optional<EvaluationSample> evaluation;
     SearchWinnerSource source = SearchWinnerSource::Baseline;
     std::optional<std::uint64_t> attempt;
     std::size_t mutationCount = 0u;
@@ -140,32 +140,6 @@ std::optional<BasicBruteForceSettings> ParseBasicBruteForceSettings(
         return std::nullopt;
     }
 
-    const auto minMutateMs = ParseSignedDecimal(settings.at("minMutateMs"));
-    if (!minMutateMs) {
-        *error = "minimum mutation time must be a non-negative 64-bit "
-                 "decimal integer";
-        return std::nullopt;
-    }
-    const auto maxMutateMs = ParseSignedDecimal(settings.at("maxMutateMs"));
-    if (!maxMutateMs) {
-        *error = "maximum mutation time must be a non-negative 64-bit "
-                 "decimal integer";
-        return std::nullopt;
-    }
-    const auto minEvalTimeMs =
-            ParseSignedDecimal(settings.at("minEvalTimeMs"));
-    if (!minEvalTimeMs) {
-        *error = "minimum evaluation time must be a non-negative 64-bit "
-                 "decimal integer";
-        return std::nullopt;
-    }
-    const auto maxEvalTimeMs =
-            ParseSignedDecimal(settings.at("maxEvalTimeMs"));
-    if (!maxEvalTimeMs) {
-        *error = "maximum evaluation time must be a non-negative 64-bit "
-                 "decimal integer";
-        return std::nullopt;
-    }
     const auto attemptCount =
             ParseUnsignedDecimal64(settings.at("attemptCount"));
     if (!attemptCount) {
@@ -173,29 +147,19 @@ std::optional<BasicBruteForceSettings> ParseBasicBruteForceSettings(
         return std::nullopt;
     }
 
-    return BasicBruteForceSettings{
-            *minMutateMs,
-            *maxMutateMs,
-            *minEvalTimeMs,
-            *maxEvalTimeMs,
-            *attemptCount};
+    return BasicBruteForceSettings{*attemptCount};
 }
 
 }  // namespace
 
 BasicBruteForceSettings DefaultBasicBruteForceSettings() {
-    return {1000, 6000, 1000, 6000, 10u};
+    return {10u};
 }
 
 OptionSettings DefaultBasicBruteForceOptionSettings() {
     const BasicBruteForceSettings defaults =
             DefaultBasicBruteForceSettings();
-    return {
-            {"minMutateMs", std::to_string(defaults.minMutateMs)},
-            {"maxMutateMs", std::to_string(defaults.maxMutateMs)},
-            {"minEvalTimeMs", std::to_string(defaults.minEvalTimeMs)},
-            {"maxEvalTimeMs", std::to_string(defaults.maxEvalTimeMs)},
-            {"attemptCount", std::to_string(defaults.attemptCount)}};
+    return {{"attemptCount", std::to_string(defaults.attemptCount)}};
 }
 
 std::optional<std::string> ValidateBasicBruteForceSettings(
@@ -204,28 +168,8 @@ std::optional<std::string> ValidateBasicBruteForceSettings(
     if (tickDurationMs == 0u) {
         return "tick duration must be greater than zero";
     }
-    if (settings.minMutateMs < static_cast<std::int64_t>(tickDurationMs)) {
-        return "minimum mutation time must be at least one tick";
-    }
-    if (settings.maxMutateMs < settings.minMutateMs) {
-        return "maximum mutation time must not precede its minimum";
-    }
-    if (settings.minEvalTimeMs < settings.minMutateMs) {
-        return "minimum evaluation time must not precede mutation";
-    }
-    if (settings.maxEvalTimeMs < settings.minEvalTimeMs) {
-        return "maximum evaluation time must not precede its minimum";
-    }
     if (settings.attemptCount == 0u) {
         return "attempt count must be greater than zero";
-    }
-
-    const std::int64_t tick = static_cast<std::int64_t>(tickDurationMs);
-    if (settings.minMutateMs % tick != 0 ||
-        settings.maxMutateMs % tick != 0 ||
-        settings.minEvalTimeMs % tick != 0 ||
-        settings.maxEvalTimeMs % tick != 0) {
-        return "mutation and evaluation times must align to whole ticks";
     }
     return std::nullopt;
 }
@@ -268,11 +212,35 @@ SearchResult BasicBruteForceSearch::Run(
         throw std::invalid_argument(*error);
     }
 
+    const std::int64_t earliestMutationTimeMs =
+            context.mutator.EarliestMutationTimeMs();
+    if (earliestMutationTimeMs <
+                static_cast<std::int64_t>(context.tickDurationMs) ||
+        earliestMutationTimeMs % context.tickDurationMs != 0) {
+        throw std::invalid_argument(
+                "modifier pipeline must begin on or after the first whole "
+                "tick");
+    }
+
     CheckCancellation(context.control);
     PhysicsSandboxStateView current = Require(
             context.sandbox.ReadState(), "reading initial sandbox state");
+    const EvaluationPlan evaluationPlan = context.evaluator.Plan(
+            static_cast<std::int64_t>(current.durationMs),
+            earliestMutationTimeMs,
+            context.tickDurationMs);
+    if (evaluationPlan.startTimeMs < earliestMutationTimeMs ||
+        evaluationPlan.endTimeMs < evaluationPlan.startTimeMs ||
+        evaluationPlan.endTimeMs >
+                static_cast<std::int64_t>(current.durationMs) ||
+        evaluationPlan.startTimeMs % context.tickDurationMs != 0 ||
+        evaluationPlan.endTimeMs % context.tickDurationMs != 0) {
+        throw std::invalid_argument(
+                "evaluation target returned an invalid observation plan");
+    }
+
     const std::uint64_t branchTimeMs =
-            static_cast<std::uint64_t>(settings_.minMutateMs) -
+            static_cast<std::uint64_t>(earliestMutationTimeMs) -
             context.tickDurationMs;
     current = AdvanceTo(context.sandbox,
                         current.timeMs,
@@ -286,11 +254,11 @@ SearchResult BasicBruteForceSearch::Run(
             context.sandbox.CaptureState(), "capturing branch state");
 
     const std::uint64_t preEvaluationTimeMs =
-            static_cast<std::uint64_t>(settings_.minEvalTimeMs) -
+            static_cast<std::uint64_t>(evaluationPlan.startTimeMs) -
             context.tickDurationMs;
     const std::uint64_t evaluationTicks =
             static_cast<std::uint64_t>(
-                    (settings_.maxEvalTimeMs - settings_.minEvalTimeMs) /
+                    (evaluationPlan.endTimeMs - evaluationPlan.startTimeMs) /
                     context.tickDurationMs) +
             1u;
 
@@ -310,21 +278,31 @@ SearchResult BasicBruteForceSearch::Run(
                 preEvaluationTimeMs,
                 context.tickDurationMs,
                 context.control);
+        std::optional<PhysicsSandboxStateView> previous = state;
+        std::unique_ptr<CandidateEvaluationSession> session =
+                context.evaluator.CreateSession();
         for (std::uint64_t tick = 0u; tick < evaluationTicks; ++tick) {
             CheckCancellation(context.control);
             state = Require(context.sandbox.AdvanceTicks(1u),
                             "advancing evaluation tick");
-            const double score = context.evaluator.Evaluate(state);
+            const std::optional<EvaluationSample> sample =
+                    session->Observe(previous, state);
+            previous = state;
             ++evaluatorCalls;
-            if (!std::isfinite(score)) {
-                throw std::runtime_error(
-                        "candidate evaluator returned a non-finite score");
+            if (!sample) {
+                continue;
             }
-            if (score <= best.score) {
+            if (!std::isfinite(sample->score) ||
+                !std::isfinite(sample->timeMs)) {
+                throw std::runtime_error(
+                        "candidate evaluator returned a non-finite result");
+            }
+            if (best.evaluation &&
+                !context.evaluator.IsBetter(*sample, *best.evaluation)) {
                 continue;
             }
 
-            best.score = score;
+            best.evaluation = sample;
             best.source = source;
             best.attempt = attempt;
             best.mutationCount = mutationCount;
@@ -353,11 +331,8 @@ SearchResult BasicBruteForceSearch::Run(
         CheckCancellation(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");
-        MutationResult mutation = context.mutator.Mutate(MutationRequest{
-                baselineInputs,
-                settings_.minMutateMs,
-                settings_.maxMutateMs,
-                attempt});
+        MutationResult mutation = context.mutator.Mutate(
+                {baselineInputs, attempt, 0u, context.tickDurationMs});
         CheckCancellation(context.control);
         if (mutation.mutationCount == 0u) {
             ++skippedAttempts;
@@ -382,8 +357,9 @@ SearchResult BasicBruteForceSearch::Run(
     }
 
     CheckCancellation(context.control);
-    if (!best.snapshot) {
-        throw std::runtime_error("search produced no evaluated state");
+    if (!best.evaluation || !best.snapshot) {
+        throw std::runtime_error(
+                "no candidate satisfied the selected evaluation target");
     }
     const PhysicsSandboxStateView restored = Require(
             context.sandbox.RestoreState(*best.snapshot),
@@ -398,12 +374,13 @@ SearchResult BasicBruteForceSearch::Run(
                 "mutation winner and improvement count are inconsistent");
     }
 
-    const auto elapsed = std::chrono::steady_clock::now() - started;
     return SearchResult{
             best.source,
             best.attempt,
             best.mutationCount,
-            best.score,
+            best.evaluation->score,
+            best.evaluation->timeMs,
+            best.evaluation->description,
             best.view,
             settings_.attemptCount,
             executedAttempts,
@@ -411,7 +388,7 @@ SearchResult BasicBruteForceSearch::Run(
             evaluatorCalls,
             mutationImprovementCount,
             totalMutationCount,
-            elapsed,
+            std::chrono::steady_clock::now() - started,
             *best.snapshot};
 }
 

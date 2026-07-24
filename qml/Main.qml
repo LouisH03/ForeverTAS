@@ -842,46 +842,65 @@ ApplicationWindow {
                         color: "#d3d8d1"
                     }
 
-                    AlgorithmSelector {
-                        objectName: "searchAlgorithmSelector"
+                    ConfigurationSection {
+                        objectName: "evaluationSection"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        title: qsTr("Search algorithm")
-                        comboObjectName: "searchAlgorithmCombo"
-                        options: window.controller.searchAlgorithmOptions
-                        selectedId: window.controller.searchAlgorithmId
-                        controller: window.controller
-                        onSelectionRequested: id =>
-                            window.controller.searchAlgorithmId = id
+                        title: qsTr("Evaluation")
+                        description: qsTr(
+                            "Choose what makes one candidate better than another.")
+
+                        AlgorithmSelector {
+                            objectName: "evaluationTargetSelector"
+                            Layout.fillWidth: true
+                            title: qsTr("Target")
+                            comboObjectName: "evaluationTargetCombo"
+                            options: window.controller.evaluationTargetOptions
+                            selectedId: window.controller.evaluationTargetId
+                            controller: window.controller
+                            onSelectionRequested: id =>
+                                window.controller.evaluationTargetId = id
+                        }
                     }
 
-                    AlgorithmSelector {
-                        objectName: "mutationAlgorithmSelector"
+                    ConfigurationSection {
+                        objectName: "modifierSection"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        title: qsTr("Mutation algorithm")
-                        comboObjectName: "mutationAlgorithmCombo"
-                        options: window.controller.mutationAlgorithmOptions
-                        selectedId: window.controller.mutationAlgorithmId
-                        controller: window.controller
-                        onSelectionRequested: id =>
-                            window.controller.mutationAlgorithmId = id
+                        title: qsTr("Input modifiers")
+                        description: qsTr(
+                            "Build an ordered pipeline of changes applied to each candidate.")
+
+                        ModifierComposition {
+                            Layout.fillWidth: true
+                            controller: window.controller
+                            options: window.controller.modifierOptions
+                            passes: window.controller.modifierPasses
+                        }
                     }
 
-                    AlgorithmSelector {
-                        objectName: "evaluationTargetSelector"
+                    ConfigurationSection {
+                        objectName: "searchSection"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        title: qsTr("Evaluation target")
-                        comboObjectName: "evaluationTargetCombo"
-                        options: window.controller.evaluationTargetOptions
-                        selectedId: window.controller.evaluationTargetId
-                        controller: window.controller
-                        onSelectionRequested: id =>
-                            window.controller.evaluationTargetId = id
+                        title: qsTr("Search")
+                        description: qsTr(
+                            "Choose how candidates are generated and compared.")
+
+                        AlgorithmSelector {
+                            objectName: "searchAlgorithmSelector"
+                            Layout.fillWidth: true
+                            title: qsTr("Algorithm")
+                            comboObjectName: "searchAlgorithmCombo"
+                            options: window.controller.searchAlgorithmOptions
+                            selectedId: window.controller.searchAlgorithmId
+                            controller: window.controller
+                            onSelectionRequested: id =>
+                                window.controller.searchAlgorithmId = id
+                        }
                     }
 
                     Label {

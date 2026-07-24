@@ -12,21 +12,26 @@
 namespace forevertas {
 
 struct RandomSteeringSettings {
+    std::int64_t minimumTimeMs = 1000;
+    std::int64_t maximumTimeMs = 6000;
     std::uint32_t seed = 0u;
 };
 
 RandomSteeringSettings DefaultRandomSteeringSettings();
 OptionSettings DefaultRandomSteeringOptionSettings();
 std::optional<std::string> ValidateRandomSteeringOptionSettings(
-        const OptionSettings &settings);
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs);
 std::unique_ptr<InputMutator> CreateRandomSteeringMutator(
-        const OptionSettings &settings);
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs);
 
 class RandomSteeringMutator final : public InputMutator {
 public:
     explicit RandomSteeringMutator(RandomSteeringSettings settings);
 
     MutationResult Mutate(const MutationRequest &request) const override;
+    std::int64_t EarliestMutationTimeMs() const override;
 
 private:
     RandomSteeringSettings settings_;

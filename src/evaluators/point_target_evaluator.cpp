@@ -1,0 +1,111 @@
+#include "evaluators/point_target_evaluator.h"
+
+#include "evaluators/evaluator_utils.h"
+#include "searches/option_settings_utils.h"
+
+#include <stdexcept>
+
+namespace forevertas {
+namespace {
+
+struct PointSettings {
+    std::int64_t minimumTimeMs = 0;
+    std::int64_t maximumTimeMs = 0;
+    EvaluationVector3 target;
+};
+
+class PointSession final : public CandidateEvaluationSession {
+public:
+    explicit PointSession(EvaluationVector3 target) : target_(target) {}
+
+    std::optional<EvaluationSample> Observe(
+            const std::optional<
+                    forevervalidator::experimental::PhysicsSandboxStateView>
+                    &previous,
+            const forevervalidator::experimental::PhysicsSandboxStateView
+                    &current) override {
+        static_cast<void>(previous);
+        const double distance = Distance(PositionOf(current), target_);
+        return EvaluationSample{
+                distance,
+                static_cast<double>(current.timeMs),
+                MetricDescription("Point distance",
+                                  distance,
+                                  "m",
+                                  static_cast<double>(current.timeMs))};
+    }
+
+private:
+    EvaluationVector3 target_;
+};
+
+class PointEvaluator final : public CandidateEvaluator {
+public:
+    explicit PointEvaluator(PointSettings settings) : settings_(settings) {}
+
+    EvaluationPlan Plan(std::int64_t replayDurationMs,
+                        std::int64_t earliestMutationTimeMs,
+                        std::uint32_t tickDurationMs) const override {
+        static_cast<void>(tickDurationMs);
+        return ClampPlan(settings_.minimumTimeMs,
+                         settings_.maximumTimeMs,
+                         replayDurationMs,
+                         earliestMutationTimeMs);
+    }
+    std::unique_ptr<CandidateEvaluationSession> CreateSession()
+            const override {
+        return std::make_unique<PointSession>(settings_.target);
+    }
+    bool IsBetter(const EvaluationSample &candidate,
+                  const EvaluationSample &incumbent) const override {
+        return candidate.score < incumbent.score;
+    }
+
+private:
+    PointSettings settings_;
+};
+
+std::optional<PointSettings> ParseSettings(const OptionSettings &settings) {
+    const auto minimum = ReadTimeSetting(settings, "minTimeMs");
+    const auto maximum = ReadTimeSetting(settings, "maxTimeMs");
+    const auto target = ReadVector3Settings(settings, "x", "y", "z");
+    if (!minimum || !maximum || !target) return std::nullopt;
+    return PointSettings{*minimum, *maximum, *target};
+}
+
+}  // namespace
+
+OptionSettings DefaultPointTargetOptionSettings() {
+    return {{"minTimeMs", "1000"},
+            {"maxTimeMs", "6000"},
+            {"x", "0"},
+            {"y", "0"},
+            {"z", "0"}};
+}
+
+std::optional<std::string> ValidatePointTargetOptionSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    if (const auto keyError = ValidateOptionSettingKeys(
+                settings, DefaultPointTargetOptionSettings())) {
+        return keyError;
+    }
+    const auto parsed = ParseSettings(settings);
+    if (!parsed) return "point target settings contain invalid values";
+    return ValidateTimeWindow(parsed->minimumTimeMs,
+                              parsed->maximumTimeMs,
+                              tickDurationMs,
+                              "evaluation");
+}
+
+std::unique_ptr<CandidateEvaluator> CreatePointTargetEvaluator(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    if (const auto error =
+                ValidatePointTargetOptionSettings(settings, tickDurationMs)) {
+        throw std::invalid_argument(*error);
+    }
+    return std::make_unique<PointEvaluator>(*ParseSettings(settings));
+}
+
+}  // namespace forevertas

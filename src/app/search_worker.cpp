@@ -1,7 +1,6 @@
 #include "app/search_worker.h"
 
 #include <chrono>
-#include <cmath>
 #include <exception>
 #include <utility>
 
@@ -12,10 +11,6 @@ QString FormatResult(const SearchResult &result) {
     const auto &state = result.bestState;
     const double elapsedMs =
             std::chrono::duration<double, std::milli>(result.elapsed).count();
-    const double speed = std::hypot(
-            static_cast<double>(state.car.linearSpeed.x),
-            static_cast<double>(state.car.linearSpeed.y),
-            static_cast<double>(state.car.linearSpeed.z));
 
     QString winner =
             result.winnerSource == SearchWinnerSource::Baseline
@@ -29,13 +24,12 @@ QString FormatResult(const SearchResult &result) {
 
     return QStringLiteral(
                    "Winner: %1\n"
-                   "Score: %2  Speed: %3\n"
-                   "Tick: %4  Time: %5 ms\n"
-                   "Attempts: %6/%7  Skipped: %8\n"
-                   "Improvements: %9  Elapsed: %10 ms")
+                   "%2\n"
+                   "State tick: %3  State time: %4 ms\n"
+                   "Attempts: %5/%6  Skipped: %7\n"
+                   "Improvements: %8  Elapsed: %9 ms")
             .arg(winner)
-            .arg(result.bestScore, 0, 'g', 8)
-            .arg(speed, 0, 'g', 8)
+            .arg(QString::fromStdString(result.bestEvaluationDescription))
             .arg(static_cast<qulonglong>(state.tick))
             .arg(static_cast<qulonglong>(state.timeMs))
             .arg(static_cast<qulonglong>(result.executedAttempts))

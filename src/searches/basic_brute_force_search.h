@@ -12,10 +12,6 @@
 namespace forevertas {
 
 struct BasicBruteForceSettings {
-    std::int64_t minMutateMs = 0;
-    std::int64_t maxMutateMs = 0;
-    std::int64_t minEvalTimeMs = 0;
-    std::int64_t maxEvalTimeMs = 0;
     std::uint64_t attemptCount = 0u;
 };
 

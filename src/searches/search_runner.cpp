@@ -1,5 +1,6 @@
 #include "searches/search_runner.h"
 
+#include "mutations/composite_input_mutator.h"
 #include "searches/algorithm_registry.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
@@ -41,17 +42,15 @@ SearchResult RunSearch(const SearchRequest &request,
 
     const SearchAlgorithmRegistration *const searchRegistration =
             FindSearchAlgorithm(request.searchAlgorithm.id);
-    const MutationAlgorithmRegistration *const mutationRegistration =
-            FindMutationAlgorithm(request.mutationAlgorithm.id);
     const EvaluationTargetRegistration *const evaluationRegistration =
             FindEvaluationTarget(request.evaluationTarget.id);
     if (searchRegistration == nullptr) {
         throw std::invalid_argument("unknown search algorithm: " +
                                     request.searchAlgorithm.id);
     }
-    if (mutationRegistration == nullptr) {
-        throw std::invalid_argument("unknown mutation algorithm: " +
-                                    request.mutationAlgorithm.id);
+    if (request.modifiers.empty()) {
+        throw std::invalid_argument(
+                "modifier pipeline must contain at least one pass");
     }
     if (evaluationRegistration == nullptr) {
         throw std::invalid_argument("unknown evaluation target: " +
@@ -61,13 +60,20 @@ SearchResult RunSearch(const SearchRequest &request,
                 request.searchAlgorithm.settings, kSearchTickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    if (const auto error = mutationRegistration->validateSettings(
-                request.mutationAlgorithm.settings)) {
+    if (const auto error = evaluationRegistration->validateSettings(
+                request.evaluationTarget.settings, kSearchTickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    if (const auto error = evaluationRegistration->validateSettings(
-                request.evaluationTarget.settings)) {
-        throw std::invalid_argument(*error);
+    for (const OptionConfiguration &modifier : request.modifiers) {
+        const ModifierRegistration *const registration =
+                FindModifier(modifier.id);
+        if (registration == nullptr) {
+            throw std::invalid_argument("unknown modifier: " + modifier.id);
+        }
+        if (const auto error = registration->validateSettings(
+                    modifier.settings, kSearchTickDurationMs)) {
+            throw std::invalid_argument(*error);
+        }
     }
 
     CheckCancellation(control);
@@ -96,14 +102,23 @@ SearchResult RunSearch(const SearchRequest &request,
             searchRegistration->create(
                     request.searchAlgorithm.settings,
                     kSearchTickDurationMs);
-    std::unique_ptr<InputMutator> mutator = mutationRegistration->create(
-            request.mutationAlgorithm.settings);
+    std::vector<std::unique_ptr<InputMutator>> modifierPasses;
+    modifierPasses.reserve(request.modifiers.size());
+    for (const OptionConfiguration &modifier : request.modifiers) {
+        const ModifierRegistration *const registration =
+                FindModifier(modifier.id);
+        modifierPasses.push_back(registration->create(
+                modifier.settings, kSearchTickDurationMs));
+    }
+    const CompositeInputMutator mutator(std::move(modifierPasses));
     std::unique_ptr<CandidateEvaluator> evaluator =
-            evaluationRegistration->create(request.evaluationTarget.settings);
+            evaluationRegistration->create(
+                    request.evaluationTarget.settings,
+                    kSearchTickDurationMs);
     return search->Run({
             sandbox,
             options.tickDurationMs,
-            *mutator,
+            mutator,
             *evaluator,
             control});
 }

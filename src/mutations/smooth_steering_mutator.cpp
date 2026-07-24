@@ -1,0 +1,133 @@
+#include "mutations/smooth_steering_mutator.h"
+
+#include "mutations/input_event_utils.h"
+#include "mutations/modifier_utils.h"
+
+#include <cmath>
+#include <stdexcept>
+
+namespace forevertas {
+namespace {
+
+struct Settings {
+    ModifierWindow window;
+    std::uint32_t deformationCount = 1u;
+    std::int64_t radiusMs = 100;
+    double amplitudeMinimum = -0.2;
+    double amplitudeMaximum = 0.2;
+};
+
+std::optional<Settings> ParseSettings(const OptionSettings &settings) {
+    const auto window = ParseModifierWindow(settings);
+    const auto count = ParseUnsignedDecimal32(settings.at("deformationCount"));
+    const auto radius = ParseSignedDecimal(settings.at("radiusMs"));
+    const auto amplitudeMinimum = ParseFiniteDouble(settings.at("amplitudeMin"));
+    const auto amplitudeMaximum = ParseFiniteDouble(settings.at("amplitudeMax"));
+    if (!window || !count || !radius || !amplitudeMinimum ||
+        !amplitudeMaximum) return std::nullopt;
+    return Settings{*window,
+                    *count,
+                    *radius,
+                    *amplitudeMinimum,
+                    *amplitudeMaximum};
+}
+
+class SmoothSteeringMutator final : public InputMutator {
+public:
+    explicit SmoothSteeringMutator(Settings settings) : settings_(settings) {}
+
+    MutationResult Mutate(const MutationRequest &request) const override {
+        std::vector<SandboxInputEvent> inputs = request.baselineInputs;
+        std::mt19937 random = ModifierRandom(
+                settings_.window.seed, request.attemptIndex, request.passIndex);
+        const std::int64_t tick = request.tickDurationMs;
+        const std::int64_t minimumTick = settings_.window.minimumTimeMs / tick;
+        const std::int64_t maximumTick = settings_.window.maximumTimeMs / tick;
+        constexpr double pi = 3.14159265358979323846;
+        for (std::uint32_t deformation = 0u;
+             deformation < settings_.deformationCount;
+             ++deformation) {
+            const std::int64_t center = RandomInteger<std::int64_t>(
+                    random, minimumTick, maximumTick) * tick;
+            const double amplitude = RandomDouble(
+                    random,
+                    settings_.amplitudeMinimum,
+                    settings_.amplitudeMaximum);
+            const std::int64_t start = std::max(
+                    settings_.window.minimumTimeMs,
+                    center - settings_.radiusMs);
+            const std::int64_t end = std::min(
+                    settings_.window.maximumTimeMs,
+                    center + settings_.radiusMs);
+            for (std::int64_t time = AlignInputTime(start, tick);
+                 time <= end;
+                 time += tick) {
+                const double distance = std::abs(
+                        static_cast<double>(time - center));
+                const double weight = settings_.radiusMs == 0
+                        ? 1.0
+                        : 0.5 * (1.0 + std::cos(
+                                  pi * distance /
+                                  static_cast<double>(settings_.radiusMs)));
+                const float value = ClampSteering(
+                        SteeringStateAt(inputs, time) +
+                        static_cast<float>(amplitude * weight));
+                inputs.push_back(AnalogEvent(time, SandboxInputAction::Steer,
+                                             value));
+            }
+            NormalizeInputEvents(inputs, request.tickDurationMs);
+        }
+        return {inputs,
+                EffectiveInputChangeCount(request.baselineInputs, inputs)};
+    }
+
+    std::int64_t EarliestMutationTimeMs() const override {
+        return settings_.window.minimumTimeMs;
+    }
+
+private:
+    Settings settings_;
+};
+
+}  // namespace
+
+OptionSettings DefaultSmoothSteeringSettings() {
+    return {{"minTimeMs", "1000"},
+            {"maxTimeMs", "6000"},
+            {"seed", "1179926867"},
+            {"deformationCount", "1"},
+            {"radiusMs", "200"},
+            {"amplitudeMin", "-0.2"},
+            {"amplitudeMax", "0.2"}};
+}
+
+std::optional<std::string> ValidateSmoothSteeringSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    if (const auto error = ValidateOptionSettingKeys(
+                settings, DefaultSmoothSteeringSettings())) return error;
+    const auto parsed = ParseSettings(settings);
+    if (!parsed) return "smooth steering settings are invalid";
+    if (const auto error = ValidateModifierWindow(parsed->window,
+                                                   tickDurationMs)) return error;
+    if (parsed->deformationCount == 0u) {
+        return "smooth steering deformation count must be greater than zero";
+    }
+    if (parsed->radiusMs < 0 || parsed->radiusMs % tickDurationMs != 0) {
+        return "smooth steering radius must be a non-negative whole-tick value";
+    }
+    if (parsed->amplitudeMinimum > parsed->amplitudeMaximum) {
+        return "smooth steering amplitude minimum must not exceed maximum";
+    }
+    return std::nullopt;
+}
+
+std::unique_ptr<InputMutator> CreateSmoothSteeringMutator(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    if (const auto error = ValidateSmoothSteeringSettings(
+                settings, tickDurationMs)) throw std::invalid_argument(*error);
+    return std::make_unique<SmoothSteeringMutator>(*ParseSettings(settings));
+}
+
+}  // namespace forevertas

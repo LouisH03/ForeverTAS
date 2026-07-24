@@ -5,6 +5,7 @@
 #include "searches/search_algorithm.h"
 
 #include <string>
+#include <vector>
 
 namespace forevertas {
 
@@ -15,8 +16,8 @@ struct SearchRequest {
     std::string replayPath;
     OptionConfiguration searchAlgorithm =
             DefaultSearchAlgorithmConfiguration();
-    OptionConfiguration mutationAlgorithm =
-            DefaultMutationAlgorithmConfiguration();
+    std::vector<OptionConfiguration> modifiers =
+            DefaultModifierConfigurations();
     OptionConfiguration evaluationTarget =
             DefaultEvaluationTargetConfiguration();
 };

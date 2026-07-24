@@ -41,8 +41,34 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
-    src/evaluators/max_speed_evaluator.cpp
+    src/evaluators/candidate_evaluator.h
+    src/evaluators/evaluator_utils.h
+    src/evaluators/finish_time_evaluator.cpp
+    src/evaluators/finish_time_evaluator.h
+    src/evaluators/point_target_evaluator.cpp
+    src/evaluators/point_target_evaluator.h
+    src/evaluators/pose_target_evaluator.cpp
+    src/evaluators/pose_target_evaluator.h
+    src/evaluators/velocity_evaluator.cpp
+    src/evaluators/velocity_evaluator.h
+    src/evaluators/volume_entry_evaluator.cpp
+    src/evaluators/volume_entry_evaluator.h
+    src/mutations/composite_input_mutator.cpp
+    src/mutations/composite_input_mutator.h
+    src/mutations/existing_event_perturbation_mutator.cpp
+    src/mutations/existing_event_perturbation_mutator.h
+    src/mutations/input_deletion_mutator.cpp
+    src/mutations/input_deletion_mutator.h
+    src/mutations/input_event_utils.cpp
+    src/mutations/input_event_utils.h
+    src/mutations/input_insertion_mutator.cpp
+    src/mutations/input_insertion_mutator.h
+    src/mutations/input_mutator.h
+    src/mutations/modifier_utils.h
     src/mutations/random_steering_mutator.cpp
+    src/mutations/random_steering_mutator.h
+    src/mutations/smooth_steering_mutator.cpp
+    src/mutations/smooth_steering_mutator.h
     src/searches/algorithm_registry.cpp
     src/searches/algorithm_registry.h
     src/searches/option_configuration.h
@@ -64,6 +90,8 @@ add_library(forevertas_gui STATIC
     src/viewer/race_timeline_item.h
     src/viewer/race_viewer_controller.cpp
     src/viewer/race_viewer_controller.h
+    src/app/search_configuration_model.cpp
+    src/app/search_configuration_model.h
     src/app/search_controller.cpp
     src/app/search_controller.h
     src/app/packs_directory_finder.cpp
@@ -89,8 +117,24 @@ qt_add_qml_module(forevertas
         qml/Main.qml
         qml/settings/AlgorithmSelector.qml
         qml/settings/BasicBruteForceSearchSettings.qml
+        qml/settings/ConfigurationSection.qml
+        qml/settings/ExistingEventPerturbationSettings.qml
+        qml/settings/FinishTimeEvaluationSettings.qml
+        qml/settings/InputDeletionSettings.qml
+        qml/settings/InputInsertionSettings.qml
+        qml/settings/ModifierComposition.qml
+        qml/settings/PointTargetEvaluationSettings.qml
+        qml/settings/PoseTargetEvaluationSettings.qml
         qml/settings/RandomSteeringMutationSettings.qml
-        qml/settings/MaximumSpeedEvaluationSettings.qml)
+        qml/settings/SettingCombo.qml
+        qml/settings/SettingSwitch.qml
+        qml/settings/SettingTextField.qml
+        qml/settings/SmoothSteeringSettings.qml
+        qml/settings/StyledComboBox.qml
+        qml/settings/TimeWindowSettings.qml
+        qml/settings/Vector3Settings.qml
+        qml/settings/VelocityEvaluationSettings.qml
+        qml/settings/VolumeEntryEvaluationSettings.qml)
 target_link_libraries(forevertas PRIVATE
     forevertas_gui
     Qt6::Gui
@@ -106,11 +150,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(BUILD_TESTING)
-    add_executable(forevertas-strategy-tests tests/strategy_tests.cpp)
+    add_executable(forevertas-strategy-tests
+        tests/search_component_tests.cpp)
     target_link_libraries(forevertas-strategy-tests PRIVATE forevertas_core)
 
     add_executable(forevertas-controller-tests
-        tests/controller_tests.cpp)
+        tests/search_controller_tests.cpp)
     target_link_libraries(forevertas-controller-tests PRIVATE
         forevertas_gui
         Qt6::Test)

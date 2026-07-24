@@ -1,7 +1,15 @@
 #include "searches/algorithm_registry.h"
 
-#include "evaluators/max_speed_evaluator.h"
+#include "evaluators/finish_time_evaluator.h"
+#include "evaluators/point_target_evaluator.h"
+#include "evaluators/pose_target_evaluator.h"
+#include "evaluators/velocity_evaluator.h"
+#include "evaluators/volume_entry_evaluator.h"
+#include "mutations/existing_event_perturbation_mutator.h"
+#include "mutations/input_deletion_mutator.h"
+#include "mutations/input_insertion_mutator.h"
 #include "mutations/random_steering_mutator.h"
+#include "mutations/smooth_steering_mutator.h"
 #include "searches/basic_brute_force_search.h"
 
 #include <algorithm>
@@ -44,29 +52,95 @@ const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry() {
     return registrations;
 }
 
-const std::vector<MutationAlgorithmRegistration> &MutationAlgorithmRegistry() {
-    static const std::vector<MutationAlgorithmRegistration> registrations{
-            {kRandomSteeringMutationId,
+const std::vector<ModifierRegistration> &ModifierRegistry() {
+    static const std::vector<ModifierRegistration> registrations{
+            {kRandomSteeringModifierId,
              {},
              "Random steering",
              "RandomSteeringMutationSettings.qml",
              DefaultRandomSteeringOptionSettings(),
-             {{"seed", "search/mutationSeed"}},
+             {{"minTimeMs", "search/minMutateMs"},
+              {"maxTimeMs", "search/maxMutateMs"},
+              {"seed", "search/mutationSeed"}},
              &ValidateRandomSteeringOptionSettings,
-             &CreateRandomSteeringMutator}};
+             &CreateRandomSteeringMutator},
+            {kExistingEventPerturbationModifierId,
+             {},
+             "Existing-event perturbation",
+             "ExistingEventPerturbationSettings.qml",
+             DefaultExistingEventPerturbationSettings(),
+             {},
+             &ValidateExistingEventPerturbationSettings,
+             &CreateExistingEventPerturbationMutator},
+            {kSmoothSteeringModifierId,
+             {},
+             "Smooth steering deformation",
+             "SmoothSteeringSettings.qml",
+             DefaultSmoothSteeringSettings(),
+             {},
+             &ValidateSmoothSteeringSettings,
+             &CreateSmoothSteeringMutator},
+            {kInputInsertionModifierId,
+             {},
+             "Input insertion",
+             "InputInsertionSettings.qml",
+             DefaultInputInsertionSettings(),
+             {},
+             &ValidateInputInsertionSettings,
+             &CreateInputInsertionMutator},
+            {kInputDeletionModifierId,
+             {},
+             "Input deletion",
+             "InputDeletionSettings.qml",
+             DefaultInputDeletionSettings(),
+             {},
+             &ValidateInputDeletionSettings,
+             &CreateInputDeletionMutator}};
     return registrations;
 }
 
 const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
     static const std::vector<EvaluationTargetRegistration> registrations{
-            {kMaximumSpeedEvaluationId,
+            {kVelocityEvaluationId,
+             {"maximum-speed"},
+             "Velocity",
+             "VelocityEvaluationSettings.qml",
+             DefaultVelocityOptionSettings(),
              {},
-             "Maximum speed",
-             "MaximumSpeedEvaluationSettings.qml",
-             DefaultMaxSpeedOptionSettings(),
+             &ValidateVelocityOptionSettings,
+             &CreateVelocityEvaluator},
+            {kFinishTimeEvaluationId,
              {},
-             &ValidateMaxSpeedOptionSettings,
-             &CreateMaxSpeedEvaluator}};
+             "Finish time",
+             "FinishTimeEvaluationSettings.qml",
+             DefaultFinishTimeOptionSettings(),
+             {},
+             &ValidateFinishTimeOptionSettings,
+             &CreateFinishTimeEvaluator},
+            {kVolumeEntryEvaluationId,
+             {},
+             "Volume entry time",
+             "VolumeEntryEvaluationSettings.qml",
+             DefaultVolumeEntryOptionSettings(),
+             {},
+             &ValidateVolumeEntryOptionSettings,
+             &CreateVolumeEntryEvaluator},
+            {kPointTargetEvaluationId,
+             {},
+             "Point target",
+             "PointTargetEvaluationSettings.qml",
+             DefaultPointTargetOptionSettings(),
+             {},
+             &ValidatePointTargetOptionSettings,
+             &CreatePointTargetEvaluator},
+            {kPoseTargetEvaluationId,
+             {},
+             "Pose target",
+             "PoseTargetEvaluationSettings.qml",
+             DefaultPoseTargetOptionSettings(),
+             {},
+             &ValidatePoseTargetOptionSettings,
+             &CreatePoseTargetEvaluator}};
     return registrations;
 }
 
@@ -75,9 +149,9 @@ const SearchAlgorithmRegistration *FindSearchAlgorithm(
     return FindRegistration(SearchAlgorithmRegistry(), id);
 }
 
-const MutationAlgorithmRegistration *FindMutationAlgorithm(
+const ModifierRegistration *FindModifier(
         const std::string &id) {
-    return FindRegistration(MutationAlgorithmRegistry(), id);
+    return FindRegistration(ModifierRegistry(), id);
 }
 
 const EvaluationTargetRegistration *FindEvaluationTarget(
@@ -91,10 +165,9 @@ OptionConfiguration DefaultSearchAlgorithmConfiguration() {
     return {registration.id, registration.defaultSettings};
 }
 
-OptionConfiguration DefaultMutationAlgorithmConfiguration() {
-    const MutationAlgorithmRegistration &registration =
-            MutationAlgorithmRegistry().front();
-    return {registration.id, registration.defaultSettings};
+std::vector<OptionConfiguration> DefaultModifierConfigurations() {
+    const ModifierRegistration &registration = ModifierRegistry().front();
+    return {{registration.id, registration.defaultSettings}};
 }
 
 OptionConfiguration DefaultEvaluationTargetConfiguration() {

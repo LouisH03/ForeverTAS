@@ -2,7 +2,6 @@
 
 #include "app/packs_directory_finder.h"
 #include "app/search_worker.h"
-#include "searches/algorithm_registry.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -10,7 +9,6 @@
 #include <QSettings>
 #include <QThread>
 #include <QTimer>
-#include <QVariantMap>
 
 #include <algorithm>
 
@@ -19,96 +17,10 @@ namespace {
 
 constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
-constexpr char kSearchAlgorithmKey[] = "selection/searchAlgorithm";
-constexpr char kMutationAlgorithmKey[] = "selection/mutationAlgorithm";
-constexpr char kEvaluationTargetKey[] = "selection/evaluationTarget";
 std::atomic_bool gAutomaticPacksSearchAttempted{false};
 
 QString StoredValue(const char *key, const QString &fallback) {
     return QSettings().value(QLatin1String(key), fallback).toString();
-}
-
-QString OptionSettingPath(const QString &category,
-                          const QString &optionId,
-                          const QString &key) {
-    return QStringLiteral("configuration/%1/%2/%3")
-            .arg(category, optionId, key);
-}
-
-OptionSettings ToOptionSettings(const QVariantMap &values) {
-    OptionSettings settings;
-    for (auto iterator = values.constBegin(); iterator != values.constEnd();
-         ++iterator) {
-        settings.emplace(iterator.key().toStdString(),
-                         iterator.value().toString().toStdString());
-    }
-    return settings;
-}
-
-template<typename Registration>
-QVariantMap LoadOptionSettings(const QString &category,
-                               const Registration &registration) {
-    QSettings storage;
-    QVariantMap values;
-    for (const auto &[key, defaultValue] : registration.defaultSettings) {
-        const QString qKey = QString::fromStdString(key);
-        const QString path = OptionSettingPath(
-                category,
-                QString::fromStdString(registration.id),
-                qKey);
-        QString value;
-        bool loaded = false;
-        if (storage.contains(path)) {
-            value = storage.value(path).toString();
-            loaded = true;
-        } else {
-            for (const std::string &legacyId : registration.legacyIds) {
-                const QString legacyPath = OptionSettingPath(
-                        category,
-                        QString::fromStdString(legacyId),
-                        qKey);
-                if (storage.contains(legacyPath)) {
-                    value = storage.value(legacyPath).toString();
-                    storage.setValue(path, value);
-                    loaded = true;
-                    break;
-                }
-            }
-            if (!loaded) {
-                const auto legacyKey =
-                        registration.legacyPersistenceKeys.find(key);
-                if (legacyKey != registration.legacyPersistenceKeys.end() &&
-                    storage.contains(
-                            QString::fromStdString(legacyKey->second))) {
-                    value = storage.value(
-                                           QString::fromStdString(
-                                                   legacyKey->second))
-                                    .toString();
-                    loaded = true;
-                } else {
-                    value = QString::fromStdString(defaultValue);
-                }
-            }
-        }
-        values.insert(qKey, value);
-    }
-    return values;
-}
-
-template<typename Registration>
-QVariantList OptionList(const std::vector<Registration> &registrations) {
-    QVariantList options;
-    options.reserve(static_cast<qsizetype>(registrations.size()));
-    for (const Registration &registration : registrations) {
-        options.push_back(QVariantMap{
-                {QStringLiteral("id"),
-                 QString::fromStdString(registration.id)},
-                {QStringLiteral("label"),
-                 QString::fromStdString(registration.displayName)},
-                {QStringLiteral("settingsComponent"),
-                 QString::fromStdString(registration.settingsComponent)}});
-    }
-    return options;
 }
 
 }  // namespace
@@ -125,42 +37,8 @@ SearchController::SearchController(const QStringList &packsSearchPatterns,
 }
 
 void SearchController::initialize(const QStringList *packsSearchPatterns) {
-    const OptionConfiguration defaultSearch =
-            DefaultSearchAlgorithmConfiguration();
-    const OptionConfiguration defaultMutation =
-            DefaultMutationAlgorithmConfiguration();
-    const OptionConfiguration defaultEvaluation =
-            DefaultEvaluationTargetConfiguration();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
-    searchAlgorithmId_ = StoredValue(
-            kSearchAlgorithmKey,
-            QString::fromStdString(defaultSearch.id));
-    mutationAlgorithmId_ = StoredValue(
-            kMutationAlgorithmKey,
-            QString::fromStdString(defaultMutation.id));
-    evaluationTargetId_ = StoredValue(
-            kEvaluationTargetKey,
-            QString::fromStdString(defaultEvaluation.id));
-    if (const SearchAlgorithmRegistration *const registration =
-                FindSearchAlgorithm(searchAlgorithmId_.toStdString())) {
-        const QString canonical = QString::fromStdString(registration->id);
-        if (searchAlgorithmId_ != canonical) {
-            searchAlgorithmId_ = canonical;
-            persist(kSearchAlgorithmKey, canonical);
-        }
-    } else {
-        searchAlgorithmId_ = QString::fromStdString(defaultSearch.id);
-    }
-    if (FindMutationAlgorithm(mutationAlgorithmId_.toStdString()) == nullptr) {
-        mutationAlgorithmId_ = QString::fromStdString(defaultMutation.id);
-    }
-    if (FindEvaluationTarget(evaluationTargetId_.toStdString()) == nullptr) {
-        evaluationTargetId_ = QString::fromStdString(defaultEvaluation.id);
-    }
-    loadSearchAlgorithmSettings();
-    loadMutationAlgorithmSettings();
-    loadEvaluationTargetSettings();
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
     refreshValidation();
 }
@@ -182,39 +60,35 @@ QString SearchController::replayPath() const {
 }
 
 QVariantList SearchController::searchAlgorithmOptions() const {
-    return OptionList(SearchAlgorithmRegistry());
+    return configuration_.searchAlgorithmOptions();
 }
 
-QVariantList SearchController::mutationAlgorithmOptions() const {
-    return OptionList(MutationAlgorithmRegistry());
+QVariantList SearchController::modifierOptions() const {
+    return configuration_.modifierOptions();
 }
 
 QVariantList SearchController::evaluationTargetOptions() const {
-    return OptionList(EvaluationTargetRegistry());
+    return configuration_.evaluationTargetOptions();
 }
 
 QString SearchController::searchAlgorithmId() const {
-    return searchAlgorithmId_;
-}
-
-QString SearchController::mutationAlgorithmId() const {
-    return mutationAlgorithmId_;
+    return configuration_.searchAlgorithmId();
 }
 
 QString SearchController::evaluationTargetId() const {
-    return evaluationTargetId_;
+    return configuration_.evaluationTargetId();
 }
 
 QVariantMap SearchController::searchAlgorithmSettings() const {
-    return searchAlgorithmSettings_;
+    return configuration_.searchAlgorithmSettings();
 }
 
-QVariantMap SearchController::mutationAlgorithmSettings() const {
-    return mutationAlgorithmSettings_;
+QVariantList SearchController::modifierPasses() const {
+    return configuration_.modifierPasses();
 }
 
 QVariantMap SearchController::evaluationTargetSettings() const {
-    return evaluationTargetSettings_;
+    return configuration_.evaluationTargetSettings();
 }
 
 bool SearchController::canStart() const {
@@ -266,41 +140,14 @@ FOREVERTAS_DEFINE_STRING_SETTER(
 #undef FOREVERTAS_DEFINE_STRING_SETTER
 
 void SearchController::setSearchAlgorithmId(const QString &value) {
-    const SearchAlgorithmRegistration *const registration =
-            FindSearchAlgorithm(value.toStdString());
-    const QString canonical = registration == nullptr
-            ? value
-            : QString::fromStdString(registration->id);
-    if (searchAlgorithmId_ == canonical) {
-        return;
-    }
-    searchAlgorithmId_ = canonical;
-    persist(kSearchAlgorithmKey, canonical);
-    loadSearchAlgorithmSettings();
+    if (!configuration_.setSearchAlgorithmId(value)) return;
     emit searchAlgorithmIdChanged();
     emit searchAlgorithmSettingsChanged();
     refreshValidation();
 }
 
-void SearchController::setMutationAlgorithmId(const QString &value) {
-    if (mutationAlgorithmId_ == value) {
-        return;
-    }
-    mutationAlgorithmId_ = value;
-    persist(kMutationAlgorithmKey, value);
-    loadMutationAlgorithmSettings();
-    emit mutationAlgorithmIdChanged();
-    emit mutationAlgorithmSettingsChanged();
-    refreshValidation();
-}
-
 void SearchController::setEvaluationTargetId(const QString &value) {
-    if (evaluationTargetId_ == value) {
-        return;
-    }
-    evaluationTargetId_ = value;
-    persist(kEvaluationTargetKey, value);
-    loadEvaluationTargetSettings();
+    if (!configuration_.setEvaluationTargetId(value)) return;
     emit evaluationTargetIdChanged();
     emit evaluationTargetSettingsChanged();
     refreshValidation();
@@ -308,51 +155,46 @@ void SearchController::setEvaluationTargetId(const QString &value) {
 
 void SearchController::setSearchAlgorithmSetting(const QString &key,
                                                  const QString &value) {
-    const SearchAlgorithmRegistration *const registration =
-            FindSearchAlgorithm(searchAlgorithmId_.toStdString());
-    if (registration == nullptr ||
-        registration->defaultSettings.find(key.toStdString()) ==
-                registration->defaultSettings.end() ||
-        searchAlgorithmSettings_.value(key).toString() == value) {
-        return;
-    }
-    searchAlgorithmSettings_.insert(key, value);
-    persistOptionSetting(
-            QStringLiteral("search"), searchAlgorithmId_, key, value);
+    if (!configuration_.setSearchAlgorithmSetting(key, value)) return;
     emit searchAlgorithmSettingsChanged();
     refreshValidation();
 }
 
-void SearchController::setMutationAlgorithmSetting(const QString &key,
-                                                   const QString &value) {
-    const MutationAlgorithmRegistration *const registration =
-            FindMutationAlgorithm(mutationAlgorithmId_.toStdString());
-    if (registration == nullptr ||
-        registration->defaultSettings.find(key.toStdString()) ==
-                registration->defaultSettings.end() ||
-        mutationAlgorithmSettings_.value(key).toString() == value) {
-        return;
-    }
-    mutationAlgorithmSettings_.insert(key, value);
-    persistOptionSetting(
-            QStringLiteral("mutation"), mutationAlgorithmId_, key, value);
-    emit mutationAlgorithmSettingsChanged();
+void SearchController::addModifierPass(const QString &id) {
+    if (!configuration_.addModifierPass(id)) return;
+    emit modifierPassesChanged();
+    refreshValidation();
+}
+
+void SearchController::removeModifierPass(int index) {
+    if (!configuration_.removeModifierPass(index)) return;
+    emit modifierPassesChanged();
+    refreshValidation();
+}
+
+void SearchController::moveModifierPass(int fromIndex, int toIndex) {
+    if (!configuration_.moveModifierPass(fromIndex, toIndex)) return;
+    emit modifierPassesChanged();
+    refreshValidation();
+}
+
+void SearchController::setModifierPassId(int index, const QString &id) {
+    if (!configuration_.setModifierPassId(index, id)) return;
+    emit modifierPassesChanged();
+    refreshValidation();
+}
+
+void SearchController::setModifierPassSetting(int index,
+                                              const QString &key,
+                                              const QString &value) {
+    if (!configuration_.setModifierPassSetting(index, key, value)) return;
+    emit modifierPassesChanged();
     refreshValidation();
 }
 
 void SearchController::setEvaluationTargetSetting(const QString &key,
                                                   const QString &value) {
-    const EvaluationTargetRegistration *const registration =
-            FindEvaluationTarget(evaluationTargetId_.toStdString());
-    if (registration == nullptr ||
-        registration->defaultSettings.find(key.toStdString()) ==
-                registration->defaultSettings.end() ||
-        evaluationTargetSettings_.value(key).toString() == value) {
-        return;
-    }
-    evaluationTargetSettings_.insert(key, value);
-    persistOptionSetting(
-            QStringLiteral("evaluation"), evaluationTargetId_, key, value);
+    if (!configuration_.setEvaluationTargetSetting(key, value)) return;
     emit evaluationTargetSettingsChanged();
     refreshValidation();
 }
@@ -514,48 +356,21 @@ SearchController::ValidationResult SearchController::validate() const {
                             "The replay path must be a readable file.")};
     }
 
-    const SearchAlgorithmRegistration *const searchRegistration =
-            FindSearchAlgorithm(searchAlgorithmId_.toStdString());
-    if (searchRegistration == nullptr) {
-        return {{}, QStringLiteral("Select a valid search algorithm.")};
+    const SearchConfigurationValidation configurationValidation =
+            configuration_.validate(kSearchTickDurationMs);
+    if (!configurationValidation.configuration) {
+        return {{}, configurationValidation.error};
     }
-    const MutationAlgorithmRegistration *const mutationRegistration =
-            FindMutationAlgorithm(mutationAlgorithmId_.toStdString());
-    if (mutationRegistration == nullptr) {
-        return {{}, QStringLiteral("Select a valid mutation algorithm.")};
-    }
-    const EvaluationTargetRegistration *const evaluationRegistration =
-            FindEvaluationTarget(evaluationTargetId_.toStdString());
-    if (evaluationRegistration == nullptr) {
-        return {{}, QStringLiteral("Select a valid evaluation target.")};
-    }
-
-    const OptionSettings searchSettings =
-            ToOptionSettings(searchAlgorithmSettings_);
-    const OptionSettings mutationSettings =
-            ToOptionSettings(mutationAlgorithmSettings_);
-    const OptionSettings evaluationSettings =
-            ToOptionSettings(evaluationTargetSettings_);
-    if (const auto error = searchRegistration->validateSettings(
-                searchSettings, kSearchTickDurationMs)) {
-        return {{}, QString::fromStdString(*error)};
-    }
-    if (const auto error =
-                mutationRegistration->validateSettings(mutationSettings)) {
-        return {{}, QString::fromStdString(*error)};
-    }
-    if (const auto error =
-                evaluationRegistration->validateSettings(evaluationSettings)) {
-        return {{}, QString::fromStdString(*error)};
-    }
+    const SearchComponentConfiguration &configuration =
+            *configurationValidation.configuration;
 
     return {
             SearchRequest{
                     packsInfo.absoluteFilePath().toStdString(),
                     replayInfo.absoluteFilePath().toStdString(),
-                    {searchAlgorithmId_.toStdString(), searchSettings},
-                    {mutationAlgorithmId_.toStdString(), mutationSettings},
-                    {evaluationTargetId_.toStdString(), evaluationSettings}},
+                    configuration.searchAlgorithm,
+                    configuration.modifiers,
+                    configuration.evaluationTarget},
             {}};
 }
 
@@ -684,37 +499,6 @@ void SearchController::clearAutoDetectedPacksDirectory() {
     }
     autoDetectedPacksDirectory_.clear();
     emit autoDetectedPacksDirectoryChanged();
-}
-
-void SearchController::loadSearchAlgorithmSettings() {
-    const SearchAlgorithmRegistration *const registration =
-            FindSearchAlgorithm(searchAlgorithmId_.toStdString());
-    searchAlgorithmSettings_ = registration == nullptr
-            ? QVariantMap{}
-            : LoadOptionSettings(QStringLiteral("search"), *registration);
-}
-
-void SearchController::loadMutationAlgorithmSettings() {
-    const MutationAlgorithmRegistration *const registration =
-            FindMutationAlgorithm(mutationAlgorithmId_.toStdString());
-    mutationAlgorithmSettings_ = registration == nullptr
-            ? QVariantMap{}
-            : LoadOptionSettings(QStringLiteral("mutation"), *registration);
-}
-
-void SearchController::loadEvaluationTargetSettings() {
-    const EvaluationTargetRegistration *const registration =
-            FindEvaluationTarget(evaluationTargetId_.toStdString());
-    evaluationTargetSettings_ = registration == nullptr
-            ? QVariantMap{}
-            : LoadOptionSettings(QStringLiteral("evaluation"), *registration);
-}
-
-void SearchController::persistOptionSetting(const QString &category,
-                                            const QString &optionId,
-                                            const QString &key,
-                                            const QString &value) {
-    QSettings().setValue(OptionSettingPath(category, optionId, key), value);
 }
 
 void SearchController::persist(const char *key, const QString &value) {

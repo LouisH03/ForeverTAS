@@ -1,31 +1,33 @@
 # Search Components Architecture
 
 This document describes how ForeverTAS organizes configurable search
-algorithms, mutation algorithms, and evaluation targets. It is intended as a
-reference for contributors adding or maintaining search features.
+algorithms, ordered input modifiers, and evaluation targets. It is the primary
+reference for adding search features without coupling the controller or main
+QML file to individual implementations.
 
 ## Feature Model
 
-A search run is composed from three independently selected components:
+A search request contains four parts:
 
-1. **Search algorithm** — controls the search loop, branching strategy,
-   evaluation schedule, acceptance rules, and result selection.
-2. **Mutation algorithm** — transforms the baseline input timeline into a
-   candidate input timeline for an attempt.
-3. **Evaluation target** — scores a simulated state so the search algorithm can
-   compare candidates.
+1. The Packs directory and replay path.
+2. One selected search algorithm.
+3. An ordered list of configured modifier passes.
+4. One selected evaluation target.
 
-Each component owns:
+The application currently requires at least one modifier pass before a search
+can start.
 
-- A stable persisted ID.
-- A user-facing display name.
-- Its settings defaults.
-- Its settings validation and typed parsing.
+Each selectable implementation owns:
+
+- A stable ID and display name.
+- Its complete default settings map.
+- Typed parsing and validation.
 - Its runtime factory.
 - Its QML settings component.
-- Optional legacy persistence-key mappings.
+- Optional aliases and legacy persistence mappings.
 
-The registry is the only place that connects all of those pieces.
+The registry is the only source that connects these pieces. `Main.qml`,
+`SearchController`, and `RunSearch` do not switch on implementation IDs.
 
 ## Directory Organization
 
@@ -33,55 +35,64 @@ The registry is the only place that connects all of those pieces.
 ForeverTAS/
 ├── src/
 │   ├── searches/
-│   │   ├── algorithm_registry.h
-│   │   ├── algorithm_registry.cpp
+│   │   ├── algorithm_registry.h/.cpp
 │   │   ├── option_configuration.h
 │   │   ├── option_settings_utils.h
 │   │   ├── search_algorithm.h
-│   │   ├── search_runner.h
-│   │   ├── search_runner.cpp
-│   │   ├── basic_brute_force_search.h
-│   │   └── basic_brute_force_search.cpp
+│   │   ├── search_runner.h/.cpp
+│   │   └── basic_brute_force_search.h/.cpp
 │   │
 │   ├── mutations/
 │   │   ├── input_mutator.h
-│   │   ├── random_steering_mutator.h
-│   │   └── random_steering_mutator.cpp
+│   │   ├── input_event_utils.h/.cpp
+│   │   ├── modifier_utils.h
+│   │   ├── composite_input_mutator.h/.cpp
+│   │   ├── random_steering_mutator.h/.cpp
+│   │   ├── existing_event_perturbation_mutator.h/.cpp
+│   │   ├── smooth_steering_mutator.h/.cpp
+│   │   ├── input_insertion_mutator.h/.cpp
+│   │   └── input_deletion_mutator.h/.cpp
 │   │
 │   ├── evaluators/
 │   │   ├── candidate_evaluator.h
-│   │   ├── max_speed_evaluator.h
-│   │   └── max_speed_evaluator.cpp
+│   │   ├── evaluator_utils.h
+│   │   ├── finish_time_evaluator.h/.cpp
+│   │   ├── volume_entry_evaluator.h/.cpp
+│   │   ├── velocity_evaluator.h/.cpp
+│   │   ├── point_target_evaluator.h/.cpp
+│   │   └── pose_target_evaluator.h/.cpp
 │   │
 │   └── app/
-│       ├── search_controller.h
-│       ├── search_controller.cpp
-│       ├── search_worker.h
-│       └── search_worker.cpp
+│       ├── search_configuration_model.h/.cpp
+│       ├── search_controller.h/.cpp
+│       └── search_worker.h/.cpp
 │
 ├── qml/
 │   ├── Main.qml
 │   └── settings/
 │       ├── AlgorithmSelector.qml
-│       ├── BasicBruteForceSearchSettings.qml
-│       ├── RandomSteeringMutationSettings.qml
-│       └── MaximumSpeedEvaluationSettings.qml
+│       ├── ModifierComposition.qml
+│       ├── SettingTextField.qml
+│       ├── SettingSwitch.qml
+│       ├── SettingCombo.qml
+│       ├── TimeWindowSettings.qml
+│       ├── Vector3Settings.qml
+│       └── one owned component per selectable implementation
 │
 ├── tests/
-│   ├── strategy_tests.cpp
-│   ├── controller_tests.cpp
+│   ├── search_component_tests.cpp
+│   ├── search_controller_tests.cpp
 │   ├── search_smoke.cpp
+│   ├── viewer_smoke.cpp
 │   └── viewer_qml_smoke.cpp
 │
 └── CMakeLists.txt
 ```
 
-## Core Contracts
+## Generic Configuration Transport
 
-### Option configuration
-
-`src/searches/option_configuration.h` defines the transport format used between
-the controller, worker, runner, and registry:
+`src/searches/option_configuration.h` defines the category-neutral transport
+format:
 
 ```cpp
 using OptionSettings = std::map<std::string, std::string>;
@@ -92,70 +103,37 @@ struct OptionConfiguration {
 };
 ```
 
-Settings are transported as strings because they originate from editable UI
-fields and must be persisted without coupling the controller to a specific
-option. Each implementation parses its map into a typed settings structure
-before construction.
+Values remain strings while they are edited and persisted. The implementation
+that owns the option parses them into a typed structure during validation and
+construction.
 
-The generic `SearchRequest` contains one `OptionConfiguration` for each
-category:
+`SearchRequest` contains:
 
 ```text
 SearchRequest
-├── Packs directory
-├── Replay path
-├── Search algorithm configuration
-├── Mutation algorithm configuration
-└── Evaluation target configuration
+├── packDirectory
+├── replayPath
+├── searchAlgorithm: OptionConfiguration
+├── modifiers: vector<OptionConfiguration>
+└── evaluationTarget: OptionConfiguration
 ```
 
-### Search algorithm interface
+Repeated modifier IDs are allowed. Each vector entry is an independent pass
+with its own settings.
 
-`SearchAlgorithm` receives a `SearchExecutionContext` containing:
+## Registry Contract
 
-- The loaded physics sandbox.
-- The physics tick duration.
-- The selected `InputMutator` instance.
-- The selected `CandidateEvaluator` instance.
-- Progress and cancellation callbacks.
+`src/searches/algorithm_registry.*` contains three registries:
 
-The search algorithm owns the search lifecycle and returns a `SearchResult`.
-
-### Mutation interface
-
-`InputMutator::Mutate` receives attempt context shared by mutation algorithms:
-
-- Baseline inputs.
-- Mutation-window bounds selected by the search algorithm.
-- Attempt index.
-
-Algorithm-specific values such as a random seed, distribution, probability, or
-step size belong in the concrete mutator instance. They are parsed from the
-selected mutation configuration when the registry factory constructs it.
-
-### Evaluation interface
-
-`CandidateEvaluator::Evaluate` receives a physics-sandbox state and returns a
-numeric score. Higher scores are currently treated as better by the basic
-brute-force implementation.
-
-Evaluation-specific configuration belongs in the concrete evaluator instance.
-
-## Registry
-
-`src/searches/algorithm_registry.*` is the central catalog for all selectable
-components.
-
-There are separate registration types for:
-
-- Search algorithms.
-- Mutation algorithms.
-- Evaluation targets.
+- `SearchAlgorithmRegistry()`
+- `ModifierRegistry()`
+- `EvaluationTargetRegistry()`
 
 Every registration contains:
 
 ```text
 id
+legacyIds
 displayName
 settingsComponent
 defaultSettings
@@ -164,336 +142,267 @@ validateSettings callback
 create callback
 ```
 
-### Stable IDs
+Stable IDs use lowercase hyphen-separated names. Released IDs must not be
+silently reused for a different behavior. Renames require an alias in
+`legacyIds`; the controller canonicalizes persisted aliases back to the current
+ID.
 
-IDs are persisted in user settings and transported in search requests. Treat
-them as stable public identifiers.
+`defaultSettings` is also the allowed key set. The controller ignores update
+requests for unknown keys, while implementation validation rejects incomplete
+or extra maps received outside the controller.
 
-Use lowercase, hyphen-separated IDs:
+## Search Algorithm Contract
+
+`SearchAlgorithm` receives a `SearchExecutionContext` containing:
+
+- A loaded `PhysicsSandbox`.
+- The physics tick duration.
+- The composed `InputMutator` pipeline.
+- The selected `CandidateEvaluator`.
+- Progress and cancellation callbacks.
+
+The Basic brute-force implementation owns only attempt scheduling and global
+winner selection. It does not own modifier windows, seeds, evaluation windows,
+or comparison direction.
+
+It asks:
+
+- The modifier pipeline for its earliest affected input time.
+- The evaluation target for its observation plan.
+- The evaluation target whether a sample is better than the incumbent.
+
+This keeps search orchestration independent from every target and modifier ID.
+
+## Modifier Contract
+
+`InputMutator::Mutate` receives:
+
+- The current input timeline entering that pass.
+- The attempt index.
+- The pass index.
+- The physics tick duration.
+
+Each modifier instance owns its own active window, seed, channel selection,
+and modification parameters. `EarliestMutationTimeMs()` reports the earliest
+input tick that the pass may change. `CompositeInputMutator` uses the minimum
+across all passes.
+
+### Composition
+
+Modifier passes run in displayed order. Each pass receives the previous pass's
+output. After the final pass, the composite mutator performs one normalization
+step:
+
+- Clamp steering to `[-1, 1]`.
+- Align event times to whole simulation ticks.
+- Sort events chronologically with stable ordering.
+- For multiple events with the same action and tick, keep the last pass value.
+- Count effective differences from the original baseline.
+
+If no effective change remains after normalization, the attempt is skipped.
+
+Deterministic random streams are derived from:
 
 ```text
-basic-brute-force
-random-steering
-maximum-speed
+configured seed + attempt index + pass index
 ```
 
-Changing a display name is safe. Changing a released ID requires an explicit
-selection migration.
+This keeps repeated runs reproducible while allowing repeated instances of the
+same modifier to produce independent changes.
 
-### Default settings
+## Evaluation Target Contract
 
-Every configurable field must be present in `defaultSettings`.
+Evaluation is timeline-based rather than a single stateless score function.
 
-The default map serves three purposes:
+`CandidateEvaluator` owns:
 
-1. Defines the initial value for a new installation.
-2. Defines the allowed setting keys.
-3. Supplies the complete configuration passed to validation and construction.
+- `Plan(...)`: the closed observation window for a replay and modifier branch.
+- `CreateSession()`: per-candidate timeline state.
+- `IsBetter(...)`: maximize or minimize semantics.
 
-Unknown keys are rejected by implementation validation and ignored by the
-controller's generic setting-update methods.
-
-### Legacy persistence keys
-
-`legacyPersistenceKeys` maps a current option-owned key to an older global
-QSettings key. It allows the controller to load existing user values after a
-settings-ownership refactor.
-
-Example:
+Each observed result is an `EvaluationSample`:
 
 ```text
-seed -> search/mutationSeed
+score
+timeMs
+description
 ```
 
-New features should normally leave this map empty. Add entries when renaming or
-moving settings that have already been released.
+The description is displayed directly in the result summary, so targets own
+their metric wording.
 
-## Runtime Flow
-
-The execution path is:
-
-```text
-QML option component
-    ↓ generic category setting method
-SearchController
-    ↓ validates through registry callbacks
-SearchRequest
-    ↓ copied to worker thread
-SearchWorker
-    ↓
-RunSearch
-    ↓ registry lookup by stable IDs
-Search algorithm factory
-Mutation algorithm factory
-Evaluation target factory
-    ↓
-SearchAlgorithm::Run
-    ↓
-SearchResult
-    ↓
-formatted UI summary
-```
-
-`RunSearch` does not switch on option IDs. It resolves registrations and invokes
-their callbacks.
+Timeline sessions receive the previous and current sandbox states. This lets
+transition targets, such as entering a volume, interpolate crossing time
+between ticks without adding target-specific logic to the search algorithm.
 
 ## Controller Responsibilities
 
-`SearchController` owns only category-neutral state:
+`SearchConfigurationModel` owns the generic component configuration state:
 
-- Selected search, mutation, and evaluation IDs.
-- One `QVariantMap` of settings per selected category.
-- Generic update methods for a key/value pair in each category.
-- Namespaced persistence.
+- Selected search ID and search settings map.
+- Ordered modifier-pass list.
+- Selected evaluation ID and evaluation settings map.
+- Generic add/remove/move/type/setting methods for modifier passes.
 - Registry-driven validation.
-- Construction of the generic `SearchRequest`.
+- Generic persistence and request construction.
 
-It must not gain properties or setters named after a particular algorithm's
-settings.
+`SearchController` owns application coordination:
 
-The public QML-facing maps are:
+- Worker-thread lifecycle, paths, status, and progress.
+- QML properties and change notifications that delegate to the configuration
+  model.
 
-```text
-searchAlgorithmSettings
-mutationAlgorithmSettings
-evaluationTargetSettings
-```
+Neither class may gain a field, property, or method named after a concrete
+target or modifier.
 
-The corresponding update methods are:
+The QML-facing composition API is:
 
 ```text
-setSearchAlgorithmSetting(key, value)
-setMutationAlgorithmSetting(key, value)
-setEvaluationTargetSetting(key, value)
+modifierOptions
+modifierPasses
+addModifierPass(id)
+removeModifierPass(index)
+moveModifierPass(fromIndex, toIndex)
+setModifierPassId(index, id)
+setModifierPassSetting(index, key, value)
 ```
 
 ## Persistence
 
-Selected IDs are stored separately:
+Search and evaluation selections use:
 
 ```text
 selection/searchAlgorithm
-selection/mutationAlgorithm
 selection/evaluationTarget
 ```
 
-Option settings are namespaced by category and stable ID:
+Their settings remain namespaced by category and option ID:
 
 ```text
-configuration/search/<option-id>/<setting-key>
-configuration/mutation/<option-id>/<setting-key>
-configuration/evaluation/<option-id>/<setting-key>
+configuration/search/<id>/<key>
+configuration/evaluation/<id>/<key>
 ```
 
-Examples:
+The ordered modifier composition is stored as compact JSON under:
 
 ```text
-configuration/search/basic-brute-force/attemptCount
-configuration/mutation/random-steering/seed
+composition/modifiers
 ```
 
-This preserves each option's settings while the user switches between options
-and prevents unrelated options from sharing keys accidentally.
+Each JSON entry contains its modifier ID and complete settings object. This
+preserves order, repeated modifier types, and independent values.
+
+Older single-modifier settings are migrated only when no composition JSON is
+present. Legacy mappings stay in registry metadata or narrowly named migration
+constants; they must not appear as selectable options.
 
 ## QML Ownership
 
-`Main.qml` places three generic `AlgorithmSelector` instances. It does not know
-which options exist and contains no option-specific settings fields.
+`Main.qml` places one generic search selector, one generic modifier composition
+editor, and one generic evaluation selector.
 
-`AlgorithmSelector.qml` receives:
+`AlgorithmSelector` loads the selected option's `settingsComponent` directly
+from registry metadata.
 
-- The category title.
-- Registry metadata exposed by the controller.
-- The selected ID.
-- The controller object.
-
-It renders the dropdown and loads the selected registration's
-`settingsComponent` using a `Loader`.
-
-An option-owned QML component:
-
-- Declares `property var controller`.
-- Reads only its category's settings map.
-- Writes through the matching generic category update method.
-- Contains every control specific to that option.
-
-## Adding a Mutation Algorithm
-
-The following example assumes a new mutation algorithm named **Steering
-Jitter**, with stable ID `steering-jitter`.
-
-### 1. Add the implementation files
-
-Create:
-
-```text
-src/mutations/steering_jitter_mutator.h
-src/mutations/steering_jitter_mutator.cpp
-```
-
-Implement `InputMutator`.
-
-Define a typed settings structure in the mutation header, for example:
-
-```text
-SteeringJitterSettings
-├── amplitude
-├── probability
-└── seed
-```
-
-The concrete mutator constructor should receive this typed structure and retain
-it for `Mutate` calls.
-
-### 2. Define option-owned configuration callbacks
-
-Alongside the implementation, provide functions matching the mutation registry
-contract:
-
-```text
-DefaultSteeringJitterOptionSettings()
-ValidateSteeringJitterOptionSettings(settings)
-CreateSteeringJitterMutator(settings)
-```
-
-The validation/factory path should:
-
-1. Verify the exact allowed key set.
-2. Parse string values into the typed settings structure.
-3. Validate ranges and relationships.
-4. Return an actionable error for invalid values.
-5. Construct the mutator only from valid typed settings.
-
-Reusable decimal parsing and exact-key validation helpers are available in
-`src/searches/option_settings_utils.h`.
-
-### 3. Register the mutation
-
-Add a stable ID constant and a `MutationAlgorithmRegistration` entry in
-`algorithm_registry.*`:
-
-```text
-ID: steering-jitter
-Display name: Steering jitter
-Settings component: SteeringJitterMutationSettings.qml
-Defaults: all supported setting keys and initial values
-Legacy keys: empty unless migrating released settings
-Validator: ValidateSteeringJitterOptionSettings
-Factory: CreateSteeringJitterMutator
-```
-
-Once registered, the option automatically appears in the mutation dropdown and
-is available to `RunSearch`.
-
-### 4. Add the owned QML settings component
-
-Create:
-
-```text
-qml/settings/SteeringJitterMutationSettings.qml
-```
-
-Read values from:
+`ModifierComposition` renders the persisted pass order, provides add/remove/
+move controls, and loads each pass's settings component. It supplies a pass
+component with:
 
 ```qml
-controller.mutationAlgorithmSettings["amplitude"]
+property var settings
+property var updateSetting
+property bool running
 ```
 
-Write values through:
+A modifier QML file reads only its provided settings map and writes only via
+`updateSetting(key, value)`.
 
-```qml
-controller.setMutationAlgorithmSetting("amplitude", text)
-```
+Search and evaluation components receive `property var controller` and use only
+their corresponding generic settings map and update method.
 
-Do not add Steering Jitter fields to `Main.qml` or `SearchController`.
+Reusable field/layout components belong in `qml/settings/`; implementation
+logic and implementation-specific field lists belong in the owned component.
 
-Add the QML file to the `qt_add_qml_module` file list in `CMakeLists.txt`.
+## Adding a Modifier
 
-### 5. Add source files to CMake
+Assume a new modifier named **Steering Jitter** with ID `steering-jitter`.
 
-Add the new mutation source and header to `forevertas_core`.
+1. Create `src/mutations/steering_jitter_mutator.h/.cpp`.
+2. Implement `InputMutator`, including `EarliestMutationTimeMs()`.
+3. Define a typed settings structure owned by the modifier.
+4. Provide defaults, validation, and a factory matching
+   `ModifierRegistration`.
+5. Reject unknown keys and parse every default key.
+6. Use the shared deterministic RNG helpers when randomness is involved.
+7. Add one `ModifierRegistration` entry.
+8. Create `qml/settings/SteeringJitterSettings.qml` using `settings`,
+   `updateSetting`, and `running`.
+9. Add source and QML files to CMake.
+10. Test validation, deterministic output, boundaries, normalization,
+    registry construction, persistence, and QML loading.
 
-### 6. Add tests
-
-Add coverage for:
-
-- Default settings validation.
-- Invalid value and unknown-key rejection.
-- Registry lookup and factory construction.
-- Deterministic output for identical settings and attempt indices.
-- Expected variation across attempts.
-- Respect for mutation-window boundaries.
-- Accurate `mutationCount`.
-- Persistence under the mutation option's namespace.
-- Dropdown availability and loading of the owned QML component.
-
-## Adding a Search Algorithm
-
-Create implementation files under `src/searches/` and implement
-`SearchAlgorithm`.
-
-The implementation should own:
-
-- A typed settings structure.
-- Default option settings.
-- String-map parsing and validation.
-- A factory accepting the generic settings map and tick duration.
-- Search-loop progress reporting and cancellation checks.
-
-Register it with a `SearchAlgorithmRegistration`, add its QML component under
-`qml/settings/`, and add all files to CMake.
-
-Search-specific fields such as attempt count, beam width, population size,
-branch time, or acceptance thresholds belong to this option's settings map and
-typed settings structure.
+No change to `Main.qml`, `SearchController`, `SearchRequest`, or
+`BasicBruteForceSearch` should be needed.
 
 ## Adding an Evaluation Target
 
-Create implementation files under `src/evaluators/` and implement
-`CandidateEvaluator`.
+1. Create target files under `src/evaluators/`.
+2. Implement `CandidateEvaluator` and a per-candidate session.
+3. Define the target's observation plan and comparison direction.
+4. Provide defaults, validation, and a factory.
+5. Return a clear target-owned `EvaluationSample::description`.
+6. Add one `EvaluationTargetRegistration` entry.
+7. Create and register the owned QML component.
+8. Test the metric with synthetic state sequences, including transition and
+   interpolation cases where relevant.
 
-Provide:
+No search-loop or controller branch should be added for the target.
 
-- Default option settings.
-- Validation and typed parsing.
-- A factory accepting the generic settings map.
-- An owned QML settings component, even if it is currently an empty `Item`.
+## Adding a Search Algorithm
 
-Register it with an `EvaluationTargetRegistration` and add its files to CMake.
-
-Evaluation-specific fields such as target position, checkpoint index, score
-weights, or time penalties belong to the evaluator's configuration and
-instance.
-
-## Testing Checklist
-
-Before committing a new selectable component:
-
-1. Build with the project's strict warning flags.
-2. Run all CTest targets.
-3. Run the Wayland/GPU QML viewer smoke test when available.
-4. Run `git diff --check`.
-5. Confirm the stable ID appears only in registry code and tests.
-6. Confirm `Main.qml` contains no option-specific branch or settings control.
-7. Confirm `SearchController` contains no option-specific property or setter.
-8. Confirm the option's settings survive switching away and restarting.
-9. Confirm invalid persisted values produce a clear validation message.
-10. Confirm the registry factory accepts defaults and rejects invalid maps.
+1. Implement `SearchAlgorithm` under `src/searches/`.
+2. Keep only search-policy settings in its typed structure.
+3. Consume the generic mutator and evaluator contracts.
+4. Report progress and check cancellation regularly.
+5. Provide defaults, validation, factory, registry entry, and QML component.
+6. Test default construction and algorithm-specific scheduling behavior.
 
 ## Current Built-In Components
 
 ### Search algorithms
 
-- `basic-brute-force` — evaluates the baseline and independently mutated
-  attempts over a configurable time range.
+- `basic-brute-force`: baseline plus independent deterministic attempts.
 
-### Mutation algorithms
+### Modifiers
 
-- `random-steering` — replaces eligible analog steering events with
-  deterministic pseudo-random values derived from its configured seed and the
-  attempt index.
+- `random-steering`: replaces existing steering values in a window.
+- `existing-event-perturbation`: perturbs selected existing event values and
+  times.
+- `smooth-steering`: adds raised-cosine steering deformations.
+- `input-insertion`: inserts steering, accelerate, or brake segments.
+- `input-deletion`: deletes eligible events per channel.
 
 ### Evaluation targets
 
-- `maximum-speed` — scores the magnitude of the car's linear velocity.
+- `velocity`: total or projected velocity with optional alignment threshold.
+- `finish-time`: minimizes the recorded race finish time.
+- `volume-entry-time`: minimizes interpolated entry time into a cuboid.
+- `point-target`: minimizes distance to a target point over a window.
+- `pose-target`: minimizes weighted position and orientation error.
 
+## Testing Checklist
+
+Before submitting a new component:
+
+1. Build with the strict warning flags.
+2. Run all CTest targets.
+3. Run the real Wayland/GPU viewer smoke test when available.
+4. Run a real replay search smoke test.
+5. Run `git diff --check`.
+6. Confirm IDs appear only in registry code, migration tests, and registry
+   assertions.
+7. Confirm no ID switch or option-specific controller field was introduced.
+8. Confirm every option owns defaults, validation, factory, persistence
+   metadata, and QML.
+9. Confirm repeated modifier instances preserve independent settings and order.
+10. Confirm invalid settings produce actionable messages.

@@ -56,6 +56,8 @@ struct SearchResult {
     std::optional<std::uint64_t> winningAttempt;
     std::size_t winningMutationCount = 0u;
     double bestScore = 0.0;
+    double bestEvaluationTimeMs = 0.0;
+    std::string bestEvaluationDescription;
     forevervalidator::experimental::PhysicsSandboxStateView bestState;
     std::uint64_t requestedAttempts = 0u;
     std::uint64_t executedAttempts = 0u;

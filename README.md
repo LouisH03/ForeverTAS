@@ -52,15 +52,20 @@ Build and launch the Qt 6 Quick application:
 ./build/local/forevertas
 ```
 
-Select an installed TMUF `Packs` directory and a replay, configure the mutation
-and evaluation windows, then start the basic search. The application persists
-paths and search settings with the platform-native Qt settings store. Search,
-replay loading, and validation stay in C++; the QML layer only presents the
-controls and the future Race Viewer placeholder.
+Select an installed TMUF `Packs` directory and a replay, choose an evaluation
+target, assemble an ordered list of input modifier passes, then start the basic
+search. The application persists paths, selections, pass order, and every
+option-owned configuration with the platform-native Qt settings store. Search,
+replay loading, validation, and physics stay in C++; QML presents the controls
+and Race Viewer.
 
 The search runs on a worker thread and can be cancelled without blocking the
-interface. It captures one state immediately before its configured closed
-mutation window, establishes the unmodified replay as its baseline, then tests
-each steering mutation one at a time. It evaluates maximum speed on every tick of a
-separately configured closed evaluation window and restores the best state at
-the end.
+interface. Each attempt applies the configured modifier passes in order,
+normalizes the resulting input timeline, evaluates it with the selected target,
+and restores the global best state at the end. Built-in targets cover finish
+time, cuboid entry time, velocity, point distance, and weighted pose error.
+Built-in modifiers cover existing-event perturbation, smooth steering
+deformation, input insertion, input deletion, and random steering.
+
+See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
+extension contracts.

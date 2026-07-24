@@ -15,6 +15,11 @@ ColumnLayout {
         && optionCombo.currentIndex < options.length
         ? options[optionCombo.currentIndex]
         : null
+    readonly property bool settingsLoaded:
+        settingsLoader.status === Loader.Ready
+        && settingsLoader.item !== null
+    readonly property string settingsObjectName:
+        settingsLoaded ? settingsLoader.item.objectName : ""
 
     signal selectionRequested(string id)
 
@@ -29,11 +34,12 @@ ColumnLayout {
     }
 
     Label {
+        visible: root.title.length > 0
         text: root.title
         font.weight: Font.Medium
     }
 
-    ComboBox {
+    StyledComboBox {
         id: optionCombo
         objectName: root.comboObjectName
         Layout.fillWidth: true

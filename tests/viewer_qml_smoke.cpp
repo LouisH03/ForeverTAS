@@ -14,6 +14,7 @@
 #include <QUrl>
 #include <QVariant>
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -230,21 +231,36 @@ int main(int argc, char **argv) {
                     QObject *const searchAlgorithmCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("searchAlgorithmCombo"));
-                    QObject *const mutationAlgorithmCombo =
+                    auto *const evaluationSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
-                                    QStringLiteral("mutationAlgorithmCombo"));
+                                    QStringLiteral("evaluationSection")));
+                    auto *const modifierSection = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("modifierSection")));
+                    auto *const searchSection = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("searchSection")));
+                    QObject *const evaluationTargetSelector =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("evaluationTargetSelector"));
+                    QObject *const modifierComposition =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("modifierComposition"));
+                    QObject *const addModifierCombo =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("addModifierCombo"));
+                    QObject *const addModifierButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("addModifierButton"));
                     QObject *const evaluationTargetCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationTargetCombo"));
                     QObject *const basicBruteForceSettings =
                             root->findChild<QObject *>(QStringLiteral(
                                     "basicBruteForceSearchSettings"));
-                    QObject *const randomSteeringSettings =
+                    QObject *const velocitySettings =
                             root->findChild<QObject *>(QStringLiteral(
-                                    "randomSteeringMutationSettings"));
-                    QObject *const maximumSpeedSettings =
-                            root->findChild<QObject *>(QStringLiteral(
-                                    "maximumSpeedEvaluationSettings"));
+                                    "velocityEvaluationSettings"));
                     const qint64 keyboardStartTick =
                             std::clamp<qint64>(
                                     viewer.tickCount() / 2,
@@ -310,32 +326,246 @@ int main(int argc, char **argv) {
                                     QStringLiteral("Apply");
                     const bool algorithmSelectorsValid =
                             searchAlgorithmCombo != nullptr &&
-                            mutationAlgorithmCombo != nullptr &&
+                            modifierComposition != nullptr &&
+                            addModifierCombo != nullptr &&
+                            addModifierButton != nullptr &&
                             evaluationTargetCombo != nullptr &&
                             searchAlgorithmCombo->property("count").toInt() ==
                                     1 &&
-                            mutationAlgorithmCombo->property("count").toInt() ==
-                                    1 &&
+                            modifierComposition
+                                            ->property("firstPassOptionCount")
+                                            .toInt() == 5 &&
+                            addModifierCombo->property("count").toInt() == 5 &&
                             evaluationTargetCombo->property("count").toInt() ==
-                                    1 &&
+                                    5 &&
                             searchAlgorithmCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("basic-brute-force") &&
-                            mutationAlgorithmCombo->property("currentValue")
+                            modifierComposition
+                                            ->property("firstPassSelectedId")
                                             .toString() ==
                                     QStringLiteral("random-steering") &&
                             evaluationTargetCombo->property("currentValue")
                                             .toString() ==
-                                    QStringLiteral("maximum-speed") &&
+                                    QStringLiteral("velocity") &&
                             basicBruteForceSettings != nullptr &&
-                            randomSteeringSettings != nullptr &&
-                            maximumSpeedSettings != nullptr;
+                            modifierComposition
+                                    ->property("firstPassSettingsLoaded")
+                                    .toBool() &&
+                            velocitySettings != nullptr;
+                    const bool configurationSectionsValid =
+                            evaluationSection != nullptr &&
+                            modifierSection != nullptr &&
+                            searchSection != nullptr &&
+                            evaluationSection->parentItem() ==
+                                    modifierSection->parentItem() &&
+                            modifierSection->parentItem() ==
+                                    searchSection->parentItem() &&
+                            evaluationSection->y() < modifierSection->y() &&
+                            modifierSection->y() < searchSection->y() &&
+                            evaluationSection->property("radius").toReal() >
+                                    0.0 &&
+                            modifierSection->property("radius").toReal() >
+                                    0.0 &&
+                            searchSection->property("radius").toReal() > 0.0;
+                    const bool comboSlotsStyled =
+                            searchAlgorithmCombo != nullptr &&
+                            evaluationTargetCombo != nullptr &&
+                            addModifierCombo != nullptr &&
+                            searchAlgorithmCombo->property("slotStyled")
+                                    .toBool() &&
+                            evaluationTargetCombo->property("slotStyled")
+                                    .toBool() &&
+                            addModifierCombo->property("slotStyled").toBool() &&
+                            modifierComposition
+                                    ->property("firstPassSlotStyled").toBool();
+                    bool everyOwnedPanelLoaded =
+                            evaluationTargetSelector != nullptr &&
+                            modifierComposition != nullptr;
+                    const std::array<std::pair<const char *, const char *>, 5>
+                            evaluationPanels{{
+                                    {"velocity",
+                                     "velocityEvaluationSettings"},
+                                    {"finish-time",
+                                     "finishTimeEvaluationSettings"},
+                                    {"volume-entry-time",
+                                     "volumeEntryEvaluationSettings"},
+                                    {"point-target",
+                                     "pointTargetEvaluationSettings"},
+                                    {"pose-target",
+                                     "poseTargetEvaluationSettings"}}};
+                    for (const auto &[id, objectName] : evaluationPanels) {
+                        controller.setEvaluationTargetId(
+                                QString::fromLatin1(id));
+                        QCoreApplication::processEvents();
+                        everyOwnedPanelLoaded &=
+                                evaluationTargetSelector != nullptr &&
+                                evaluationTargetSelector
+                                                ->property("settingsLoaded")
+                                                .toBool() &&
+                                evaluationTargetSelector
+                                                ->property(
+                                                        "settingsObjectName")
+                                                .toString() ==
+                                        QString::fromLatin1(objectName);
+                    }
+                    const std::array<std::pair<const char *, const char *>, 5>
+                            modifierPanels{{
+                                    {"random-steering",
+                                     "randomSteeringMutationSettings"},
+                                    {"existing-event-perturbation",
+                                     "existingEventPerturbationSettings"},
+                                    {"smooth-steering",
+                                     "smoothSteeringSettings"},
+                                    {"input-insertion",
+                                     "inputInsertionSettings"},
+                                    {"input-deletion",
+                                     "inputDeletionSettings"}}};
+                    for (const auto &[id, objectName] : modifierPanels) {
+                        controller.setModifierPassId(
+                                0, QString::fromLatin1(id));
+                        QCoreApplication::processEvents();
+                        everyOwnedPanelLoaded &=
+                                modifierComposition != nullptr &&
+                                modifierComposition
+                                                ->property(
+                                                        "firstPassSettingsLoaded")
+                                                .toBool() &&
+                                modifierComposition
+                                                ->property(
+                                                        "firstPassSettingsObjectName")
+                                                .toString() ==
+                                        QString::fromLatin1(objectName);
+                    }
+                    controller.setModifierPassId(
+                            0, QStringLiteral("random-steering"));
+                    controller.setEvaluationTargetId(
+                            QStringLiteral("velocity"));
+                    QCoreApplication::processEvents();
+                    QObject *const firstPassBefore =
+                            modifierComposition
+                                    ->property("firstRenderedPass")
+                                    .value<QObject *>();
+                    QObject *const firstPassSettings =
+                            modifierComposition
+                                    ->property("firstPassSettingsItem")
+                                    .value<QObject *>();
+                    QObject *const minimumTimeField = firstPassSettings == nullptr
+                            ? nullptr
+                            : firstPassSettings->findChild<QObject *>(
+                                      QStringLiteral("minimumTimeField"));
+                    const int rebuildCountBefore =
+                            modifierComposition->property("rebuildCount").toInt();
+                    const bool focusRequested = minimumTimeField != nullptr &&
+                            QMetaObject::invokeMethod(
+                                    minimumTimeField,
+                                    "forceActiveFocus",
+                                    Qt::DirectConnection);
+                    QCoreApplication::processEvents();
+                    const bool focusedBeforeUpdate =
+                            minimumTimeField != nullptr &&
+                            (minimumTimeField->property("activeFocus").toBool() ||
+                             minimumTimeField->property("focus").toBool());
+                    controller.setModifierPassSetting(
+                            0,
+                            QStringLiteral("minTimeMs"),
+                            QStringLiteral("1010"));
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QObject *const firstPassAfter =
+                            modifierComposition
+                                    ->property("firstRenderedPass")
+                                    .value<QObject *>();
+                    const QVariantMap updatedPass =
+                            controller.modifierPasses().front().toMap();
+                    const bool modifierFocusStable = focusRequested &&
+                            focusedBeforeUpdate &&
+                            firstPassBefore == firstPassAfter &&
+                            modifierComposition->property("rebuildCount").toInt() ==
+                                    rebuildCountBefore &&
+                            minimumTimeField != nullptr &&
+                            (minimumTimeField->property("activeFocus").toBool() ||
+                             minimumTimeField->property("focus").toBool()) &&
+                            updatedPass.value(QStringLiteral("settings"))
+                                            .toMap()
+                                            .value(QStringLiteral("minTimeMs"))
+                                            .toString() ==
+                                    QStringLiteral("1010");
+                    controller.setModifierPassSetting(
+                            0,
+                            QStringLiteral("minTimeMs"),
+                            QStringLiteral("1000"));
+                    QCoreApplication::processEvents();
+                    if (!algorithmSelectorsValid) {
+                        const auto count = [](QObject *object) {
+                            return object == nullptr
+                                    ? -1
+                                    : object->property("count").toInt();
+                        };
+                        const auto current = [](QObject *object) {
+                            return object == nullptr
+                                    ? QStringLiteral("<missing>")
+                                    : object->property("currentValue")
+                                              .toString();
+                        };
+                        std::cerr
+                                << "algorithm structure failed: search="
+                                << count(searchAlgorithmCombo) << "/"
+                                << current(searchAlgorithmCombo).toStdString()
+                                << ", modifierComposition="
+                                << (modifierComposition != nullptr)
+                                << "/"
+                                << (modifierComposition == nullptr
+                                            ? -1
+                                            : modifierComposition
+                                                      ->property("passCount")
+                                                      .toInt())
+                                << "/"
+                                << (modifierComposition == nullptr
+                                            ? -1
+                                            : modifierComposition
+                                                      ->property(
+                                                              "passModelCount")
+                                                      .toInt())
+                                << "/"
+                                << (modifierComposition == nullptr
+                                            ? -1
+                                            : modifierComposition
+                                                      ->property(
+                                                              "renderedPassCount")
+                                                      .toInt())
+                                << ", controllerPasses="
+                                << controller.modifierPasses().size()
+                                << ", firstPass="
+                                << modifierComposition
+                                           ->property("firstPassOptionCount")
+                                           .toInt() << "/"
+                                << modifierComposition
+                                           ->property("firstPassSelectedId")
+                                           .toString().toStdString()
+                                << "/"
+                                << modifierComposition
+                                           ->property("firstPassSettingsLoaded")
+                                           .toBool()
+                                << ", addCombo=" << count(addModifierCombo)
+                                << ", addButton="
+                                << (addModifierButton != nullptr)
+                                << ", evaluation="
+                                << count(evaluationTargetCombo) << "/"
+                                << current(evaluationTargetCombo).toStdString()
+                                << ", basicSettings="
+                                << (basicBruteForceSettings != nullptr)
+                                << ", velocitySettings="
+                                << (velocitySettings != nullptr) << '\n';
+                    }
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
                             fpsCounterValid && wireframeTextIsWhite &&
                             automaticPacksUi && algorithmSelectorsValid &&
+                            everyOwnedPanelLoaded && configurationSectionsValid &&
+                            comboSlotsStyled && modifierFocusStable &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
                             playPause->property("enabled").toBool() &&

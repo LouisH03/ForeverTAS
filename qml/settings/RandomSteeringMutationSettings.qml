@@ -1,28 +1,27 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
-GridLayout {
+ColumnLayout {
+    id: root
+
     objectName: "randomSteeringMutationSettings"
-    property var controller
+    property var settings: ({})
+    property var updateSetting
+    property bool running: false
 
-    columns: 2
-    columnSpacing: 12
-    rowSpacing: 9
+    Layout.fillWidth: true
+    spacing: 8
 
-    Label {
-        text: qsTr("Mutation seed")
+    TimeWindowSettings {
+        settings: root.settings
+        updateSetting: root.updateSetting
+        running: root.running
     }
-    TextField {
-        Layout.fillWidth: true
-        horizontalAlignment: TextInput.AlignRight
-        text: controller.mutationAlgorithmSettings["seed"] ?? ""
-        enabled: !controller.running
-        selectByMouse: true
-        validator: RegularExpressionValidator {
-            regularExpression: /[0-9]*/
-        }
-        onTextEdited:
-            controller.setMutationAlgorithmSetting("seed", text)
+
+    SettingTextField {
+        label: qsTr("Seed")
+        value: root.settings["seed"] ?? ""
+        running: root.running
+        onEdited: value => root.updateSetting("seed", value)
     }
 }

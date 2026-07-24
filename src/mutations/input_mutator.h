@@ -13,9 +13,9 @@ struct MutationRequest {
     const std::vector<
             forevervalidator::experimental::PhysicsSandboxInputEvent>
             &baselineInputs;
-    std::int64_t minMutateMs = 0;
-    std::int64_t maxMutateMs = 0;
     std::uint64_t attemptIndex = 0u;
+    std::uint32_t passIndex = 0u;
+    std::uint32_t tickDurationMs = 10u;
 };
 
 struct MutationResult {
@@ -28,6 +28,7 @@ class InputMutator {
 public:
     virtual ~InputMutator() = default;
     virtual MutationResult Mutate(const MutationRequest &request) const = 0;
+    virtual std::int64_t EarliestMutationTimeMs() const = 0;
 };
 
 }  // namespace forevertas

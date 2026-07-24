@@ -4,8 +4,11 @@
 #include "searches/option_configuration.h"
 
 #include <cstdint>
+#include <cmath>
 #include <limits>
+#include <locale>
 #include <optional>
+#include <sstream>
 #include <string>
 
 namespace forevertas {
@@ -82,6 +85,50 @@ inline std::optional<std::uint32_t> ParseUnsignedDecimal32(
         return std::nullopt;
     }
     return static_cast<std::uint32_t>(*parsed);
+}
+
+inline std::optional<double> ParseFiniteDouble(const std::string &value) {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    std::istringstream stream(value);
+    stream.imbue(std::locale::classic());
+    stream >> std::noskipws;
+
+    double parsed = 0.0;
+    if (!(stream >> parsed) || !std::isfinite(parsed)) {
+        return std::nullopt;
+    }
+
+    char trailing = '\0';
+    if (stream >> trailing || !stream.eof()) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+inline std::optional<bool> ParseBoolean(const std::string &value) {
+    if (value == "true" || value == "1") return true;
+    if (value == "false" || value == "0") return false;
+    return std::nullopt;
+}
+
+inline std::optional<std::string> ValidateTimeWindow(
+        std::int64_t minimum,
+        std::int64_t maximum,
+        std::uint32_t tickDurationMs,
+        const std::string &name) {
+    if (tickDurationMs == 0u) return "tick duration must be greater than zero";
+    if (minimum < static_cast<std::int64_t>(tickDurationMs)) {
+        return name + " minimum must be at least one tick";
+    }
+    if (maximum < minimum) return name + " maximum must not precede minimum";
+    const std::int64_t tick = static_cast<std::int64_t>(tickDurationMs);
+    if (minimum % tick != 0 || maximum % tick != 0) {
+        return name + " times must align to whole ticks";
+    }
+    return std::nullopt;
 }
 
 }  // namespace forevertas

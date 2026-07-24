@@ -1,6 +1,7 @@
 #include "mutations/random_steering_mutator.h"
 
-#include "searches/option_settings_utils.h"
+#include "mutations/input_event_utils.h"
+#include "mutations/modifier_utils.h"
 
 #include <limits>
 #include <random>
@@ -24,34 +25,53 @@ std::optional<RandomSteeringSettings> ParseRandomSteeringSettings(
         *error = *keyError;
         return std::nullopt;
     }
-    const auto seed = ParseUnsignedDecimal32(settings.at("seed"));
-    if (!seed) {
-        *error = "mutation seed must be an unsigned 32-bit decimal integer";
+    const auto window = ParseModifierWindow(settings);
+    if (!window) {
+        *error = "random steering window or seed is invalid";
         return std::nullopt;
     }
-    return RandomSteeringSettings{*seed};
+    return RandomSteeringSettings{
+            window->minimumTimeMs, window->maximumTimeMs, window->seed};
 }
 
 }  // namespace
 
 RandomSteeringSettings DefaultRandomSteeringSettings() {
-    return {1179926867u};
+    return {1000, 6000, 1179926867u};
 }
 
 OptionSettings DefaultRandomSteeringOptionSettings() {
-    return {{"seed", std::to_string(DefaultRandomSteeringSettings().seed)}};
+    const RandomSteeringSettings defaults = DefaultRandomSteeringSettings();
+    return {{"minTimeMs", std::to_string(defaults.minimumTimeMs)},
+            {"maxTimeMs", std::to_string(defaults.maximumTimeMs)},
+            {"seed", std::to_string(defaults.seed)}};
 }
 
 std::optional<std::string> ValidateRandomSteeringOptionSettings(
-        const OptionSettings &settings) {
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
     std::string error;
-    static_cast<void>(ParseRandomSteeringSettings(settings, &error));
+    const auto parsed = ParseRandomSteeringSettings(settings, &error);
+    if (parsed) {
+        if (const auto windowError = ValidateTimeWindow(
+                    parsed->minimumTimeMs,
+                    parsed->maximumTimeMs,
+                    tickDurationMs,
+                    "mutation")) {
+            error = *windowError;
+        }
+    }
     return error.empty() ? std::nullopt
                          : std::optional<std::string>(std::move(error));
 }
 
 std::unique_ptr<InputMutator> CreateRandomSteeringMutator(
-        const OptionSettings &settings) {
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) {
+    if (const auto error = ValidateRandomSteeringOptionSettings(
+                settings, tickDurationMs)) {
+        throw std::invalid_argument(*error);
+    }
     std::string error;
     const auto parsed = ParseRandomSteeringSettings(settings, &error);
     if (!parsed) {
@@ -70,17 +90,14 @@ MutationResult RandomSteeringMutator::Mutate(
     using forevervalidator::experimental::PhysicsSandboxInputEvent;
     using forevervalidator::experimental::PhysicsSandboxInputValueKind;
 
-    std::seed_seq sequence{
-            settings_.seed,
-            static_cast<std::uint32_t>(request.attemptIndex),
-            static_cast<std::uint32_t>(request.attemptIndex >> 32u)};
-    std::mt19937 random(sequence);
+    std::mt19937 random = ModifierRandom(
+            settings_.seed, request.attemptIndex, request.passIndex);
 
     MutationResult result;
     result.inputs = request.baselineInputs;
     for (PhysicsSandboxInputEvent &event : result.inputs) {
-        if (event.timeMs < request.minMutateMs ||
-            event.timeMs > request.maxMutateMs ||
+        if (event.timeMs < settings_.minimumTimeMs ||
+            event.timeMs > settings_.maximumTimeMs ||
             event.action != PhysicsSandboxInputAction::Steer ||
             event.value.kind != PhysicsSandboxInputValueKind::Analog) {
             continue;
@@ -93,7 +110,14 @@ MutationResult RandomSteeringMutator::Mutate(
         event.value.analog = value;
         ++result.mutationCount;
     }
+    NormalizeInputEvents(result.inputs, request.tickDurationMs);
+    result.mutationCount = EffectiveInputChangeCount(
+            request.baselineInputs, result.inputs);
     return result;
+}
+
+std::int64_t RandomSteeringMutator::EarliestMutationTimeMs() const {
+    return settings_.minimumTimeMs;
 }
 
 }  // namespace forevertas

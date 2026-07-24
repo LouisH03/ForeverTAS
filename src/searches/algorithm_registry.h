@@ -14,8 +14,17 @@
 namespace forevertas {
 
 inline constexpr char kBasicBruteForceSearchId[] = "basic-brute-force";
-inline constexpr char kRandomSteeringMutationId[] = "random-steering";
-inline constexpr char kMaximumSpeedEvaluationId[] = "maximum-speed";
+inline constexpr char kRandomSteeringModifierId[] = "random-steering";
+inline constexpr char kExistingEventPerturbationModifierId[] =
+        "existing-event-perturbation";
+inline constexpr char kSmoothSteeringModifierId[] = "smooth-steering";
+inline constexpr char kInputInsertionModifierId[] = "input-insertion";
+inline constexpr char kInputDeletionModifierId[] = "input-deletion";
+inline constexpr char kVelocityEvaluationId[] = "velocity";
+inline constexpr char kFinishTimeEvaluationId[] = "finish-time";
+inline constexpr char kVolumeEntryEvaluationId[] = "volume-entry-time";
+inline constexpr char kPointTargetEvaluationId[] = "point-target";
+inline constexpr char kPoseTargetEvaluationId[] = "pose-target";
 
 struct SearchAlgorithmRegistration {
     std::string id;
@@ -30,15 +39,17 @@ struct SearchAlgorithmRegistration {
             const OptionSettings &, std::uint32_t);
 };
 
-struct MutationAlgorithmRegistration {
+struct ModifierRegistration {
     std::string id;
     std::vector<std::string> legacyIds;
     std::string displayName;
     std::string settingsComponent;
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
-    std::optional<std::string> (*validateSettings)(const OptionSettings &);
-    std::unique_ptr<InputMutator> (*create)(const OptionSettings &);
+    std::optional<std::string> (*validateSettings)(
+            const OptionSettings &, std::uint32_t);
+    std::unique_ptr<InputMutator> (*create)(
+            const OptionSettings &, std::uint32_t);
 };
 
 struct EvaluationTargetRegistration {
@@ -48,23 +59,25 @@ struct EvaluationTargetRegistration {
     std::string settingsComponent;
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
-    std::optional<std::string> (*validateSettings)(const OptionSettings &);
-    std::unique_ptr<CandidateEvaluator> (*create)(const OptionSettings &);
+    std::optional<std::string> (*validateSettings)(
+            const OptionSettings &, std::uint32_t);
+    std::unique_ptr<CandidateEvaluator> (*create)(
+            const OptionSettings &, std::uint32_t);
 };
 
 const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry();
-const std::vector<MutationAlgorithmRegistration> &MutationAlgorithmRegistry();
+const std::vector<ModifierRegistration> &ModifierRegistry();
 const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry();
 
 const SearchAlgorithmRegistration *FindSearchAlgorithm(
         const std::string &id);
-const MutationAlgorithmRegistration *FindMutationAlgorithm(
+const ModifierRegistration *FindModifier(
         const std::string &id);
 const EvaluationTargetRegistration *FindEvaluationTarget(
         const std::string &id);
 
 OptionConfiguration DefaultSearchAlgorithmConfiguration();
-OptionConfiguration DefaultMutationAlgorithmConfiguration();
+std::vector<OptionConfiguration> DefaultModifierConfigurations();
 OptionConfiguration DefaultEvaluationTargetConfiguration();
 
 }  // namespace forevertas
