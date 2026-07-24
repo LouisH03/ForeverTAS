@@ -41,7 +41,7 @@ public:
     MutationResult Mutate(const MutationRequest &request) const override {
         std::vector<SandboxInputEvent> inputs = request.baselineInputs;
         std::mt19937 random = ModifierRandom(
-                settings_.window.seed, request.attemptIndex, request.passIndex);
+                settings_.window.seed, request.iterationIndex, request.passIndex);
         const std::int64_t tick = request.tickDurationMs;
         const std::int64_t minimumTick = settings_.window.minimumTimeMs / tick;
         const std::int64_t maximumTick = settings_.window.maximumTimeMs / tick;
@@ -82,7 +82,10 @@ public:
                                              SandboxInputAction::Steer,
                                              value));
             }
-            NormalizeInputEvents(inputs, request.tickDurationMs);
+            NormalizeMutableInputEvents(inputs,
+                                    request.baselineInputs,
+                                    request.tickDurationMs,
+                                    request.mutableFromTimeMs);
         }
         return {inputs,
                 EffectiveInputChangeCount(request.baselineInputs, inputs)};

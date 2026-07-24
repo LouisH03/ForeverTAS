@@ -105,7 +105,7 @@ public:
         std::vector<SandboxInputEvent> inputs = request.baselineInputs;
         const std::vector<SandboxInputEvent> original = inputs;
         std::mt19937 random = ModifierRandom(
-                settings_.window.seed, request.attemptIndex, request.passIndex);
+                settings_.window.seed, request.iterationIndex, request.passIndex);
         const std::int64_t tick = request.tickDurationMs;
 
         const auto randomTime = [&]() {
@@ -174,7 +174,10 @@ public:
         };
         insertSwitch(settings_.accelerate, SandboxInputAction::Accelerate);
         insertSwitch(settings_.brake, SandboxInputAction::Brake);
-        NormalizeInputEvents(inputs, request.tickDurationMs);
+        NormalizeMutableInputEvents(inputs,
+                                    request.baselineInputs,
+                                    request.tickDurationMs,
+                                    request.mutableFromTimeMs);
         return {inputs, EffectiveInputChangeCount(original, inputs)};
     }
 

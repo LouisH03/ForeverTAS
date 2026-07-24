@@ -51,7 +51,7 @@ public:
         std::vector<SandboxInputEvent> inputs = request.baselineInputs;
         const std::vector<SandboxInputEvent> original = inputs;
         std::mt19937 random = ModifierRandom(
-                settings_.window.seed, request.attemptIndex, request.passIndex);
+                settings_.window.seed, request.iterationIndex, request.passIndex);
 
         const auto deleteChannel = [&](const ChannelSettings &channel,
                                        auto matches) {
@@ -59,25 +59,28 @@ public:
             const std::uint32_t requested = RandomInteger(
                     random, 0u, channel.maximumCount);
             for (std::uint32_t removal = 0u; removal < requested; ++removal) {
-                std::vector<std::size_t> candidates;
+                std::vector<std::size_t> eligibleIndices;
                 for (std::size_t index = 0u; index < inputs.size(); ++index) {
                     const SandboxInputEvent &event = inputs[index];
                     if (event.timeMs >= settings_.window.minimumTimeMs &&
                         event.timeMs <= settings_.window.maximumTimeMs &&
                         matches(event.action)) {
-                        candidates.push_back(index);
+                        eligibleIndices.push_back(index);
                     }
                 }
-                if (candidates.empty()) break;
-                const std::size_t selected = candidates[RandomInteger<std::size_t>(
-                        random, 0u, candidates.size() - 1u)];
+                if (eligibleIndices.empty()) break;
+                const std::size_t selected = eligibleIndices[RandomInteger<std::size_t>(
+                        random, 0u, eligibleIndices.size() - 1u)];
                 inputs.erase(inputs.begin() + static_cast<std::ptrdiff_t>(selected));
             }
         };
         deleteChannel(settings_.steering, IsSteerAction);
         deleteChannel(settings_.accelerate, IsAccelerateAction);
         deleteChannel(settings_.brake, IsBrakeAction);
-        NormalizeInputEvents(inputs, request.tickDurationMs);
+        NormalizeMutableInputEvents(inputs,
+                                    request.baselineInputs,
+                                    request.tickDurationMs,
+                                    request.mutableFromTimeMs);
         return {inputs, EffectiveInputChangeCount(original, inputs)};
     }
 

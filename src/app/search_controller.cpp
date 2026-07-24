@@ -17,7 +17,7 @@ namespace {
 
 constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
-std::atomic_bool gAutomaticPacksSearchAttempted{false};
+std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
 QString StoredValue(const char *key, const QString &fallback) {
     return QSettings().value(QLatin1String(key), fallback).toString();
@@ -100,8 +100,8 @@ bool SearchController::running() const {
     return running_;
 }
 
-bool SearchController::cancelling() const {
-    return cancelling_;
+bool SearchController::stopping() const {
+    return stopping_;
 }
 
 bool SearchController::progressIndeterminate() const {
@@ -118,6 +118,22 @@ QString SearchController::validationMessage() const {
 
 QString SearchController::statusText() const {
     return statusText_;
+}
+
+bool SearchController::liveMetricsVisible() const {
+    return liveMetricsVisible_;
+}
+
+QString SearchController::iterationCountText() const {
+    return iterationCountText_;
+}
+
+QString SearchController::throughputText() const {
+    return throughputText_;
+}
+
+QString SearchController::elapsedText() const {
+    return elapsedText_;
 }
 
 QString SearchController::resultText() const {
@@ -270,16 +286,20 @@ void SearchController::startSearch() {
 
     setResultText({});
     setBestInputsText({});
+    setLiveMetrics({}, {}, {}, false);
     lastCompletion_.reset();
     setProgress(true, 0.0);
     setStatusText(QStringLiteral("Starting search..."));
-    setCancelling(false);
+    setStopping(false);
     setRunning(true);
 
+    stopRequested_ = std::make_shared<std::atomic_bool>(false);
     cancellationRequested_ = std::make_shared<std::atomic_bool>(false);
     QThread *const thread = new QThread(this);
     SearchWorker *const worker = new SearchWorker(
-            *validation.request, cancellationRequested_);
+            *validation.request,
+            stopRequested_,
+            cancellationRequested_);
     worker->moveToThread(thread);
     workerThread_ = thread;
 
@@ -299,6 +319,24 @@ void SearchController::startSearch() {
                 setProgress(false, value);
             });
     connect(worker,
+            &SearchWorker::metricsChanged,
+            this,
+            [this](const QString &iterationCountText,
+                   const QString &throughputText,
+                   const QString &elapsedText) {
+                setLiveMetrics(iterationCountText,
+                               throughputText,
+                               elapsedText,
+                               true);
+            });
+    connect(worker,
+            &SearchWorker::bestChanged,
+            this,
+            [this](const QString &summary, const QString &inputsText) {
+                setResultText(summary);
+                setBestInputsText(inputsText);
+            });
+    connect(worker,
             &SearchWorker::succeeded,
             this,
             [this](SearchCompletionPtr completion) {
@@ -310,7 +348,7 @@ void SearchController::startSearch() {
                 emit searchCompleted(std::move(completion));
             });
     connect(worker, &SearchWorker::cancelled, this, [this]() {
-        setStatusText(QStringLiteral("Cancelled"));
+        setStatusText(QStringLiteral("Search aborted"));
         setProgress(false, progressValue_);
     });
     connect(worker,
@@ -326,8 +364,9 @@ void SearchController::startSearch() {
     connect(thread, &QThread::finished, this, [this, thread]() {
         if (workerThread_ == thread) {
             workerThread_ = nullptr;
+            stopRequested_.reset();
             cancellationRequested_.reset();
-            setCancelling(false);
+            setStopping(false);
             setRunning(false);
         }
     });
@@ -336,13 +375,13 @@ void SearchController::startSearch() {
     thread->start();
 }
 
-void SearchController::cancelSearch() {
-    if (!running_ || cancelling_ || !cancellationRequested_) {
+void SearchController::stopSearch() {
+    if (!running_ || stopping_ || !stopRequested_) {
         return;
     }
-    cancellationRequested_->store(true, std::memory_order_relaxed);
-    setCancelling(true);
-    setStatusText(QStringLiteral("Cancelling..."));
+    stopRequested_->store(true, std::memory_order_relaxed);
+    setStopping(true);
+    setStatusText(QStringLiteral("Stopping after current iteration..."));
 }
 
 SearchController::ValidationResult SearchController::validate() const {
@@ -411,12 +450,12 @@ void SearchController::setRunning(bool value) {
     }
 }
 
-void SearchController::setCancelling(bool value) {
-    if (cancelling_ == value) {
+void SearchController::setStopping(bool value) {
+    if (stopping_ == value) {
         return;
     }
-    cancelling_ = value;
-    emit cancellingChanged();
+    stopping_ = value;
+    emit stoppingChanged();
 }
 
 void SearchController::setStatusText(const QString &value) {
@@ -425,6 +464,23 @@ void SearchController::setStatusText(const QString &value) {
     }
     statusText_ = value;
     emit statusChanged();
+}
+
+void SearchController::setLiveMetrics(
+        const QString &iterationCountText,
+        const QString &throughputText,
+        const QString &elapsedText,
+        bool visible) {
+    if (iterationCountText_ == iterationCountText &&
+        throughputText_ == throughputText && elapsedText_ == elapsedText &&
+        liveMetricsVisible_ == visible) {
+        return;
+    }
+    iterationCountText_ = iterationCountText;
+    throughputText_ = throughputText;
+    elapsedText_ = elapsedText;
+    liveMetricsVisible_ = visible;
+    emit metricsChanged();
 }
 
 void SearchController::setResultText(const QString &value) {
@@ -456,15 +512,15 @@ void SearchController::setProgress(bool indeterminate, double value) {
 
 void SearchController::scheduleAutoDetectPacksDirectory(
         const QStringList *packsSearchPatterns) {
-    if (autoDetectionAttempted_ || !packsDirectory_.trimmed().isEmpty()) {
+    if (autoDetectionScheduled_ || !packsDirectory_.trimmed().isEmpty()) {
         return;
     }
     if (packsSearchPatterns == nullptr &&
-        gAutomaticPacksSearchAttempted.exchange(
+        gAutomaticPacksSearchScheduled.exchange(
                 true, std::memory_order_relaxed)) {
         return;
     }
-    autoDetectionAttempted_ = true;
+    autoDetectionScheduled_ = true;
     const std::optional<QStringList> patterns = packsSearchPatterns == nullptr
             ? std::nullopt
             : std::optional<QStringList>(*packsSearchPatterns);
@@ -529,6 +585,9 @@ void SearchController::waitForWorker() {
         autoDetectionThread_->wait();
         delete autoDetectionThread_;
         autoDetectionThread_ = nullptr;
+    }
+    if (stopRequested_) {
+        stopRequested_->store(true, std::memory_order_relaxed);
     }
     if (cancellationRequested_) {
         cancellationRequested_->store(true, std::memory_order_relaxed);

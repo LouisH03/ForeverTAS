@@ -226,9 +226,9 @@ int main(int argc, char **argv) {
                                     QStringLiteral("searchAlgorithmCombo"));
                     QObject *const settingsScroll = root->findChild<QObject *>(
                             QStringLiteral("settingsScroll"));
-                    QObject *const settingsWheelHandler =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("settingsWheelHandler"));
+                    QObject *const settingsWheelRedirector =
+                            root->property("settingsWheelRedirectorObject")
+                                    .value<QObject *>();
                     auto *const evaluationSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationSection")));
@@ -268,6 +268,35 @@ int main(int argc, char **argv) {
                     QObject *const copyBestInputsButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "copyBestInputsButton"));
+                    QObject *const startSearchButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "startSearchButton"));
+                    QObject *const stopSearchButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "stopSearchButton"));
+                    auto *const searchMetricsRow = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "searchMetricsRow")));
+                    auto *const iterationsMetricCard =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "iterationsMetricCard")));
+                    QObject *const iterationsMetricValue =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "iterationsMetricValue"));
+                    auto *const throughputMetricCard =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "throughputMetricCard")));
+                    QObject *const throughputMetricValue =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "throughputMetricValue"));
+                    auto *const elapsedMetricCard = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "elapsedMetricCard")));
+                    QObject *const elapsedMetricValue =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "elapsedMetricValue"));
                     const qint64 keyboardStartTick =
                             std::clamp<qint64>(
                                     viewer.tickCount() / 2,
@@ -319,6 +348,46 @@ int main(int argc, char **argv) {
                             bestInputsTextArea->property("readOnly").toBool() &&
                             copyBestInputsButton->property("text").toString() ==
                                     QStringLiteral("Copy all");
+                    const bool searchControlsValid =
+                            startSearchButton != nullptr &&
+                            stopSearchButton != nullptr &&
+                            startSearchButton->property("text").toString() ==
+                                    QStringLiteral("Start") &&
+                            stopSearchButton->property("text").toString() ==
+                                    QStringLiteral("Stop") &&
+                            !stopSearchButton->property("enabled").toBool();
+                    const bool searchMetricsUiValid =
+                            searchMetricsRow != nullptr &&
+                            iterationsMetricCard != nullptr &&
+                            iterationsMetricValue != nullptr &&
+                            throughputMetricCard != nullptr &&
+                            throughputMetricValue != nullptr &&
+                            elapsedMetricCard != nullptr &&
+                            elapsedMetricValue != nullptr &&
+                            !searchMetricsRow->isVisible() &&
+                            std::abs(iterationsMetricCard->height() -
+                                     throughputMetricCard->height()) < 0.1 &&
+                            std::abs(throughputMetricCard->height() -
+                                     elapsedMetricCard->height()) < 0.1 &&
+                            iterationsMetricValue->property("text")
+                                    .toString().isEmpty() &&
+                            throughputMetricValue->property("text")
+                                    .toString().isEmpty() &&
+                            elapsedMetricValue->property("text")
+                                    .toString().isEmpty();
+                    const bool removedSectionDescriptions =
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("Build an ordered pipeline")) &&
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("Choose what makes one")) &&
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("Choose how iterations")) &&
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("Runs continuously until"));
                     const bool wireframeTextIsWhite =
                             wireframeSwitch != nullptr &&
                             wireframeLabel != nullptr &&
@@ -394,54 +463,186 @@ int main(int argc, char **argv) {
                             addModifierCombo->property("slotStyled").toBool() &&
                             modifierComposition
                                     ->property("firstPassSlotStyled").toBool();
+                    const bool modifierPassLayoutValid =
+                            modifierComposition != nullptr &&
+                            modifierComposition
+                                    ->property("firstPassHeaderLayoutValid")
+                                    .toBool();
+
                     bool wheelScrollingValid =
                             settingsScroll != nullptr &&
-                            settingsWheelHandler != nullptr &&
-                            settingsWheelHandler->property("blocking").toBool();
+                            settingsWheelRedirector != nullptr &&
+                            settingsWheelRedirector->property("blocking")
+                                    .toBool();
                     if (wheelScrollingValid) {
                         QObject *const flickable =
                                 settingsScroll->property("contentItem")
                                         .value<QObject *>();
-                        const int acceptedDevices =
-                                settingsWheelHandler
-                                        ->property("acceptedDevices")
-                                        .toInt();
-                        const int mouseDevice = static_cast<int>(
-                                QInputDevice::DeviceType::Mouse);
-                        const int touchPadDevice = static_cast<int>(
-                                QInputDevice::DeviceType::TouchPad);
+                        QObject *const nestedFlickable =
+                                bestInputsScrollView == nullptr
+                                ? nullptr
+                                : bestInputsScrollView
+                                          ->property("contentItem")
+                                          .value<QObject *>();
+                        auto *const scrollItem =
+                                qobject_cast<QQuickItem *>(settingsScroll);
+                        auto *const redirectorItem =
+                                qobject_cast<QQuickItem *>(
+                                        settingsWheelRedirector);
+                        auto *const comboItem =
+                                qobject_cast<QQuickItem *>(
+                                        evaluationTargetCombo);
+                        auto *const scriptItem =
+                                qobject_cast<QQuickItem *>(
+                                        bestInputsScrollView);
+                        auto *const quickWindow =
+                                qobject_cast<QQuickWindow *>(root);
                         wheelScrollingValid &= flickable != nullptr &&
-                                (acceptedDevices & mouseDevice) != 0 &&
-                                (acceptedDevices & touchPadDevice) != 0;
+                                nestedFlickable != nullptr &&
+                                scrollItem != nullptr &&
+                                redirectorItem != nullptr &&
+                                comboItem != nullptr &&
+                                scriptItem != nullptr &&
+                                quickWindow != nullptr;
+                        const auto sendWheel = [quickWindow](
+                                                       QQuickItem *item,
+                                                       const QPointF &local,
+                                                       int delta) {
+                            const QPointF position = item->mapToScene(local);
+                            const QPoint global = quickWindow->mapToGlobal(
+                                    position.toPoint());
+                            QWheelEvent event(position,
+                                              QPointF(global),
+                                              {},
+                                              QPoint(0, delta),
+                                              Qt::NoButton,
+                                              Qt::NoModifier,
+                                              Qt::ScrollUpdate,
+                                              false);
+                            QCoreApplication::sendEvent(quickWindow, &event);
+                            QCoreApplication::processEvents();
+                            return event.isAccepted();
+                        };
                         if (wheelScrollingValid) {
-                            auto *const scrollItem =
-                                    qobject_cast<QQuickItem *>(settingsScroll);
-                            auto *const quickWindow =
-                                    qobject_cast<QQuickWindow *>(root);
-                            wheelScrollingValid &= scrollItem != nullptr &&
-                                    quickWindow != nullptr;
+                            flickable->setProperty("contentY", 0.0);
+                            const bool comboAccepted = sendWheel(
+                                    comboItem,
+                                    QPointF(comboItem->width() * 0.5,
+                                            comboItem->height() * 0.5),
+                                    -120);
+                            const double afterCombo =
+                                    flickable->property("contentY").toDouble();
+                            wheelScrollingValid &= comboAccepted &&
+                                    afterCombo > 0.0;
+
+                            controller.setModifierPassId(
+                                    0,
+                                    QStringLiteral(
+                                            "existing-event-perturbation"));
+                            QCoreApplication::processEvents();
+                            QCoreApplication::processEvents();
+                            QObject *const perturbationSettings =
+                                    modifierComposition
+                                            ->property("firstPassSettingsItem")
+                                            .value<QObject *>();
+                            auto *const absoluteMinimumSlider =
+                                    perturbationSettings == nullptr
+                                    ? nullptr
+                                    : qobject_cast<QQuickItem *>(
+                                              perturbationSettings
+                                                      ->findChild<QObject *>(
+                                                              QStringLiteral(
+                                                                      "perturbationAbsoluteMinimumSlider")));
+                            wheelScrollingValid &=
+                                    absoluteMinimumSlider != nullptr;
                             if (wheelScrollingValid) {
-                                flickable->setProperty("contentY", 0.0);
-                                const QPointF position = scrollItem->mapToScene(
-                                        QPointF(scrollItem->width() * 0.5,
-                                                scrollItem->height() * 0.25));
-                                const QPoint global = quickWindow->mapToGlobal(
-                                        position.toPoint());
-                                QWheelEvent event(position,
-                                                  QPointF(global),
-                                                  {},
-                                                  QPoint(0, -120),
-                                                  Qt::NoButton,
-                                                  Qt::NoModifier,
-                                                  Qt::ScrollUpdate,
-                                                  false);
-                                QCoreApplication::sendEvent(quickWindow, &event);
-                                QCoreApplication::processEvents();
-                                const double contentY =
+                                const double sliderContentHeight =
+                                        flickable->property("contentHeight")
+                                                .toDouble();
+                                const double sliderMaximum = std::max(
+                                        0.0,
+                                        sliderContentHeight -
+                                                scrollItem->height());
+                                const QPointF panelTopLeft =
+                                        redirectorItem->mapToScene(QPointF());
+                                const QPointF sliderBefore =
+                                        absoluteMinimumSlider->mapToScene(
+                                                QPointF(
+                                                        absoluteMinimumSlider
+                                                                        ->width() *
+                                                                0.5,
+                                                        absoluteMinimumSlider
+                                                                        ->height() *
+                                                                0.5));
+                                const double desiredSceneY =
+                                        panelTopLeft.y() +
+                                        redirectorItem->height() * 0.5;
+                                const double currentY =
                                         flickable->property("contentY")
                                                 .toDouble();
-                                wheelScrollingValid &= contentY > 0.0;
+                                flickable->setProperty(
+                                        "contentY",
+                                        std::clamp(
+                                                currentY + sliderBefore.y() -
+                                                        desiredSceneY,
+                                                0.0,
+                                                sliderMaximum));
+                                QCoreApplication::processEvents();
+                                const double beforeSlider =
+                                        flickable->property("contentY")
+                                                .toDouble();
+                                const bool sliderAccepted = sendWheel(
+                                        absoluteMinimumSlider,
+                                        QPointF(
+                                                absoluteMinimumSlider->width() *
+                                                        0.5,
+                                                absoluteMinimumSlider->height() *
+                                                        0.5),
+                                        -120);
+                                const double afterSlider =
+                                        flickable->property("contentY")
+                                                .toDouble();
+                                wheelScrollingValid &= sliderAccepted &&
+                                        afterSlider > beforeSlider;
                             }
+                            controller.setModifierPassId(
+                                    0, QStringLiteral("random-steering"));
+                            QCoreApplication::processEvents();
+                            QCoreApplication::processEvents();
+
+                            const double contentHeight =
+                                    flickable->property("contentHeight")
+                                            .toDouble();
+                            const double maximum = std::max(
+                                    0.0,
+                                    contentHeight - scrollItem->height());
+                            flickable->setProperty("contentY", maximum);
+                            nestedFlickable->setProperty("contentY", 0.0);
+                            QCoreApplication::processEvents();
+                            const QPointF scriptLocal(
+                                    scriptItem->width() * 0.5,
+                                    std::min(10.0,
+                                             scriptItem->height() * 0.5));
+                            const QPointF scriptScene =
+                                    scriptItem->mapToScene(scriptLocal);
+                            const bool scriptInsidePanel =
+                                    redirectorItem->contains(
+                                            redirectorItem->mapFromScene(
+                                                    scriptScene));
+                            const double beforeOuter =
+                                    flickable->property("contentY").toDouble();
+                            const double beforeNested = nestedFlickable
+                                    ->property("contentY").toDouble();
+                            const bool scriptAccepted =
+                                    sendWheel(scriptItem, scriptLocal, 120);
+                            const double afterOuter =
+                                    flickable->property("contentY").toDouble();
+                            const double afterNested = nestedFlickable
+                                    ->property("contentY").toDouble();
+                            wheelScrollingValid &= scriptInsidePanel &&
+                                    scriptAccepted &&
+                                    afterOuter < beforeOuter &&
+                                    afterNested == beforeNested;
                         }
                     }
                     bool everyOwnedPanelLoaded =
@@ -758,10 +959,13 @@ int main(int argc, char **argv) {
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
                             runSelectorValid && bestInputsUiValid &&
+                            searchControlsValid && searchMetricsUiValid &&
+                            removedSectionDescriptions &&
                             wireframeTextIsWhite &&
                             automaticPacksUi && algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
-                            comboSlotsStyled && wheelScrollingValid &&
+                            comboSlotsStyled && modifierPassLayoutValid &&
+                            wheelScrollingValid &&
                             dropdownStateUpdates && insertionSlidersValid &&
                             poseSliderValid && velocitySliderValid &&
                             modifierFocusStable && unboundedFieldsScrubbable &&
@@ -790,6 +994,27 @@ int main(int argc, char **argv) {
                                     root,
                                     QStringLiteral("INPUT TIMELINE")) &&
                             keyboardStepping;
+                    if (!editorStructure) {
+                        std::cerr
+                                << "editor checks: runSelector=" << runSelectorValid
+                                << ", bestInputs=" << bestInputsUiValid
+                                << ", searchControls=" << searchControlsValid
+                                << ", wireText=" << wireframeTextIsWhite
+                                << ", autoPacks=" << automaticPacksUi
+                                << ", selectors=" << algorithmSelectorsValid
+                                << ", panels=" << everyOwnedPanelLoaded
+                                << ", sections=" << configurationSectionsValid
+                                << ", comboStyle=" << comboSlotsStyled
+                                << ", passLayout=" << modifierPassLayoutValid
+                                << ", wheel=" << wheelScrollingValid
+                                << ", dropdown=" << dropdownStateUpdates
+                                << ", insertion=" << insertionSlidersValid
+                                << ", pose=" << poseSliderValid
+                                << ", velocity=" << velocitySliderValid
+                                << ", focus=" << modifierFocusStable
+                                << ", scrub=" << unboundedFieldsScrubbable
+                                << ", keyboard=" << keyboardStepping << '\n';
+                    }
                     if (filled == nullptr || wire == nullptr) {
                         std::cerr << "track models were not created\n";
                         completed = true;

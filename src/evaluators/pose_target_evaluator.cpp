@@ -50,7 +50,7 @@ struct PoseSettings {
     double rotationWeight = 0.5;
 };
 
-class PoseSession final : public CandidateEvaluationSession {
+class PoseSession final : public IterationEvaluationSession {
 public:
     explicit PoseSession(PoseSettings settings) : settings_(settings) {}
 
@@ -71,7 +71,9 @@ public:
         description << "Pose error: " << score
                     << " (position " << positionError << " m, rotation "
                     << rotationError * 180.0 / 3.14159265358979323846
-                    << " deg) at " << current.timeMs << " ms";
+                    << " deg) at "
+                    << FormatHumanDurationMilliseconds(
+                               static_cast<double>(current.timeMs));
         return EvaluationSample{score,
                                 static_cast<double>(current.timeMs),
                                 description.str()};
@@ -81,7 +83,7 @@ private:
     PoseSettings settings_;
 };
 
-class PoseEvaluator final : public CandidateEvaluator {
+class PoseEvaluator final : public IterationEvaluator {
 public:
     explicit PoseEvaluator(PoseSettings settings) : settings_(settings) {}
     EvaluationPlan Plan(std::int64_t replayDurationMs,
@@ -93,13 +95,13 @@ public:
                          replayDurationMs,
                          earliestMutationTimeMs);
     }
-    std::unique_ptr<CandidateEvaluationSession> CreateSession()
+    std::unique_ptr<IterationEvaluationSession> CreateSession()
             const override {
         return std::make_unique<PoseSession>(settings_);
     }
-    bool IsBetter(const EvaluationSample &candidate,
+    bool IsBetter(const EvaluationSample &iteration,
                   const EvaluationSample &incumbent) const override {
-        return candidate.score < incumbent.score;
+        return iteration.score < incumbent.score;
     }
 
 private:
@@ -156,7 +158,7 @@ std::optional<std::string> ValidatePoseTargetOptionSettings(
                               "evaluation");
 }
 
-std::unique_ptr<CandidateEvaluator> CreatePoseTargetEvaluator(
+std::unique_ptr<IterationEvaluator> CreatePoseTargetEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     if (const auto error =

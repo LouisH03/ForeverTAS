@@ -1,5 +1,9 @@
 #include "viewer/race_timeline_item.h"
 
+#include "app/panel_wheel_redirector.h"
+
+#include "time_format.h"
+
 #include <QCursor>
 #include <QMouseEvent>
 #include <QPainter>
@@ -68,13 +72,13 @@ QColor CentisecondTickColor(qreal pixelsPerTick) {
 
 TimelineScale SelectTimelineScale(qreal pixelsPerTick) {
     constexpr qreal targetMajorPixels = 120.0;
-    constexpr qint64 majorCandidates[] = {1, 2, 5, 10, 20, 50, 100};
+    constexpr qint64 majorSteps[] = {1, 2, 5, 10, 20, 50, 100};
 
     TimelineScale scale;
-    for (const qint64 candidate : majorCandidates) {
-        if (static_cast<qreal>(candidate) * pixelsPerTick >=
+    for (const qint64 step : majorSteps) {
+        if (static_cast<qreal>(step) * pixelsPerTick >=
             targetMajorPixels) {
-            scale.majorTicks = candidate;
+            scale.majorTicks = step;
             break;
         }
     }
@@ -87,35 +91,8 @@ TimelineScale SelectTimelineScale(qreal pixelsPerTick) {
 }
 
 QString FormatTimelineTime(qint64 tick) {
-    tick = std::max<qint64>(0, tick);
-    const qint64 totalSeconds = tick / 100;
-    const qint64 minutes = totalSeconds / 60;
-    const qint64 seconds = totalSeconds % 60;
-    const qint64 centiseconds = tick % 100;
-
-    if (centiseconds == 0) {
-        if (minutes == 0) {
-            return QString::number(totalSeconds);
-        }
-        return QStringLiteral("%1:%2")
-                .arg(minutes)
-                .arg(seconds, 2, 10, QLatin1Char('0'));
-    }
-
-    const bool tenthsOnly = centiseconds % 10 == 0;
-    const int decimals = tenthsOnly ? 1 : 2;
-    const qint64 fraction = tenthsOnly
-            ? centiseconds / 10
-            : centiseconds;
-    if (minutes == 0) {
-        return QStringLiteral("%1.%2")
-                .arg(totalSeconds)
-                .arg(fraction, decimals, 10, QLatin1Char('0'));
-    }
-    return QStringLiteral("%1:%2.%3")
-            .arg(minutes)
-            .arg(seconds, 2, 10, QLatin1Char('0'))
-            .arg(fraction, decimals, 10, QLatin1Char('0'));
+    return QString::fromStdString(FormatHumanDurationMilliseconds(
+            static_cast<double>(std::max<qint64>(0, tick)) * 10.0));
 }
 
 }  // namespace
@@ -439,9 +416,13 @@ void RaceTimelineItem::disconnectViewer() {
 }
 
 void RegisterRaceViewerQmlTypes() {
-    static const int typeId = qmlRegisterType<RaceTimelineItem>(
+    static const int timelineTypeId = qmlRegisterType<RaceTimelineItem>(
             "ForeverTAS.Viewer", 1, 0, "RaceTimeline");
-    Q_UNUSED(typeId);
+    static const int wheelTypeId =
+            qmlRegisterType<forevertas::app::PanelWheelRedirector>(
+                    "ForeverTAS.Viewer", 1, 0, "PanelWheelRedirector");
+    Q_UNUSED(timelineTypeId);
+    Q_UNUSED(wheelTypeId);
 }
 
 }  // namespace forevertas::viewer

@@ -25,6 +25,8 @@ ColumnLayout {
         firstRenderedPass ? firstRenderedPass.settingsItem : null
     readonly property bool firstPassSlotStyled:
         firstRenderedPass ? firstRenderedPass.slotStyled : false
+    readonly property bool firstPassHeaderLayoutValid:
+        firstRenderedPass ? firstRenderedPass.headerLayoutValid : false
     property int rebuildCount: 0
 
     objectName: "modifierComposition"
@@ -102,6 +104,13 @@ ColumnLayout {
                 settingsLoaded ? passSettingsLoader.item.objectName : ""
             readonly property var settingsItem: passSettingsLoader.item
             readonly property bool slotStyled: passTypeCombo.slotStyled
+            readonly property bool headerLayoutValid:
+                passTitleLabel.parent === passHeaderRow
+                && passUpButton.parent === passHeaderRow
+                && passDownButton.parent === passHeaderRow
+                && passRemoveButton.parent === passHeaderRow
+                && passTypeCombo.parent !== passHeaderRow
+                && passTypeCombo.width >= passHeaderRow.width - 1
 
             objectName: "modifierPass" + index
             Layout.fillWidth: true
@@ -118,36 +127,30 @@ ColumnLayout {
                 spacing: 6
 
                 RowLayout {
+                    id: passHeaderRow
+                    objectName: "modifierPassHeader" + index
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: 4
 
                     Label {
+                        id: passTitleLabel
+                        objectName: "modifierPassTitle" + index
+                        Layout.fillWidth: true
                         text: qsTr("Pass %1").arg(index + 1)
                         font.weight: Font.DemiBold
                     }
 
-                    StyledComboBox {
-                        id: passTypeCombo
-                        objectName: "modifierPassCombo" + index
-                        Layout.fillWidth: true
-                        model: root.options
-                        textRole: "label"
-                        valueRole: "id"
-                        currentIndex: root.optionIndex(passId)
-                        enabled: !root.controller.running
-                        onActivated: selectedIndex =>
-                            root.controller.setModifierPassId(
-                                passDelegate.index,
-                                valueAt(selectedIndex).toString())
-                    }
-
                     ToolButton {
+                        id: passUpButton
+                        objectName: "modifierPassUp" + index
                         text: "↑"
                         enabled: index > 0 && !root.controller.running
                         onClicked:
                             root.controller.moveModifierPass(index, index - 1)
                     }
                     ToolButton {
+                        id: passDownButton
+                        objectName: "modifierPassDown" + index
                         text: "↓"
                         enabled: index + 1 < root.passes.length
                                  && !root.controller.running
@@ -155,10 +158,27 @@ ColumnLayout {
                             root.controller.moveModifierPass(index, index + 1)
                     }
                     ToolButton {
+                        id: passRemoveButton
+                        objectName: "modifierPassRemove" + index
                         text: "×"
                         enabled: !root.controller.running
                         onClicked: root.controller.removeModifierPass(index)
                     }
+                }
+
+                StyledComboBox {
+                    id: passTypeCombo
+                    objectName: "modifierPassCombo" + index
+                    Layout.fillWidth: true
+                    model: root.options
+                    textRole: "label"
+                    valueRole: "id"
+                    currentIndex: root.optionIndex(passId)
+                    enabled: !root.controller.running
+                    onActivated: selectedIndex =>
+                        root.controller.setModifierPassId(
+                            passDelegate.index,
+                            valueAt(selectedIndex).toString())
                 }
 
                 Loader {

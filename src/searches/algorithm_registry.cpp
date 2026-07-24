@@ -42,11 +42,7 @@ const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry() {
              "Basic bruteforce",
              "BasicBruteForceSearchSettings.qml",
              DefaultBasicBruteForceOptionSettings(),
-             {{"minMutateMs", "search/minMutateMs"},
-              {"maxMutateMs", "search/maxMutateMs"},
-              {"minEvalTimeMs", "search/minEvalTimeMs"},
-              {"maxEvalTimeMs", "search/maxEvalTimeMs"},
-              {"attemptCount", "search/attemptCount"}},
+             {},
              &ValidateBasicBruteForceOptionSettings,
              &CreateBasicBruteForceSearch}};
     return registrations;

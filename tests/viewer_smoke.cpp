@@ -300,7 +300,7 @@ int main(int argc, char **argv) {
                     viewer.setCurrentTick(100);
                     const bool timeLabelUnambiguous =
                             viewer.timeText().startsWith(
-                                    QStringLiteral("00:01.000 / "));
+                                    QStringLiteral("00:00:01 / "));
                     const bool sceneValid = viewer.triangleCount() > 0 &&
                             viewer.ellipsoidCount() > 0 &&
                             viewer.durationMs() > 0 &&

@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_EVALUATORS_POSE_TARGET_EVALUATOR_H
 #define FOREVERTAS_EVALUATORS_POSE_TARGET_EVALUATOR_H
 
-#include "evaluators/candidate_evaluator.h"
+#include "evaluators/iteration_evaluator.h"
 #include "searches/option_configuration.h"
 
 #include <memory>
@@ -14,7 +14,7 @@ OptionSettings DefaultPoseTargetOptionSettings();
 std::optional<std::string> ValidatePoseTargetOptionSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs);
-std::unique_ptr<CandidateEvaluator> CreatePoseTargetEvaluator(
+std::unique_ptr<IterationEvaluator> CreatePoseTargetEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs);
 

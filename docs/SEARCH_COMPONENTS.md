@@ -55,7 +55,7 @@ ForeverTAS/
 │   │   └── input_deletion_mutator.h/.cpp
 │   │
 │   ├── evaluators/
-│   │   ├── candidate_evaluator.h
+│   │   ├── iteration_evaluator.h
 │   │   ├── evaluator_utils.h
 │   │   ├── finish_time_evaluator.h/.cpp
 │   │   ├── volume_entry_evaluator.h/.cpp
@@ -160,12 +160,12 @@ or extra maps received outside the controller.
 - A loaded `PhysicsSandbox`.
 - The physics tick duration.
 - The composed `InputMutator` pipeline.
-- The selected `CandidateEvaluator`.
-- Progress and cancellation callbacks.
+- The selected `IterationEvaluator`.
+- Stop, hard-abort, progress, and live-best callbacks.
 
-The Basic bruteforce implementation owns only attempt scheduling and global
-winner selection. It does not own modifier windows, seeds, evaluation windows,
-or comparison direction.
+The Basic bruteforce implementation owns continuous iteration scheduling and
+global winner selection. It does not own modifier windows, seeds, evaluation
+windows, or comparison direction.
 
 It asks:
 
@@ -177,8 +177,14 @@ This keeps search orchestration independent from every target and modifier ID.
 
 ### Winner retention and final sampling
 
-`SearchResult` retains the winning normalized input timeline. `RunSearch`
-performs a separate final-sampling stage after winner selection:
+`SearchLiveUpdate` publishes the current winning state, normalized input
+timeline, iteration count, throughput, elapsed time, and last-improvement time.
+It is emitted periodically while the loop runs and immediately after each new
+global best. The worker refreshes the summary live without simulating a complete
+viewer timeline.
+
+Pressing Stop finishes the current iteration and returns `SearchResult`. Only
+then does `RunSearch` perform the separate final-sampling stage:
 
 1. Open a fresh Reference-backend sandbox.
 2. Reload the original replay from tick zero.
@@ -186,10 +192,12 @@ performs a separate final-sampling stage after winner selection:
 4. Advance exactly one physics tick at a time through the complete replay.
 5. Record position, rotation, and input state for every tick.
 
-This final pass is intentionally separate from candidate evaluation. Search
-algorithms remain free to branch, restore snapshots, and observe only the
-target-required window without retaining complete candidate traces. The worker
-reports this pass as `SearchProgressStage::FinalSampling`.
+This Stop-triggered pass is intentionally separate from iteration evaluation.
+Search algorithms remain free to branch, restore snapshots, and observe only
+the target-required window without retaining complete iteration traces. The
+worker reports this pass as `SearchProgressStage::FinalSampling`. A private
+hard-abort callback exists only for application shutdown and skips completion
+sampling.
 
 `input_event_formatter.*` converts the retained timeline into invariant,
 copy-ready input script syntax. Timestamps always use `.` decimals and do
@@ -207,7 +215,7 @@ storage representation directly into this canonical form.
 Modifier settings remain normalized decimal strings in `[-1, 1]` for UI and
 persistence compatibility. `ParseNormalizedAnalogInput` quantizes each setting
 once to an integer state. Mutators subsequently use integer sampling, addition,
-comparison, and saturation only; candidate timelines never carry arbitrary
+comparison, and saturation only; iteration timelines never carry arbitrary
 floating-point analog values.
 
 The only integer-to-float conversion occurs when ForeverValidator builds the
@@ -220,7 +228,7 @@ they describe applied simulation controls rather than editable input events.
 `InputMutator::Mutate` receives:
 
 - The current input timeline entering that pass.
-- The attempt index.
+- The iteration index.
 - The pass index.
 - The physics tick duration.
 
@@ -232,21 +240,27 @@ across all passes.
 ### Composition
 
 Modifier passes run in displayed order. Each pass receives the previous pass's
-output. After the final pass, the composite mutator performs one normalization
-step:
+output. The search also supplies the earliest mutable input time: the first tick
+after the restored branch state. Every pass and the final composite
+normalization preserve baseline events before that boundary byte-for-byte and
+in their original order. Only the mutable suffix is normalized:
 
 - Saturate every analog state to the exact integer range `[-65536, 65536]`.
 - Align event times to whole simulation ticks.
 - Sort events chronologically with stable ordering.
 - For multiple events with the same action and tick, keep the last pass value.
+- Reattach the exact immutable baseline prefix.
 - Count effective differences from the original baseline.
 
-If no effective change remains after normalization, the attempt is skipped.
+This split is required because `PhysicsSandbox::ReplaceInputs` rejects any
+change to replay history before the restored branch. If no effective change
+remains after normalization, the iteration is still counted but the unchanged
+simulation is not repeated.
 
 Deterministic random streams are derived from:
 
 ```text
-configured seed + attempt index + pass index
+configured seed + iteration index + pass index
 ```
 
 This keeps repeated runs reproducible while allowing repeated instances of the
@@ -256,10 +270,10 @@ same modifier to produce independent changes.
 
 Evaluation is timeline-based rather than a single stateless score function.
 
-`CandidateEvaluator` owns:
+`IterationEvaluator` owns:
 
 - `Plan(...)`: the closed observation window for a replay and modifier branch.
-- `CreateSession()`: per-candidate timeline state.
+- `CreateSession()`: per-iteration timeline state.
 - `IsBetter(...)`: maximize or minimize semantics.
 
 Each observed result is an `EvaluationSample`:
@@ -320,6 +334,18 @@ interpolated pose.
 The initially loaded replay creates the `Baseline` run. A completed search
 upserts `Best`. The same run container supports additional result types later
 without adding more controller fields.
+
+Replay loading is serialized. If another replay is requested while the active
+worker is still finishing, the latest request is queued and starts as soon as
+the worker exits. A monotonically increasing load serial prevents a late result
+from an older worker from replacing the newer scene. Both the C++ controller
+and the QML car-delegate layer are tested across consecutive loads.
+
+The settings pane uses one window-level wheel redirector over its entire visible
+rectangle. Mouse-wheel and touchpad vertical deltas update only the outer
+settings flickable, even over sliders, dropdowns, or the best-input preview.
+Nested scroll areas remain usable through direct dragging and their scrollbars,
+but do not steal wheel input from the pane.
 
 The selected run owns the active timeline, duration, input channels, playback,
 and camera focus. All runs are still interpolated at the active time and exposed
@@ -415,7 +441,7 @@ No change to `Main.qml`, `SearchController`, `SearchRequest`, or
 ## Adding an Evaluation Target
 
 1. Create target files under `src/evaluators/`.
-2. Implement `CandidateEvaluator` and a per-candidate session.
+2. Implement `IterationEvaluator` and a per-iteration session.
 3. Define the target's observation plan and comparison direction.
 4. Provide defaults, validation, and a factory.
 5. Return a clear target-owned `EvaluationSample::description`.
@@ -431,7 +457,7 @@ No search-loop or controller branch should be added for the target.
 1. Implement `SearchAlgorithm` under `src/searches/`.
 2. Keep only search-policy settings in its typed structure.
 3. Consume the generic mutator and evaluator contracts.
-4. Report progress and check cancellation regularly.
+4. Report progress, publish improvements, and check Stop regularly.
 5. Provide defaults, validation, factory, registry entry, and QML component.
 6. Test default construction and algorithm-specific scheduling behavior.
 
@@ -439,7 +465,8 @@ No search-loop or controller branch should be added for the target.
 
 ### Search algorithms
 
-- `basic-brute-force`: baseline plus independent deterministic attempts.
+- `basic-brute-force`: baseline plus independent deterministic iterations,
+  continuing until Stop is requested.
 
 ### Modifiers
 

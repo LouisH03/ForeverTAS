@@ -17,7 +17,7 @@ struct VelocitySettings {
     double minimumAlignment = -1.0;
 };
 
-class VelocitySession final : public CandidateEvaluationSession {
+class VelocitySession final : public IterationEvaluationSession {
 public:
     explicit VelocitySession(VelocitySettings settings)
         : settings_(settings) {}
@@ -55,7 +55,7 @@ private:
     VelocitySettings settings_;
 };
 
-class VelocityEvaluator final : public CandidateEvaluator {
+class VelocityEvaluator final : public IterationEvaluator {
 public:
     explicit VelocityEvaluator(VelocitySettings settings)
         : settings_(settings) {}
@@ -70,14 +70,14 @@ public:
                          earliestMutationTimeMs);
     }
 
-    std::unique_ptr<CandidateEvaluationSession> CreateSession()
+    std::unique_ptr<IterationEvaluationSession> CreateSession()
             const override {
         return std::make_unique<VelocitySession>(settings_);
     }
 
-    bool IsBetter(const EvaluationSample &candidate,
+    bool IsBetter(const EvaluationSample &iteration,
                   const EvaluationSample &incumbent) const override {
-        return candidate.score > incumbent.score;
+        return iteration.score > incumbent.score;
     }
 
 private:
@@ -146,7 +146,7 @@ std::optional<std::string> ValidateVelocityOptionSettings(
                               "evaluation");
 }
 
-std::unique_ptr<CandidateEvaluator> CreateVelocityEvaluator(
+std::unique_ptr<IterationEvaluator> CreateVelocityEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     if (const auto error =

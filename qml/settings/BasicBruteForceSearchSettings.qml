@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 ColumnLayout {
@@ -7,13 +8,4 @@ ColumnLayout {
 
     Layout.fillWidth: true
 
-    SettingTextField {
-        fieldObjectName: "attemptCountField"
-        label: qsTr("Attempt count")
-        value: controller.searchAlgorithmSettings["attemptCount"] ?? ""
-        running: controller.running
-        minimum: 1
-        onEdited: value =>
-            controller.setSearchAlgorithmSetting("attemptCount", value)
-    }
 }

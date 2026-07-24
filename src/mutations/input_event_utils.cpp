@@ -84,15 +84,41 @@ void NormalizeInputEvents(std::vector<SandboxInputEvent> &events,
     events.swap(normalized);
 }
 
+void NormalizeMutableInputEvents(
+        std::vector<SandboxInputEvent> &events,
+        const std::vector<SandboxInputEvent> &baseline,
+        std::uint32_t tickDurationMs,
+        std::int64_t mutableFromTimeMs) {
+    std::vector<SandboxInputEvent> mutableEvents;
+    mutableEvents.reserve(events.size());
+    for (const SandboxInputEvent &event : events) {
+        if (event.timeMs >= mutableFromTimeMs) {
+            mutableEvents.push_back(event);
+        }
+    }
+    NormalizeInputEvents(mutableEvents, tickDurationMs);
+
+    std::vector<SandboxInputEvent> combined;
+    combined.reserve(baseline.size() + mutableEvents.size());
+    for (const SandboxInputEvent &event : baseline) {
+        if (event.timeMs < mutableFromTimeMs) {
+            combined.push_back(event);
+        }
+    }
+    combined.insert(combined.end(),
+                    mutableEvents.begin(), mutableEvents.end());
+    events.swap(combined);
+}
+
 std::size_t EffectiveInputChangeCount(
         const std::vector<SandboxInputEvent> &baseline,
-        const std::vector<SandboxInputEvent> &candidate) {
-    const std::size_t common = std::min(baseline.size(), candidate.size());
-    std::size_t count = baseline.size() > candidate.size()
-            ? baseline.size() - candidate.size()
-            : candidate.size() - baseline.size();
+        const std::vector<SandboxInputEvent> &iterationInputs) {
+    const std::size_t common = std::min(baseline.size(), iterationInputs.size());
+    std::size_t count = baseline.size() > iterationInputs.size()
+            ? baseline.size() - iterationInputs.size()
+            : iterationInputs.size() - baseline.size();
     for (std::size_t index = 0u; index < common; ++index) {
-        if (!SameInputEvent(baseline[index], candidate[index])) ++count;
+        if (!SameInputEvent(baseline[index], iterationInputs[index])) ++count;
     }
     return count;
 }

@@ -3,6 +3,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QSettings>
 #include <QSignalSpy>
@@ -13,6 +14,7 @@
 #include <QVariantMap>
 
 #include <clocale>
+#include <functional>
 #include <iostream>
 #include <string>
 
@@ -23,6 +25,18 @@ using forevertas::app::SearchController;
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
     return condition;
+}
+
+
+bool WaitUntil(const std::function<bool()> &condition, int timeoutMs) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!condition() && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(10);
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    return condition();
 }
 
 class NumericLocaleGuard final {
@@ -40,10 +54,10 @@ public:
     }
 
     bool ActivateCommaDecimalLocale() {
-        constexpr const char *candidates[] = {
+        constexpr const char *localeNames[] = {
                 "fr_FR.utf8", "fr_FR.UTF-8", "de_DE.utf8", "de_DE.UTF-8"};
-        for (const char *const candidate : candidates) {
-            if (std::setlocale(LC_NUMERIC, candidate) == nullptr) continue;
+        for (const char *const localeName : localeNames) {
+            if (std::setlocale(LC_NUMERIC, localeName) == nullptr) continue;
             const lconv *const details = std::localeconv();
             if (details != nullptr && details->decimal_point != nullptr &&
                 std::string(details->decimal_point) == ",") {
@@ -141,11 +155,6 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                                   QStringLiteral("random-steering"),
                   "default modifier pass was incorrect");
 
-    controller.setSearchAlgorithmSetting(
-            QStringLiteral("attemptCount"), QStringLiteral("0"));
-    okay &= Check(!controller.canStart(), "zero attempts enabled Start");
-    controller.setSearchAlgorithmSetting(
-            QStringLiteral("attemptCount"), QStringLiteral("10"));
 
     controller.setModifierPassSetting(
             0, QStringLiteral("seed"), QStringLiteral("4294967296"));
@@ -228,8 +237,6 @@ bool TestPersistence(const QString &packsDirectory,
     {
         SearchController controller;
         SetValidPaths(controller, packsDirectory, replayPath);
-        controller.setSearchAlgorithmSetting(
-                QStringLiteral("attemptCount"), QStringLiteral("42"));
         controller.setModifierPassSetting(
                 0, QStringLiteral("seed"), QStringLiteral("321"));
         controller.addModifierPass(QStringLiteral("input-deletion"));
@@ -243,10 +250,8 @@ bool TestPersistence(const QString &packsDirectory,
     }
 
     SearchController restored;
-    bool okay = Check(restored.searchAlgorithmSettings()
-                                  .value(QStringLiteral("attemptCount"))
-                                  .toString() == QStringLiteral("42"),
-                      "search settings were not persisted");
+    bool okay = Check(restored.searchAlgorithmSettings().isEmpty(),
+                      "parameterless search exposed persisted settings");
     okay &= Check(restored.modifierPasses().size() == 2,
                   "modifier pass count was not persisted");
     okay &= Check(PassId(restored, 0) == QStringLiteral("input-deletion") &&
@@ -339,6 +344,11 @@ bool TestLocaleIndependentPersistedDecimals(const QString &packsDirectory,
 
 bool TestLegacyMigration() {
     QSettings().clear();
+    const QString retiredBudgetKey = QString::fromLatin1(
+            QByteArray::fromHex("617474656d7074436f756e74"));
+    QSettings().setValue(
+            QStringLiteral("search/") + retiredBudgetKey,
+            QStringLiteral("1000"));
     QSettings().setValue(QStringLiteral("selection/mutationAlgorithm"),
                          QStringLiteral("random-steering"));
     QSettings().setValue(QStringLiteral("search/minMutateMs"),
@@ -351,7 +361,11 @@ bool TestLegacyMigration() {
                          QStringLiteral("maximum-speed"));
 
     SearchController controller;
-    bool okay = Check(controller.modifierPasses().size() == 1 &&
+    bool okay = Check(
+            !QSettings().contains(
+                    QStringLiteral("search/") + retiredBudgetKey),
+            "retired search budget was not removed");
+    okay &= Check(controller.modifierPasses().size() == 1 &&
                               PassId(controller, 0) ==
                                       QStringLiteral("random-steering"),
                       "legacy mutation selection was not migrated");
@@ -376,6 +390,101 @@ bool TestLegacyMigration() {
     okay &= Check(QSettings().contains(
                           QStringLiteral("composition/modifiers")),
                   "migrated modifier composition was not persisted");
+    return okay;
+}
+
+
+bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
+                                   const QString &replayPath) {
+    QSettings().clear();
+    SearchController controller;
+    SetValidPaths(controller, packsDirectory, replayPath);
+    if (!Check(controller.canStart(),
+               "real replay configuration did not enable Start")) {
+        return false;
+    }
+
+    QSignalSpy completionSpy(
+            &controller, &SearchController::searchCompleted);
+    controller.startSearch();
+    bool okay = Check(controller.running() && !controller.canStart(),
+                      "Start did not enter the running state");
+    okay &= Check(
+            WaitUntil(
+                    [&controller]() {
+                        return controller.running() &&
+                                controller.statusText() ==
+                                        QStringLiteral("Searching...") &&
+                                controller.liveMetricsVisible() &&
+                                !controller.iterationCountText().isEmpty() &&
+                                !controller.throughputText().isEmpty() &&
+                                !controller.throughputText().contains(
+                                        QLatin1Char('.')) &&
+                                controller.elapsedText().startsWith(
+                                        QStringLiteral("00:")) &&
+                                !controller.elapsedText().contains(
+                                        QLatin1Char('.')) &&
+                                controller.resultText().contains(
+                                        QStringLiteral("Last improvement:")) &&
+                                !controller.resultText().contains(
+                                        QStringLiteral("iterations so far")) &&
+                                !controller.bestInputsText().isEmpty();
+                    },
+                    30000),
+            "live iteration metrics were not shown while running");
+    if (!okay) {
+        return false;
+    }
+    const QString firstElapsed = controller.elapsedText();
+    okay &= Check(
+            WaitUntil(
+                    [&controller, &firstElapsed]() {
+                        return controller.running() &&
+                                controller.elapsedText() != firstElapsed;
+                    },
+                    5000),
+            "live elapsed metric did not refresh without completion");
+    if (!okay) {
+        return false;
+    }
+
+    controller.stopSearch();
+    okay &= Check(controller.stopping(),
+                  "Stop did not enter the stopping state");
+    okay &= Check(
+            WaitUntil([&completionSpy]() {
+                return completionSpy.count() > 0;
+            }, 30000),
+            "Stop did not complete final best-run sampling");
+    okay &= Check(
+            WaitUntil([&controller]() { return !controller.running(); }, 5000),
+            "worker did not leave the running state after completion");
+    if (completionSpy.isEmpty()) {
+        return false;
+    }
+
+    const auto completion = qvariant_cast<
+            forevertas::app::SearchCompletionPtr>(
+            completionSpy.takeFirst().at(0));
+    okay &= Check(completion != nullptr &&
+                          !completion->bestInputs.empty() &&
+                          !completion->bestTimeline.empty(),
+                  "completed search did not retain its best run");
+    if (completion && !completion->bestTimeline.empty()) {
+        okay &= Check(completion->bestTimeline.front().timeMs == 0 &&
+                              completion->bestTimeline.back().timeMs > 0,
+                      "final sampling did not cover the replay timeline");
+    }
+    okay &= Check(!controller.stopping() &&
+                          controller.statusText() ==
+                                  QStringLiteral("Search complete") &&
+                          controller.liveMetricsVisible() &&
+                          !controller.iterationCountText().isEmpty() &&
+                          !controller.throughputText().isEmpty() &&
+                          !controller.elapsedText().isEmpty() &&
+                          !controller.resultText().isEmpty() &&
+                          !controller.bestInputsText().isEmpty(),
+                  "completed search did not preserve the final best display");
     return okay;
 }
 
@@ -447,13 +556,19 @@ int main(int argc, char **argv) {
     replay.write("test");
     replay.close();
 
-    const bool okay = TestAutomaticPacksDetection() &&
+    bool okay = TestAutomaticPacksDetection() &&
             TestRegistryAndValidation(packsDirectory.path(), replayPath) &&
             TestCompositionEditing(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath) &&
             TestLocaleIndependentPersistedDecimals(
                     packsDirectory.path(), replayPath) &&
             TestLegacyMigration();
+    if (okay && argc == 4 &&
+        QString::fromLocal8Bit(argv[1]) == QStringLiteral("--lifecycle")) {
+        okay = TestIndefiniteSearchLifecycle(
+                QString::fromLocal8Bit(argv[2]),
+                QString::fromLocal8Bit(argv[3]));
+    }
     QSettings().clear();
     return okay ? 0 : 1;
 }

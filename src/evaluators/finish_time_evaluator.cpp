@@ -8,7 +8,7 @@
 namespace forevertas {
 namespace {
 
-class FinishTimeSession final : public CandidateEvaluationSession {
+class FinishTimeSession final : public IterationEvaluationSession {
 public:
     std::optional<EvaluationSample> Observe(
             const std::optional<
@@ -27,7 +27,7 @@ public:
         return EvaluationSample{
                 timeMs,
                 timeMs,
-                MetricDescription("Finish time", timeMs, "ms", timeMs)};
+                TimeMetricDescription("Finish time", timeMs)};
     }
 
 private:
@@ -47,7 +47,7 @@ std::optional<std::string> ValidateFinishTimeOptionSettings(
     return ValidateOptionSettingKeys(settings, DefaultFinishTimeOptionSettings());
 }
 
-std::unique_ptr<CandidateEvaluator> CreateFinishTimeEvaluator(
+std::unique_ptr<IterationEvaluator> CreateFinishTimeEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     if (const auto error =
@@ -68,14 +68,14 @@ EvaluationPlan FinishTimeEvaluator::Plan(
                      earliestMutationTimeMs);
 }
 
-std::unique_ptr<CandidateEvaluationSession>
+std::unique_ptr<IterationEvaluationSession>
 FinishTimeEvaluator::CreateSession() const {
     return std::make_unique<FinishTimeSession>();
 }
 
-bool FinishTimeEvaluator::IsBetter(const EvaluationSample &candidate,
+bool FinishTimeEvaluator::IsBetter(const EvaluationSample &iteration,
                                    const EvaluationSample &incumbent) const {
-    return candidate.score < incumbent.score;
+    return iteration.score < incumbent.score;
 }
 
 }  // namespace forevertas

@@ -70,12 +70,12 @@ QStringList ExpandDirectoryPattern(const QString &sourcePattern) {
     remainder = pattern.mid(1);
 #endif
 
-    QStringList candidates{root};
+    QStringList paths{root};
     const QStringList components = remainder.split(
             QLatin1Char('/'), Qt::SkipEmptyParts);
     for (const QString &component : components) {
         QStringList next;
-        for (const QString &base : candidates) {
+        for (const QString &base : paths) {
             const QDir directory(base);
             if (HasWildcard(component)) {
                 const QStringList matches = directory.entryList(
@@ -92,12 +92,12 @@ QStringList ExpandDirectoryPattern(const QString &sourcePattern) {
                 }
             }
         }
-        candidates = UniqueExistingDirectories(next);
-        if (candidates.isEmpty()) {
+        paths = UniqueExistingDirectories(next);
+        if (paths.isEmpty()) {
             break;
         }
     }
-    return candidates;
+    return paths;
 }
 
 void AddWineInstallPatterns(QStringList &patterns,
@@ -333,11 +333,11 @@ QStringList DefaultPacksDirectorySearchPatterns() {
 
 QString FindInstalledPacksDirectory(const QStringList &patterns) {
     for (const QString &pattern : patterns) {
-        for (const QString &candidate : ExpandDirectoryPattern(pattern)) {
-            if (IsUsablePacksDirectory(candidate)) {
-                const QString canonical = QFileInfo(candidate).canonicalFilePath();
+        for (const QString &path : ExpandDirectoryPattern(pattern)) {
+            if (IsUsablePacksDirectory(path)) {
+                const QString canonical = QFileInfo(path).canonicalFilePath();
                 return canonical.isEmpty()
-                        ? QDir::cleanPath(QFileInfo(candidate).absoluteFilePath())
+                        ? QDir::cleanPath(QFileInfo(path).absoluteFilePath())
                         : canonical;
             }
         }

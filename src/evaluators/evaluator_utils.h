@@ -3,6 +3,7 @@
 
 #include "searches/option_configuration.h"
 #include "searches/option_settings_utils.h"
+#include "time_format.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,8 +95,13 @@ inline std::string MetricDescription(const char *name,
     stream.precision(9);
     stream << name << ": " << value;
     if (unit != nullptr && *unit != '\0') stream << ' ' << unit;
-    stream << " at " << timeMs << " ms";
+    stream << " at " << FormatHumanDurationMilliseconds(timeMs);
     return stream.str();
+}
+
+inline std::string TimeMetricDescription(const char *name, double timeMs) {
+    return std::string(name) + ": " +
+            FormatHumanDurationMilliseconds(timeMs);
 }
 
 inline EvaluationPlan ClampPlan(std::int64_t start,

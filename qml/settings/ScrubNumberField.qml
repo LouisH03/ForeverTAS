@@ -21,12 +21,12 @@ TextField {
     horizontalAlignment: TextInput.AlignRight
     selectByMouse: true
 
-    function clampNumber(candidate) {
-        return Math.max(control.minimum, Math.min(control.maximum, candidate))
+    function clampNumber(number) {
+        return Math.max(control.minimum, Math.min(control.maximum, number))
     }
 
-    function formatNumber(candidate) {
-        let numeric = control.clampNumber(candidate)
+    function formatNumber(number) {
+        let numeric = control.clampNumber(number)
         if (control.integer)
             return Math.round(numeric).toString()
 
@@ -52,10 +52,10 @@ TextField {
         if (modifiers & Qt.ControlModifier)
             step *= 10
 
-        let candidate = scrubArea.startValue + stepCount * step
+        let proposed = scrubArea.startValue + stepCount * step
         if (control.integer)
-            candidate = Math.round(candidate)
-        const formatted = control.formatNumber(candidate)
+            proposed = Math.round(proposed)
+        const formatted = control.formatNumber(proposed)
         if (formatted === control.text)
             return
         control.text = formatted

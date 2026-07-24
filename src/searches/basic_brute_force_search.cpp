@@ -74,13 +74,17 @@ void CheckCancellation(const SearchRunControl *control) {
     }
 }
 
+bool StopRequested(const SearchRunControl *control) {
+    return control != nullptr && control->stopRequested &&
+            control->stopRequested();
+}
+
 void ReportProgress(const SearchRunControl *control,
                     SearchProgressStage stage,
-                    std::uint64_t completedAttempts,
-                    std::uint64_t requestedAttempts) {
+                    std::uint64_t completedWork,
+                    std::uint64_t totalWork = 0u) {
     if (control != nullptr && control->progressChanged) {
-        control->progressChanged(
-                {stage, completedAttempts, requestedAttempts});
+        control->progressChanged({stage, completedWork, totalWork});
     }
 }
 
@@ -122,94 +126,80 @@ PhysicsSandboxStateView AdvanceTo(PhysicsSandbox &sandbox,
     return state;
 }
 
-struct BestCandidate {
+struct BestIteration {
     std::optional<EvaluationSample> evaluation;
     SearchWinnerSource source = SearchWinnerSource::Baseline;
-    std::optional<std::uint64_t> attempt;
+    std::optional<std::uint64_t> iterationIndex;
     std::size_t mutationCount = 0u;
     PhysicsSandboxStateView view;
     std::optional<PhysicsSandboxState> snapshot;
     std::vector<PhysicsSandboxInputEvent> inputs;
 };
 
-std::optional<BasicBruteForceSettings> ParseBasicBruteForceSettings(
-        const OptionSettings &settings,
-        std::string *error) {
-    const OptionSettings defaults = DefaultBasicBruteForceOptionSettings();
-    if (const auto keyError = ValidateOptionSettingKeys(settings, defaults)) {
-        *error = *keyError;
-        return std::nullopt;
+void ReportLive(
+        const SearchRunControl *control,
+        const BestIteration &best,
+        std::uint64_t iterations,
+        std::uint64_t evaluatorCalls,
+        std::uint64_t mutationImprovementCount,
+        std::uint64_t totalMutationCount,
+        std::chrono::steady_clock::duration elapsed,
+        const std::optional<std::chrono::steady_clock::duration>
+                &lastImprovementElapsed) {
+    if (control == nullptr || !control->liveChanged || !best.evaluation) {
+        return;
     }
-
-    const auto attemptCount =
-            ParseUnsignedDecimal64(settings.at("attemptCount"));
-    if (!attemptCount) {
-        *error = "attempt count must be an unsigned 64-bit decimal integer";
-        return std::nullopt;
-    }
-
-    return BasicBruteForceSettings{*attemptCount};
+    control->liveChanged({
+            best.source,
+            best.iterationIndex,
+            best.mutationCount,
+            best.evaluation->score,
+            best.evaluation->timeMs,
+            best.evaluation->description,
+            best.view,
+            best.inputs,
+            iterations,
+            evaluatorCalls,
+            mutationImprovementCount,
+            totalMutationCount,
+            elapsed,
+            lastImprovementElapsed});
 }
 
 }  // namespace
 
-BasicBruteForceSettings DefaultBasicBruteForceSettings() {
-    return {10u};
-}
-
 OptionSettings DefaultBasicBruteForceOptionSettings() {
-    const BasicBruteForceSettings defaults =
-            DefaultBasicBruteForceSettings();
-    return {{"attemptCount", std::to_string(defaults.attemptCount)}};
-}
-
-std::optional<std::string> ValidateBasicBruteForceSettings(
-        const BasicBruteForceSettings &settings,
-        std::uint32_t tickDurationMs) {
-    if (tickDurationMs == 0u) {
-        return "tick duration must be greater than zero";
-    }
-    if (settings.attemptCount == 0u) {
-        return "attempt count must be greater than zero";
-    }
-    return std::nullopt;
+    return {};
 }
 
 std::optional<std::string> ValidateBasicBruteForceOptionSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
-    std::string parseError;
-    const auto parsed = ParseBasicBruteForceSettings(settings, &parseError);
-    if (!parsed) {
-        return parseError;
+    if (const auto keyError = ValidateOptionSettingKeys(
+                settings, DefaultBasicBruteForceOptionSettings())) {
+        return keyError;
     }
-    return ValidateBasicBruteForceSettings(*parsed, tickDurationMs);
+    if (tickDurationMs == 0u) {
+        return "tick duration must be greater than zero";
+    }
+    return std::nullopt;
 }
 
 std::unique_ptr<SearchAlgorithm> CreateBasicBruteForceSearch(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
-    std::string parseError;
-    const auto parsed = ParseBasicBruteForceSettings(settings, &parseError);
-    if (!parsed) {
-        throw std::invalid_argument(parseError);
-    }
     if (const auto error =
-                ValidateBasicBruteForceSettings(*parsed, tickDurationMs)) {
+                ValidateBasicBruteForceOptionSettings(settings, tickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    return std::make_unique<BasicBruteForceSearch>(*parsed);
+    return std::make_unique<BasicBruteForceSearch>();
 }
-
-BasicBruteForceSearch::BasicBruteForceSearch(
-        BasicBruteForceSettings settings)
-    : settings_(settings) {}
 
 SearchResult BasicBruteForceSearch::Run(
         const SearchExecutionContext &context) const {
     const auto started = std::chrono::steady_clock::now();
-    if (const auto error = ValidateBasicBruteForceSettings(
-                settings_, context.tickDurationMs)) {
+    if (const auto error = ValidateBasicBruteForceOptionSettings(
+                {}, context.tickDurationMs)) {
         throw std::invalid_argument(*error);
     }
 
@@ -263,15 +253,32 @@ SearchResult BasicBruteForceSearch::Run(
                     context.tickDurationMs) +
             1u;
 
-    BestCandidate best;
+    BestIteration best;
+    std::uint64_t iterations = 0u;
     std::uint64_t evaluatorCalls = 0u;
     std::uint64_t mutationImprovementCount = 0u;
-    std::uint64_t executedAttempts = 0u;
-    std::uint64_t skippedAttempts = 0u;
     std::uint64_t totalMutationCount = 0u;
+    std::optional<std::chrono::steady_clock::duration>
+            lastImprovementElapsed;
+    auto lastLiveReport = started - std::chrono::milliseconds(100);
+    const auto reportLive = [&](bool force) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!force && now - lastLiveReport < std::chrono::milliseconds(100)) {
+            return;
+        }
+        ReportLive(context.control,
+                   best,
+                   iterations,
+                   evaluatorCalls,
+                   mutationImprovementCount,
+                   totalMutationCount,
+                   now - started,
+                   lastImprovementElapsed);
+        lastLiveReport = now;
+    };
 
     const auto evaluateTimeline = [&](SearchWinnerSource source,
-                                      std::optional<std::uint64_t> attempt,
+                                      std::optional<std::uint64_t> iterationIndex,
                                       std::size_t mutationCount) {
         PhysicsSandboxStateView state = AdvanceTo(
                 context.sandbox,
@@ -280,7 +287,7 @@ SearchResult BasicBruteForceSearch::Run(
                 context.tickDurationMs,
                 context.control);
         std::optional<PhysicsSandboxStateView> previous = state;
-        std::unique_ptr<CandidateEvaluationSession> session =
+        std::unique_ptr<IterationEvaluationSession> session =
                 context.evaluator.CreateSession();
         for (std::uint64_t tick = 0u; tick < evaluationTicks; ++tick) {
             CheckCancellation(context.control);
@@ -296,7 +303,7 @@ SearchResult BasicBruteForceSearch::Run(
             if (!std::isfinite(sample->score) ||
                 !std::isfinite(sample->timeMs)) {
                 throw std::runtime_error(
-                        "candidate evaluator returned a non-finite result");
+                        "iteration evaluator returned a non-finite result");
             }
             if (best.evaluation &&
                 !context.evaluator.IsBetter(*sample, *best.evaluation)) {
@@ -305,7 +312,7 @@ SearchResult BasicBruteForceSearch::Run(
 
             best.evaluation = sample;
             best.source = source;
-            best.attempt = attempt;
+            best.iterationIndex = iterationIndex;
             best.mutationCount = mutationCount;
             best.view = state;
             best.snapshot = Require(context.sandbox.CaptureState(),
@@ -314,55 +321,53 @@ SearchResult BasicBruteForceSearch::Run(
                                   "reading improved inputs");
             if (source == SearchWinnerSource::Mutation) {
                 ++mutationImprovementCount;
+                lastImprovementElapsed =
+                        std::chrono::steady_clock::now() - started;
+                reportLive(true);
+            } else {
+                reportLive(false);
             }
         }
     };
 
-    ReportProgress(context.control,
-                   SearchProgressStage::Baseline,
-                   0u,
-                   settings_.attemptCount);
+    ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
     evaluateTimeline(SearchWinnerSource::Baseline, std::nullopt, 0u);
-    ReportProgress(context.control,
-                   SearchProgressStage::Mutations,
-                   0u,
-                   settings_.attemptCount);
+    reportLive(true);
+    ReportProgress(context.control, SearchProgressStage::Mutations, 0u);
 
-    for (std::uint64_t attempt = 0u;
-         attempt < settings_.attemptCount;
-         ++attempt) {
+    std::uint64_t iterationIndex = 0u;
+    while (!StopRequested(context.control)) {
         CheckCancellation(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");
         MutationResult mutation = context.mutator.Mutate(
-                {baselineInputs, attempt, 0u, context.tickDurationMs});
+                {baselineInputs,
+                 iterationIndex,
+                 0u,
+                 context.tickDurationMs,
+                 earliestMutationTimeMs});
         CheckCancellation(context.control);
-        if (mutation.mutationCount == 0u) {
-            ++skippedAttempts;
-            ReportProgress(context.control,
-                           SearchProgressStage::Mutations,
-                           attempt + 1u,
-                           settings_.attemptCount);
-            continue;
+        ++iterations;
+        if (mutation.mutationCount != 0u) {
+            totalMutationCount += mutation.mutationCount;
+            Require(context.sandbox.ReplaceInputs(std::move(mutation.inputs)),
+                    "replacing iteration inputs");
+            evaluateTimeline(SearchWinnerSource::Mutation,
+                             iterationIndex,
+                             mutation.mutationCount);
         }
-
-        ++executedAttempts;
-        totalMutationCount += mutation.mutationCount;
-        Require(context.sandbox.ReplaceInputs(std::move(mutation.inputs)),
-                "replacing candidate inputs");
-        evaluateTimeline(SearchWinnerSource::Mutation,
-                         attempt,
-                         mutation.mutationCount);
-        ReportProgress(context.control,
-                       SearchProgressStage::Mutations,
-                       attempt + 1u,
-                       settings_.attemptCount);
+        reportLive(false);
+        if (iterationIndex == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::overflow_error("iteration sequence exhausted");
+        }
+        ++iterationIndex;
     }
 
     CheckCancellation(context.control);
+    reportLive(true);
     if (!best.evaluation || !best.snapshot) {
         throw std::runtime_error(
-                "no candidate satisfied the selected evaluation target");
+                "no iteration satisfied the selected evaluation target");
     }
     const PhysicsSandboxStateView restored = Require(
             context.sandbox.RestoreState(*best.snapshot),
@@ -379,7 +384,7 @@ SearchResult BasicBruteForceSearch::Run(
 
     return SearchResult{
             best.source,
-            best.attempt,
+            best.iterationIndex,
             best.mutationCount,
             best.evaluation->score,
             best.evaluation->timeMs,
@@ -387,13 +392,12 @@ SearchResult BasicBruteForceSearch::Run(
             best.view,
             std::move(best.inputs),
             {},
-            settings_.attemptCount,
-            executedAttempts,
-            skippedAttempts,
+            iterations,
             evaluatorCalls,
             mutationImprovementCount,
             totalMutationCount,
             std::chrono::steady_clock::now() - started,
+            lastImprovementElapsed,
             *best.snapshot};
 }
 

@@ -4,7 +4,7 @@ Thanks. Here are my adapted specs. Save them in a temporary markdown file.
 
 ### 1. Finish time
 
-* Require the candidate to finish the race.
+* Require the iteration to finish the race.
 * Lower finish time wins.
 * Support precise sub-tick finish timing when available, through linear interpolation and collision tests.
 * When the baseline does not finish, the first valid finish becomes the winner.
@@ -16,7 +16,7 @@ Note: checkpoint and finish time bruteforce should function exactly the same: a 
 * User selects a spatial area, like a cuboid.
 * Minimize the first valid crossing time, using car position (not collision) inside cuboid.
 * Support precise sub-tick crossing timing, through the same interpolation technique as precise checkpoint/finish.
-* When the baseline does not reach it, the first attempt to reach it becomes the winner.
+* When the baseline does not reach it, the first iteration to reach it becomes the winner.
 
 ### 3. Velocity
 
@@ -71,16 +71,16 @@ Note: checkpoint and finish time bruteforce should function exactly the same: a 
 
 ### 6. Modifier composition
 
-* Allow several configured modification algorithm passes to contribute to one candidate.
+* Allow several configured modification algorithm passes to contribute to one iteration.
 * Give each pass independent settings.
 * Normalize the final event stream after all selected passes (sort, keep last of inputs of same type on same tick)
-* Treat a candidate with no effective modification as skipped.
+* Treat an iteration with no effective modification as unchanged.
 
 ## Shared mutation contract
 
-All modifiers should (or after all modifiers, in a single pass, but before using for candidate):
+All modifiers should (or after all modifiers, in a single pass, but before using for an iteration):
 
-* Be deterministic from the configured seed and attempt index.
+* Be deterministic from the configured seed and iteration index.
 * Respect tick alignment and configured time bounds.
 * Preserve a valid, chronologically ordered input stream.
 * Clamp analog values.

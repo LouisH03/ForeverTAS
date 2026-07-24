@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_SEARCHES_ALGORITHM_REGISTRY_H
 #define FOREVERTAS_SEARCHES_ALGORITHM_REGISTRY_H
 
-#include "evaluators/candidate_evaluator.h"
+#include "evaluators/iteration_evaluator.h"
 #include "mutations/input_mutator.h"
 #include "searches/option_configuration.h"
 #include "searches/search_algorithm.h"
@@ -61,7 +61,7 @@ struct EvaluationTargetRegistration {
     OptionSettings legacyPersistenceKeys;
     std::optional<std::string> (*validateSettings)(
             const OptionSettings &, std::uint32_t);
-    std::unique_ptr<CandidateEvaluator> (*create)(
+    std::unique_ptr<IterationEvaluator> (*create)(
             const OptionSettings &, std::uint32_t);
 };
 

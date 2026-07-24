@@ -13,6 +13,8 @@ ApplicationWindow {
     required property var viewer
 
     property bool wireframeMode: false
+    readonly property var settingsWheelRedirectorObject:
+        settingsWheelRedirector
 
     ListModel {
         id: runPoseModel
@@ -755,64 +757,12 @@ ApplicationWindow {
                 clip: true
                 contentWidth: availableWidth
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                property real angleDeltaPixelScale: 2.0
-
-                function wheelDeltaPixels(pixelDeltaY, angleDeltaY) {
-                    if (pixelDeltaY !== 0)
-                        return pixelDeltaY
-                    return angleDeltaY * angleDeltaPixelScale
-                }
-
-                function scrollViewByWheelInput(scrollView,
-                                                pixelDeltaY,
-                                                angleDeltaY) {
-                    if (!scrollView || !scrollView.contentItem)
-                        return
-                    const deltaY = wheelDeltaPixels(pixelDeltaY, angleDeltaY)
-                    if (deltaY === 0)
-                        return
-                    const maximum = Math.max(
-                        0,
-                        scrollView.contentItem.contentHeight
-                        - scrollView.availableHeight)
-                    scrollView.contentItem.contentY = Math.max(
-                        0,
-                        Math.min(
-                            maximum,
-                            scrollView.contentItem.contentY - deltaY))
-                }
-
-                function scrollByWheelInput(pixelDeltaY, angleDeltaY) {
-                    scrollViewByWheelInput(
-                        settingsScroll, pixelDeltaY, angleDeltaY)
-                }
-
-                function wheelTargetsBestInputs(x, y) {
-                    if (!bestInputsScroll.visible)
-                        return false
-                    const local = bestInputsScroll.mapFromItem(
-                        settingsScroll, x, y)
-                    return local.x >= 0 && local.y >= 0
-                            && local.x < bestInputsScroll.width
-                            && local.y < bestInputsScroll.height
-                }
-
-                WheelHandler {
-                    objectName: "settingsWheelHandler"
-                    target: null
-                    acceptedDevices:
-                        PointerDevice.Mouse | PointerDevice.TouchPad
-                    blocking: true
-                    onWheel: wheel => {
-                        const target = settingsScroll.wheelTargetsBestInputs(
-                            wheel.x, wheel.y)
-                                ? bestInputsScroll
-                                : settingsScroll
-                        settingsScroll.scrollViewByWheelInput(
-                            target,
-                            wheel.pixelDelta.y,
-                            wheel.angleDelta.y)
-                    }
+                PanelWheelRedirector {
+                    id: settingsWheelRedirector
+                    objectName: "settingsWheelRedirector"
+                    parent: settingsScroll.parent
+                    anchors.fill: parent
+                    flickable: settingsScroll.contentItem
                 }
 
                 ColumnLayout {
@@ -981,8 +931,6 @@ ApplicationWindow {
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
                         title: qsTr("Evaluation")
-                        description: qsTr(
-                            "Choose what makes one candidate better than another.")
 
                         AlgorithmSelector {
                             objectName: "evaluationTargetSelector"
@@ -1003,8 +951,6 @@ ApplicationWindow {
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
                         title: qsTr("Input modifiers")
-                        description: qsTr(
-                            "Build an ordered pipeline of changes applied to each candidate.")
 
                         ModifierComposition {
                             Layout.fillWidth: true
@@ -1020,8 +966,6 @@ ApplicationWindow {
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
                         title: qsTr("Search")
-                        description: qsTr(
-                            "Choose how candidates are generated and compared.")
 
                         AlgorithmSelector {
                             objectName: "searchAlgorithmSelector"
@@ -1054,6 +998,7 @@ ApplicationWindow {
                         spacing: 8
 
                         Button {
+                            objectName: "startSearchButton"
                             Layout.fillWidth: true
                             text: qsTr("Start")
                             highlighted: true
@@ -1062,11 +1007,14 @@ ApplicationWindow {
                         }
 
                         Button {
+                            objectName: "stopSearchButton"
                             Layout.fillWidth: true
-                            text: qsTr("Cancel")
+                            text: window.controller.stopping
+                                  ? qsTr("Stopping...")
+                                  : qsTr("Stop")
                             enabled: window.controller.running
-                                     && !window.controller.cancelling
-                            onClicked: window.controller.cancelSearch()
+                                     && !window.controller.stopping
+                            onClicked: window.controller.stopSearch()
                         }
                     }
 
@@ -1089,6 +1037,132 @@ ApplicationWindow {
                             text: window.controller.statusText
                             font.weight: Font.Medium
                             wrapMode: Text.WordWrap
+                        }
+
+                        RowLayout {
+                            id: searchMetricsRow
+
+                            objectName: "searchMetricsRow"
+                            Layout.fillWidth: true
+                            visible: window.controller.liveMetricsVisible
+                            spacing: 6
+
+                            Rectangle {
+                                objectName: "iterationsMetricCard"
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                Layout.preferredHeight: 58
+                                radius: 7
+                                color: "#eef2ed"
+                                border.width: 1
+                                border.color: "#d2d9cf"
+                                clip: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 2
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: qsTr("Iterations")
+                                        color: "#667064"
+                                        font.pixelSize: 10
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    Label {
+                                        objectName: "iterationsMetricValue"
+                                        Layout.fillWidth: true
+                                        text: window.controller.iterationCountText
+                                        color: "#20251f"
+                                        font.family: "monospace"
+                                        font.pixelSize: 13
+                                        font.weight: Font.DemiBold
+                                        horizontalAlignment: Text.AlignHCenter
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                objectName: "throughputMetricCard"
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                Layout.preferredHeight: 58
+                                radius: 7
+                                color: "#eef2ed"
+                                border.width: 1
+                                border.color: "#d2d9cf"
+                                clip: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 2
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: qsTr("Throughput")
+                                        color: "#667064"
+                                        font.pixelSize: 10
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    Label {
+                                        objectName: "throughputMetricValue"
+                                        Layout.fillWidth: true
+                                        text: window.controller.throughputText.length > 0
+                                              ? window.controller.throughputText
+                                                    + qsTr(" /s")
+                                              : ""
+                                        color: "#20251f"
+                                        font.family: "monospace"
+                                        font.pixelSize: 13
+                                        font.weight: Font.DemiBold
+                                        horizontalAlignment: Text.AlignHCenter
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                objectName: "elapsedMetricCard"
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                Layout.preferredHeight: 58
+                                radius: 7
+                                color: "#eef2ed"
+                                border.width: 1
+                                border.color: "#d2d9cf"
+                                clip: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 2
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: qsTr("Elapsed")
+                                        color: "#667064"
+                                        font.pixelSize: 10
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    Label {
+                                        objectName: "elapsedMetricValue"
+                                        Layout.fillWidth: true
+                                        text: window.controller.elapsedText
+                                        color: "#20251f"
+                                        font.family: "monospace"
+                                        font.pixelSize: 12
+                                        font.weight: Font.DemiBold
+                                        horizontalAlignment: Text.AlignHCenter
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
                         }
 
                         ProgressBar {

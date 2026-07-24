@@ -11,16 +11,7 @@
 
 namespace forevertas {
 
-struct BasicBruteForceSettings {
-    std::uint64_t attemptCount = 0u;
-};
-
-BasicBruteForceSettings DefaultBasicBruteForceSettings();
 OptionSettings DefaultBasicBruteForceOptionSettings();
-
-std::optional<std::string> ValidateBasicBruteForceSettings(
-        const BasicBruteForceSettings &settings,
-        std::uint32_t tickDurationMs);
 std::optional<std::string> ValidateBasicBruteForceOptionSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs);
@@ -30,12 +21,7 @@ std::unique_ptr<SearchAlgorithm> CreateBasicBruteForceSearch(
 
 class BasicBruteForceSearch final : public SearchAlgorithm {
 public:
-    explicit BasicBruteForceSearch(BasicBruteForceSettings settings);
-
     SearchResult Run(const SearchExecutionContext &context) const override;
-
-private:
-    BasicBruteForceSettings settings_;
 };
 
 }  // namespace forevertas

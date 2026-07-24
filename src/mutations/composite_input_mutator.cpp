@@ -18,12 +18,16 @@ MutationResult CompositeInputMutator::Mutate(
     for (std::size_t index = 0u; index < modifiers_.size(); ++index) {
         const MutationResult pass = modifiers_[index]->Mutate({
                 current,
-                request.attemptIndex,
+                request.iterationIndex,
                 static_cast<std::uint32_t>(index),
-                request.tickDurationMs});
+                request.tickDurationMs,
+                request.mutableFromTimeMs});
         current = pass.inputs;
     }
-    NormalizeInputEvents(current, request.tickDurationMs);
+    NormalizeMutableInputEvents(current,
+                                request.baselineInputs,
+                                request.tickDurationMs,
+                                request.mutableFromTimeMs);
     return {current,
             EffectiveInputChangeCount(request.baselineInputs, current)};
 }

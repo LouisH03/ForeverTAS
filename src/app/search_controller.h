@@ -47,13 +47,19 @@ class SearchController final : public QObject {
 
     Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
-    Q_PROPERTY(bool cancelling READ cancelling NOTIFY cancellingChanged)
+    Q_PROPERTY(bool stopping READ stopping NOTIFY stoppingChanged)
     Q_PROPERTY(bool progressIndeterminate READ progressIndeterminate NOTIFY
                        progressChanged)
     Q_PROPERTY(double progressValue READ progressValue NOTIFY progressChanged)
     Q_PROPERTY(QString validationMessage READ validationMessage NOTIFY
                        validationChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
+    Q_PROPERTY(bool liveMetricsVisible READ liveMetricsVisible NOTIFY
+                       metricsChanged)
+    Q_PROPERTY(QString iterationCountText READ iterationCountText NOTIFY
+                       metricsChanged)
+    Q_PROPERTY(QString throughputText READ throughputText NOTIFY metricsChanged)
+    Q_PROPERTY(QString elapsedText READ elapsedText NOTIFY metricsChanged)
     Q_PROPERTY(QString resultText READ resultText NOTIFY resultChanged)
     Q_PROPERTY(QString bestInputsText READ bestInputsText NOTIFY resultChanged)
 
@@ -77,11 +83,15 @@ public:
 
     bool canStart() const;
     bool running() const;
-    bool cancelling() const;
+    bool stopping() const;
     bool progressIndeterminate() const;
     double progressValue() const;
     QString validationMessage() const;
     QString statusText() const;
+    bool liveMetricsVisible() const;
+    QString iterationCountText() const;
+    QString throughputText() const;
+    QString elapsedText() const;
     QString resultText() const;
     QString bestInputsText() const;
 
@@ -106,7 +116,7 @@ public slots:
     Q_INVOKABLE void setEvaluationTargetSetting(const QString &key,
                                                 const QString &value);
     Q_INVOKABLE void startSearch();
-    Q_INVOKABLE void cancelSearch();
+    Q_INVOKABLE void stopSearch();
 
 signals:
     void packsDirectoryChanged();
@@ -119,10 +129,11 @@ signals:
     void evaluationTargetSettingsChanged();
     void canStartChanged();
     void runningChanged();
-    void cancellingChanged();
+    void stoppingChanged();
     void progressChanged();
     void validationChanged();
     void statusChanged();
+    void metricsChanged();
     void resultChanged();
     void searchCompleted(forevertas::app::SearchCompletionPtr completion);
 
@@ -135,8 +146,12 @@ private:
     ValidationResult validate() const;
     void refreshValidation();
     void setRunning(bool value);
-    void setCancelling(bool value);
+    void setStopping(bool value);
     void setStatusText(const QString &value);
+    void setLiveMetrics(const QString &iterationCountText,
+                        const QString &throughputText,
+                        const QString &elapsedText,
+                        bool visible);
     void setResultText(const QString &value);
     void setBestInputsText(const QString &value);
     void setProgress(bool indeterminate, double value);
@@ -154,16 +169,21 @@ private:
     SearchConfigurationModel configuration_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
+    QString iterationCountText_;
+    QString throughputText_;
+    QString elapsedText_;
     QString resultText_;
     QString bestInputsText_;
     bool valid_ = false;
+    bool liveMetricsVisible_ = false;
     bool running_ = false;
-    bool cancelling_ = false;
+    bool stopping_ = false;
     bool progressIndeterminate_ = false;
-    bool autoDetectionAttempted_ = false;
+    bool autoDetectionScheduled_ = false;
     double progressValue_ = 0.0;
     QThread *autoDetectionThread_ = nullptr;
     QThread *workerThread_ = nullptr;
+    std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
     SearchCompletionPtr lastCompletion_;
 };

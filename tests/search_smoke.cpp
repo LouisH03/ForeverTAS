@@ -1,6 +1,7 @@
 #include "mutations/input_event_formatter.h"
 #include "searches/search_runner.h"
 
+#include <chrono>
 #include <exception>
 #include <iostream>
 
@@ -11,8 +12,31 @@ int main(int argc, char **argv) {
     }
 
     try {
+        constexpr std::uint64_t iterationsBeforeStop = 64u;
+        bool stopRequested = false;
+        bool sawLiveBest = false;
         bool sawFinalSampling = false;
+        std::chrono::steady_clock::duration previousElapsed{};
+        std::size_t liveUpdateCount = 0u;
         forevertas::SearchRunControl control;
+        control.stopRequested = [&stopRequested]() {
+            return stopRequested;
+        };
+        control.liveChanged = [&](const forevertas::SearchLiveUpdate &live) {
+            if (sawFinalSampling) {
+                std::cerr << "live search update arrived after final sampling started\n";
+                return;
+            }
+            sawLiveBest |= !live.bestInputs.empty();
+            if (liveUpdateCount != 0u && live.elapsed < previousElapsed) {
+                std::cerr << "live elapsed time moved backwards\n";
+            }
+            previousElapsed = live.elapsed;
+            ++liveUpdateCount;
+            if (live.iterations >= iterationsBeforeStop) {
+                stopRequested = true;
+            }
+        };
         control.progressChanged = [&sawFinalSampling](
                                           const forevertas::SearchProgress
                                                   &progress) {
@@ -26,6 +50,14 @@ int main(int argc, char **argv) {
                 forevertas::SearchWinnerSource::Mutation;
         if (mutationWon != (result.mutationImprovementCount > 0u)) {
             std::cerr << "winner and mutation improvement count disagree\n";
+            return 1;
+        }
+        if (!stopRequested || result.iterations < iterationsBeforeStop) {
+            std::cerr << "search returned before the stop request\n";
+            return 1;
+        }
+        if (!sawLiveBest || liveUpdateCount < 2u) {
+            std::cerr << "search did not publish live updates while running\n";
             return 1;
         }
         if (result.bestInputs.empty()) {
@@ -51,7 +83,7 @@ int main(int argc, char **argv) {
             return 1;
         }
         if (!sawFinalSampling || result.bestTimeline.empty()) {
-            std::cerr << "best run was not sampled after search\n";
+            std::cerr << "best run was not sampled after Stop\n";
             return 1;
         }
         if (result.bestTimeline.front().timeMs != 0 ||
@@ -75,11 +107,12 @@ int main(int argc, char **argv) {
                   << " score=" << result.bestScore
                   << " improvements="
                   << result.mutationImprovementCount
-                  << " attempt="
-                  << (result.winningAttempt
-                              ? std::to_string(*result.winningAttempt + 1u)
+                  << " iteration="
+                  << (result.winningIterationIndex
+                              ? std::to_string(
+                                        *result.winningIterationIndex + 1u)
                               : std::string("none"))
-                  << " attempts=" << result.requestedAttempts
+                  << " iterations=" << result.iterations
                   << " inputs=" << result.bestInputs.size()
                   << " frames=" << result.bestTimeline.size() << '\n';
         return 0;

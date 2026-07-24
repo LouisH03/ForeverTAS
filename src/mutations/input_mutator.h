@@ -5,15 +5,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace forevertas {
 
 struct MutationRequest {
     const std::vector<SandboxInputEvent> &baselineInputs;
-    std::uint64_t attemptIndex = 0u;
+    std::uint64_t iterationIndex = 0u;
     std::uint32_t passIndex = 0u;
     std::uint32_t tickDurationMs = 10u;
+    std::int64_t mutableFromTimeMs =
+            std::numeric_limits<std::int64_t>::min();
 };
 
 struct MutationResult {

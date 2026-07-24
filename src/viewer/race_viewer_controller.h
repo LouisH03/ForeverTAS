@@ -153,7 +153,8 @@ signals:
     void selectedRunChanged();
 
 private:
-    void applyLoadResult(RaceViewerLoadResult result);
+    void applyLoadResult(std::uint64_t loadSerial,
+                         RaceViewerLoadResult result);
     void beginReplayLoad(const QString &packsDirectory,
                          const QString &replayPath);
     void applyPendingRunIfReady();
@@ -177,6 +178,10 @@ private:
     std::vector<std::unique_ptr<RaceGeometry>>
             ellipsoidFilledGeometries_;
     RaceGeometry ellipsoidWireGeometry_;
+    struct ReplayLoadRequest {
+        QString packsDirectory;
+        QString replayPath;
+    };
     struct PendingRun {
         QString packsDirectory;
         QString replayPath;
@@ -184,6 +189,7 @@ private:
     };
 
     std::vector<RaceViewerRun> runs_;
+    std::optional<ReplayLoadRequest> queuedReplayLoad_;
     std::optional<PendingRun> pendingRun_;
     QVariantList carEllipsoids_;
     QVector3D carPosition_{};
@@ -203,6 +209,7 @@ private:
     QTimer playbackTimer_;
     QElapsedTimer playbackClock_;
     QThread *workerThread_ = nullptr;
+    std::uint64_t loadSerial_ = 0u;
 };
 
 }  // namespace forevertas::viewer

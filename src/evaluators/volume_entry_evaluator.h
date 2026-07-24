@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_EVALUATORS_VOLUME_ENTRY_EVALUATOR_H
 #define FOREVERTAS_EVALUATORS_VOLUME_ENTRY_EVALUATOR_H
 
-#include "evaluators/candidate_evaluator.h"
+#include "evaluators/iteration_evaluator.h"
 #include "searches/option_configuration.h"
 
 #include <memory>
@@ -14,7 +14,7 @@ OptionSettings DefaultVolumeEntryOptionSettings();
 std::optional<std::string> ValidateVolumeEntryOptionSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs);
-std::unique_ptr<CandidateEvaluator> CreateVolumeEntryEvaluator(
+std::unique_ptr<IterationEvaluator> CreateVolumeEntryEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs);
 

@@ -35,11 +35,11 @@ void CheckCancellation(const SearchRunControl *control) {
 
 void ReportProgress(const SearchRunControl *control,
                     SearchProgressStage stage,
-                    std::uint64_t completedAttempts,
-                    std::uint64_t requestedAttempts) {
+                    std::uint64_t completedWork,
+                    std::uint64_t totalWork) {
     if (control != nullptr && control->progressChanged) {
         control->progressChanged(
-                {stage, completedAttempts, requestedAttempts});
+                {stage, completedWork, totalWork});
     }
 }
 
@@ -195,7 +195,7 @@ SearchResult RunSearch(const SearchRequest &request,
                 modifier.settings, kSearchTickDurationMs));
     }
     const CompositeInputMutator mutator(std::move(modifierPasses));
-    std::unique_ptr<CandidateEvaluator> evaluator =
+    std::unique_ptr<IterationEvaluator> evaluator =
             evaluationRegistration->create(
                     request.evaluationTarget.settings,
                     kSearchTickDurationMs);

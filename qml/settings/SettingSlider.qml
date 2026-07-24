@@ -27,8 +27,8 @@ RowLayout {
     Layout.fillWidth: true
     spacing: 10
 
-    function formatNumber(candidate) {
-        let formatted = candidate.toFixed(Math.max(0, root.decimals))
+    function formatNumber(number) {
+        let formatted = number.toFixed(Math.max(0, root.decimals))
         while (formatted.indexOf(".") >= 0 && formatted.endsWith("0"))
             formatted = formatted.slice(0, -1)
         if (formatted.endsWith("."))

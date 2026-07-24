@@ -1,4 +1,4 @@
-#include "evaluators/candidate_evaluator.h"
+#include "evaluators/iteration_evaluator.h"
 #include "mutations/composite_input_mutator.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/input_event_utils.h"
@@ -6,6 +6,7 @@
 #include "searches/basic_brute_force_search.h"
 #include "searches/option_settings_utils.h"
 #include "searches/search_runner.h"
+#include "time_format.h"
 
 #include <clocale>
 #include <cmath>
@@ -52,10 +53,10 @@ public:
     }
 
     bool ActivateCommaDecimalLocale() {
-        constexpr const char *candidates[] = {
+        constexpr const char *localeNames[] = {
                 "fr_FR.utf8", "fr_FR.UTF-8", "de_DE.utf8", "de_DE.UTF-8"};
-        for (const char *const candidate : candidates) {
-            if (std::setlocale(LC_NUMERIC, candidate) == nullptr) continue;
+        for (const char *const localeName : localeNames) {
+            if (std::setlocale(LC_NUMERIC, localeName) == nullptr) continue;
             const lconv *const details = std::localeconv();
             if (details != nullptr && details->decimal_point != nullptr &&
                 std::string(details->decimal_point) == ",") {
@@ -149,7 +150,7 @@ bool SameEvents(const std::vector<SandboxInputEvent> &left,
     return true;
 }
 
-std::unique_ptr<forevertas::CandidateEvaluator> Evaluator(
+std::unique_ptr<forevertas::IterationEvaluator> Evaluator(
         const char *id,
         const OptionSettings *overrideSettings = nullptr) {
     const auto *const registration = forevertas::FindEvaluationTarget(id);
@@ -158,6 +159,61 @@ std::unique_ptr<forevertas::CandidateEvaluator> Evaluator(
             ? registration->defaultSettings
             : *overrideSettings;
     return registration->create(settings, 10u);
+}
+
+
+bool TestHumanDurationFormatting() {
+    bool okay = Check(
+            forevertas::FormatHumanDurationMilliseconds(0.0) ==
+                    "00:00:00",
+            "zero duration formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatHumanDurationMilliseconds(13500.0) ==
+                    "00:00:13.5",
+            "trailing duration zeroes were not trimmed");
+    okay &= Check(
+            forevertas::FormatHumanDurationMilliseconds(13.0) ==
+                    "00:00:00.013",
+            "millisecond duration formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatHumanDurationMilliseconds(3723004.0) ==
+                    "01:02:03.004",
+            "hour duration formatting was incorrect");
+    return okay;
+}
+
+bool TestMutableSuffixNormalization() {
+    const std::vector<SandboxInputEvent> baseline{
+            Steering(90, 1234),
+            Switch(70, SandboxInputAction::Accelerate, true),
+            Steering(80, -4321),
+            Steering(100, 1000),
+            Steering(110, 2000)};
+    std::vector<SandboxInputEvent> iteration{
+            Steering(90, 65536),
+            Switch(70, SandboxInputAction::Accelerate, true),
+            Steering(80, -4321),
+            Steering(100, 1000),
+            Steering(110, 2000),
+            Steering(50, 9999),
+            Steering(115, 70000),
+            Steering(110, 3000)};
+
+    forevertas::NormalizeMutableInputEvents(
+            iteration, baseline, 10u, 100);
+
+    bool okay = Check(iteration.size() == 5u,
+                      "mutable suffix normalization returned the wrong size");
+    okay &= Check(forevertas::SameInputEvent(iteration[0], baseline[0]) &&
+                          forevertas::SameInputEvent(iteration[1], baseline[1]) &&
+                          forevertas::SameInputEvent(iteration[2], baseline[2]),
+                  "immutable input prefix was reordered or rewritten");
+    okay &= Check(iteration[3].timeMs == 100 &&
+                          iteration[3].value.analog == 1000 &&
+                          iteration[4].timeMs == 110 &&
+                          iteration[4].value.analog == 3000,
+                  "mutable input suffix was not normalized independently");
+    return okay;
 }
 
 bool TestEvaluationTargets() {
@@ -259,6 +315,10 @@ bool TestEvaluationTargets() {
         const auto sample = session->Observe(previous, current);
         okay &= Check(sample && sample->timeMs == 1234.0,
                       "finish target ignored the recorded finish time");
+        okay &= Check(sample &&
+                              sample->description ==
+                                      "Finish time: 00:00:01.234",
+                      "finish target did not use human-readable time");
     }
 
     return okay;
@@ -332,14 +392,14 @@ bool TestModifierDeterminism() {
             Steering(2010, 32768)};
     const MutationResult first = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult repeated = modifier->Mutate({baseline, 7u, 0u, 10u});
-    const MutationResult otherAttempt = modifier->Mutate(
+    const MutationResult otherIteration = modifier->Mutate(
             {baseline, 8u, 0u, 10u});
     bool okay = Check(SameEvents(first.inputs, repeated.inputs),
-                      "same seed and attempt were not deterministic");
-    okay &= Check(!SameEvents(first.inputs, otherAttempt.inputs),
-                  "different attempts produced identical candidates");
+                      "same seed and iteration index were not deterministic");
+    okay &= Check(!SameEvents(first.inputs, otherIteration.inputs),
+                  "different iteration indices produced identical inputs");
     okay &= Check(AllAnalogInputsValid(first.inputs) &&
-                          AllAnalogInputsValid(otherAttempt.inputs),
+                          AllAnalogInputsValid(otherIteration.inputs),
                   "random steering produced an out-of-range input state");
     okay &= Check(forevertas::SameInputEvent(first.inputs.front(),
                                              baseline.front()) &&
@@ -422,9 +482,9 @@ bool TestAllModifierAnalogInvariants() {
     for (const auto &registration : forevertas::ModifierRegistry()) {
         std::unique_ptr<InputMutator> modifier = registration.create(
                 registration.defaultSettings, 10u);
-        for (std::uint64_t attempt = 0u; attempt < 32u; ++attempt) {
+        for (std::uint64_t iteration = 0u; iteration < 32u; ++iteration) {
             const MutationResult result = modifier->Mutate(
-                    {baseline, attempt, 0u, 10u});
+                    {baseline, iteration, 0u, 10u});
             if (!AllAnalogInputsValid(result.inputs)) {
                 return Check(false,
                              "modifier produced an out-of-range analog state");
@@ -551,16 +611,17 @@ bool TestLocaleIndependentFloatingPointSettings() {
     return okay;
 }
 
-bool TestSearchSettingsAndCancellation() {
+bool TestSearchControl() {
     bool okay = Check(
-            !forevertas::ValidateBasicBruteForceSettings({10u}, 10u),
-            "valid Basic search settings were rejected");
+            !forevertas::ValidateBasicBruteForceOptionSettings({}, 10u),
+            "parameterless Basic search settings were rejected");
     okay &= Check(
-            forevertas::ValidateBasicBruteForceSettings({0u}, 10u)
+            forevertas::ValidateBasicBruteForceOptionSettings(
+                    {{"unexpected", "1"}}, 10u)
                     .has_value(),
-            "zero attempts were accepted");
+            "an unexpected Basic search setting was accepted");
     okay &= Check(
-            forevertas::ValidateBasicBruteForceSettings({10u}, 0u)
+            forevertas::ValidateBasicBruteForceOptionSettings({}, 0u)
                     .has_value(),
             "zero tick duration was accepted");
 
@@ -569,10 +630,10 @@ bool TestSearchSettingsAndCancellation() {
     try {
         static_cast<void>(forevertas::RunSearch(
                 {"unused", "unused"}, &control));
-        okay &= Check(false, "immediate cancellation was ignored");
+        okay &= Check(false, "immediate hard abort was ignored");
     } catch (const forevertas::SearchCancelled &) {
     } catch (...) {
-        okay &= Check(false, "immediate cancellation returned wrong failure");
+        okay &= Check(false, "immediate hard abort returned wrong failure");
     }
     return okay;
 }
@@ -580,7 +641,9 @@ bool TestSearchSettingsAndCancellation() {
 }  // namespace
 
 int main() {
-    const bool okay = TestEvaluationTargets() &&
+    const bool okay = TestHumanDurationFormatting() &&
+            TestMutableSuffixNormalization() &&
+            TestEvaluationTargets() &&
             TestModifierComposition() &&
             TestModifierDeterminism() &&
             TestInputScriptFormatting() &&
@@ -588,6 +651,6 @@ int main() {
             TestAllModifierAnalogInvariants() &&
             TestRegistries() &&
             TestLocaleIndependentFloatingPointSettings() &&
-            TestSearchSettingsAndCancellation();
+            TestSearchControl();
     return okay ? 0 : 1;
 }

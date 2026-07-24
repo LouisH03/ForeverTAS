@@ -86,7 +86,7 @@ MutationResult RandomSteeringMutator::Mutate(
     using forevervalidator::experimental::PhysicsSandboxInputValueKind;
 
     std::mt19937 random = ModifierRandom(
-            settings_.seed, request.attemptIndex, request.passIndex);
+            settings_.seed, request.iterationIndex, request.passIndex);
 
     MutationResult result;
     result.inputs = request.baselineInputs;
@@ -107,7 +107,10 @@ MutationResult RandomSteeringMutator::Mutate(
         event.value.analog = value;
         ++result.mutationCount;
     }
-    NormalizeInputEvents(result.inputs, request.tickDurationMs);
+    NormalizeMutableInputEvents(result.inputs,
+                                request.baselineInputs,
+                                request.tickDurationMs,
+                                request.mutableFromTimeMs);
     result.mutationCount = EffectiveInputChangeCount(
             request.baselineInputs, result.inputs);
     return result;

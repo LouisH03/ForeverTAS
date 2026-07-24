@@ -17,6 +17,7 @@ class SearchWorker final : public QObject {
 
 public:
     SearchWorker(SearchRequest request,
+                 std::shared_ptr<std::atomic_bool> stopRequested,
                  std::shared_ptr<std::atomic_bool> cancellationRequested);
 
 public slots:
@@ -25,6 +26,10 @@ public slots:
 signals:
     void stageChanged(const QString &status, bool indeterminate);
     void progressChanged(double value, const QString &status);
+    void metricsChanged(const QString &iterationCountText,
+                        const QString &throughputText,
+                        const QString &elapsedText);
+    void bestChanged(const QString &summary, const QString &inputsText);
     void succeeded(forevertas::app::SearchCompletionPtr completion);
     void cancelled();
     void failed(const QString &message);
@@ -32,6 +37,7 @@ signals:
 
 private:
     SearchRequest request_;
+    std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
 };
 

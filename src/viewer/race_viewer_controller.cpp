@@ -1,5 +1,7 @@
 #include "viewer/race_viewer_controller.h"
 
+#include "time_format.h"
+
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
@@ -306,14 +308,8 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
 }
 
 QString FormatTime(qint64 milliseconds) {
-    milliseconds = std::max<qint64>(0, milliseconds);
-    const qint64 minutes = milliseconds / 60000;
-    const qint64 seconds = (milliseconds / 1000) % 60;
-    const qint64 millis = milliseconds % 1000;
-    return QStringLiteral("%1:%2.%3")
-            .arg(minutes, 2, 10, QLatin1Char('0'))
-            .arg(seconds, 2, 10, QLatin1Char('0'))
-            .arg(millis, 3, 10, QLatin1Char('0'));
+    return QString::fromStdString(FormatHumanDurationMilliseconds(
+            static_cast<double>(std::max<qint64>(0, milliseconds))));
 }
 
 std::vector<RaceViewerFrame> ToViewerFrames(
@@ -671,25 +667,37 @@ void RaceViewerController::jumpToEnd() {
 void RaceViewerController::loadReplay(const QString &packsDirectory,
                                       const QString &replayPath) {
     pendingRun_.reset();
+    if (workerThread_ != nullptr) {
+        queuedReplayLoad_ = ReplayLoadRequest{packsDirectory, replayPath};
+        setLoading(true);
+        setStatusText(QStringLiteral("Waiting to load selected replay..."));
+        return;
+    }
     beginReplayLoad(packsDirectory, replayPath);
 }
 
 void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
                                            const QString &replayPath) {
     if (workerThread_ != nullptr) {
+        queuedReplayLoad_ = ReplayLoadRequest{packsDirectory, replayPath};
+        setLoading(true);
+        setStatusText(QStringLiteral("Waiting to load selected replay..."));
         return;
     }
+    queuedReplayLoad_.reset();
     const QFileInfo packsInfo(packsDirectory);
     const QFileInfo replayInfo(replayPath);
     if (!packsInfo.isDir() || !packsInfo.isReadable()) {
         pendingRun_.reset();
         setStatusText(QStringLiteral(
                 "Select a readable installed Packs directory."));
+        setLoading(false);
         return;
     }
     if (!replayInfo.isFile() || !replayInfo.isReadable()) {
         pendingRun_.reset();
         setStatusText(QStringLiteral("Select a readable replay file."));
+        setLoading(false);
         return;
     }
 
@@ -698,14 +706,16 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
     setStatusText(QStringLiteral(
             "Loading collision geometry and sampling replay..."));
 
+    const std::uint64_t loadSerial = ++loadSerial_;
     QThread *const thread = QThread::create(
-            [this, packsDirectory, replayPath]() {
+            [this, packsDirectory, replayPath, loadSerial]() {
                 RaceViewerLoadResult result =
                         LoadReplayData(packsDirectory, replayPath);
                 QMetaObject::invokeMethod(
                         this,
-                        [this, result = std::move(result)]() mutable {
-                            applyLoadResult(std::move(result));
+                        [this, loadSerial,
+                         result = std::move(result)]() mutable {
+                            applyLoadResult(loadSerial, std::move(result));
                         },
                         Qt::QueuedConnection);
             });
@@ -713,6 +723,12 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
     connect(thread, &QThread::finished, this, [this, thread]() {
         if (workerThread_ == thread) {
             workerThread_ = nullptr;
+        }
+        if (queuedReplayLoad_) {
+            const ReplayLoadRequest request = *queuedReplayLoad_;
+            queuedReplayLoad_.reset();
+            beginReplayLoad(request.packsDirectory, request.replayPath);
+            return;
         }
         if (pendingRun_ &&
             (!loaded_ ||
@@ -726,18 +742,21 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
     thread->start();
 }
 
-void RaceViewerController::applyLoadResult(RaceViewerLoadResult result) {
+void RaceViewerController::applyLoadResult(
+        std::uint64_t loadSerial,
+        RaceViewerLoadResult result) {
+    if (loadSerial != loadSerial_) return;
     pause();
     if (!result.error.isEmpty()) {
         pendingRun_.reset();
         setStatusText(result.error);
-        setLoading(false);
+        if (!queuedReplayLoad_) setLoading(false);
         return;
     }
     if (result.frames.empty()) {
         pendingRun_.reset();
         setStatusText(QStringLiteral("Replay produced no viewable frames."));
-        setLoading(false);
+        if (!queuedReplayLoad_) setLoading(false);
         return;
     }
 
@@ -772,7 +791,7 @@ void RaceViewerController::applyLoadResult(RaceViewerLoadResult result) {
               true);
     applyPendingRunIfReady();
     setStatusText(QStringLiteral("Replay loaded"));
-    setLoading(false);
+    if (!queuedReplayLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();
 }

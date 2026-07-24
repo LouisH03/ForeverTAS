@@ -59,20 +59,31 @@ option-owned configuration with the platform-native Qt settings store. Search,
 replay loading, validation, and physics stay in C++; QML presents the controls
 and Race Viewer.
 
-The search runs on a worker thread and can be cancelled without blocking the
-interface. Analog replay and candidate inputs use the exact signed integer
-state range `[-65536, 65536]`; normalized decimal UI settings are
-quantized once when parsed. Each attempt applies the configured modifier passes
-in order, normalizes the resulting input timeline, evaluates it with the
-selected target, and restores the global best state at the end. After winner
-selection, ForeverTAS performs one fresh full-replay simulation of the winner
-and records
-one viewer sample per physics tick. The winning input timeline is retained and
-shown as copy-ready input script text at the bottom of the settings panel.
+The search runs indefinitely on a worker thread after Start is pressed. Each
+iteration applies the configured modifier passes in order, preserves the replay
+input prefix before the mutation branch exactly, normalizes only the mutable
+suffix, and evaluates it with the selected target. Whenever a new global best
+is found, its copy-ready input script is shown immediately.
+Iteration count, iterations per second, elapsed time, and time since the last
+improvement continue refreshing while the search runs. Pressing Stop
+finishes the current
+iteration, restores the global best, then performs one fresh full-replay
+simulation and records one viewer sample per physics tick. The completed Best
+run is added to the Race Viewer only after that Stop-triggered sampling pass.
+Analog replay and iteration inputs use the exact signed integer state range
+`[-65536, 65536]`; normalized decimal UI settings are quantized once when
+parsed.
 Built-in targets cover finish
 time, cuboid entry time, velocity, point distance, and weighted pose error.
 Built-in modifiers cover existing-event perturbation, smooth steering
 deformation, input insertion, input deletion, and random steering.
+
+The complete visible settings pane owns vertical wheel scrolling, including
+areas occupied by sliders, dropdowns, and the best-input preview. Nested
+controls do not capture wheel input from the pane. Replay loads are serialized;
+a request made while an earlier load worker is finishing is queued rather than
+discarded, allowing repeated replay and car-geometry loads in one application
+instance.
 
 The Race Viewer stores named runs. A centered selector switches the active
 timeline and camera focus between `Baseline`, `Best`, and future run types,

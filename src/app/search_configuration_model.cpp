@@ -2,6 +2,7 @@
 
 #include "searches/algorithm_registry.h"
 
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -26,6 +27,21 @@ QString OptionSettingPath(const QString &category,
                           const QString &key) {
     return QStringLiteral("configuration/%1/%2/%3")
             .arg(category, optionId, key);
+}
+
+void RemoveRetiredSearchBudget() {
+    const QString retiredKey = QString::fromLatin1(
+            QByteArray::fromHex("617474656d7074436f756e74"));
+    QSettings storage;
+    storage.remove(QStringLiteral("search/") + retiredKey);
+    storage.remove(OptionSettingPath(
+            QStringLiteral("search"),
+            QStringLiteral("basic-brute-force"),
+            retiredKey));
+    storage.remove(OptionSettingPath(
+            QStringLiteral("search"),
+            QStringLiteral("serial-brute-force"),
+            retiredKey));
 }
 
 OptionSettings ToOptionSettings(const QVariantMap &values) {
@@ -116,6 +132,7 @@ QVariantList OptionList(const std::vector<Registration> &registrations) {
 }  // namespace
 
 SearchConfigurationModel::SearchConfigurationModel() {
+    RemoveRetiredSearchBudget();
     const OptionConfiguration defaultSearch =
             DefaultSearchAlgorithmConfiguration();
     const OptionConfiguration defaultEvaluation =

@@ -47,7 +47,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
-    src/evaluators/candidate_evaluator.h
+    src/evaluators/iteration_evaluator.h
     src/evaluators/evaluator_utils.h
     src/evaluators/finish_time_evaluator.cpp
     src/evaluators/finish_time_evaluator.h
@@ -84,6 +84,7 @@ add_library(forevertas_core STATIC
     src/searches/basic_brute_force_search.cpp
     src/searches/basic_brute_force_search.h
     src/searches/search_runner.cpp
+    src/time_format.h
     src/searches/search_runner.h)
 target_include_directories(forevertas_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -105,6 +106,8 @@ add_library(forevertas_gui STATIC
     src/app/search_controller.h
     src/app/packs_directory_finder.cpp
     src/app/packs_directory_finder.h
+    src/app/panel_wheel_redirector.cpp
+    src/app/panel_wheel_redirector.h
     src/app/search_worker.cpp
     src/app/search_worker.h)
 target_include_directories(forevertas_gui PUBLIC
@@ -204,6 +207,28 @@ if(BUILD_TESTING)
                  COMMAND forevertas-search-smoke
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
+        add_test(NAME forevertas-controller-lifecycle
+                 COMMAND forevertas-controller-tests
+                     --lifecycle
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+
+        add_executable(forevertas-viewer-reload-smoke
+            tests/viewer_reload_smoke.cpp)
+        target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
+            forevertas_gui
+            Qt6::Gui)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-viewer-reload-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-viewer-reload
+                 COMMAND forevertas-viewer-reload-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-viewer-reload PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 180)
 
         add_executable(forevertas-viewer-smoke
             tests/viewer_smoke.cpp)
@@ -220,6 +245,28 @@ if(BUILD_TESTING)
                      "${FOREVERTAS_TEST_REPLAY}")
         set_tests_properties(forevertas-viewer PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 180)
+
+        add_executable(forevertas-viewer-reload-qml-smoke
+            tests/viewer_reload_qml_smoke.cpp)
+        target_compile_definitions(forevertas-viewer-reload-qml-smoke PRIVATE
+            FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(forevertas-viewer-reload-qml-smoke PRIVATE
+            forevertas_gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::QuickControls2
+            Qt6::Widgets)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-viewer-reload-qml-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-viewer-reload-qml
+                 COMMAND forevertas-viewer-reload-qml-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-viewer-reload-qml PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software"
             TIMEOUT 180)
 
         add_executable(forevertas-viewer-qml-smoke

@@ -66,7 +66,7 @@ public:
 
     MutationResult Mutate(const MutationRequest &request) const override {
         std::vector<SandboxInputEvent> inputs = request.baselineInputs;
-        std::vector<std::size_t> candidates;
+        std::vector<std::size_t> eligibleIndices;
         for (std::size_t index = 0u; index < inputs.size(); ++index) {
             const SandboxInputEvent &event = inputs[index];
             if (event.timeMs < settings_.window.minimumTimeMs ||
@@ -79,24 +79,24 @@ public:
                 (settings_.toggleAccelerate &&
                  IsAccelerateAction(event.action)) ||
                 (settings_.toggleBrake && IsBrakeAction(event.action))) {
-                candidates.push_back(index);
+                eligibleIndices.push_back(index);
             }
         }
-        if (candidates.empty()) return {inputs, 0u};
+        if (eligibleIndices.empty()) return {inputs, 0u};
 
         std::mt19937 random = ModifierRandom(
-                settings_.window.seed, request.attemptIndex, request.passIndex);
-        std::shuffle(candidates.begin(), candidates.end(), random);
+                settings_.window.seed, request.iterationIndex, request.passIndex);
+        std::shuffle(eligibleIndices.begin(), eligibleIndices.end(), random);
         const std::uint32_t requested = RandomInteger(
                 random, settings_.minimumCount, settings_.maximumCount);
         const std::size_t count = std::min<std::size_t>(
-                requested, candidates.size());
+                requested, eligibleIndices.size());
         const std::int64_t tick = request.tickDurationMs;
         const std::int64_t maximumShiftTicks = tick == 0
                 ? 0
                 : settings_.maximumTimeShiftMs / tick;
         for (std::size_t n = 0u; n < count; ++n) {
-            SandboxInputEvent &event = inputs[candidates[n]];
+            SandboxInputEvent &event = inputs[eligibleIndices[n]];
             const std::int64_t shiftTicks = RandomInteger<std::int64_t>(
                     random, -maximumShiftTicks, maximumShiftTicks);
             event.timeMs = static_cast<std::int32_t>(std::clamp<std::int64_t>(
@@ -133,7 +133,10 @@ public:
                                   PhysicsSandboxSwitchState::Pressed;
             }
         }
-        NormalizeInputEvents(inputs, request.tickDurationMs);
+        NormalizeMutableInputEvents(inputs,
+                                    request.baselineInputs,
+                                    request.tickDurationMs,
+                                    request.mutableFromTimeMs);
         return {inputs,
                 EffectiveInputChangeCount(request.baselineInputs, inputs)};
     }

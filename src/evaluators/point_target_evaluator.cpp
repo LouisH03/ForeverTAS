@@ -14,7 +14,7 @@ struct PointSettings {
     EvaluationVector3 target;
 };
 
-class PointSession final : public CandidateEvaluationSession {
+class PointSession final : public IterationEvaluationSession {
 public:
     explicit PointSession(EvaluationVector3 target) : target_(target) {}
 
@@ -39,7 +39,7 @@ private:
     EvaluationVector3 target_;
 };
 
-class PointEvaluator final : public CandidateEvaluator {
+class PointEvaluator final : public IterationEvaluator {
 public:
     explicit PointEvaluator(PointSettings settings) : settings_(settings) {}
 
@@ -52,13 +52,13 @@ public:
                          replayDurationMs,
                          earliestMutationTimeMs);
     }
-    std::unique_ptr<CandidateEvaluationSession> CreateSession()
+    std::unique_ptr<IterationEvaluationSession> CreateSession()
             const override {
         return std::make_unique<PointSession>(settings_.target);
     }
-    bool IsBetter(const EvaluationSample &candidate,
+    bool IsBetter(const EvaluationSample &iteration,
                   const EvaluationSample &incumbent) const override {
-        return candidate.score < incumbent.score;
+        return iteration.score < incumbent.score;
     }
 
 private:
@@ -98,7 +98,7 @@ std::optional<std::string> ValidatePointTargetOptionSettings(
                               "evaluation");
 }
 
-std::unique_ptr<CandidateEvaluator> CreatePointTargetEvaluator(
+std::unique_ptr<IterationEvaluator> CreatePointTargetEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     if (const auto error =

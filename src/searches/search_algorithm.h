@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_SEARCHES_SEARCH_ALGORITHM_H
 #define FOREVERTAS_SEARCHES_SEARCH_ALGORITHM_H
 
-#include "evaluators/candidate_evaluator.h"
+#include "evaluators/iteration_evaluator.h"
 #include "mutations/input_mutator.h"
 
 #include <chrono>
@@ -10,6 +10,7 @@
 #include <exception>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <forevervalidator/experimental/physics_sandbox.h>
@@ -29,13 +30,33 @@ enum class SearchProgressStage : std::uint8_t {
 
 struct SearchProgress {
     SearchProgressStage stage = SearchProgressStage::Baseline;
-    std::uint64_t completedAttempts = 0u;
-    std::uint64_t requestedAttempts = 0u;
+    std::uint64_t completedWork = 0u;
+    std::uint64_t totalWork = 0u;
+};
+
+struct SearchLiveUpdate {
+    SearchWinnerSource winnerSource = SearchWinnerSource::Baseline;
+    std::optional<std::uint64_t> winningIterationIndex;
+    std::size_t winningMutationCount = 0u;
+    double bestScore = 0.0;
+    double bestEvaluationTimeMs = 0.0;
+    std::string bestEvaluationDescription;
+    forevervalidator::experimental::PhysicsSandboxStateView bestState;
+    std::vector<SandboxInputEvent> bestInputs;
+    std::uint64_t iterations = 0u;
+    std::uint64_t evaluatorCalls = 0u;
+    std::uint64_t mutationImprovementCount = 0u;
+    std::uint64_t totalMutationCount = 0u;
+    std::chrono::steady_clock::duration elapsed{};
+    std::optional<std::chrono::steady_clock::duration>
+            lastImprovementElapsed;
 };
 
 struct SearchRunControl {
+    std::function<bool()> stopRequested;
     std::function<bool()> cancellationRequested;
     std::function<void(const SearchProgress &)> progressChanged;
+    std::function<void(const SearchLiveUpdate &)> liveChanged;
 };
 
 class SearchCancelled final : public std::exception {
@@ -49,7 +70,7 @@ struct SearchExecutionContext {
     forevervalidator::experimental::PhysicsSandbox &sandbox;
     std::uint32_t tickDurationMs;
     const InputMutator &mutator;
-    const CandidateEvaluator &evaluator;
+    const IterationEvaluator &evaluator;
     const SearchRunControl *control = nullptr;
 };
 
@@ -69,7 +90,7 @@ struct SearchTimelineFrame {
 
 struct SearchResult {
     SearchWinnerSource winnerSource = SearchWinnerSource::Baseline;
-    std::optional<std::uint64_t> winningAttempt;
+    std::optional<std::uint64_t> winningIterationIndex;
     std::size_t winningMutationCount = 0u;
     double bestScore = 0.0;
     double bestEvaluationTimeMs = 0.0;
@@ -77,13 +98,13 @@ struct SearchResult {
     forevervalidator::experimental::PhysicsSandboxStateView bestState;
     std::vector<SandboxInputEvent> bestInputs;
     std::vector<SearchTimelineFrame> bestTimeline;
-    std::uint64_t requestedAttempts = 0u;
-    std::uint64_t executedAttempts = 0u;
-    std::uint64_t skippedAttempts = 0u;
+    std::uint64_t iterations = 0u;
     std::uint64_t evaluatorCalls = 0u;
     std::uint64_t mutationImprovementCount = 0u;
     std::uint64_t totalMutationCount = 0u;
     std::chrono::steady_clock::duration elapsed{};
+    std::optional<std::chrono::steady_clock::duration>
+            lastImprovementElapsed;
     forevervalidator::experimental::PhysicsSandboxState bestSnapshot;
 };
 

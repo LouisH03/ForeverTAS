@@ -1,5 +1,5 @@
-#ifndef FOREVERTAS_EVALUATORS_CANDIDATE_EVALUATOR_H
-#define FOREVERTAS_EVALUATORS_CANDIDATE_EVALUATOR_H
+#ifndef FOREVERTAS_EVALUATORS_ITERATION_EVALUATOR_H
+#define FOREVERTAS_EVALUATORS_ITERATION_EVALUATOR_H
 
 #include <cstdint>
 #include <memory>
@@ -21,9 +21,9 @@ struct EvaluationSample {
     std::string description;
 };
 
-class CandidateEvaluationSession {
+class IterationEvaluationSession {
 public:
-    virtual ~CandidateEvaluationSession() = default;
+    virtual ~IterationEvaluationSession() = default;
     virtual std::optional<EvaluationSample> Observe(
             const std::optional<
                     forevervalidator::experimental::PhysicsSandboxStateView>
@@ -32,15 +32,15 @@ public:
                     &current) = 0;
 };
 
-class CandidateEvaluator {
+class IterationEvaluator {
 public:
-    virtual ~CandidateEvaluator() = default;
+    virtual ~IterationEvaluator() = default;
     virtual EvaluationPlan Plan(std::int64_t replayDurationMs,
                                 std::int64_t earliestMutationTimeMs,
                                 std::uint32_t tickDurationMs) const = 0;
-    virtual std::unique_ptr<CandidateEvaluationSession> CreateSession()
+    virtual std::unique_ptr<IterationEvaluationSession> CreateSession()
             const = 0;
-    virtual bool IsBetter(const EvaluationSample &candidate,
+    virtual bool IsBetter(const EvaluationSample &iteration,
                           const EvaluationSample &incumbent) const = 0;
 };
 

@@ -20,12 +20,12 @@ struct ModifierWindow {
 };
 
 inline std::mt19937 ModifierRandom(std::uint32_t seed,
-                                  std::uint64_t attemptIndex,
+                                  std::uint64_t iterationIndex,
                                   std::uint32_t passIndex) {
     std::seed_seq sequence{
             seed,
-            static_cast<std::uint32_t>(attemptIndex),
-            static_cast<std::uint32_t>(attemptIndex >> 32u),
+            static_cast<std::uint32_t>(iterationIndex),
+            static_cast<std::uint32_t>(iterationIndex >> 32u),
             passIndex};
     return std::mt19937(sequence);
 }

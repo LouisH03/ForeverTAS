@@ -53,7 +53,7 @@ std::optional<double> SegmentEntryFraction(const Box &box,
             : std::nullopt;
 }
 
-class VolumeEntrySession final : public CandidateEvaluationSession {
+class VolumeEntrySession final : public IterationEvaluationSession {
 public:
     explicit VolumeEntrySession(Box box) : box_(box) {}
 
@@ -72,7 +72,7 @@ public:
             return EvaluationSample{
                     time,
                     time,
-                    MetricDescription("Volume entry time", time, "ms", time)};
+                    TimeMetricDescription("Volume entry time", time)};
         }
 
         const EvaluationVector3 previousPosition = PositionOf(*previous);
@@ -87,7 +87,7 @@ public:
         return EvaluationSample{
                 time,
                 time,
-                MetricDescription("Volume entry time", time, "ms", time)};
+                TimeMetricDescription("Volume entry time", time)};
     }
 
 private:
@@ -95,7 +95,7 @@ private:
     bool reported_ = false;
 };
 
-class VolumeEntryEvaluator final : public CandidateEvaluator {
+class VolumeEntryEvaluator final : public IterationEvaluator {
 public:
     explicit VolumeEntryEvaluator(Box box) : box_(box) {}
 
@@ -109,14 +109,14 @@ public:
                          earliestMutationTimeMs);
     }
 
-    std::unique_ptr<CandidateEvaluationSession> CreateSession()
+    std::unique_ptr<IterationEvaluationSession> CreateSession()
             const override {
         return std::make_unique<VolumeEntrySession>(box_);
     }
 
-    bool IsBetter(const EvaluationSample &candidate,
+    bool IsBetter(const EvaluationSample &iteration,
                   const EvaluationSample &incumbent) const override {
-        return candidate.score < incumbent.score;
+        return iteration.score < incumbent.score;
     }
 
 private:
@@ -168,7 +168,7 @@ std::optional<std::string> ValidateVolumeEntryOptionSettings(
     return std::nullopt;
 }
 
-std::unique_ptr<CandidateEvaluator> CreateVolumeEntryEvaluator(
+std::unique_ptr<IterationEvaluator> CreateVolumeEntryEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     if (const auto error =
