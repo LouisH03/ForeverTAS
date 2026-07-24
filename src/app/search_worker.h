@@ -1,6 +1,7 @@
 #ifndef FOREVERTAS_APP_SEARCH_WORKER_H
 #define FOREVERTAS_APP_SEARCH_WORKER_H
 
+#include "app/search_completion.h"
 #include "searches/search_runner.h"
 
 #include <QObject>
@@ -24,7 +25,7 @@ public slots:
 signals:
     void stageChanged(const QString &status, bool indeterminate);
     void progressChanged(double value, const QString &status);
-    void succeeded(const QString &summary);
+    void succeeded(forevertas::app::SearchCompletionPtr completion);
     void cancelled();
     void failed(const QString &message);
     void finished();

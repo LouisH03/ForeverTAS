@@ -45,6 +45,7 @@ ForeverTAS/
 │   ├── mutations/
 │   │   ├── input_mutator.h
 │   │   ├── input_event_utils.h/.cpp
+│   │   ├── input_event_formatter.h/.cpp
 │   │   ├── modifier_utils.h
 │   │   ├── composite_input_mutator.h/.cpp
 │   │   ├── random_steering_mutator.h/.cpp
@@ -63,6 +64,7 @@ ForeverTAS/
 │   │   └── pose_target_evaluator.h/.cpp
 │   │
 │   └── app/
+│       ├── search_completion.h
 │       ├── search_configuration_model.h/.cpp
 │       ├── search_controller.h/.cpp
 │       └── search_worker.h/.cpp
@@ -173,6 +175,26 @@ It asks:
 
 This keeps search orchestration independent from every target and modifier ID.
 
+### Winner retention and final sampling
+
+`SearchResult` retains the winning normalized input timeline. `RunSearch`
+performs a separate final-sampling stage after winner selection:
+
+1. Open a fresh Reference-backend sandbox.
+2. Reload the original replay from tick zero.
+3. Replace its inputs with the winning timeline.
+4. Advance exactly one physics tick at a time through the complete replay.
+5. Record position, rotation, and input state for every tick.
+
+This final pass is intentionally separate from candidate evaluation. Search
+algorithms remain free to branch, restore snapshots, and observe only the
+target-required window without retaining complete candidate traces. The worker
+reports this pass as `SearchProgressStage::FinalSampling`.
+
+`input_event_formatter.*` converts the retained timeline into invariant,
+copy-ready TMInterface script syntax. Formatting always uses `.` decimals and
+does not depend on `LC_NUMERIC`.
+
 ## Modifier Contract
 
 `InputMutator::Mutate` receives:
@@ -249,6 +271,8 @@ between ticks without adding target-specific logic to the search algorithm.
 `SearchController` owns application coordination:
 
 - Worker-thread lifecycle, paths, status, and progress.
+- Completed-search transport: summary text, copy-ready winning inputs, replay
+  identity, and the fully sampled winning timeline.
 - QML properties and change notifications that delegate to the configuration
   model.
 
@@ -266,6 +290,25 @@ moveModifierPass(fromIndex, toIndex)
 setModifierPassId(index, id)
 setModifierPassSetting(index, key, value)
 ```
+
+## Viewer runs
+
+`RaceViewerController` stores a vector of named `RaceViewerRun` entries rather
+than one global frame vector. Each run owns its sampled frames and current
+interpolated pose.
+
+The initially loaded replay creates the `Baseline` run. A completed search
+upserts `Best`. The same run container supports additional result types later
+without adding more controller fields.
+
+The selected run owns the active timeline, duration, input channels, playback,
+and camera focus. All runs are still interpolated at the active time and exposed
+to QML through `runPoses`, so the preview renders one car hierarchy per run.
+`runOptions` and `selectedRunId` drive the centered run selector.
+
+QML mirrors `runPoses` into a stable `ListModel` and updates roles in place.
+Binding `Repeater3D` directly to a rebuilt `QVariantList` would destroy and
+recreate every car model whenever the time changes.
 
 ## Persistence
 

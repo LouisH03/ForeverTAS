@@ -2,6 +2,7 @@
 #define FOREVERTAS_APP_SEARCH_CONTROLLER_H
 
 #include "app/search_configuration_model.h"
+#include "app/search_completion.h"
 
 #include <QObject>
 #include <QString>
@@ -54,6 +55,7 @@ class SearchController final : public QObject {
                        validationChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(QString resultText READ resultText NOTIFY resultChanged)
+    Q_PROPERTY(QString bestInputsText READ bestInputsText NOTIFY resultChanged)
 
 public:
     explicit SearchController(QObject *parent = nullptr);
@@ -81,6 +83,7 @@ public:
     QString validationMessage() const;
     QString statusText() const;
     QString resultText() const;
+    QString bestInputsText() const;
 
 public slots:
     void setPacksDirectory(const QString &value);
@@ -121,6 +124,7 @@ signals:
     void validationChanged();
     void statusChanged();
     void resultChanged();
+    void searchCompleted(forevertas::app::SearchCompletionPtr completion);
 
 private:
     struct ValidationResult {
@@ -134,6 +138,7 @@ private:
     void setCancelling(bool value);
     void setStatusText(const QString &value);
     void setResultText(const QString &value);
+    void setBestInputsText(const QString &value);
     void setProgress(bool indeterminate, double value);
     void initialize(const QStringList *packsSearchPatterns);
     void scheduleAutoDetectPacksDirectory(
@@ -150,6 +155,7 @@ private:
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString resultText_;
+    QString bestInputsText_;
     bool valid_ = false;
     bool running_ = false;
     bool cancelling_ = false;
@@ -159,6 +165,7 @@ private:
     QThread *autoDetectionThread_ = nullptr;
     QThread *workerThread_ = nullptr;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
+    SearchCompletionPtr lastCompletion_;
 };
 
 }  // namespace forevertas::app

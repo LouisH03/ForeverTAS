@@ -59,6 +59,8 @@ add_library(forevertas_core STATIC
     src/mutations/existing_event_perturbation_mutator.h
     src/mutations/input_deletion_mutator.cpp
     src/mutations/input_deletion_mutator.h
+    src/mutations/input_event_formatter.cpp
+    src/mutations/input_event_formatter.h
     src/mutations/input_event_utils.cpp
     src/mutations/input_event_utils.h
     src/mutations/input_insertion_mutator.cpp
@@ -92,6 +94,7 @@ add_library(forevertas_gui STATIC
     src/viewer/race_viewer_controller.h
     src/app/search_configuration_model.cpp
     src/app/search_configuration_model.h
+    src/app/search_completion.h
     src/app/search_controller.cpp
     src/app/search_controller.h
     src/app/packs_directory_finder.cpp

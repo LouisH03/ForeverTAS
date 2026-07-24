@@ -19,6 +19,15 @@ int main(int argc, char **argv) {
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    QObject::connect(
+            &controller,
+            &forevertas::app::SearchController::searchCompleted,
+            &viewer,
+            [&viewer](forevertas::app::SearchCompletionPtr completion) {
+                viewer.addSearchRun(completion->packsDirectory,
+                                    completion->replayPath,
+                                    completion->bestTimeline);
+            });
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
     engine.setInitialProperties({

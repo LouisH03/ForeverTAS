@@ -4,7 +4,6 @@
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QImage>
 #include <QInputDevice>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
@@ -14,47 +13,19 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
+#include <QWheelEvent>
 
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <vector>
 
 #ifndef FOREVERTAS_SOURCE_DIR
 #error "FOREVERTAS_SOURCE_DIR must be defined"
 #endif
 
 namespace {
-
-qsizetype DifferentPixelCount(const QImage &leftSource,
-                              const QImage &rightSource) {
-    if (leftSource.isNull() || rightSource.isNull() ||
-        leftSource.size() != rightSource.size()) {
-        return 0;
-    }
-    const QImage left = leftSource.convertToFormat(QImage::Format_RGBA8888);
-    const QImage right = rightSource.convertToFormat(QImage::Format_RGBA8888);
-    qsizetype different = 0;
-    for (int y = 52; y < left.height() - 78; ++y) {
-        const int viewportWidth = left.width() * 2 / 3;
-        for (int x = 0; x < viewportWidth; ++x) {
-            const int byteOffset = x * 4;
-            const uchar *const leftPixel = left.constScanLine(y) + byteOffset;
-            const uchar *const rightPixel = right.constScanLine(y) + byteOffset;
-            const int difference =
-                    std::abs(static_cast<int>(leftPixel[0]) -
-                             static_cast<int>(rightPixel[0])) +
-                    std::abs(static_cast<int>(leftPixel[1]) -
-                             static_cast<int>(rightPixel[1])) +
-                    std::abs(static_cast<int>(leftPixel[2]) -
-                             static_cast<int>(rightPixel[2]));
-            if (difference > 6) {
-                ++different;
-            }
-        }
-    }
-    return different;
-}
 
 bool ModelsHaveState(const QList<QObject *> &models,
                      int expectedCount,
@@ -134,6 +105,7 @@ int main(int argc, char **argv) {
 
     int exitCode = 1;
     bool completed = false;
+    bool verificationScheduled = false;
     bool editorStructure = false;
     QObject::connect(
             &engine,
@@ -159,9 +131,11 @@ int main(int argc, char **argv) {
             &forevertas::viewer::RaceViewerController::stateChanged,
             &application,
             [&]() {
-                if (completed || viewer.loading() || !viewer.loaded()) {
+                if (completed || verificationScheduled || viewer.loading() ||
+                    !viewer.loaded()) {
                     return;
                 }
+                verificationScheduled = true;
                 QTimer::singleShot(500, &application, [&]() {
                     if (completed) {
                         return;
@@ -170,8 +144,6 @@ int main(int argc, char **argv) {
                             QStringLiteral("trackFilledModel"));
                     QObject *const wire = root->findChild<QObject *>(
                             QStringLiteral("trackWireModel"));
-                    QObject *const car = root->findChild<QObject *>(
-                            QStringLiteral("carCollisionRoot"));
                     auto *const timeline = root->findChild<
                             forevertas::viewer::RaceTimelineItem *>(
                             QStringLiteral("raceTimeline"));
@@ -184,15 +156,9 @@ int main(int argc, char **argv) {
                     auto *const raceViewerHeader = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("raceViewerHeader")));
-                    auto *const fpsCounter = qobject_cast<QQuickItem *>(
+                    auto *const runSelector = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
-                                    QStringLiteral("fpsCounter")));
-                    QObject *const fpsCounterLabel =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("fpsCounterLabel"));
-                    QObject *const fpsFrameAnimation =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("fpsFrameAnimation"));
+                                    QStringLiteral("runSelector")));
                     QObject *const wireframeSwitch =
                             root->findChild<QObject *>(
                                     QStringLiteral("wireframeSwitch"));
@@ -267,6 +233,15 @@ int main(int argc, char **argv) {
                     QObject *const velocitySettings =
                             root->findChild<QObject *>(QStringLiteral(
                                     "velocityEvaluationSettings"));
+                    QObject *const bestInputsScrollView =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "bestInputsScrollView"));
+                    QObject *const bestInputsTextArea =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "bestInputsTextArea"));
+                    QObject *const copyBestInputsButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "copyBestInputsButton"));
                     const qint64 keyboardStartTick =
                             std::clamp<qint64>(
                                     viewer.tickCount() / 2,
@@ -299,20 +274,25 @@ int main(int argc, char **argv) {
                                     QStringLiteral("Left") &&
                             stepForward->property("sequence").toString() ==
                                     QStringLiteral("Right");
-                    const bool fpsCounterValid =
+                    const bool runSelectorValid =
                             raceViewerHeader != nullptr &&
-                            fpsCounter != nullptr &&
-                            fpsCounter->parentItem() == raceViewerHeader &&
-                            std::abs(fpsCounter->x() +
-                                             fpsCounter->width() * 0.5 -
-                                     raceViewerHeader->width() * 0.5) < 0.1 &&
-                            fpsCounterLabel != nullptr &&
-                            fpsCounterLabel->property("text")
-                                    .toString()
-                                    .endsWith(QStringLiteral(" FPS")) &&
-                            root->property("viewerFps").toInt() > 0 &&
-                            fpsFrameAnimation != nullptr &&
-                            fpsFrameAnimation->property("running").toBool();
+                            runSelector != nullptr &&
+                            runSelector->parentItem() == raceViewerHeader &&
+                            std::abs(runSelector->x() +
+                                             runSelector->width() * 0.5 -
+                                     raceViewerHeader->width() * 0.5) < 0.6 &&
+                            runSelector->property("count").toInt() == 1 &&
+                            runSelector->property("currentValue").toString() ==
+                                    QStringLiteral("baseline") &&
+                            runSelector->property("displayText").toString() ==
+                                    QStringLiteral("Baseline");
+                    const bool bestInputsUiValid =
+                            bestInputsScrollView != nullptr &&
+                            bestInputsTextArea != nullptr &&
+                            copyBestInputsButton != nullptr &&
+                            bestInputsTextArea->property("readOnly").toBool() &&
+                            copyBestInputsButton->property("text").toString() ==
+                                    QStringLiteral("Copy all");
                     const bool wireframeTextIsWhite =
                             wireframeSwitch != nullptr &&
                             wireframeLabel != nullptr &&
@@ -408,26 +388,34 @@ int main(int argc, char **argv) {
                                 (acceptedDevices & mouseDevice) != 0 &&
                                 (acceptedDevices & touchPadDevice) != 0;
                         if (wheelScrollingValid) {
-                            QVariant angleDelta;
-                            const bool angleInvoked = QMetaObject::invokeMethod(
-                                    settingsScroll,
-                                    "wheelDeltaPixels",
-                                    Qt::DirectConnection,
-                                    Q_RETURN_ARG(QVariant, angleDelta),
-                                    Q_ARG(QVariant, QVariant(0.0)),
-                                    Q_ARG(QVariant, QVariant(-15.0)));
-                            QVariant pixelDelta;
-                            const bool pixelInvoked = QMetaObject::invokeMethod(
-                                    settingsScroll,
-                                    "wheelDeltaPixels",
-                                    Qt::DirectConnection,
-                                    Q_RETURN_ARG(QVariant, pixelDelta),
-                                    Q_ARG(QVariant, QVariant(-9.0)),
-                                    Q_ARG(QVariant, QVariant(-120.0)));
-                            wheelScrollingValid &= angleInvoked &&
-                                    angleDelta.toDouble() == -30.0 &&
-                                    pixelInvoked &&
-                                    pixelDelta.toDouble() == -9.0;
+                            auto *const scrollItem =
+                                    qobject_cast<QQuickItem *>(settingsScroll);
+                            auto *const quickWindow =
+                                    qobject_cast<QQuickWindow *>(root);
+                            wheelScrollingValid &= scrollItem != nullptr &&
+                                    quickWindow != nullptr;
+                            if (wheelScrollingValid) {
+                                flickable->setProperty("contentY", 0.0);
+                                const QPointF position = scrollItem->mapToScene(
+                                        QPointF(scrollItem->width() * 0.5,
+                                                scrollItem->height() * 0.25));
+                                const QPoint global = quickWindow->mapToGlobal(
+                                        position.toPoint());
+                                QWheelEvent event(position,
+                                                  QPointF(global),
+                                                  {},
+                                                  QPoint(0, -120),
+                                                  Qt::NoButton,
+                                                  Qt::NoModifier,
+                                                  Qt::ScrollUpdate,
+                                                  false);
+                                QCoreApplication::sendEvent(quickWindow, &event);
+                                QCoreApplication::processEvents();
+                                const double contentY =
+                                        flickable->property("contentY")
+                                                .toDouble();
+                                wheelScrollingValid &= contentY > 0.0;
+                            }
                         }
                     }
                     bool everyOwnedPanelLoaded =
@@ -743,7 +731,8 @@ int main(int argc, char **argv) {
                             timeline->viewer() == &viewer &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
-                            fpsCounterValid && wireframeTextIsWhite &&
+                            runSelectorValid && bestInputsUiValid &&
+                            wireframeTextIsWhite &&
                             automaticPacksUi && algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
                             comboSlotsStyled && wheelScrollingValid &&
@@ -775,244 +764,201 @@ int main(int argc, char **argv) {
                                     root,
                                     QStringLiteral("INPUT TIMELINE")) &&
                             keyboardStepping;
-                    const QList<QObject *> carFilledModels =
-                            root->findChildren<QObject *>(
-                                    QStringLiteral("carFilledModel"));
-                    const QList<QObject *> carWireModels =
-                            root->findChildren<QObject *>(
-                                    QStringLiteral("carWireModel"));
-                    if (filled == nullptr || wire == nullptr ||
-                        car == nullptr) {
+                    if (filled == nullptr || wire == nullptr) {
                         std::cerr << "track models were not created\n";
                         completed = true;
                         application.quit();
                         return;
                     }
-                    QQuickWindow *const window =
+                    QQuickWindow *const quickWindow =
                             qobject_cast<QQuickWindow *>(root);
-                    if (window == nullptr) {
+                    if (quickWindow == nullptr) {
                         std::cerr << "Main.qml root is not a window\n";
                         completed = true;
                         application.quit();
                         return;
                     }
 
-                    const QVariant filledGeometry =
-                            filled->property("geometry");
-                    const QVariant wireGeometry = wire->property("geometry");
-                    const bool filledAttached = filledGeometry.isValid() &&
-                            !filledGeometry.isNull();
-                    const bool wireAttached = wireGeometry.isValid() &&
-                            !wireGeometry.isNull();
-                    const bool filledVisible =
-                            filled->property("visible").toBool();
-                    const int expectedCarModels =
-                            static_cast<int>(viewer.ellipsoidCount());
-                    const bool initialCarState = ModelsHaveState(
-                            carFilledModels, expectedCarModels, true) &&
-                            ModelsHaveState(
-                                    carWireModels, expectedCarModels, false);
-                    const QImage withCar = window->grabWindow();
-                    car->setProperty("visible", false);
+                    const qint64 baselineTickCount = viewer.tickCount();
+                    const QVector3D baselinePosition = viewer.carPosition();
+                    const QVector3D bestPosition =
+                            baselinePosition + QVector3D(7.0f, 0.0f, 0.0f);
+                    std::vector<forevertas::SearchTimelineFrame> bestFrames;
+                    bestFrames.reserve(3u);
+                    for (std::int64_t timeMs : {0, 10, 20}) {
+                        forevertas::SearchTimelineFrame frame;
+                        frame.timeMs = timeMs;
+                        frame.positionX = baselinePosition.x() +
+                                5.0f + static_cast<float>(timeMs) / 10.0f;
+                        frame.positionY = baselinePosition.y();
+                        frame.positionZ = baselinePosition.z();
+                        frame.rotationW = 1.0f;
+                        frame.accelerate = timeMs >= 10 ? 1.0f : 0.0f;
+                        frame.steering = static_cast<float>(timeMs) / 20.0f;
+                        bestFrames.push_back(frame);
+                    }
+                    viewer.addSearchRun(QString::fromLocal8Bit(argv[1]),
+                                        QString::fromLocal8Bit(argv[2]),
+                                        bestFrames);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+
                     QTimer::singleShot(
-                            150,
+                            250,
                             &application,
-                            [&, filledAttached, wireAttached, filledVisible,
-                             initialCarState, expectedCarModels,
-                             carFilledModels, carWireModels, withCar, car,
-                             filled, wire, window]() {
-                                const QImage withoutCar =
-                                        window->grabWindow();
-                                const qsizetype carPixels =
-                                        DifferentPixelCount(
-                                                withCar, withoutCar);
-                                car->setProperty("visible", true);
-                                const QImage withFilled =
-                                        window->grabWindow();
-                                filled->setProperty("visible", false);
-                                QTimer::singleShot(
-                                        150,
-                                        &application,
-                                        [&, filledAttached, wireAttached,
-                                         filledVisible, initialCarState,
-                                         expectedCarModels, carFilledModels,
-                                         carWireModels, carPixels, withFilled,
-                                         car, wire, window]() {
-                                const QImage withoutFilled =
-                                        window->grabWindow();
-                                const qsizetype filledPixels =
-                                        DifferentPixelCount(
-                                                withFilled, withoutFilled);
+                            [&, filled, wire, quickWindow, runSelector,
+                             baselineTickCount, bestPosition]() {
+                                const QList<QObject *> carRoots =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral("runCarRoot"));
+                                const QList<QObject *> carFilledModels =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "runCarFilledModel"));
+                                const QList<QObject *> carWireModels =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "runCarWireModel"));
+                                const int expectedCarModels =
+                                        static_cast<int>(
+                                                viewer.ellipsoidCount() *
+                                                viewer.runCount());
+                                bool rootsVisible = carRoots.size() == 2;
+                                for (const QObject *rootNode : carRoots) {
+                                    rootsVisible &= rootNode
+                                                            ->property("visible")
+                                                            .toBool();
+                                }
+
+                                const QVariant filledGeometry =
+                                        filled->property("geometry");
+                                const QVariant wireGeometry =
+                                        wire->property("geometry");
+                                const bool geometryAttached =
+                                        filledGeometry.isValid() &&
+                                        !filledGeometry.isNull() &&
+                                        wireGeometry.isValid() &&
+                                        !wireGeometry.isNull();
+                                const bool initialModelState =
+                                        filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        ModelsHaveState(carFilledModels,
+                                                        expectedCarModels,
+                                                        true) &&
+                                        ModelsHaveState(carWireModels,
+                                                        expectedCarModels,
+                                                        false);
+
+                                const bool bestSelectedInitially =
+                                        viewer.runCount() == 2 &&
+                                        viewer.runOptions().size() == 2 &&
+                                        viewer.runPoses().size() == 2 &&
+                                        viewer.selectedRunId() ==
+                                                QStringLiteral("best") &&
+                                        viewer.tickCount() == 3 &&
+                                        (viewer.carPosition() - bestPosition)
+                                                        .length() < 0.001f &&
+                                        runSelector != nullptr &&
+                                        runSelector->property("count").toInt() ==
+                                                2 &&
+                                        runSelector
+                                                        ->property("currentValue")
+                                                        .toString() ==
+                                                QStringLiteral("best") &&
+                                        runSelector
+                                                        ->property("displayText")
+                                                        .toString() ==
+                                                QStringLiteral("Best");
+
+                                const auto activateRun =
+                                        [runSelector](int index) {
+                                            return runSelector != nullptr &&
+                                                    QMetaObject::invokeMethod(
+                                                            runSelector,
+                                                            "activated",
+                                                            Qt::DirectConnection,
+                                                            Q_ARG(int, index));
+                                        };
+                                const bool baselineActivated = activateRun(0);
+                                QCoreApplication::processEvents();
+                                QCoreApplication::processEvents();
+                                const bool baselineSelected =
+                                        baselineActivated &&
+                                        viewer.selectedRunId() ==
+                                                QStringLiteral("baseline") &&
+                                        viewer.tickCount() == baselineTickCount &&
+                                        (viewer.carPosition() - bestPosition)
+                                                        .length() > 0.1f;
+
+                                const bool bestActivated = activateRun(1);
+                                QCoreApplication::processEvents();
+                                QCoreApplication::processEvents();
+                                const bool bestReselected =
+                                        bestActivated &&
+                                        viewer.selectedRunId() ==
+                                                QStringLiteral("best") &&
+                                        viewer.tickCount() == 3 &&
+                                        (viewer.carPosition() - bestPosition)
+                                                        .length() < 0.001f;
 
                                 root->setProperty("wireframeMode", true);
-                                QTimer::singleShot(
-                                        150,
-                                        &application,
-                                        [&, filledAttached, wireAttached,
-                                         filledVisible, initialCarState,
-                                         expectedCarModels, carFilledModels,
-                                         carWireModels, carPixels,
-                                         filledPixels, car, wire, window]() {
-                                            const bool wireVisible =
-                                                    wire->property("visible")
-                                                            .toBool();
-                                            const bool wireCarState =
-                                                    ModelsHaveState(
-                                                            carFilledModels,
-                                                            expectedCarModels,
-                                                            false) &&
-                                                    ModelsHaveState(
-                                                            carWireModels,
-                                                            expectedCarModels,
-                                                            true);
-                                            const QImage withWire =
-                                                    window->grabWindow();
-                                            wire->setProperty(
-                                                    "visible", false);
-                                            QTimer::singleShot(
-                                                    150,
-                                                    &application,
-                                                    [&, filledAttached,
-                                                     wireAttached,
-                                                     filledVisible,
-                                                     initialCarState,
-                                                     expectedCarModels,
-                                                     carFilledModels,
-                                                     carWireModels,
-                                                     carPixels, filledPixels,
-                                                     wireVisible,
-                                                     wireCarState, withWire,
-                                                     car, wire, window]() {
-                                                        const QImage
-                                                                withoutWire =
-                                                                        window->grabWindow();
-                                                        const qsizetype
-                                                                wirePixels =
-                                                                        DifferentPixelCount(
-                                                                                withWire,
-                                                                                withoutWire);
-                                                        wire->setProperty(
-                                                                "visible",
-                                                                true);
-                                                        root->setProperty(
-                                                                "wireframeMode",
-                                                                false);
-                                                        QTimer::singleShot(
-                                                                150,
-                                                                &application,
-                                                                [&, filledAttached,
-                                                                 wireAttached,
-                                                                 filledVisible,
-                                                                 initialCarState,
-                                                                 expectedCarModels,
-                                                                 carFilledModels,
-                                                                 carWireModels,
-                                                                 carPixels,
-                                                                 filledPixels,
-                                                                 wireVisible,
-                                                                 wireCarState,
-                                                                 wirePixels,
-                                                                 car, window]() {
-                                                                    const bool
-                                                                            restoredCarState =
-                                                                                    ModelsHaveState(
-                                                                                            carFilledModels,
-                                                                                            expectedCarModels,
-                                                                                            true) &&
-                                                                                    ModelsHaveState(
-                                                                                            carWireModels,
-                                                                                            expectedCarModels,
-                                                                                            false);
-                                                                    const QImage
-                                                                            restoredCar =
-                                                                                    window->grabWindow();
-                                                                    car->setProperty(
-                                                                            "visible",
-                                                                            false);
-                                                                    QTimer::singleShot(
-                                                                            150,
-                                                                            &application,
-                                                                            [&, filledAttached,
-                                                                             wireAttached,
-                                                                             filledVisible,
-                                                                             initialCarState,
-                                                                             carPixels,
-                                                                             filledPixels,
-                                                                             wireVisible,
-                                                                             wireCarState,
-                                                                             wirePixels,
-                                                                             restoredCarState,
-                                                                             restoredCar,
-                                                                             window]() {
-                                                                                const qsizetype
-                                                                                        restoredCarPixels =
-                                                                                                DifferentPixelCount(
-                                                                                                        restoredCar,
-                                                                                                        window->grabWindow());
-                                                                                const bool
-                                                                                        pixelCaptureAvailable =
-                                                                                                carPixels >
-                                                                                                100;
-                                                                                const bool
-                                                                                        renderedSceneVisible =
-                                                                                                !pixelCaptureAvailable ||
-                                                                                                (filledPixels >
-                                                                                                         100 &&
-                                                                                                 wirePixels >
-                                                                                                         100 &&
-                                                                                                 restoredCarPixels >
-                                                                                                         100);
-                                                                                completed =
-                                                                                        true;
-                                                                                exitCode =
-                                                                                        filledAttached &&
-                                                                                                wireAttached &&
-                                                                                                filledVisible &&
-                                                                                                wireVisible &&
-                                                                                                initialCarState &&
-                                                                                                wireCarState &&
-                                                                                                restoredCarState &&
-                                                                                                renderedSceneVisible &&
-                                                                                                editorStructure
-                                                                                        ? 0
-                                                                                        : 1;
-                                                                                if (exitCode !=
-                                                                                    0) {
-                                                                                    std::cerr
-                                                                                            << "viewer rendering failed: filledAttached="
-                                                                                            << filledAttached
-                                                                                            << ", wireAttached="
-                                                                                            << wireAttached
-                                                                                            << ", filledVisible="
-                                                                                            << filledVisible
-                                                                                            << ", wireVisible="
-                                                                                            << wireVisible
-                                                                                            << ", initialCarState="
-                                                                                            << initialCarState
-                                                                                            << ", wireCarState="
-                                                                                            << wireCarState
-                                                                                            << ", restoredCarState="
-                                                                                            << restoredCarState
-                                                                                            << ", editorStructure="
-                                                                                            << editorStructure
-                                                                                            << ", carPixels="
-                                                                                            << carPixels
-                                                                                            << ", pixelCaptureAvailable="
-                                                                                            << pixelCaptureAvailable
-                                                                                            << ", filledPixels="
-                                                                                            << filledPixels
-                                                                                            << ", wirePixels="
-                                                                                            << wirePixels
-                                                                                            << ", restoredCarPixels="
-                                                                                            << restoredCarPixels
-                                                                                            << '\n';
-                                                                                }
-                                                                                application.quit();
-                                                                            });
-                                                                });
-                                                    });
-                                        });
-                                        });
+                                QCoreApplication::processEvents();
+                                const bool wireframeState =
+                                        !filled->property("visible").toBool() &&
+                                        wire->property("visible").toBool() &&
+                                        ModelsHaveState(carFilledModels,
+                                                        expectedCarModels,
+                                                        false) &&
+                                        ModelsHaveState(carWireModels,
+                                                        expectedCarModels,
+                                                        true);
+                                root->setProperty("wireframeMode", false);
+                                QCoreApplication::processEvents();
+                                const bool restoredState =
+                                        ModelsHaveState(carFilledModels,
+                                                        expectedCarModels,
+                                                        true) &&
+                                        ModelsHaveState(carWireModels,
+                                                        expectedCarModels,
+                                                        false);
+
+                                completed = true;
+                                exitCode = geometryAttached && rootsVisible &&
+                                                initialModelState &&
+                                                bestSelectedInitially &&
+                                                baselineSelected &&
+                                                bestReselected &&
+                                                wireframeState && restoredState &&
+                                                editorStructure
+                                        ? 0
+                                        : 1;
+                                if (exitCode != 0) {
+                                    std::cerr
+                                            << "viewer run switching failed: geometry="
+                                            << geometryAttached
+                                            << ", roots=" << carRoots.size()
+                                            << ", filledModels="
+                                            << carFilledModels.size()
+                                            << ", wireModels="
+                                            << carWireModels.size()
+                                            << ", expectedModels="
+                                            << expectedCarModels
+                                            << ", initial="
+                                            << initialModelState
+                                            << ", bestInitial="
+                                            << bestSelectedInitially
+                                            << ", baselineSelected="
+                                            << baselineSelected
+                                            << ", bestReselected="
+                                            << bestReselected
+                                            << ", wireframe="
+                                            << wireframeState
+                                            << ", restored=" << restoredState
+                                            << ", editorStructure="
+                                            << editorStructure << '\n';
+                                }
+                                static_cast<void>(quickWindow);
+                                application.quit();
                             });
                 });
             });

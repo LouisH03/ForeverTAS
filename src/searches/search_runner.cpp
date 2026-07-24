@@ -33,6 +33,90 @@ void CheckCancellation(const SearchRunControl *control) {
     }
 }
 
+void ReportProgress(const SearchRunControl *control,
+                    SearchProgressStage stage,
+                    std::uint64_t completedAttempts,
+                    std::uint64_t requestedAttempts) {
+    if (control != nullptr && control->progressChanged) {
+        control->progressChanged(
+                {stage, completedAttempts, requestedAttempts});
+    }
+}
+
+SearchTimelineFrame ToTimelineFrame(
+        const forevervalidator::experimental::PhysicsSandboxStateView &view) {
+    return {
+            static_cast<std::int64_t>(view.timeMs),
+            view.car.position.x,
+            view.car.position.y,
+            view.car.position.z,
+            view.car.rotationX,
+            view.car.rotationY,
+            view.car.rotationZ,
+            view.car.rotationW,
+            view.accelerate,
+            view.brake,
+            view.steering};
+}
+
+std::vector<SearchTimelineFrame> SampleBestTimeline(
+        const SearchRequest &request,
+        const forevervalidator::AssetBytes &replay,
+        const forevervalidator::ReplayIdentity &identity,
+        const std::vector<
+                forevervalidator::experimental::PhysicsSandboxInputEvent>
+                &inputs,
+        const SearchRunControl *control) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    CheckCancellation(control);
+    AssetSource source = Require(
+            OpenInstalledPackDirectory(request.packDirectory),
+            "opening pack directory for final sampling");
+    PhysicsSandboxOptions options;
+    options.backend = SimulationBackend::Reference;
+    options.tickDurationMs = kSearchTickDurationMs;
+    PhysicsSandbox sandbox = Require(
+            CreatePhysicsSandbox(std::move(source), options),
+            "creating final-sampling sandbox");
+    PhysicsSandboxStateView state = Require(
+            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading replay for final sampling");
+    Require(sandbox.ReplaceInputs(inputs),
+            "replacing best inputs for final sampling");
+    state = Require(sandbox.ReadState(),
+                    "reading final-sampling initial state");
+    if (state.durationMs % kSearchTickDurationMs != 0u) {
+        throw std::runtime_error(
+                "replay duration is not aligned to the search tick duration");
+    }
+
+    const std::uint64_t finalTickCount =
+            state.durationMs / kSearchTickDurationMs;
+    std::vector<SearchTimelineFrame> frames;
+    frames.reserve(static_cast<std::size_t>(finalTickCount + 1u));
+    frames.push_back(ToTimelineFrame(state));
+    ReportProgress(control,
+                   SearchProgressStage::FinalSampling,
+                   0u,
+                   finalTickCount);
+
+    for (std::uint64_t tick = 1u; tick <= finalTickCount; ++tick) {
+        CheckCancellation(control);
+        state = Require(sandbox.AdvanceTicks(1u),
+                        "sampling best-run timeline");
+        frames.push_back(ToTimelineFrame(state));
+        if (tick == finalTickCount || tick % 128u == 0u) {
+            ReportProgress(control,
+                           SearchProgressStage::FinalSampling,
+                           tick,
+                           finalTickCount);
+        }
+    }
+    return frames;
+}
+
 }  // namespace
 
 SearchResult RunSearch(const SearchRequest &request,
@@ -115,12 +199,16 @@ SearchResult RunSearch(const SearchRequest &request,
             evaluationRegistration->create(
                     request.evaluationTarget.settings,
                     kSearchTickDurationMs);
-    return search->Run({
+    SearchResult result = search->Run({
             sandbox,
             options.tickDurationMs,
             mutator,
             *evaluator,
             control});
+    CheckCancellation(control);
+    result.bestTimeline = SampleBestTimeline(
+            request, replay, identity, result.bestInputs, control);
+    return result;
 }
 
 }  // namespace forevertas

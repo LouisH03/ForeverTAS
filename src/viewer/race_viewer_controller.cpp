@@ -200,6 +200,8 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
     using namespace forevervalidator::experimental;
 
     RaceViewerLoadResult result;
+    result.packsDirectory = packsDirectory;
+    result.replayPath = replayPath;
     try {
         const ReplayIdentity identity{replayPath.toStdString()};
         AssetSource source = Require(
@@ -243,7 +245,6 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
             result.carEllipsoids.push_back(std::move(item));
         }
 
-        result.durationMs = static_cast<qint64>(state.durationMs);
         const std::uint64_t frameCount =
                 state.durationMs / kViewerTickDurationMs + 1u;
         result.frames.reserve(static_cast<std::size_t>(frameCount));
@@ -282,6 +283,63 @@ QString FormatTime(qint64 milliseconds) {
             .arg(minutes, 2, 10, QLatin1Char('0'))
             .arg(seconds, 2, 10, QLatin1Char('0'))
             .arg(millis, 3, 10, QLatin1Char('0'));
+}
+
+std::vector<RaceViewerFrame> ToViewerFrames(
+        const std::vector<SearchTimelineFrame> &frames) {
+    std::vector<RaceViewerFrame> result;
+    result.reserve(frames.size());
+    for (const SearchTimelineFrame &frame : frames) {
+        result.push_back({
+                frame.timeMs,
+                QVector3D(frame.positionX,
+                          frame.positionY,
+                          frame.positionZ),
+                QQuaternion(frame.rotationW,
+                            frame.rotationX,
+                            frame.rotationY,
+                            frame.rotationZ).normalized(),
+                frame.accelerate,
+                frame.brake,
+                frame.steering});
+    }
+    return result;
+}
+
+void UpdateRunPose(RaceViewerRun &run, qint64 timeMs) {
+    if (run.frames.empty()) {
+        run.position = {};
+        run.rotation = {};
+        return;
+    }
+    const auto upper = std::lower_bound(
+            run.frames.begin(),
+            run.frames.end(),
+            timeMs,
+            [](const RaceViewerFrame &frame, qint64 time) {
+                return frame.timeMs < time;
+            });
+    if (upper == run.frames.begin()) {
+        run.position = upper->position;
+        run.rotation = upper->rotation;
+        return;
+    }
+    if (upper == run.frames.end()) {
+        run.position = run.frames.back().position;
+        run.rotation = run.frames.back().rotation;
+        return;
+    }
+    const RaceViewerFrame &after = *upper;
+    const RaceViewerFrame &before = *(upper - 1);
+    const qint64 interval = after.timeMs - before.timeMs;
+    const float blend = interval > 0
+            ? static_cast<float>(timeMs - before.timeMs) /
+                    static_cast<float>(interval)
+            : 0.0f;
+    run.position = before.position * (1.0f - blend) +
+            after.position * blend;
+    run.rotation = QQuaternion::slerp(
+            before.rotation, after.rotation, blend);
 }
 
 }  // namespace
@@ -338,6 +396,45 @@ QVariantList RaceViewerController::carEllipsoids() const {
     return carEllipsoids_;
 }
 
+QVariantList RaceViewerController::runOptions() const {
+    QVariantList options;
+    options.reserve(static_cast<qsizetype>(runs_.size()));
+    for (const RaceViewerRun &run : runs_) {
+        QVariantMap option;
+        option.insert(QStringLiteral("id"), run.id);
+        option.insert(QStringLiteral("name"), run.name);
+        options.push_back(std::move(option));
+    }
+    return options;
+}
+
+QVariantList RaceViewerController::runPoses() const {
+    QVariantList poses;
+    poses.reserve(static_cast<qsizetype>(runs_.size()));
+    for (std::size_t index = 0u; index < runs_.size(); ++index) {
+        const RaceViewerRun &run = runs_[index];
+        QVariantMap pose;
+        pose.insert(QStringLiteral("id"), run.id);
+        pose.insert(QStringLiteral("name"), run.name);
+        pose.insert(QStringLiteral("index"),
+                    static_cast<qint64>(index));
+        pose.insert(QStringLiteral("position"), run.position);
+        pose.insert(QStringLiteral("rotation"), run.rotation);
+        pose.insert(QStringLiteral("selected"),
+                    run.id == selectedRunId_);
+        poses.push_back(std::move(pose));
+    }
+    return poses;
+}
+
+qint64 RaceViewerController::runCount() const {
+    return static_cast<qint64>(runs_.size());
+}
+
+QString RaceViewerController::selectedRunId() const {
+    return selectedRunId_;
+}
+
 QVector3D RaceViewerController::carPosition() const {
     return carPosition_;
 }
@@ -355,7 +452,8 @@ qint64 RaceViewerController::timeMs() const {
 }
 
 qint64 RaceViewerController::currentTick() const {
-    if (frames_.empty()) {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr || run->frames.empty()) {
         return 0;
     }
     return std::clamp<qint64>(
@@ -365,7 +463,10 @@ qint64 RaceViewerController::currentTick() const {
 }
 
 qint64 RaceViewerController::tickCount() const {
-    return static_cast<qint64>(frames_.size());
+    const RaceViewerRun *const run = selectedRun();
+    return run == nullptr
+            ? 0
+            : static_cast<qint64>(run->frames.size());
 }
 
 int RaceViewerController::tickDurationMs() const {
@@ -407,11 +508,41 @@ double RaceViewerController::sceneRadius() const {
 
 RaceViewerInputSample RaceViewerController::inputSample(qint64 tick) const
         noexcept {
-    if (tick < 0 || tick >= tickCount()) {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr || tick < 0 ||
+        tick >= static_cast<qint64>(run->frames.size())) {
         return {};
     }
-    const RaceViewerFrame &frame = frames_[static_cast<std::size_t>(tick)];
+    const RaceViewerFrame &frame =
+            run->frames[static_cast<std::size_t>(tick)];
     return {frame.accelerate, frame.brake, frame.steering};
+}
+
+void RaceViewerController::addSearchRun(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames) {
+    if (frames.empty()) {
+        setStatusText(QStringLiteral("Best run produced no viewable frames."));
+        return;
+    }
+    PendingRun pending{
+            packsDirectory,
+            replayPath,
+            ToViewerFrames(frames)};
+    if (loaded_ && loadedPacksDirectory_ == packsDirectory &&
+        loadedReplayPath_ == replayPath) {
+        upsertRun(QStringLiteral("best"),
+                  QStringLiteral("Best"),
+                  std::move(pending.frames),
+                  true);
+        setStatusText(QStringLiteral("Best run added"));
+        return;
+    }
+    pendingRun_ = std::move(pending);
+    if (workerThread_ == nullptr) {
+        beginReplayLoad(packsDirectory, replayPath);
+    }
 }
 
 void RaceViewerController::setTimeMs(qint64 value) {
@@ -425,7 +556,8 @@ void RaceViewerController::setTimeMs(qint64 value) {
 }
 
 void RaceViewerController::setCurrentTick(qint64 tick) {
-    if (frames_.empty()) {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr || run->frames.empty()) {
         setTimeMs(0);
         return;
     }
@@ -435,8 +567,25 @@ void RaceViewerController::setCurrentTick(qint64 tick) {
             clamped * static_cast<qint64>(kViewerTickDurationMs)));
 }
 
+void RaceViewerController::setSelectedRunId(const QString &value) {
+    const auto selected = std::find_if(
+            runs_.begin(), runs_.end(), [&value](const RaceViewerRun &run) {
+                return run.id == value;
+            });
+    if (selected == runs_.end() || selectedRunId_ == value) {
+        return;
+    }
+    pause();
+    selectedRunId_ = value;
+    refreshSelectedRun();
+    emit selectedRunChanged();
+    emit timelineChanged();
+    emit timeChanged();
+}
+
 void RaceViewerController::play() {
-    if (!loaded_ || frames_.empty() || playing_) {
+    const RaceViewerRun *const run = selectedRun();
+    if (!loaded_ || run == nullptr || run->frames.empty() || playing_) {
         return;
     }
     if (timeMs_ >= durationMs_) {
@@ -475,17 +624,25 @@ void RaceViewerController::jumpToEnd() {
 
 void RaceViewerController::loadReplay(const QString &packsDirectory,
                                       const QString &replayPath) {
+    pendingRun_.reset();
+    beginReplayLoad(packsDirectory, replayPath);
+}
+
+void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
+                                           const QString &replayPath) {
     if (workerThread_ != nullptr) {
         return;
     }
     const QFileInfo packsInfo(packsDirectory);
     const QFileInfo replayInfo(replayPath);
     if (!packsInfo.isDir() || !packsInfo.isReadable()) {
+        pendingRun_.reset();
         setStatusText(QStringLiteral(
                 "Select a readable installed Packs directory."));
         return;
     }
     if (!replayInfo.isFile() || !replayInfo.isReadable()) {
+        pendingRun_.reset();
         setStatusText(QStringLiteral("Select a readable replay file."));
         return;
     }
@@ -511,6 +668,13 @@ void RaceViewerController::loadReplay(const QString &packsDirectory,
         if (workerThread_ == thread) {
             workerThread_ = nullptr;
         }
+        if (pendingRun_ &&
+            (!loaded_ ||
+             loadedPacksDirectory_ != pendingRun_->packsDirectory ||
+             loadedReplayPath_ != pendingRun_->replayPath)) {
+            beginReplayLoad(pendingRun_->packsDirectory,
+                            pendingRun_->replayPath);
+        }
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
@@ -519,11 +683,13 @@ void RaceViewerController::loadReplay(const QString &packsDirectory,
 void RaceViewerController::applyLoadResult(RaceViewerLoadResult result) {
     pause();
     if (!result.error.isEmpty()) {
+        pendingRun_.reset();
         setStatusText(result.error);
         setLoading(false);
         return;
     }
     if (result.frames.empty()) {
+        pendingRun_.reset();
         setStatusText(QStringLiteral("Replay produced no viewable frames."));
         setLoading(false);
         return;
@@ -543,22 +709,41 @@ void RaceViewerController::applyLoadResult(RaceViewerLoadResult result) {
             false,
             result.track.boundsMin,
             result.track.boundsMax);
-    frames_ = std::move(result.frames);
     carEllipsoids_ = std::move(result.carEllipsoids);
-    durationMs_ = result.durationMs;
     triangleCount_ = result.triangleCount;
     sceneRadius_ = std::max(
             1.0, 0.5 * static_cast<double>(
                     (result.track.boundsMax - result.track.boundsMin).length()));
     timeMs_ = 0;
+    loadedPacksDirectory_ = result.packsDirectory;
+    loadedReplayPath_ = result.replayPath;
     loaded_ = true;
-    updatePose();
+    runs_.clear();
+    selectedRunId_.clear();
+    upsertRun(QStringLiteral("baseline"),
+              QStringLiteral("Baseline"),
+              std::move(result.frames),
+              true);
+    applyPendingRunIfReady();
     setStatusText(QStringLiteral("Replay loaded"));
     setLoading(false);
     emit sceneChanged();
-    emit timelineChanged();
-    emit timeChanged();
     emit stateChanged();
+}
+
+void RaceViewerController::applyPendingRunIfReady() {
+    if (!pendingRun_ || !loaded_ ||
+        pendingRun_->packsDirectory != loadedPacksDirectory_ ||
+        pendingRun_->replayPath != loadedReplayPath_) {
+        return;
+    }
+    std::vector<RaceViewerFrame> frames =
+            std::move(pendingRun_->frames);
+    pendingRun_.reset();
+    upsertRun(QStringLiteral("best"),
+              QStringLiteral("Best"),
+              std::move(frames),
+              true);
 }
 
 void RaceViewerController::setLoading(bool value) {
@@ -580,7 +765,8 @@ void RaceViewerController::setStatusText(const QString &value) {
 void RaceViewerController::clearLoadedScene() {
     pause();
     loaded_ = false;
-    frames_.clear();
+    runs_.clear();
+    selectedRunId_.clear();
     carEllipsoids_.clear();
     trackFilledGeometry_.clearMesh();
     trackWireGeometry_.clearMesh();
@@ -588,13 +774,78 @@ void RaceViewerController::clearLoadedScene() {
     carRotation_ = {};
     durationMs_ = 0;
     timeMs_ = 0;
+    loadedPacksDirectory_.clear();
+    loadedReplayPath_.clear();
     triangleCount_ = 0;
     sceneRadius_ = 1.0;
     emit sceneChanged();
     emit poseChanged();
+    emit runsChanged();
+    emit selectedRunChanged();
     emit timelineChanged();
     emit timeChanged();
     emit stateChanged();
+}
+
+const RaceViewerRun *RaceViewerController::selectedRun() const noexcept {
+    const auto selected = std::find_if(
+            runs_.begin(), runs_.end(), [this](const RaceViewerRun &run) {
+                return run.id == selectedRunId_;
+            });
+    return selected == runs_.end() ? nullptr : &*selected;
+}
+
+RaceViewerRun *RaceViewerController::selectedRun() noexcept {
+    const auto selected = std::find_if(
+            runs_.begin(), runs_.end(), [this](const RaceViewerRun &run) {
+                return run.id == selectedRunId_;
+            });
+    return selected == runs_.end() ? nullptr : &*selected;
+}
+
+void RaceViewerController::upsertRun(QString id,
+                                     QString name,
+                                     std::vector<RaceViewerFrame> frames,
+                                     bool select) {
+    if (frames.empty()) {
+        return;
+    }
+    auto existing = std::find_if(
+            runs_.begin(), runs_.end(), [&id](const RaceViewerRun &run) {
+                return run.id == id;
+            });
+    const QString runId = id;
+    if (existing == runs_.end()) {
+        runs_.push_back({std::move(id),
+                         std::move(name),
+                         std::move(frames),
+                         {},
+                         {}});
+    } else {
+        existing->name = std::move(name);
+        existing->frames = std::move(frames);
+    }
+    emit runsChanged();
+
+    if (selectedRunId_.isEmpty()) {
+        selectedRunId_ = runId;
+        emit selectedRunChanged();
+    } else if (select && selectedRunId_ != runId) {
+        setSelectedRunId(runId);
+        return;
+    }
+    refreshSelectedRun();
+    emit timelineChanged();
+    emit timeChanged();
+}
+
+void RaceViewerController::refreshSelectedRun() {
+    const RaceViewerRun *const run = selectedRun();
+    durationMs_ = run == nullptr || run->frames.empty()
+            ? 0
+            : static_cast<qint64>(run->frames.back().timeMs);
+    timeMs_ = std::clamp<qint64>(timeMs_, 0, durationMs_);
+    updatePose();
 }
 
 void RaceViewerController::waitForWorker() {
@@ -607,40 +858,26 @@ void RaceViewerController::waitForWorker() {
 }
 
 void RaceViewerController::updatePose() {
-    if (frames_.empty()) {
+    if (runs_.empty()) {
+        carPosition_ = {};
+        carRotation_ = {};
+        emit poseChanged();
         return;
     }
-    const auto upper = std::lower_bound(
-            frames_.begin(),
-            frames_.end(),
-            timeMs_,
-            [](const RaceViewerFrame &frame, qint64 time) {
-                return frame.timeMs < time;
-            });
-    if (upper == frames_.begin()) {
-        carPosition_ = upper->position;
-        carRotation_ = upper->rotation;
-    } else if (upper == frames_.end()) {
-        carPosition_ = frames_.back().position;
-        carRotation_ = frames_.back().rotation;
-    } else {
-        const RaceViewerFrame &after = *upper;
-        const RaceViewerFrame &before = *(upper - 1);
-        const qint64 interval = after.timeMs - before.timeMs;
-        const float blend = interval > 0
-                ? static_cast<float>(timeMs_ - before.timeMs) /
-                        static_cast<float>(interval)
-                : 0.0f;
-        carPosition_ = before.position * (1.0f - blend) +
-                after.position * blend;
-        carRotation_ = QQuaternion::slerp(
-                before.rotation, after.rotation, blend);
+    for (RaceViewerRun &run : runs_) {
+        UpdateRunPose(run, timeMs_);
+    }
+    const RaceViewerRun *const run = selectedRun();
+    if (run != nullptr) {
+        carPosition_ = run->position;
+        carRotation_ = run->rotation;
     }
     emit poseChanged();
 }
 
 void RaceViewerController::advancePlayback() {
-    if (!playing_ || frames_.empty()) {
+    const RaceViewerRun *const run = selectedRun();
+    if (!playing_ || run == nullptr || run->frames.empty()) {
         return;
     }
     const qint64 elapsedTicks = playbackClock_.elapsed() /

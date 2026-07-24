@@ -37,6 +37,7 @@ SearchController::SearchController(const QStringList &packsSearchPatterns,
 }
 
 void SearchController::initialize(const QStringList *packsSearchPatterns) {
+    qRegisterMetaType<SearchCompletionPtr>();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
@@ -121,6 +122,10 @@ QString SearchController::statusText() const {
 
 QString SearchController::resultText() const {
     return resultText_;
+}
+
+QString SearchController::bestInputsText() const {
+    return bestInputsText_;
 }
 
 #define FOREVERTAS_DEFINE_STRING_SETTER(Method, Member, Signal, Key)          \
@@ -264,6 +269,8 @@ void SearchController::startSearch() {
     }
 
     setResultText({});
+    setBestInputsText({});
+    lastCompletion_.reset();
     setProgress(true, 0.0);
     setStatusText(QStringLiteral("Starting search..."));
     setCancelling(false);
@@ -294,10 +301,13 @@ void SearchController::startSearch() {
     connect(worker,
             &SearchWorker::succeeded,
             this,
-            [this](const QString &summary) {
-                setResultText(summary);
+            [this](SearchCompletionPtr completion) {
+                lastCompletion_ = completion;
+                setResultText(completion->summary);
+                setBestInputsText(completion->inputsText);
                 setProgress(false, 1.0);
                 setStatusText(QStringLiteral("Search complete"));
+                emit searchCompleted(std::move(completion));
             });
     connect(worker, &SearchWorker::cancelled, this, [this]() {
         setStatusText(QStringLiteral("Cancelled"));
@@ -422,6 +432,14 @@ void SearchController::setResultText(const QString &value) {
         return;
     }
     resultText_ = value;
+    emit resultChanged();
+}
+
+void SearchController::setBestInputsText(const QString &value) {
+    if (bestInputsText_ == value) {
+        return;
+    }
+    bestInputsText_ = value;
     emit resultChanged();
 }
 

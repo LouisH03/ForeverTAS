@@ -1,5 +1,6 @@
 #include "evaluators/candidate_evaluator.h"
 #include "mutations/composite_input_mutator.h"
+#include "mutations/input_event_formatter.h"
 #include "mutations/input_event_utils.h"
 #include "searches/algorithm_registry.h"
 #include "searches/basic_brute_force_search.h"
@@ -28,6 +29,7 @@ using forevertas::SandboxInputAction;
 using forevertas::SandboxInputEvent;
 using forevervalidator::experimental::PhysicsSandboxInputValueKind;
 using forevervalidator::experimental::PhysicsSandboxStateView;
+using forevervalidator::experimental::PhysicsSandboxSwitchState;
 
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
@@ -102,6 +104,19 @@ SandboxInputEvent Steering(std::int32_t timeMs, float value) {
     event.action = SandboxInputAction::Steer;
     event.value.kind = PhysicsSandboxInputValueKind::Analog;
     event.value.analog = value;
+    return event;
+}
+
+SandboxInputEvent Switch(std::int32_t timeMs,
+                         SandboxInputAction action,
+                         bool pressed) {
+    SandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Switch;
+    event.value.switchState = pressed
+            ? PhysicsSandboxSwitchState::Pressed
+            : PhysicsSandboxSwitchState::Released;
     return event;
 }
 
@@ -310,6 +325,30 @@ bool TestModifierDeterminism() {
     return okay;
 }
 
+bool TestTmInterfaceInputFormatting() {
+    NumericLocaleGuard locale;
+    if (!locale.ActivateCommaDecimalLocale()) {
+        return Check(false, "no comma-decimal locale is installed for testing");
+    }
+    const std::vector<SandboxInputEvent> inputs{
+            Switch(0, SandboxInputAction::Accelerate, true),
+            Steering(10, -0.5f),
+            Switch(1230, SandboxInputAction::Brake, false),
+            Switch(1240, SandboxInputAction::SteerLeft, true),
+            Switch(1250, SandboxInputAction::Respawn, true),
+            Switch(1260, SandboxInputAction::RaceRunning, true)};
+    const std::string formatted =
+            forevertas::FormatTmInterfaceInputs(inputs);
+    return Check(
+            formatted ==
+                    "0.00 press up\n"
+                    "0.01 steer -32768\n"
+                    "1.23 release down\n"
+                    "1.24 press left\n"
+                    "1.25 press enter",
+            "TMInterface input formatting was incorrect or locale-sensitive");
+}
+
 bool TestRegistries() {
     bool okay = true;
     for (const auto &registration : forevertas::SearchAlgorithmRegistry()) {
@@ -452,6 +491,7 @@ int main() {
     const bool okay = TestEvaluationTargets() &&
             TestModifierComposition() &&
             TestModifierDeterminism() &&
+            TestTmInterfaceInputFormatting() &&
             TestRegistries() &&
             TestLocaleIndependentFloatingPointSettings() &&
             TestSearchSettingsAndCancellation();

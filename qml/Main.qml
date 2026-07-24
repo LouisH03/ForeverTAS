@@ -13,7 +13,42 @@ ApplicationWindow {
     required property var viewer
 
     property bool wireframeMode: false
-    property int viewerFps: 0
+
+    ListModel {
+        id: runPoseModel
+        dynamicRoles: true
+    }
+
+    function synchronizeRunPoses() {
+        const poses = window.viewer.runPoses
+        while (runPoseModel.count < poses.length) {
+            runPoseModel.append({
+                                    "runId": "",
+                                    "runName": "",
+                                    "runIndex": 0,
+                                    "runPosition": Qt.vector3d(0, 0, 0),
+                                    "runRotation": Qt.quaternion(1, 0, 0, 0),
+                                    "runSelected": false
+                                })
+        }
+        while (runPoseModel.count > poses.length)
+            runPoseModel.remove(runPoseModel.count - 1)
+        for (let index = 0; index < poses.length; ++index) {
+            const pose = poses[index]
+            runPoseModel.setProperty(index, "runId", pose.id)
+            runPoseModel.setProperty(index, "runName", pose.name)
+            runPoseModel.setProperty(index, "runIndex", pose.index)
+            runPoseModel.setProperty(index, "runPosition", pose.position)
+            runPoseModel.setProperty(index, "runRotation", pose.rotation)
+            runPoseModel.setProperty(index, "runSelected", pose.selected)
+        }
+    }
+
+    function runColor(index) {
+        const colors = ["#ff8a3d", "#4f9ddd", "#63c77b", "#c57aeb",
+                        "#e7c24f", "#54c7c1"]
+        return colors[index % colors.length]
+    }
 
     function stepViewerTick(delta) {
         if (!window.viewer.loaded) {
@@ -21,6 +56,22 @@ ApplicationWindow {
         }
         window.viewer.pause()
         window.viewer.currentTick = window.viewer.currentTick + delta
+    }
+
+    Component.onCompleted: Qt.callLater(synchronizeRunPoses)
+
+    Connections {
+        target: window.viewer
+
+        function onRunsChanged() {
+            window.synchronizeRunPoses()
+        }
+        function onPoseChanged() {
+            window.synchronizeRunPoses()
+        }
+        function onSelectedRunChanged() {
+            window.synchronizeRunPoses()
+        }
     }
 
     width: 1420
@@ -50,18 +101,6 @@ ApplicationWindow {
         autoRepeat: true
         enabled: window.viewer.loaded
         onActivated: window.stepViewerTick(-1)
-    }
-
-    FrameAnimation {
-        id: fpsAnimation
-        objectName: "fpsFrameAnimation"
-        running: window.visible
-
-        onTriggered: {
-            if (currentFrame % 15 === 0 && smoothFrameTime > 0) {
-                window.viewerFps = Math.round(1 / smoothFrameTime)
-            }
-        }
     }
 
     Shortcut {
@@ -262,46 +301,61 @@ ApplicationWindow {
                             }
                         }
 
-                        Node {
-                            objectName: "carCollisionRoot"
-                            position: window.viewer.carPosition
-                            rotation: window.viewer.carRotation
+                        Repeater3D {
+                            model: runPoseModel
 
-                            Repeater3D {
-                                model: window.viewer.carEllipsoids
+                            delegate: Node {
+                                id: runCarRoot
 
-                                delegate: Node {
-                                    required property var modelData
+                                required property string runId
+                                required property string runName
+                                required property int runIndex
+                                required property var runPosition
+                                required property var runRotation
+                                required property bool runSelected
 
-                                    position: modelData.position
-                                    rotation: modelData.rotation
-                                    scale: modelData.radii
+                                objectName: "runCarRoot"
+                                position: runPosition
+                                rotation: runRotation
+                                opacity: runSelected ? 1.0 : 0.72
 
-                                    Model {
-                                        objectName: "carFilledModel"
-                                        visible: !window.wireframeMode
-                                        geometry:
-                                            window.viewer.ellipsoidFilledGeometry
-                                        materials: DefaultMaterial {
-                                            lighting:
-                                                DefaultMaterial.NoLighting
-                                            vertexColorsEnabled: true
-                                            diffuseColor: "white"
-                                            cullMode:
-                                                Material.BackFaceCulling
+                                Repeater3D {
+                                    model: window.viewer.carEllipsoids
+
+                                    delegate: Node {
+                                        required property var modelData
+
+                                        position: modelData.position
+                                        rotation: modelData.rotation
+                                        scale: modelData.radii
+
+                                        Model {
+                                            objectName: "runCarFilledModel"
+                                            visible: !window.wireframeMode
+                                            geometry:
+                                                window.viewer.ellipsoidFilledGeometry
+                                            materials: DefaultMaterial {
+                                                lighting:
+                                                    DefaultMaterial.NoLighting
+                                                diffuseColor: window.runColor(
+                                                    runCarRoot.runIndex)
+                                                cullMode:
+                                                    Material.BackFaceCulling
+                                            }
                                         }
-                                    }
 
-                                    Model {
-                                        objectName: "carWireModel"
-                                        visible: window.wireframeMode
-                                        geometry:
-                                            window.viewer.ellipsoidWireGeometry
-                                        materials: DefaultMaterial {
-                                            lighting:
-                                                DefaultMaterial.NoLighting
-                                            diffuseColor: "#ff8a3d"
-                                            cullMode: Material.NoCulling
+                                        Model {
+                                            objectName: "runCarWireModel"
+                                            visible: window.wireframeMode
+                                            geometry:
+                                                window.viewer.ellipsoidWireGeometry
+                                            materials: DefaultMaterial {
+                                                lighting:
+                                                    DefaultMaterial.NoLighting
+                                                diffuseColor: window.runColor(
+                                                    runCarRoot.runIndex)
+                                                cullMode: Material.NoCulling
+                                            }
                                         }
                                     }
                                 }
@@ -367,8 +421,9 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: window.viewer.loaded
-                                      ? qsTr("%1 triangles · %2 ellipsoids")
+                                      ? qsTr("%1 triangles · %2 runs · %3 ellipsoids/run")
                                             .arg(window.viewer.triangleCount)
+                                            .arg(window.viewer.runCount)
                                             .arg(window.viewer.ellipsoidCount)
                                       : window.viewer.statusText
                                 color: "#aeb8b0"
@@ -407,25 +462,39 @@ ApplicationWindow {
                             }
                         }
 
-                        Rectangle {
-                            objectName: "fpsCounter"
-                            anchors.centerIn: parent
-                            width: fpsCounterLabel.implicitWidth + 16
-                            height: 28
-                            radius: 8
-                            color: "#99111412"
-                            border.width: 1
-                            border.color: "#39423d"
+                        StyledComboBox {
+                            id: runSelector
 
-                            Label {
-                                id: fpsCounterLabel
-                                objectName: "fpsCounterLabel"
-                                anchors.centerIn: parent
-                                text: qsTr("%1 FPS").arg(window.viewerFps)
-                                color: "#ffffff"
-                                font.family: "monospace"
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
+                            objectName: "runSelector"
+                            anchors.centerIn: parent
+                            width: 180
+                            model: window.viewer.runOptions
+                            textRole: "name"
+                            valueRole: "id"
+                            enabled: count > 0
+
+                            function synchronizeSelection() {
+                                const selected = indexOfValue(
+                                    window.viewer.selectedRunId)
+                                if (selected >= 0 && currentIndex !== selected)
+                                    currentIndex = selected
+                            }
+
+                            Component.onCompleted: synchronizeSelection()
+                            onModelChanged: Qt.callLater(synchronizeSelection)
+                            onActivated: selectedIndex =>
+                                window.viewer.selectedRunId =
+                                    valueAt(selectedIndex)
+
+                            Connections {
+                                target: window.viewer
+
+                                function onRunsChanged() {
+                                    Qt.callLater(runSelector.synchronizeSelection)
+                                }
+                                function onSelectedRunChanged() {
+                                    runSelector.synchronizeSelection()
+                                }
                             }
                         }
                     }
@@ -664,6 +733,7 @@ ApplicationWindow {
                             wrapMode: Text.WordWrap
                             font.pixelSize: 12
                         }
+
                     }
                 }
             }
@@ -691,18 +761,38 @@ ApplicationWindow {
                     return angleDeltaY * angleDeltaPixelScale
                 }
 
-                function scrollByWheelInput(pixelDeltaY, angleDeltaY) {
-                    if (!contentItem)
+                function scrollViewByWheelInput(scrollView,
+                                                pixelDeltaY,
+                                                angleDeltaY) {
+                    if (!scrollView || !scrollView.contentItem)
                         return
                     const deltaY = wheelDeltaPixels(pixelDeltaY, angleDeltaY)
                     if (deltaY === 0)
                         return
                     const maximum = Math.max(
-                        0, contentItem.contentHeight - availableHeight)
-                    contentItem.contentY = Math.max(
+                        0,
+                        scrollView.contentItem.contentHeight
+                        - scrollView.availableHeight)
+                    scrollView.contentItem.contentY = Math.max(
                         0,
                         Math.min(
-                            maximum, contentItem.contentY - deltaY))
+                            maximum,
+                            scrollView.contentItem.contentY - deltaY))
+                }
+
+                function scrollByWheelInput(pixelDeltaY, angleDeltaY) {
+                    scrollViewByWheelInput(
+                        settingsScroll, pixelDeltaY, angleDeltaY)
+                }
+
+                function wheelTargetsBestInputs(x, y) {
+                    if (!bestInputsScroll.visible)
+                        return false
+                    const local = bestInputsScroll.mapFromItem(
+                        settingsScroll, x, y)
+                    return local.x >= 0 && local.y >= 0
+                            && local.x < bestInputsScroll.width
+                            && local.y < bestInputsScroll.height
                 }
 
                 WheelHandler {
@@ -711,9 +801,16 @@ ApplicationWindow {
                     acceptedDevices:
                         PointerDevice.Mouse | PointerDevice.TouchPad
                     blocking: true
-                    onWheel: wheel =>
-                        settingsScroll.scrollByWheelInput(
-                            wheel.pixelDelta.y, wheel.angleDelta.y)
+                    onWheel: wheel => {
+                        const target = settingsScroll.wheelTargetsBestInputs(
+                            wheel.x, wheel.y)
+                                ? bestInputsScroll
+                                : settingsScroll
+                        settingsScroll.scrollViewByWheelInput(
+                            target,
+                            wheel.pixelDelta.y,
+                            wheel.angleDelta.y)
+                    }
                 }
 
                 ColumnLayout {
@@ -1010,6 +1107,68 @@ ApplicationWindow {
                                            === qsTr("Search failed")
                                    ? "#a23434"
                                    : "#3c443f"
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: window.controller.bestInputsText.length > 0
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Best inputs (TMInterface)")
+                                    font.weight: Font.Medium
+                                }
+
+                                Button {
+                                    objectName: "copyBestInputsButton"
+                                    text: qsTr("Copy all")
+                                    onClicked: {
+                                        bestInputsArea.selectAll()
+                                        bestInputsArea.copy()
+                                        bestInputsArea.select(0, 0)
+                                    }
+                                }
+                            }
+
+                            ScrollView {
+                                id: bestInputsScroll
+
+                                objectName: "bestInputsScrollView"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 260
+                                clip: true
+                                ScrollBar.horizontal.policy:
+                                    ScrollBar.AsNeeded
+                                ScrollBar.vertical.policy:
+                                    ScrollBar.AsNeeded
+
+                                TextArea {
+                                    id: bestInputsArea
+
+                                    objectName: "bestInputsTextArea"
+                                    width: Math.max(
+                                        bestInputsScroll.availableWidth,
+                                        contentWidth + leftPadding + rightPadding)
+                                    text: window.controller.bestInputsText
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: TextEdit.NoWrap
+                                    textFormat: TextEdit.PlainText
+                                    font.family: "monospace"
+                                    font.pixelSize: 12
+                                    color: "#202421"
+                                    background: Rectangle {
+                                        color: "#ffffff"
+                                        border.width: 1
+                                        border.color: "#c5ccc1"
+                                        radius: 6
+                                    }
+                                }
+                            }
                         }
                     }
 

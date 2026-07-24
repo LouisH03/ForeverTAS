@@ -62,10 +62,18 @@ and Race Viewer.
 The search runs on a worker thread and can be cancelled without blocking the
 interface. Each attempt applies the configured modifier passes in order,
 normalizes the resulting input timeline, evaluates it with the selected target,
-and restores the global best state at the end. Built-in targets cover finish
+and restores the global best state at the end. After winner selection,
+ForeverTAS performs one fresh full-replay simulation of the winner and records
+one viewer sample per physics tick. The winning input timeline is retained and
+shown as copy-ready TMInterface script text at the bottom of the settings panel.
+Built-in targets cover finish
 time, cuboid entry time, velocity, point distance, and weighted pose error.
 Built-in modifiers cover existing-event perturbation, smooth steering
 deformation, input insertion, input deletion, and random steering.
+
+The Race Viewer stores named runs. A centered selector switches the active
+timeline and camera focus between `Baseline`, `Best`, and future run types,
+while every run remains visible as a separate car in the 3D preview.
 
 See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
 extension contracts.

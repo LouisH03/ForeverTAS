@@ -1,5 +1,7 @@
 #include "app/search_worker.h"
 
+#include "mutations/input_event_formatter.h"
+
 #include <chrono>
 #include <exception>
 #include <utility>
@@ -63,6 +65,21 @@ void SearchWorker::run() {
             return;
         }
 
+        if (progress.stage == SearchProgressStage::FinalSampling) {
+            const double value = progress.requestedAttempts == 0u
+                    ? 1.0
+                    : static_cast<double>(progress.completedAttempts) /
+                              static_cast<double>(progress.requestedAttempts);
+            emit progressChanged(
+                    value,
+                    QStringLiteral("Sampling best run: %1 of %2 ticks")
+                            .arg(static_cast<qulonglong>(
+                                    progress.completedAttempts))
+                            .arg(static_cast<qulonglong>(
+                                    progress.requestedAttempts)));
+            return;
+        }
+
         const double value = progress.requestedAttempts == 0u
                 ? 0.0
                 : static_cast<double>(progress.completedAttempts) /
@@ -77,7 +94,17 @@ void SearchWorker::run() {
     };
 
     try {
-        emit succeeded(FormatResult(RunSearch(request_, &control)));
+        SearchResult result = RunSearch(request_, &control);
+        auto completion = std::make_shared<SearchCompletion>();
+        completion->summary = FormatResult(result);
+        completion->inputsText = QString::fromStdString(
+                FormatTmInterfaceInputs(result.bestInputs));
+        completion->packsDirectory =
+                QString::fromStdString(request_.packDirectory);
+        completion->replayPath = QString::fromStdString(request_.replayPath);
+        completion->bestInputs = std::move(result.bestInputs);
+        completion->bestTimeline = std::move(result.bestTimeline);
+        emit succeeded(std::move(completion));
     } catch (const SearchCancelled &) {
         emit cancelled();
     } catch (const std::exception &error) {

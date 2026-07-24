@@ -1,6 +1,7 @@
 #ifndef FOREVERTAS_VIEWER_RACE_VIEWER_CONTROLLER_H
 #define FOREVERTAS_VIEWER_RACE_VIEWER_CONTROLLER_H
 
+#include "searches/search_algorithm.h"
 #include "viewer/race_geometry.h"
 
 #include <QElapsedTimer>
@@ -12,6 +13,7 @@
 #include <QVector3D>
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 class QThread;
@@ -33,6 +35,14 @@ struct RaceViewerInputSample {
     float steering = 0.0f;
 };
 
+struct RaceViewerRun {
+    QString id;
+    QString name;
+    std::vector<RaceViewerFrame> frames;
+    QVector3D position{};
+    QQuaternion rotation{};
+};
+
 struct RaceViewerMeshBuffers {
     QByteArray filled;
     QByteArray wire;
@@ -42,10 +52,11 @@ struct RaceViewerMeshBuffers {
 
 struct RaceViewerLoadResult {
     QString error;
+    QString packsDirectory;
+    QString replayPath;
     RaceViewerMeshBuffers track;
     std::vector<RaceViewerFrame> frames;
     QVariantList carEllipsoids;
-    std::int64_t durationMs = 0;
     std::int64_t triangleCount = 0;
 };
 
@@ -62,6 +73,11 @@ class RaceViewerController final : public QObject {
                        ellipsoidWireGeometry CONSTANT)
     Q_PROPERTY(QVariantList carEllipsoids READ carEllipsoids NOTIFY
                        sceneChanged)
+    Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
+    Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
+    Q_PROPERTY(qint64 runCount READ runCount NOTIFY runsChanged)
+    Q_PROPERTY(QString selectedRunId READ selectedRunId WRITE setSelectedRunId
+                       NOTIFY selectedRunChanged)
     Q_PROPERTY(QVector3D carPosition READ carPosition NOTIFY poseChanged)
     Q_PROPERTY(QQuaternion carRotation READ carRotation NOTIFY poseChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY timelineChanged)
@@ -88,6 +104,10 @@ public:
     QQuick3DGeometry *ellipsoidFilledGeometry();
     QQuick3DGeometry *ellipsoidWireGeometry();
     QVariantList carEllipsoids() const;
+    QVariantList runOptions() const;
+    QVariantList runPoses() const;
+    qint64 runCount() const;
+    QString selectedRunId() const;
     QVector3D carPosition() const;
     QQuaternion carRotation() const;
     qint64 durationMs() const;
@@ -104,10 +124,15 @@ public:
     qint64 ellipsoidCount() const;
     double sceneRadius() const;
     RaceViewerInputSample inputSample(qint64 tick) const noexcept;
+    void addSearchRun(
+            const QString &packsDirectory,
+            const QString &replayPath,
+            const std::vector<SearchTimelineFrame> &frames);
 
 public slots:
     void setTimeMs(qint64 value);
     void setCurrentTick(qint64 tick);
+    void setSelectedRunId(const QString &value);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void togglePlayback();
@@ -123,9 +148,21 @@ signals:
     void timeChanged();
     void playbackChanged();
     void stateChanged();
+    void runsChanged();
+    void selectedRunChanged();
 
 private:
     void applyLoadResult(RaceViewerLoadResult result);
+    void beginReplayLoad(const QString &packsDirectory,
+                         const QString &replayPath);
+    void applyPendingRunIfReady();
+    void upsertRun(QString id,
+                   QString name,
+                   std::vector<RaceViewerFrame> frames,
+                   bool select);
+    const RaceViewerRun *selectedRun() const noexcept;
+    RaceViewerRun *selectedRun() noexcept;
+    void refreshSelectedRun();
     void setLoading(bool value);
     void setStatusText(const QString &value);
     void clearLoadedScene();
@@ -138,11 +175,21 @@ private:
     RaceGeometry trackWireGeometry_;
     RaceGeometry ellipsoidFilledGeometry_;
     RaceGeometry ellipsoidWireGeometry_;
-    std::vector<RaceViewerFrame> frames_;
+    struct PendingRun {
+        QString packsDirectory;
+        QString replayPath;
+        std::vector<RaceViewerFrame> frames;
+    };
+
+    std::vector<RaceViewerRun> runs_;
+    std::optional<PendingRun> pendingRun_;
     QVariantList carEllipsoids_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
     QString statusText_ = QStringLiteral("No replay loaded");
+    QString selectedRunId_;
+    QString loadedPacksDirectory_;
+    QString loadedReplayPath_;
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;

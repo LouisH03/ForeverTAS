@@ -10,6 +10,7 @@
 #include <exception>
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 
@@ -23,6 +24,7 @@ enum class SearchWinnerSource : std::uint8_t {
 enum class SearchProgressStage : std::uint8_t {
     Baseline,
     Mutations,
+    FinalSampling,
 };
 
 struct SearchProgress {
@@ -51,6 +53,20 @@ struct SearchExecutionContext {
     const SearchRunControl *control = nullptr;
 };
 
+struct SearchTimelineFrame {
+    std::int64_t timeMs = 0;
+    float positionX = 0.0f;
+    float positionY = 0.0f;
+    float positionZ = 0.0f;
+    float rotationX = 0.0f;
+    float rotationY = 0.0f;
+    float rotationZ = 0.0f;
+    float rotationW = 1.0f;
+    float accelerate = 0.0f;
+    float brake = 0.0f;
+    float steering = 0.0f;
+};
+
 struct SearchResult {
     SearchWinnerSource winnerSource = SearchWinnerSource::Baseline;
     std::optional<std::uint64_t> winningAttempt;
@@ -59,6 +75,10 @@ struct SearchResult {
     double bestEvaluationTimeMs = 0.0;
     std::string bestEvaluationDescription;
     forevervalidator::experimental::PhysicsSandboxStateView bestState;
+    std::vector<
+            forevervalidator::experimental::PhysicsSandboxInputEvent>
+            bestInputs;
+    std::vector<SearchTimelineFrame> bestTimeline;
     std::uint64_t requestedAttempts = 0u;
     std::uint64_t executedAttempts = 0u;
     std::uint64_t skippedAttempts = 0u;

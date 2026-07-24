@@ -129,6 +129,7 @@ struct BestCandidate {
     std::size_t mutationCount = 0u;
     PhysicsSandboxStateView view;
     std::optional<PhysicsSandboxState> snapshot;
+    std::vector<PhysicsSandboxInputEvent> inputs;
 };
 
 std::optional<BasicBruteForceSettings> ParseBasicBruteForceSettings(
@@ -309,6 +310,8 @@ SearchResult BasicBruteForceSearch::Run(
             best.view = state;
             best.snapshot = Require(context.sandbox.CaptureState(),
                                     "capturing improved state");
+            best.inputs = Require(context.sandbox.ReadInputs(),
+                                  "reading improved inputs");
             if (source == SearchWinnerSource::Mutation) {
                 ++mutationImprovementCount;
             }
@@ -382,6 +385,8 @@ SearchResult BasicBruteForceSearch::Run(
             best.evaluation->timeMs,
             best.evaluation->description,
             best.view,
+            std::move(best.inputs),
+            {},
             settings_.attemptCount,
             executedAttempts,
             skippedAttempts,
