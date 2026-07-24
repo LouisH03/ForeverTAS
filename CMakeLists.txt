@@ -194,6 +194,8 @@ if(BUILD_TESTING)
         "Installed TMUF Packs directory used by the optional search smoke test")
     set(FOREVERTAS_TEST_REPLAY "" CACHE FILEPATH
         "Replay used by the optional search smoke test")
+    set(FOREVERTAS_TEST_SECOND_REPLAY "" CACHE FILEPATH
+        "Distinct replay used by optional viewer reload tests")
     if(FOREVERTAS_TEST_PACK_DIRECTORY AND FOREVERTAS_TEST_REPLAY)
         add_executable(forevertas-search-smoke
             tests/search_smoke.cpp)
@@ -213,22 +215,26 @@ if(BUILD_TESTING)
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
 
-        add_executable(forevertas-viewer-reload-smoke
-            tests/viewer_reload_smoke.cpp)
-        target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
-            forevertas_gui
-            Qt6::Gui)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(forevertas-viewer-reload-smoke PRIVATE
-                -Wall -Wextra -Werror)
+        if(FOREVERTAS_TEST_SECOND_REPLAY)
+            add_executable(forevertas-viewer-reload-smoke
+                tests/viewer_reload_smoke.cpp)
+            target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
+                forevertas_gui
+                Qt6::Gui)
+            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(forevertas-viewer-reload-smoke PRIVATE
+                    -Wall -Wextra -Werror)
+            endif()
+            add_test(NAME forevertas-viewer-reload
+                     COMMAND forevertas-viewer-reload-smoke
+                         "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                         "${FOREVERTAS_TEST_REPLAY}"
+                         "${FOREVERTAS_TEST_SECOND_REPLAY}")
+            set_tests_properties(forevertas-viewer-reload PROPERTIES
+                ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+                TIMEOUT 180)
+
         endif()
-        add_test(NAME forevertas-viewer-reload
-                 COMMAND forevertas-viewer-reload-smoke
-                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
-                     "${FOREVERTAS_TEST_REPLAY}")
-        set_tests_properties(forevertas-viewer-reload PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 180)
 
         add_executable(forevertas-viewer-smoke
             tests/viewer_smoke.cpp)
@@ -247,27 +253,31 @@ if(BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 180)
 
-        add_executable(forevertas-viewer-reload-qml-smoke
-            tests/viewer_reload_qml_smoke.cpp)
-        target_compile_definitions(forevertas-viewer-reload-qml-smoke PRIVATE
-            FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-        target_link_libraries(forevertas-viewer-reload-qml-smoke PRIVATE
-            forevertas_gui
-            Qt6::Qml
-            Qt6::Quick
-            Qt6::QuickControls2
-            Qt6::Widgets)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(forevertas-viewer-reload-qml-smoke PRIVATE
-                -Wall -Wextra -Werror)
+        if(FOREVERTAS_TEST_SECOND_REPLAY)
+            add_executable(forevertas-viewer-reload-qml-smoke
+                tests/viewer_reload_qml_smoke.cpp)
+            target_compile_definitions(forevertas-viewer-reload-qml-smoke PRIVATE
+                FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+            target_link_libraries(forevertas-viewer-reload-qml-smoke PRIVATE
+                forevertas_gui
+                Qt6::Qml
+                Qt6::Quick
+                Qt6::QuickControls2
+                Qt6::Widgets)
+            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(forevertas-viewer-reload-qml-smoke PRIVATE
+                    -Wall -Wextra -Werror)
+            endif()
+            add_test(NAME forevertas-viewer-reload-qml
+                     COMMAND forevertas-viewer-reload-qml-smoke
+                         "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                         "${FOREVERTAS_TEST_REPLAY}"
+                         "${FOREVERTAS_TEST_SECOND_REPLAY}")
+            set_tests_properties(forevertas-viewer-reload-qml PROPERTIES
+                ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software"
+                TIMEOUT 180)
+
         endif()
-        add_test(NAME forevertas-viewer-reload-qml
-                 COMMAND forevertas-viewer-reload-qml-smoke
-                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
-                     "${FOREVERTAS_TEST_REPLAY}")
-        set_tests_properties(forevertas-viewer-reload-qml PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software"
-            TIMEOUT 180)
 
         add_executable(forevertas-viewer-qml-smoke
             tests/viewer_qml_smoke.cpp)

@@ -21,6 +21,11 @@ ApplicationWindow {
         dynamicRoles: true
     }
 
+    ListModel {
+        id: carEllipsoidModel
+        dynamicRoles: true
+    }
+
     function synchronizeRunPoses() {
         const poses = window.viewer.runPoses
         while (runPoseModel.count < poses.length) {
@@ -48,6 +53,39 @@ ApplicationWindow {
         }
     }
 
+    function synchronizeCarEllipsoids() {
+        const ellipsoids = window.viewer.carEllipsoids
+        while (carEllipsoidModel.count < ellipsoids.length) {
+            carEllipsoidModel.append({
+                                         "ellipsoidIndex":
+                                             carEllipsoidModel.count,
+                                         "ellipsoidActive": false,
+                                         "ellipsoidPosition":
+                                             Qt.vector3d(0, 0, 0),
+                                         "ellipsoidRotation":
+                                             Qt.quaternion(1, 0, 0, 0),
+                                         "ellipsoidRadii":
+                                             Qt.vector3d(1, 1, 1)
+                                     })
+        }
+        for (let index = 0; index < carEllipsoidModel.count; ++index) {
+            const active = index < ellipsoids.length
+            carEllipsoidModel.setProperty(index, "ellipsoidActive", active)
+            if (!active)
+                continue
+            const ellipsoid = ellipsoids[index]
+            carEllipsoidModel.setProperty(index,
+                                          "ellipsoidPosition",
+                                          ellipsoid.position)
+            carEllipsoidModel.setProperty(index,
+                                          "ellipsoidRotation",
+                                          ellipsoid.rotation)
+            carEllipsoidModel.setProperty(index,
+                                          "ellipsoidRadii",
+                                          ellipsoid.radii)
+        }
+    }
+
     function runColor(index) {
         const colors = ["#ff8a3d", "#3d8dff", "#63c77b", "#c57aeb",
                         "#e7c24f", "#54c7c1"]
@@ -62,13 +100,19 @@ ApplicationWindow {
         window.viewer.currentTick = window.viewer.currentTick + delta
     }
 
-    Component.onCompleted: Qt.callLater(synchronizeRunPoses)
+    Component.onCompleted: Qt.callLater(function() {
+        synchronizeRunPoses()
+        synchronizeCarEllipsoids()
+    })
 
     Connections {
         target: window.viewer
 
         function onRunsChanged() {
             window.synchronizeRunPoses()
+        }
+        function onSceneChanged() {
+            window.synchronizeCarEllipsoids()
         }
         function onPoseChanged() {
             window.synchronizeRunPoses()
@@ -324,14 +368,20 @@ ApplicationWindow {
                                 rotation: runRotation
 
                                 Repeater3D {
-                                    model: window.viewer.carEllipsoids
+                                    model: carEllipsoidModel
 
                                     delegate: Node {
-                                        required property var modelData
+                                        required property int ellipsoidIndex
+                                        required property bool ellipsoidActive
+                                        required property var ellipsoidPosition
+                                        required property var ellipsoidRotation
+                                        required property var ellipsoidRadii
 
-                                        position: modelData.position
-                                        rotation: modelData.rotation
-                                        scale: modelData.radii
+                                        objectName: "runCarEllipsoidNode"
+                                        visible: ellipsoidActive
+                                        position: ellipsoidPosition
+                                        rotation: ellipsoidRotation
+                                        scale: ellipsoidRadii
 
                                         Model {
                                             objectName: "runCarFilledModel"
@@ -869,6 +919,7 @@ ApplicationWindow {
                         }
 
                         Button {
+                            objectName: "loadRaceViewerButton"
                             Layout.fillWidth: true
                             text: window.viewer.loading
                                   ? qsTr("Loading viewer...")

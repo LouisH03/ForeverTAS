@@ -80,10 +80,13 @@ deformation, input insertion, input deletion, and random steering.
 
 The complete visible settings pane owns vertical wheel scrolling, including
 areas occupied by sliders, dropdowns, and the best-input preview. Nested
-controls do not capture wheel input from the pane. Replay loads are serialized;
-a request made while an earlier load worker is finishing is queued rather than
-discarded, allowing repeated replay and car-geometry loads in one application
-instance.
+controls do not capture wheel input from the pane.
+
+Replay loads are serialized and transactional. The currently rendered scene
+stays attached while a replacement replay is sampled, then track, run, and car
+shape data are swapped only after the new scene is complete. This avoids
+tearing down nested Qt Quick 3D repeaters between loads and keeps the car visible
+across repeated replay and vehicle-family changes in one application instance.
 
 The Race Viewer stores named runs. A centered selector switches the active
 timeline and camera focus between `Baseline`, `Best`, and future run types,

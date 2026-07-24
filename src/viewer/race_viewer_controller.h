@@ -167,7 +167,6 @@ private:
     void refreshSelectedRun();
     void setLoading(bool value);
     void setStatusText(const QString &value);
-    void clearLoadedScene();
     void waitForWorker();
     void updatePose();
     void advancePlayback();

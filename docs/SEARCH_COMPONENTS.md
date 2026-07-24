@@ -335,11 +335,17 @@ The initially loaded replay creates the `Baseline` run. A completed search
 upserts `Best`. The same run container supports additional result types later
 without adding more controller fields.
 
-Replay loading is serialized. If another replay is requested while the active
-worker is still finishing, the latest request is queued and starts as soon as
-the worker exits. A monotonically increasing load serial prevents a late result
-from an older worker from replacing the newer scene. Both the C++ controller
-and the QML car-delegate layer are tested across consecutive loads.
+Replay loading is serialized and transactional. If another replay is requested
+while the active worker is still finishing, the latest request is queued and
+starts as soon as the worker exits. A monotonically increasing load serial
+prevents a late result from an older worker from replacing the newer scene.
+The current scene remains published while a replacement is loading; publishing
+an intermediate empty run or ellipsoid model would detach nested Qt Quick 3D
+render nodes. QML mirrors ellipsoid transforms into a stable `ListModel`, updates
+roles in place, and retains inactive delegates when vehicle shape counts shrink.
+The controller and QML regressions perform three real first-second-first loads;
+the QML test invokes the actual Load Race Viewer button for every load and checks
+current shape transforms plus rendered car pixels on a capable graphics backend.
 
 The settings pane uses one window-level wheel redirector over its entire visible
 rectangle. Mouse-wheel and touchpad vertical deltas update only the outer

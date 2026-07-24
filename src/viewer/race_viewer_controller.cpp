@@ -701,7 +701,9 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
         return;
     }
 
-    clearLoadedScene();
+    // Keep the published 3D scene attached until the replacement is complete.
+    // Publishing an empty run/ellipsoid model detaches nested Repeater3D render
+    // nodes on some Qt Quick 3D backends.
     setLoading(true);
     setStatusText(QStringLiteral(
             "Loading collision geometry and sampling replay..."));
@@ -824,31 +826,6 @@ void RaceViewerController::setStatusText(const QString &value) {
         return;
     }
     statusText_ = value;
-    emit stateChanged();
-}
-
-void RaceViewerController::clearLoadedScene() {
-    pause();
-    loaded_ = false;
-    runs_.clear();
-    selectedRunId_.clear();
-    carEllipsoids_.clear();
-    trackFilledGeometry_.clearMesh();
-    trackWireGeometry_.clearMesh();
-    carPosition_ = {};
-    carRotation_ = {};
-    durationMs_ = 0;
-    timeMs_ = 0;
-    loadedPacksDirectory_.clear();
-    loadedReplayPath_.clear();
-    triangleCount_ = 0;
-    sceneRadius_ = 1.0;
-    emit sceneChanged();
-    emit poseChanged();
-    emit runsChanged();
-    emit selectedRunChanged();
-    emit timelineChanged();
-    emit timeChanged();
     emit stateChanged();
 }
 
