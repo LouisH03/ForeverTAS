@@ -31,6 +31,9 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Quick3D
     QuickControls2
     Widgets)
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
+    find_package(Qt6 QUIET COMPONENTS GuiPrivate ShaderTools)
+endif()
 if(BUILD_TESTING)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
 endif()
@@ -98,12 +101,20 @@ target_link_libraries(forevertas_core PUBLIC
     ForeverValidator::native)
 
 add_library(forevertas_gui STATIC
+    src/viewer/gpu_ray_tracing_view.cpp
+    src/viewer/gpu_ray_tracing_view.h
+    src/viewer/material_classifier.cpp
+    src/viewer/material_classifier.h
     src/viewer/race_geometry.cpp
     src/viewer/race_geometry.h
+    src/viewer/ray_tracing_scene.cpp
+    src/viewer/ray_tracing_scene.h
     src/viewer/race_timeline_item.cpp
     src/viewer/race_timeline_item.h
     src/viewer/race_viewer_controller.cpp
     src/viewer/race_viewer_controller.h
+    src/viewer/visual_scene_pipeline.cpp
+    src/viewer/visual_scene_pipeline.h
     src/app/search_configuration_model.cpp
     src/app/search_configuration_model.h
     src/app/search_completion.h
@@ -124,6 +135,14 @@ target_link_libraries(forevertas_gui PUBLIC
     Qt6::Quick
     Qt6::Quick3D
     Qt6::Widgets)
+if(TARGET Qt6::GuiPrivate AND TARGET Qt6::ShaderTools)
+    target_compile_definitions(forevertas_gui PUBLIC
+        FOREVERTAS_GPU_RAY_TRACING=1)
+    target_link_libraries(forevertas_gui PRIVATE Qt6::GuiPrivate)
+else()
+    target_compile_definitions(forevertas_gui PUBLIC
+        FOREVERTAS_GPU_RAY_TRACING=0)
+endif()
 
 qt_add_executable(forevertas
     src/app/main.cpp)
@@ -189,6 +208,27 @@ qt_add_qml_module(forevertas
         qml/settings/Vector3Settings.qml
         qml/settings/VelocityEvaluationSettings.qml
         qml/settings/VolumeEntryEvaluationSettings.qml)
+file(GLOB FOREVERTAS_REPLACEMENT_TEXTURES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/*.png")
+qt_add_resources(forevertas "replacement-materials"
+    PREFIX "/materials"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials"
+    FILES ${FOREVERTAS_REPLACEMENT_TEXTURES})
+file(GLOB FOREVERTAS_ENVIRONMENT_TEXTURES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment/*.png")
+qt_add_resources(forevertas "environment-textures"
+    PREFIX "/environment"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment"
+    FILES ${FOREVERTAS_ENVIRONMENT_TEXTURES})
+if(TARGET Qt6::GuiPrivate AND TARGET Qt6::ShaderTools)
+    qt_add_shaders(forevertas "ray-tracing-shaders"
+        PREFIX "/raytracing"
+        GLSL "310 es,430"
+        FILES
+            shaders/raytrace.comp
+            shaders/raytrace_present.vert
+            shaders/raytrace_present.frag)
+endif()
 target_link_libraries(forevertas PRIVATE
     forevertas_gui
     Qt6::Gui
@@ -307,10 +347,20 @@ if(BUILD_TESTING)
         forevertas_gui
         Qt6::Test)
 
+    add_executable(forevertas-renderer-tests
+        tests/renderer_tests.cpp)
+    target_compile_definitions(forevertas-renderer-tests PRIVATE
+        FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(forevertas-renderer-tests PRIVATE
+        forevertas_gui
+        Qt6::Gui)
+
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(forevertas-strategy-tests PRIVATE
             -Wall -Wextra -Werror)
         target_compile_options(forevertas-controller-tests PRIVATE
+            -Wall -Wextra -Werror)
+        target_compile_options(forevertas-renderer-tests PRIVATE
             -Wall -Wextra -Werror)
     endif()
 
@@ -318,6 +368,10 @@ if(BUILD_TESTING)
              COMMAND forevertas-strategy-tests)
     add_test(NAME forevertas-controller
              COMMAND forevertas-controller-tests)
+    add_test(NAME forevertas-renderer
+             COMMAND forevertas-renderer-tests)
+    set_tests_properties(forevertas-renderer PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME forevertas-qml-smoke
              COMMAND forevertas --qml-smoke-test)
     set_tests_properties(forevertas-qml-smoke PROPERTIES
@@ -355,16 +409,40 @@ if(BUILD_TESTING)
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
 
+        add_executable(forevertas-render-scene-data-smoke
+            tests/render_scene_data_smoke.cpp)
+        target_link_libraries(forevertas-render-scene-data-smoke PRIVATE
+            forevertas_core)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-render-scene-data-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-render-scene-data
+                 COMMAND forevertas-render-scene-data-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-render-scene-data PROPERTIES
+            TIMEOUT 180)
+
+        add_executable(forevertas-viewer-reload-smoke
+            tests/viewer_reload_smoke.cpp)
+        target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
+            forevertas_gui
+            Qt6::Gui)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-viewer-reload-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-viewer-reload-same
+                 COMMAND forevertas-viewer-reload-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-viewer-reload-same PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 180)
+
         if(FOREVERTAS_TEST_SECOND_REPLAY)
-            add_executable(forevertas-viewer-reload-smoke
-                tests/viewer_reload_smoke.cpp)
-            target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
-                forevertas_gui
-                Qt6::Gui)
-            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-                target_compile_options(forevertas-viewer-reload-smoke PRIVATE
-                    -Wall -Wextra -Werror)
-            endif()
             add_test(NAME forevertas-viewer-reload
                      COMMAND forevertas-viewer-reload-smoke
                          "${FOREVERTAS_TEST_PACK_DIRECTORY}"
@@ -421,6 +499,16 @@ if(BUILD_TESTING)
 
         add_executable(forevertas-viewer-qml-smoke
             tests/viewer_qml_smoke.cpp)
+        qt_add_resources(forevertas-viewer-qml-smoke
+            "replacement-materials-test"
+            PREFIX "/materials"
+            BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials"
+            FILES ${FOREVERTAS_REPLACEMENT_TEXTURES})
+        qt_add_resources(forevertas-viewer-qml-smoke
+            "environment-textures-test"
+            PREFIX "/environment"
+            BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment"
+            FILES ${FOREVERTAS_ENVIRONMENT_TEXTURES})
         target_compile_definitions(forevertas-viewer-qml-smoke PRIVATE
             FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(forevertas-viewer-qml-smoke PRIVATE

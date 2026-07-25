@@ -4,6 +4,8 @@
 #include "physics_backend.h"
 #include "searches/search_algorithm.h"
 #include "viewer/race_geometry.h"
+#include "viewer/ray_tracing_scene.h"
+#include "viewer/visual_scene_pipeline.h"
 
 #include <QElapsedTimer>
 #include <QObject>
@@ -11,6 +13,7 @@
 #include <QString>
 #include <QTimer>
 #include <QVariantList>
+#include <QVector2D>
 #include <QVector3D>
 
 #include <cstdint>
@@ -58,9 +61,21 @@ struct RaceViewerLoadResult {
     QString replayPath;
     PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
     RaceViewerMeshBuffers track;
+    std::vector<StaticVisualBatch> visualBatches;
+    std::shared_ptr<const RayTracingSceneData> rayTracingScene;
+    QVariantList visualMaterials;
+    QVariantList visualBatchItems;
+    QVector3D visualBoundsMin{};
+    QVector3D visualBoundsMax{};
     std::vector<RaceViewerFrame> frames;
     QVariantList carEllipsoids;
     std::int64_t triangleCount = 0;
+    std::int64_t visualTriangleCount = 0;
+    std::int64_t sourceVisualObjectCount = 0;
+    std::int64_t sourceVisualMeshCount = 0;
+    std::int64_t duplicateVisualObjectCount = 0;
+    std::int64_t materialCount = 0;
+    std::int64_t diagnosticCount = 0;
 };
 
 class RaceViewerController final : public QObject {
@@ -75,6 +90,12 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(QQuick3DGeometry *ellipsoidWireGeometry READ
                        ellipsoidWireGeometry CONSTANT)
     Q_PROPERTY(QVariantList carEllipsoids READ carEllipsoids NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(QVariantList visualInstances READ visualInstances NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(
+            QVariantList visualBatches READ visualBatches NOTIFY sceneChanged)
+    Q_PROPERTY(QVariantList visualMaterials READ visualMaterials NOTIFY
                        sceneChanged)
     Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
     Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
@@ -95,8 +116,22 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(qint64 triangleCount READ triangleCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 visualTriangleCount READ visualTriangleCount NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(qint64 visualMeshCount READ visualMeshCount NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(
+            qint64 visualBatchCount READ visualBatchCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 sourceVisualObjectCount READ sourceVisualObjectCount
+                       NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 shadowCount READ shadowCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 materialCount READ materialCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 diagnosticCount READ diagnosticCount NOTIFY
+                       sceneChanged)
     Q_PROPERTY(qint64 ellipsoidCount READ ellipsoidCount NOTIFY sceneChanged)
     Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY sceneChanged)
+    Q_PROPERTY(QVector3D sceneBoundsMin READ sceneBoundsMin NOTIFY sceneChanged)
+    Q_PROPERTY(QVector3D sceneBoundsMax READ sceneBoundsMax NOTIFY sceneChanged)
 
 public:
     explicit RaceViewerController(QObject *parent = nullptr);
@@ -107,6 +142,9 @@ public:
     QQuick3DGeometry *ellipsoidFilledGeometry();
     QQuick3DGeometry *ellipsoidWireGeometry();
     QVariantList carEllipsoids() const;
+    QVariantList visualInstances() const;
+    QVariantList visualBatches() const;
+    QVariantList visualMaterials() const;
     QVariantList runOptions() const;
     QVariantList runPoses() const;
     qint64 runCount() const;
@@ -124,8 +162,18 @@ public:
     bool loading() const;
     QString statusText() const;
     qint64 triangleCount() const;
+    qint64 visualTriangleCount() const;
+    qint64 visualMeshCount() const;
+    qint64 visualBatchCount() const;
+    qint64 sourceVisualObjectCount() const;
+    qint64 shadowCount() const;
+    qint64 materialCount() const;
+    qint64 diagnosticCount() const;
     qint64 ellipsoidCount() const;
     double sceneRadius() const;
+    QVector3D sceneBoundsMin() const;
+    QVector3D sceneBoundsMax() const;
+    std::shared_ptr<const RayTracingSceneData> rayTracingScene() const;
     RaceViewerInputSample inputSample(qint64 tick) const noexcept;
     void addSearchRun(
             const QString &packsDirectory,
@@ -151,6 +199,8 @@ public slots:
     Q_INVOKABLE void loadReplay(const QString &packsDirectory,
                                 const QString &replayPath,
                                 const QString &backendId);
+    Q_INVOKABLE QVector2D cameraClipPlanes(const QVector3D &cameraPosition,
+                                           double cameraDistance) const;
 
 signals:
     void sceneChanged();
@@ -185,6 +235,8 @@ private:
 
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
+    std::vector<std::unique_ptr<RaceGeometry>> visualGeometries_;
+    std::shared_ptr<const RayTracingSceneData> rayTracingScene_;
     std::vector<std::unique_ptr<RaceGeometry>>
             ellipsoidFilledGeometries_;
     RaceGeometry ellipsoidWireGeometry_;
@@ -204,6 +256,8 @@ private:
     std::optional<ReplayLoadRequest> queuedReplayLoad_;
     std::optional<PendingRun> pendingRun_;
     QVariantList carEllipsoids_;
+    QVariantList visualBatches_;
+    QVariantList visualMaterials_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
     QString statusText_ = QStringLiteral("No replay loaded");
@@ -214,7 +268,15 @@ private:
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;
+    qint64 visualTriangleCount_ = 0;
+    qint64 sourceVisualObjectCount_ = 0;
+    qint64 sourceVisualMeshCount_ = 0;
+    qint64 duplicateVisualObjectCount_ = 0;
+    qint64 materialCount_ = 0;
+    qint64 diagnosticCount_ = 0;
     double sceneRadius_ = 1.0;
+    QVector3D sceneBoundsMin_{};
+    QVector3D sceneBoundsMax_{};
     qint64 playbackStartTick_ = 0;
     bool loaded_ = false;
     bool loading_ = false;

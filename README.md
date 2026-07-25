@@ -44,6 +44,11 @@ The committed dependency hash only needs to change when ForeverTAS deliberately
 adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
+The pinned dependency is extended by
+`cmake/patches/forevervalidator-race-viewer.patch`. The patch is produced from
+a worktree at the pinned revision and adds the immutable visual render-scene
+API without requiring a local Validator checkout at build time.
+
 ## Desktop application
 
 Build and launch the Qt 6 Quick application:
@@ -92,11 +97,17 @@ shape data are swapped only after the new scene is complete. This avoids
 tearing down nested Qt Quick 3D repeaters between loads and keeps the car visible
 across repeated replay and vehicle-family changes in one application instance.
 
-The Race Viewer stores named runs. A centered selector switches the active
+The Race Viewer stores named runs. A header selector switches the active
 timeline and camera focus between `Baseline`, `Best`, and future run types,
 while every run remains visible as a separate car in the 3D preview. Car colors
 are baked into separate flat-shaded vertex-color meshes: Baseline preserves the
 original orange palette exactly and Best uses the equivalent blue palette.
+
+The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
+with ShaderTools, the `Textured (RT)` render mode enables the real-time QRhi
+compute renderer with GPU BVH traversal, ray-traced shadows and reflections,
+and immediate noise-free output. Qt 6.5 and 6.6 keep the full raster renderer
+and omit only that optional mode.
 
 ## Portable bundles
 
@@ -109,3 +120,6 @@ behavior, artifact layouts, signing notes, and clean-machine release checks.
 
 See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
 extension contracts.
+
+See `docs/RENDERER.md` for visual-scene extraction, replacement materials,
+fallbacks, caching, render modes, and asset ownership.

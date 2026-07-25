@@ -1,6 +1,7 @@
 #include "viewer/race_viewer_controller.h"
 
 #include "time_format.h"
+#include "viewer/material_classifier.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
@@ -177,6 +178,30 @@ RaceViewerMeshBuffers BuildMeshBuffers(
     return result;
 }
 
+QVariantMap MaterialMap(ReplacementMaterialClass materialClass) {
+    const ReplacementMaterial replacement = ReplacementFor(materialClass);
+    QVariantMap map;
+    map.insert(QStringLiteral("materialClass"),
+               MaterialClassName(materialClass));
+    map.insert(QStringLiteral("baseColor"), replacement.baseColor);
+    map.insert(QStringLiteral("debugColor"), replacement.debugColor);
+    map.insert(QStringLiteral("baseTexture"), replacement.baseTexture);
+    map.insert(QStringLiteral("normalTexture"), replacement.normalTexture);
+    map.insert(QStringLiteral("roughness"), replacement.roughness);
+    map.insert(QStringLiteral("metalness"), replacement.metalness);
+    map.insert(QStringLiteral("opacity"), replacement.opacity);
+    map.insert(QStringLiteral("textureScale"),
+               replacement.worldUvScale > 0.0f
+                       ? 1.0f
+                       : replacement.textureScale);
+    map.insert(QStringLiteral("emissiveStrength"),
+               replacement.emissiveStrength);
+    map.insert(QStringLiteral("twoSided"), replacement.twoSided);
+    map.insert(QStringLiteral("unknown"),
+               materialClass == ReplacementMaterialClass::Unknown);
+    return map;
+}
+
 std::vector<ViewerTriangle> UnitEllipsoidTriangles() {
     constexpr unsigned Latitudes = 12u;
     constexpr unsigned Longitudes = 20u;
@@ -256,6 +281,9 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
                 "loading replay failed");
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
+        PhysicsSandboxRenderSceneHandle renderScene = Require(
+                sandbox.ReadRenderScene(),
+                "reading visual render scene failed");
 
         std::vector<ViewerTriangle> triangles;
         triangles.reserve(scene.collisionTriangles.size());
@@ -267,6 +295,81 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
         result.track = BuildMeshBuffers(triangles, -1);
         result.triangleCount = static_cast<qint64>(triangles.size());
 
+        StaticVisualBatchResult batches =
+                BuildStaticVisualBatches(*renderScene);
+        result.rayTracingScene = BuildRayTracingScene(batches.batches);
+        result.materialCount =
+                static_cast<qint64>(renderScene->materials.size());
+        result.diagnosticCount +=
+                static_cast<qint64>(renderScene->diagnostics.size()) +
+                static_cast<qint64>(batches.invalidInstanceCount) +
+                static_cast<qint64>(batches.duplicateInstanceCount);
+        result.sourceVisualObjectCount =
+                static_cast<qint64>(batches.defaultVisibleInstanceCount);
+        result.sourceVisualMeshCount =
+                static_cast<qint64>(batches.sourceMeshCount);
+        result.duplicateVisualObjectCount =
+                static_cast<qint64>(batches.duplicateInstanceCount);
+        result.visualTriangleCount =
+                static_cast<qint64>(batches.defaultTriangleCount);
+        result.visualBoundsMin = batches.defaultBoundsMin;
+        result.visualBoundsMax = batches.defaultBoundsMax;
+
+        struct MaterialBindingKey {
+            ReplacementMaterialClass materialClass =
+                    ReplacementMaterialClass::Unknown;
+            bool vertexColors = false;
+        };
+        std::vector<MaterialBindingKey> materialBindings;
+        result.visualBatches = std::move(batches.batches);
+        result.visualBatchItems.reserve(result.visualBatches.size());
+        for (std::size_t batchIndex = 0u;
+             batchIndex < result.visualBatches.size(); ++batchIndex) {
+            const StaticVisualBatch &batch = result.visualBatches[batchIndex];
+            const bool applyVertexColors =
+                    batch.hasVertexColors &&
+                    ReplacementFor(batch.materialClass).applyVertexColors;
+            std::size_t materialBindingIndex = 0u;
+            for (; materialBindingIndex < materialBindings.size();
+                 ++materialBindingIndex) {
+                const MaterialBindingKey &binding =
+                        materialBindings[materialBindingIndex];
+                if (binding.materialClass == batch.materialClass &&
+                    binding.vertexColors == applyVertexColors) {
+                    break;
+                }
+            }
+            if (materialBindingIndex == materialBindings.size()) {
+                materialBindings.push_back(
+                        {batch.materialClass, applyVertexColors});
+                QVariantMap binding = MaterialMap(batch.materialClass);
+                binding.insert(QStringLiteral("vertexColors"),
+                               applyVertexColors);
+                if (batch.materialClass == ReplacementMaterialClass::Unknown) {
+                    ++result.diagnosticCount;
+                }
+                result.visualMaterials.push_back(std::move(binding));
+            }
+
+            QVariantMap item;
+            item.insert(QStringLiteral("batchIndex"),
+                        static_cast<qint64>(batchIndex));
+            item.insert(QStringLiteral("materialBindingIndex"),
+                        static_cast<qint64>(materialBindingIndex));
+            item.insert(QStringLiteral("materialClass"),
+                        MaterialClassName(batch.materialClass));
+            item.insert(QStringLiteral("defaultVisible"),
+                        batch.defaultVisible);
+            item.insert(QStringLiteral("sourceInstanceCount"),
+                        static_cast<qint64>(batch.sourceInstanceCount));
+            item.insert(QStringLiteral("triangleCount"),
+                        static_cast<qint64>(batch.triangleCount));
+            result.visualBatchItems.push_back(std::move(item));
+        }
+        if (result.sourceVisualObjectCount == 0) {
+            result.visualBoundsMin = result.track.boundsMin;
+            result.visualBoundsMax = result.track.boundsMax;
+        }
         for (const PhysicsSandboxEllipsoid &ellipsoid :
              scene.carEllipsoids) {
             QVariantMap item;
@@ -434,6 +537,18 @@ QVariantList RaceViewerController::carEllipsoids() const {
     return carEllipsoids_;
 }
 
+QVariantList RaceViewerController::visualInstances() const {
+    return visualBatches_;
+}
+
+QVariantList RaceViewerController::visualBatches() const {
+    return visualBatches_;
+}
+
+QVariantList RaceViewerController::visualMaterials() const {
+    return visualMaterials_;
+}
+
 QVariantList RaceViewerController::runOptions() const {
     QVariantList options;
     options.reserve(static_cast<qsizetype>(runs_.size()));
@@ -542,12 +657,58 @@ qint64 RaceViewerController::triangleCount() const {
     return triangleCount_;
 }
 
+qint64 RaceViewerController::visualTriangleCount() const {
+    return visualTriangleCount_;
+}
+
+qint64 RaceViewerController::visualMeshCount() const {
+    return sourceVisualMeshCount_;
+}
+
+qint64 RaceViewerController::visualBatchCount() const {
+    return static_cast<qint64>(visualGeometries_.size());
+}
+
+qint64 RaceViewerController::sourceVisualObjectCount() const {
+    return sourceVisualObjectCount_;
+}
+
+qint64 RaceViewerController::shadowCount() const { return 0; }
+
+qint64 RaceViewerController::materialCount() const {
+    return materialCount_;
+}
+
+qint64 RaceViewerController::diagnosticCount() const {
+    return diagnosticCount_;
+}
+
 qint64 RaceViewerController::ellipsoidCount() const {
     return carEllipsoids_.size();
 }
 
-double RaceViewerController::sceneRadius() const {
-    return sceneRadius_;
+double RaceViewerController::sceneRadius() const { return sceneRadius_; }
+
+QVector3D RaceViewerController::sceneBoundsMin() const {
+    return sceneBoundsMin_;
+}
+
+QVector3D RaceViewerController::sceneBoundsMax() const {
+    return sceneBoundsMax_;
+}
+
+std::shared_ptr<const RayTracingSceneData>
+RaceViewerController::rayTracingScene() const {
+    return rayTracingScene_;
+}
+
+QVector2D
+RaceViewerController::cameraClipPlanes(const QVector3D &cameraPosition,
+                                       double cameraDistance) const {
+    const CameraClipPlanes planes = CalculateCameraClipPlanes(
+            cameraPosition, static_cast<float>(cameraDistance), sceneBoundsMin_,
+            sceneBoundsMax_);
+    return {planes.nearPlane, planes.farPlane};
 }
 
 RaceViewerInputSample RaceViewerController::inputSample(qint64 tick) const
@@ -743,7 +904,7 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
     // nodes on some Qt Quick 3D backends.
     setLoading(true);
     setStatusText(QStringLiteral(
-            "Loading collision geometry and sampling replay..."));
+            "Loading visual geometry, materials, and replay..."));
 
     const std::uint64_t loadSerial = ++loadSerial_;
     QThread *const thread = QThread::create(
@@ -817,11 +978,55 @@ void RaceViewerController::applyLoadResult(
             false,
             result.track.boundsMin,
             result.track.boundsMax);
+    std::vector<std::unique_ptr<RaceGeometry>> visualGeometries;
+    visualGeometries.reserve(result.visualBatches.size());
+    for (StaticVisualBatch &batch : result.visualBatches) {
+        auto geometry = std::make_unique<RaceGeometry>();
+        const int indexCount =
+                static_cast<int>(batch.indices.size() /
+                                 static_cast<qsizetype>(sizeof(std::uint32_t)));
+        geometry->setIndexedMesh(
+                std::move(batch.vertices), std::move(batch.indices),
+                StaticVisualVertexStride, true, true, true, true,
+                batch.hasVertexColors, batch.boundsMin, batch.boundsMax,
+                {{0, indexCount}});
+        visualGeometries.push_back(std::move(geometry));
+    }
+    QVariantList visualBatches;
+    visualBatches.reserve(result.visualBatchItems.size());
+    for (QVariant &entry : result.visualBatchItems) {
+        QVariantMap item = entry.toMap();
+        const qint64 batchIndex =
+                item.value(QStringLiteral("batchIndex")).toLongLong();
+        if (batchIndex < 0 ||
+            batchIndex >= static_cast<qint64>(visualGeometries.size())) {
+            continue;
+        }
+        item.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(static_cast<QObject *>(
+                        visualGeometries[static_cast<std::size_t>(batchIndex)]
+                                .get())));
+        visualBatches.push_back(std::move(item));
+    }
+    visualGeometries_ = std::move(visualGeometries);
+    rayTracingScene_ = std::move(result.rayTracingScene);
+    visualMaterials_ = std::move(result.visualMaterials);
+    visualBatches_ = std::move(visualBatches);
     carEllipsoids_ = std::move(result.carEllipsoids);
     triangleCount_ = result.triangleCount;
+    visualTriangleCount_ = result.visualTriangleCount;
+    sourceVisualObjectCount_ = result.sourceVisualObjectCount;
+    sourceVisualMeshCount_ = result.sourceVisualMeshCount;
+    duplicateVisualObjectCount_ = result.duplicateVisualObjectCount;
+    materialCount_ = result.materialCount;
+    diagnosticCount_ = result.diagnosticCount;
+    sceneBoundsMin_ = result.visualBoundsMin;
+    sceneBoundsMax_ = result.visualBoundsMax;
     sceneRadius_ = std::max(
             1.0, 0.5 * static_cast<double>(
-                    (result.track.boundsMax - result.track.boundsMin).length()));
+                    (result.visualBoundsMax -
+                     result.visualBoundsMin).length()));
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
@@ -834,7 +1039,7 @@ void RaceViewerController::applyLoadResult(
               std::move(result.frames),
               true);
     applyPendingRunIfReady();
-    setStatusText(QStringLiteral("Replay loaded"));
+    setStatusText(QStringLiteral("Replay and visual map loaded"));
     if (!queuedReplayLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();

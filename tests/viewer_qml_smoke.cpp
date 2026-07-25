@@ -3,13 +3,14 @@
 #include "viewer/race_viewer_controller.h"
 
 #include <QApplication>
+#include <QColor>
 #include <QCoreApplication>
 #include <QInputDevice>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
-#include <QQuickWindow>
 #include <QQuickStyle>
 #include <QSettings>
+#include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -42,6 +43,87 @@ bool ModelsHaveState(const QList<QObject *> &models,
         }
     }
     return true;
+}
+
+int VisibleModelCount(const QList<QObject *> &models) {
+    return static_cast<int>(std::count_if(
+            models.cbegin(),
+            models.cend(),
+            [](const QObject *model) {
+                return model->property("visible").toBool();
+            }));
+}
+
+bool ModelsHaveGeometry(const QList<QObject *> &models,
+                        int expectedCount) {
+    return models.size() == expectedCount &&
+            std::all_of(
+                    models.cbegin(),
+                    models.cend(),
+                    [](const QObject *model) {
+                        const QVariant geometry =
+                                model->property("geometry");
+                        return geometry.isValid() && !geometry.isNull();
+                    });
+}
+
+bool VisualMaterialsAreBoundAndShared(
+        const QList<QObject *> &models,
+        const QList<QObject *> &materials,
+        const QList<QObject *> &baseTextures,
+        const QList<QObject *> &normalTextures,
+        const forevertas::viewer::RaceViewerController &viewer) {
+    if (materials.size() != viewer.visualMaterials().size() ||
+        baseTextures.size() != materials.size() ||
+        normalTextures.size() != materials.size() ||
+        materials.isEmpty() || materials.size() >= models.size()) {
+        return false;
+    }
+
+    QSet<QObject *> baseTextureObjects(baseTextures.cbegin(),
+                                       baseTextures.cend());
+    QSet<QObject *> normalTextureObjects(normalTextures.cbegin(),
+                                         normalTextures.cend());
+    for (const QObject *texture : baseTextures) {
+        const QUrl source = texture->property("source").toUrl();
+        if (source.scheme() != QStringLiteral("qrc") ||
+            !source.path().startsWith(QStringLiteral("/materials/"))) {
+            return false;
+        }
+    }
+    for (const QObject *texture : normalTextures) {
+        const QUrl source = texture->property("source").toUrl();
+        if (source.scheme() != QStringLiteral("qrc") ||
+            !source.path().startsWith(QStringLiteral("/materials/"))) {
+            return false;
+        }
+    }
+
+    for (const QObject *material : materials) {
+        QObject *const baseMap =
+                material->property("baseColorMap").value<QObject *>();
+        QObject *const normalMap =
+                material->property("normalMap").value<QObject *>();
+        if (!baseTextureObjects.contains(baseMap) ||
+            !normalTextureObjects.contains(normalMap)) {
+            return false;
+        }
+    }
+
+    QSet<QObject *> usedMaterials;
+    bool repeatedBinding = false;
+    for (const QObject *model : models) {
+        const int binding = model->property("materialBindingIndex").toInt();
+        QObject *const material =
+                model->property("sharedMaterial").value<QObject *>();
+        if (binding < 0 || binding >= materials.size() ||
+            material != materials.at(binding)) {
+            return false;
+        }
+        repeatedBinding |= usedMaterials.contains(material);
+        usedMaterials.insert(material);
+    }
+    return repeatedBinding && usedMaterials.size() < models.size();
 }
 
 bool FilledModelsHaveBakedRunPalettes(
@@ -172,6 +254,29 @@ int main(int argc, char **argv) {
                             QStringLiteral("trackFilledModel"));
                     QObject *const wire = root->findChild<QObject *>(
                             QStringLiteral("trackWireModel"));
+                    auto *const renderModeSelector =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "renderModeSelector")));
+                    QObject *const gpuRayTracingView =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("gpuRayTracingView"));
+                    QObject *const rasterMapView =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("rasterMapView"));
+                    QObject *const viewCamera = root->findChild<QObject *>(
+                            QStringLiteral("viewCamera"));
+                    QObject *const mapEnvironment =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("mapEnvironment"));
+                    QObject *const daySkyTexture =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("daySkyTexture"));
+                    QObject *const mainMapLight = root->findChild<QObject *>(
+                            QStringLiteral("mainMapLight"));
+                    QObject *const fillMapLight = root->findChild<QObject *>(
+                            QStringLiteral("fillMapLight"));
                     auto *const timeline = root->findChild<
                             forevertas::viewer::RaceTimelineItem *>(
                             QStringLiteral("raceTimeline"));
@@ -184,15 +289,24 @@ int main(int argc, char **argv) {
                     auto *const raceViewerHeader = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("raceViewerHeader")));
+                    auto *const headerControlsRow =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "headerControlsRow")));
+                    auto *const raceViewerTitleBlock =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "raceViewerTitleBlock")));
                     auto *const runSelector = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("runSelector")));
-                    QObject *const wireframeSwitch =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("wireframeSwitch"));
-                    QObject *const wireframeLabel =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("wireframeLabel"));
+                    auto *const resetViewButton =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "resetViewButton")));
                     QObject *const playPause = root->findChild<QObject *>(
                             QStringLiteral("playPauseButton"));
                     auto *const playIcon = qobject_cast<QQuickItem *>(
@@ -341,13 +455,36 @@ int main(int argc, char **argv) {
                                     QStringLiteral("Left") &&
                             stepForward->property("sequence").toString() ==
                                     QStringLiteral("Right");
+                    const auto rowCenter =
+                            [](const QQuickItem *item) {
+                                return item != nullptr
+                                        ? item->y() + item->height() * 0.5
+                                        : -1.0;
+                            };
                     const bool runSelectorValid =
                             raceViewerHeader != nullptr &&
+                            headerControlsRow != nullptr &&
+                            raceViewerTitleBlock != nullptr &&
                             runSelector != nullptr &&
-                            runSelector->parentItem() == raceViewerHeader &&
-                            std::abs(runSelector->x() +
-                                             runSelector->width() * 0.5 -
-                                     raceViewerHeader->width() * 0.5) < 0.6 &&
+                            renderModeSelector != nullptr &&
+                            resetViewButton != nullptr &&
+                            headerControlsRow->parentItem() ==
+                                    raceViewerHeader &&
+                            raceViewerTitleBlock->parentItem() ==
+                                    headerControlsRow &&
+                            runSelector->parentItem() ==
+                                    headerControlsRow &&
+                            renderModeSelector->parentItem() ==
+                                    headerControlsRow &&
+                            resetViewButton->parentItem() ==
+                                    headerControlsRow &&
+                            std::abs(rowCenter(raceViewerTitleBlock) -
+                                     rowCenter(runSelector)) < 0.6 &&
+                            std::abs(rowCenter(runSelector) -
+                                     rowCenter(renderModeSelector)) < 0.6 &&
+                            std::abs(rowCenter(renderModeSelector) -
+                                     rowCenter(resetViewButton)) < 0.6 &&
+                            renderModeSelector->width() >= 179.0 &&
                             runSelector->property("count").toInt() == 1 &&
                             runSelector->property("currentValue").toString() ==
                                     QStringLiteral("baseline") &&
@@ -400,11 +537,6 @@ int main(int argc, char **argv) {
                             !ContainsText(
                                     root,
                                     QStringLiteral("Runs continuously until"));
-                    const bool wireframeTextIsWhite =
-                            wireframeSwitch != nullptr &&
-                            wireframeLabel != nullptr &&
-                            wireframeLabel->property("color").value<QColor>() ==
-                                    QColor(QStringLiteral("#ffffff"));
                     const bool automaticPacksUi =
                             autoPacksSuggestion != nullptr &&
                             autoPacksSuggestionText != nullptr &&
@@ -1037,7 +1169,6 @@ int main(int argc, char **argv) {
                             runSelectorValid && bestInputsUiValid &&
                             searchControlsValid && searchMetricsUiValid &&
                             removedSectionDescriptions &&
-                            wireframeTextIsWhite &&
                             automaticPacksUi && backendSelectorValid &&
                             algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
@@ -1077,7 +1208,6 @@ int main(int argc, char **argv) {
                                 << "editor checks: runSelector=" << runSelectorValid
                                 << ", bestInputs=" << bestInputsUiValid
                                 << ", searchControls=" << searchControlsValid
-                                << ", wireText=" << wireframeTextIsWhite
                                 << ", autoPacks=" << automaticPacksUi
                                 << ", backend=" << backendSelectorValid
                                 << ", selectors=" << algorithmSelectorsValid
@@ -1135,10 +1265,12 @@ int main(int argc, char **argv) {
                     QCoreApplication::processEvents();
 
                     QTimer::singleShot(
-                            250,
-                            &application,
+                            250, &application,
                             [&, filled, wire, quickWindow, runSelector,
-                             baselineTickCount, bestPosition]() {
+                             renderModeSelector, gpuRayTracingView,
+                             rasterMapView, viewCamera,
+                             mapEnvironment, daySkyTexture, mainMapLight,
+                             fillMapLight, baselineTickCount, bestPosition]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1154,6 +1286,22 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "runCarWireModel"));
+                                const QList<QObject *> visualModels =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualModel"));
+                                const QList<QObject *> visualMaterials =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualMaterial"));
+                                const QList<QObject *> visualBaseTextures =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualBaseTexture"));
+                                const QList<QObject *> visualNormalTextures =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualNormalTexture"));
                                 const int expectedCarModels =
                                         static_cast<int>(
                                                 viewer.ellipsoidCount() *
@@ -1178,9 +1326,93 @@ int main(int argc, char **argv) {
                                         !filledGeometry.isNull() &&
                                         wireGeometry.isValid() &&
                                         !wireGeometry.isNull();
+                                const int initialVisibleVisualModels =
+                                        VisibleModelCount(visualModels);
+                                const bool rayTracingSupported =
+                                        gpuRayTracingView != nullptr &&
+                                        gpuRayTracingView
+                                                ->property("supported")
+                                                .toBool();
+                                const int wireframeIndex =
+                                        rayTracingSupported ? 4 : 3;
+                                const int highContrastIndex =
+                                        rayTracingSupported ? 5 : 4;
+                                bool renderModeOptionsValid =
+                                        renderModeSelector != nullptr &&
+                                        renderModeSelector->property("count")
+                                                        .toInt() ==
+                                                (rayTracingSupported ? 6 : 5);
+                                if (renderModeOptionsValid) {
+                                    if (rayTracingSupported) {
+                                        renderModeSelector->setProperty(
+                                                "currentIndex", 1);
+                                        renderModeOptionsValid =
+                                                renderModeSelector
+                                                                ->property(
+                                                                        "currentValue")
+                                                                .toString() ==
+                                                        QStringLiteral(
+                                                                "textured-rt") &&
+                                                renderModeSelector
+                                                                ->property(
+                                                                        "displayText")
+                                                                .toString() ==
+                                                        QStringLiteral(
+                                                                "Textured (RT)");
+                                    }
+                                    renderModeSelector->setProperty(
+                                            "currentIndex", wireframeIndex);
+                                    renderModeOptionsValid &=
+                                            renderModeSelector
+                                                    ->property("currentValue")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "wireframe") &&
+                                            renderModeSelector
+                                                    ->property("displayText")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "Wireframe");
+                                    renderModeSelector->setProperty(
+                                            "currentIndex",
+                                            highContrastIndex);
+                                    renderModeOptionsValid &=
+                                            renderModeSelector
+                                                    ->property("currentValue")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "material-debug") &&
+                                            renderModeSelector
+                                                    ->property("displayText")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "High Contrast");
+                                    renderModeSelector->setProperty(
+                                            "currentIndex", 0);
+                                }
                                 const bool initialModelState =
-                                        filled->property("visible").toBool() &&
+                                        !filled->property("visible").toBool() &&
                                         !wire->property("visible").toBool() &&
+                                        renderModeOptionsValid &&
+                                        renderModeSelector
+                                                        ->property("currentValue")
+                                                        .toString() ==
+                                                QStringLiteral("textured") &&
+                                        visualModels.size() ==
+                                                viewer.visualInstances().size() &&
+                                        viewer.visualTriangleCount() > 0 &&
+                                        viewer.visualMeshCount() > 0 &&
+                                        viewer.materialCount() > 0 &&
+                                        initialVisibleVisualModels > 0 &&
+                                        ModelsHaveGeometry(
+                                                visualModels,
+                                                visualModels.size()) &&
+                                        VisualMaterialsAreBoundAndShared(
+                                                visualModels,
+                                                visualMaterials,
+                                                visualBaseTextures,
+                                                visualNormalTextures,
+                                                viewer) &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&
@@ -1191,6 +1423,119 @@ int main(int argc, char **argv) {
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         false);
+                                bool rayTracingModeValid =
+                                        gpuRayTracingView != nullptr &&
+                                        rasterMapView != nullptr &&
+                                        !gpuRayTracingView
+                                                 ->property("visible")
+                                                 .toBool() &&
+                                        !gpuRayTracingView
+                                                 ->property("active")
+                                                 .toBool() &&
+                                        !gpuRayTracingView
+                                                 ->property("status")
+                                                 .toString()
+                                                 .isEmpty();
+                                if (rayTracingSupported) {
+                                    root->setProperty(
+                                            "renderMode",
+                                            QStringLiteral("textured-rt"));
+                                    QCoreApplication::processEvents();
+                                    rayTracingModeValid &=
+                                            root->property(
+                                                        "rayTracingEnabled")
+                                                            .toBool() &&
+                                            gpuRayTracingView
+                                                    ->property("visible")
+                                                    .toBool() &&
+                                            gpuRayTracingView
+                                                    ->property("active")
+                                                    .toBool() &&
+                                            !rasterMapView
+                                                     ->property("visible")
+                                                     .toBool();
+                                    root->setProperty(
+                                            "renderMode",
+                                            QStringLiteral("textured"));
+                                    QCoreApplication::processEvents();
+                                    rayTracingModeValid &=
+                                            !root->property(
+                                                         "rayTracingEnabled")
+                                                     .toBool() &&
+                                            !gpuRayTracingView
+                                                     ->property("visible")
+                                                     .toBool() &&
+                                            !gpuRayTracingView
+                                                     ->property("active")
+                                                     .toBool() &&
+                                            rasterMapView
+                                                    ->property("visible")
+                                                    .toBool();
+                                }
+                                const bool optimizedRenderState =
+                                        viewCamera != nullptr &&
+                                        viewCamera->property("clipNear")
+                                                        .toDouble() >= 0.05 &&
+                                        viewCamera->property("clipFar")
+                                                        .toDouble() >
+                                                viewCamera->property("clipNear")
+                                                        .toDouble() &&
+                                        viewCamera->property("clipFar")
+                                                                .toDouble() /
+                                                        viewCamera
+                                                                ->property(
+                                                                        "clipNe"
+                                                                        "ar")
+                                                                .toDouble() <=
+                                                50001.0 &&
+                                        mainMapLight != nullptr &&
+                                        !mainMapLight->property("castsShadow")
+                                                 .toBool() &&
+                                        std::all_of(
+                                                visualModels.cbegin(),
+                                                visualModels.cend(),
+                                                [](const QObject *model) {
+                                                    return !model->property(
+                                                                         "casts"
+                                                                         "Shado"
+                                                                         "ws")
+                                                                    .toBool();
+                                                });
+                                const QUrl skySource =
+                                        daySkyTexture != nullptr
+                                        ? daySkyTexture->property("source")
+                                                  .toUrl()
+                                        : QUrl();
+                                const bool daylightEnvironment =
+                                        mapEnvironment != nullptr &&
+                                        daySkyTexture != nullptr &&
+                                        mainMapLight != nullptr &&
+                                        fillMapLight != nullptr &&
+                                        mapEnvironment
+                                                        ->property(
+                                                                "probeExposure")
+                                                        .toDouble() >=
+                                                0.8 &&
+                                        mapEnvironment
+                                                        ->property(
+                                                                "skyboxBlur"
+                                                                "Amount")
+                                                        .toDouble() ==
+                                                0.0 &&
+                                        skySource.scheme() ==
+                                                QStringLiteral("qrc") &&
+                                        skySource.path() ==
+                                                QStringLiteral(
+                                                        "/environment/"
+                                                        "day_sky.png") &&
+                                        mainMapLight
+                                                        ->property("brightness")
+                                                        .toDouble() >=
+                                                1.0 &&
+                                        fillMapLight
+                                                        ->property("brightness")
+                                                        .toDouble() >
+                                                0.0;
 
                                 const bool bestSelectedInitially =
                                         viewer.runCount() == 2 &&
@@ -1242,22 +1587,78 @@ int main(int argc, char **argv) {
                                                 QStringLiteral("best") &&
                                         viewer.tickCount() == 3 &&
                                         (viewer.carPosition() - bestPosition)
-                                                        .length() < 0.001f;
+                                                .length() < 0.001f;
 
-                                root->setProperty("wireframeMode", true);
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("neutral"));
+                                QCoreApplication::processEvents();
+                                const bool neutralModeState =
+                                        !filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels &&
+                                        std::all_of(
+                                                visualMaterials.cbegin(),
+                                                visualMaterials.cend(),
+                                                [](const QObject *material) {
+                                                    return material
+                                                            ->property(
+                                                                    "baseColorMap")
+                                                            .value<QObject *>() ==
+                                                            nullptr &&
+                                                            material
+                                                                    ->property(
+                                                                            "normalMap")
+                                                                    .value<QObject *>() ==
+                                                            nullptr;
+                                                });
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("collision"));
+                                QCoreApplication::processEvents();
+                                const bool collisionModeState =
+                                        filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        ModelsHaveState(
+                                                visualModels,
+                                                visualModels.size(),
+                                                false);
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("material-debug"));
+                                QCoreApplication::processEvents();
+                                const bool materialDebugState =
+                                        !filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels;
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("wireframe"));
                                 QCoreApplication::processEvents();
                                 const bool wireframeState =
                                         !filled->property("visible").toBool() &&
                                         wire->property("visible").toBool() &&
+                                        ModelsHaveState(
+                                                visualModels,
+                                                visualModels.size(),
+                                                false) &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         false) &&
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         true);
-                                root->setProperty("wireframeMode", false);
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("textured"));
                                 QCoreApplication::processEvents();
                                 const bool restoredState =
+                                        !filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&
@@ -1266,18 +1667,27 @@ int main(int argc, char **argv) {
                                                         false);
 
                                 completed = true;
-                                exitCode = geometryAttached && rootsVisible &&
-                                                initialModelState &&
-                                                bestSelectedInitially &&
-                                                baselineSelected &&
-                                                bestReselected &&
-                                                wireframeState && restoredState &&
-                                                editorStructure
-                                        ? 0
-                                        : 1;
+                                exitCode =
+                                        geometryAttached && rootsVisible &&
+                                                        initialModelState &&
+                                                        bestSelectedInitially &&
+                                                        baselineSelected &&
+                                                        bestReselected &&
+                                                        neutralModeState &&
+                                                        collisionModeState &&
+                                                        materialDebugState &&
+                                                        wireframeState &&
+                                                        restoredState &&
+                                                        rayTracingModeValid &&
+                                                        optimizedRenderState &&
+                                                        daylightEnvironment &&
+                                                        editorStructure
+                                                ? 0
+                                                : 1;
                                 if (exitCode != 0) {
                                     std::cerr
-                                            << "viewer run switching failed: geometry="
+                                            << "viewer run switching failed: "
+                                               "geometry="
                                             << geometryAttached
                                             << ", roots=" << carRoots.size()
                                             << ", filledModels="
@@ -1286,19 +1696,60 @@ int main(int argc, char **argv) {
                                             << carFilledMaterials.size()
                                             << ", wireModels="
                                             << carWireModels.size()
+                                            << ", visualModels="
+                                            << visualModels.size()
+                                            << ", visualInstances="
+                                            << viewer.visualInstances().size()
+                                            << ", visualTriangles="
+                                            << viewer.visualTriangleCount()
+                                            << ", visualMeshes="
+                                            << viewer.visualMeshCount()
+                                            << ", materials="
+                                            << viewer.materialCount()
                                             << ", expectedModels="
                                             << expectedCarModels
-                                            << ", initial="
-                                            << initialModelState
+                                            << ", initial=" << initialModelState
                                             << ", bestInitial="
                                             << bestSelectedInitially
                                             << ", baselineSelected="
                                             << baselineSelected
                                             << ", bestReselected="
                                             << bestReselected
-                                            << ", wireframe="
-                                            << wireframeState
+                                            << ", collisionMode="
+                                            << collisionModeState
+                                            << ", neutralMode="
+                                            << neutralModeState
+                                            << ", materialDebug="
+                                            << materialDebugState
+                                            << ", wireframe=" << wireframeState
                                             << ", restored=" << restoredState
+                                            << ", optimizedRenderState="
+                                            << optimizedRenderState
+                                            << ", daylightEnvironment="
+                                            << daylightEnvironment
+                                            << ", clipNear="
+                                            << (viewCamera
+                                                        ? viewCamera
+                                                                  ->property(
+                                                                          "clip"
+                                                                          "Nea"
+                                                                          "r")
+                                                                  .toDouble()
+                                                        : -1.0)
+                                            << ", clipFar="
+                                            << (viewCamera
+                                                        ? viewCamera
+                                                                  ->property(
+                                                                          "clip"
+                                                                          "Far")
+                                                                  .toDouble()
+                                                        : -1.0)
+                                            << ", mainCastsShadow="
+                                            << (mainMapLight &&
+                                                mainMapLight
+                                                        ->property(
+                                                                "castsShadow")
+                                                        .toBool())
                                             << ", editorStructure="
                                             << editorStructure << '\n';
                                 }

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtQml.Models
 import QtQuick3D
 import "settings"
 import ForeverTAS.Viewer 1.0
@@ -12,9 +13,30 @@ ApplicationWindow {
     required property var controller
     required property var viewer
 
-    property bool wireframeMode: false
+    property string renderMode: "textured"
+    readonly property bool rayTracingEnabled:
+        renderMode === "textured-rt"
+    property real measuredFps: 0
+    property int framesSinceSample: 0
     readonly property var settingsWheelRedirectorObject:
         settingsWheelRedirector
+
+    FrameAnimation {
+        id: frameRateMonitor
+        objectName: "frameRateMonitor"
+        running: window.visible
+        onTriggered: ++window.framesSinceSample
+    }
+
+    Timer {
+        interval: 1000
+        repeat: true
+        running: window.visible
+        onTriggered: {
+            window.measuredFps = window.framesSinceSample
+            window.framesSinceSample = 0
+        }
+    }
 
     ListModel {
         id: runPoseModel
@@ -124,7 +146,7 @@ ApplicationWindow {
 
     width: 1420
     height: 820
-    minimumWidth: 1050
+    minimumWidth: 1240
     minimumHeight: 580
     visible: true
     title: qsTr("ForeverTAS")
@@ -297,13 +319,26 @@ ApplicationWindow {
                     property real orbitDistance: 38
 
                     View3D {
+                        objectName: "rasterMapView"
                         anchors.fill: parent
+                        visible: !window.rayTracingEnabled
 
                         environment: SceneEnvironment {
-                            backgroundMode: SceneEnvironment.Color
-                            clearColor: "#181b19"
+                            objectName: "mapEnvironment"
+                            backgroundMode: SceneEnvironment.SkyBox
                             antialiasingMode: SceneEnvironment.MSAA
                             antialiasingQuality: SceneEnvironment.Medium
+                            tonemapMode: SceneEnvironment.TonemapModeAces
+                            probeExposure: 1.0
+                            skyboxBlurAmount: 0.0
+                            specularAAEnabled: true
+
+                            lightProbe: Texture {
+                                objectName: "daySkyTexture"
+                                source: "qrc:/environment/day_sky.png"
+                                mappingMode: Texture.LightProbe
+                                generateMipmaps: true
+                            }
                         }
 
                         Node {
@@ -312,18 +347,154 @@ ApplicationWindow {
                             eulerRotation.y: viewport.orbitYaw
 
                             PerspectiveCamera {
+                                id: viewCamera
+                                objectName: "viewCamera"
+                                readonly property var dynamicClipPlanes:
+                                    window.viewer.cameraClipPlanes(
+                                        scenePosition,
+                                        viewport.orbitDistance)
+
                                 z: viewport.orbitDistance
-                                clipNear: 0.05
-                                clipFar: Math.max(5000,
-                                                  window.viewer.sceneRadius * 3)
+                                clipNear: dynamicClipPlanes.x
+                                clipFar: dynamicClipPlanes.y
                                 fieldOfView: 55
+                            }
+                        }
+
+                        DirectionalLight {
+                            objectName: "mainMapLight"
+                            eulerRotation.x: -52
+                            eulerRotation.y: -32
+                            brightness: 1.2
+                            color: "#fff3d7"
+                            castsShadow: false
+                        }
+
+                        DirectionalLight {
+                            objectName: "fillMapLight"
+                            eulerRotation.x: -20
+                            eulerRotation.y: 145
+                            brightness: 0.35
+                            color: "#b9dbf2"
+                            castsShadow: false
+                        }
+
+                        Instantiator {
+                            id: visualMaterialCache
+                            model: window.viewer.visualMaterials
+
+                            delegate: PrincipledMaterial {
+                                required property var modelData
+
+                                objectName: "trackVisualMaterial"
+                                Texture {
+                                    id: replacementBaseMap
+                                    objectName: "trackVisualBaseTexture"
+                                    source: modelData.baseTexture
+                                    tilingModeHorizontal: Texture.Repeat
+                                    tilingModeVertical: Texture.Repeat
+                                    scaleU: modelData.textureScale
+                                    scaleV: modelData.textureScale
+                                    generateMipmaps: true
+                                    minFilter: Texture.Linear
+                                    magFilter: Texture.Linear
+                                    mipFilter: Texture.Linear
+                                }
+
+                                Texture {
+                                    id: replacementNormalMap
+                                    objectName: "trackVisualNormalTexture"
+                                    source: modelData.normalTexture
+                                    tilingModeHorizontal: Texture.Repeat
+                                    tilingModeVertical: Texture.Repeat
+                                    scaleU: modelData.textureScale
+                                    scaleV: modelData.textureScale
+                                    generateMipmaps: true
+                                    minFilter: Texture.Linear
+                                    magFilter: Texture.Linear
+                                    mipFilter: Texture.Linear
+                                }
+
+                                lighting:
+                                    PrincipledMaterial.FragmentLighting
+                                baseColor: window.renderMode ===
+                                           "neutral"
+                                           ? "#aeb3af"
+                                           : (window.renderMode ===
+                                              "material-debug"
+                                              ? modelData.debugColor
+                                              : "#ffffff")
+                                baseColorMap: window.renderMode ===
+                                              "textured"
+                                              ? replacementBaseMap
+                                              : null
+                                normalMap: window.renderMode ===
+                                           "textured"
+                                           ? replacementNormalMap
+                                           : null
+                                roughness: window.renderMode ===
+                                           "neutral"
+                                           ? 0.74
+                                           : modelData.roughness
+                                metalness: window.renderMode ===
+                                           "neutral"
+                                           ? 0
+                                           : modelData.metalness
+                                opacity: modelData.opacity
+                                alphaMode: modelData.opacity < 0.999
+                                           ? PrincipledMaterial.Blend
+                                           : PrincipledMaterial.Opaque
+                                cullMode: modelData.twoSided
+                                          ? Material.NoCulling
+                                          : Material.BackFaceCulling
+                                vertexColorsEnabled:
+                                    modelData.vertexColors
+                                    && window.renderMode === "textured"
+                                emissiveFactor: window.renderMode ===
+                                                "textured"
+                                                ? Qt.vector3d(
+                                                      modelData.baseColor.r
+                                                      * modelData.emissiveStrength,
+                                                      modelData.baseColor.g
+                                                      * modelData.emissiveStrength,
+                                                      modelData.baseColor.b
+                                                      * modelData.emissiveStrength)
+                                                : Qt.vector3d(0, 0, 0)
+                            }
+                        }
+
+                        Repeater3D {
+                            model: window.viewer.visualBatches
+
+                            delegate: Model {
+                                required property var modelData
+                                readonly property int materialBindingIndex:
+                                    modelData.materialBindingIndex
+                                readonly property var sharedMaterial: {
+                                    const cacheSize = visualMaterialCache.count
+                                    return cacheSize > 0
+                                           ? visualMaterialCache.objectAt(
+                                                 materialBindingIndex)
+                                           : null
+                                }
+
+                                objectName: "trackVisualModel"
+                                visible: window.viewer.loaded
+                                         && window.renderMode !== "collision"
+                                         && window.renderMode !== "wireframe"
+                                         && modelData.defaultVisible
+                                geometry: modelData.geometry
+                                castsShadows: false
+
+                                materials: sharedMaterial
+                                           ? [sharedMaterial] : []
                             }
                         }
 
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
-                                     && !window.wireframeMode
+                                     && window.renderMode === "collision"
                             geometry: window.viewer.loaded
                                       ? window.viewer.trackFilledGeometry
                                       : null
@@ -338,7 +509,7 @@ ApplicationWindow {
                         Model {
                             objectName: "trackWireModel"
                             visible: window.viewer.loaded
-                                     && window.wireframeMode
+                                     && window.renderMode === "wireframe"
                             geometry: window.viewer.loaded
                                       ? window.viewer.trackWireGeometry
                                       : null
@@ -385,7 +556,8 @@ ApplicationWindow {
 
                                         Model {
                                             objectName: "runCarFilledModel"
-                                            visible: !window.wireframeMode
+                                            visible: window.renderMode !==
+                                                     "wireframe"
                                             geometry: runCarRoot.runGeometry
                                             materials: DefaultMaterial {
                                                 objectName: "runCarFilledMaterial"
@@ -400,7 +572,8 @@ ApplicationWindow {
 
                                         Model {
                                             objectName: "runCarWireModel"
-                                            visible: window.wireframeMode
+                                            visible: window.renderMode ===
+                                                     "wireframe"
                                             geometry:
                                                 window.viewer.ellipsoidWireGeometry
                                             materials: DefaultMaterial {
@@ -417,8 +590,24 @@ ApplicationWindow {
                         }
                     }
 
+                    GpuRayTracingView {
+                        id: gpuRayTracingView
+                        objectName: "gpuRayTracingView"
+                        anchors.fill: parent
+                        z: 1
+                        visible: window.rayTracingEnabled
+                        active: window.rayTracingEnabled
+                                && window.viewer.loaded
+                        viewer: window.viewer
+                        cameraPosition: viewCamera.scenePosition
+                        cameraTarget: window.viewer.carPosition
+                        cameraUp: viewCamera.up
+                        fieldOfView: viewCamera.fieldOfView
+                    }
+
                     MouseArea {
                         anchors.fill: parent
+                        z: 2
                         acceptedButtons: Qt.LeftButton
                         hoverEnabled: true
                         property real previousX: 0
@@ -456,98 +645,150 @@ ApplicationWindow {
                         anchors.top: parent.top
                         anchors.left: parent.left
                         anchors.right: parent.right
+                        z: 3
                         height: 52
                         color: "#cc111412"
 
                         RowLayout {
+                            id: headerControlsRow
+                            objectName: "headerControlsRow"
                             anchors.fill: parent
                             anchors.leftMargin: 14
                             anchors.rightMargin: 14
-                            spacing: 12
+                            spacing: 10
 
-                            Label {
-                                text: qsTr("Race Viewer")
-                                color: "#eef2ee"
-                                font.pixelSize: 17
-                                font.weight: Font.DemiBold
-                            }
-
-                            Label {
+                            ColumnLayout {
+                                id: raceViewerTitleBlock
+                                objectName: "raceViewerTitleBlock"
                                 Layout.fillWidth: true
-                                text: window.viewer.loaded
-                                      ? qsTr("%1 triangles · %2 runs · %3 ellipsoids/run")
-                                            .arg(window.viewer.triangleCount)
-                                            .arg(window.viewer.runCount)
-                                            .arg(window.viewer.ellipsoidCount)
-                                      : window.viewer.statusText
-                                color: "#aeb8b0"
-                                elide: Text.ElideRight
-                            }
+                                Layout.minimumWidth: 150
+                                Layout.alignment: Qt.AlignVCenter
+                                spacing: 0
 
-                            Switch {
-                                id: wireframeSwitch
-                                objectName: "wireframeSwitch"
-                                text: qsTr("Wireframe")
-                                checked: window.wireframeMode
-                                enabled: window.viewer.loaded
-                                onToggled:
-                                    window.wireframeMode = checked
+                                Label {
+                                    text: qsTr("Race Viewer")
+                                    color: "#eef2ee"
+                                    font.pixelSize: 17
+                                    font.weight: Font.DemiBold
+                                }
 
-                                contentItem: Text {
-                                    objectName: "wireframeLabel"
-                                    leftPadding:
-                                        wireframeSwitch.indicator.width
-                                        + wireframeSwitch.spacing
-                                    text: wireframeSwitch.text
-                                    font: wireframeSwitch.font
-                                    color: "#ffffff"
-                                    verticalAlignment: Text.AlignVCenter
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: window.viewer.loaded
+                                          ? qsTr("%1 triangles · %2 batches · %3 FPS")
+                                                .arg(Number(
+                                                         window.viewer.visualTriangleCount)
+                                                         .toLocaleString(
+                                                             Qt.locale(),
+                                                             "f",
+                                                             0))
+                                                .arg(window.viewer.visualBatchCount)
+                                                .arg(Math.round(
+                                                         window.measuredFps))
+                                          : window.viewer.statusText
+                                    color: "#aeb8b0"
+                                    font.pixelSize: 11
+                                    elide: Text.ElideRight
                                 }
                             }
 
+                            StyledComboBox {
+                                id: runSelector
+
+                                objectName: "runSelector"
+                                Layout.preferredWidth: 160
+                                Layout.alignment: Qt.AlignVCenter
+                                model: window.viewer.runOptions
+                                textRole: "name"
+                                valueRole: "id"
+                                enabled: count > 0
+
+                                function synchronizeSelection() {
+                                    const selected = indexOfValue(
+                                        window.viewer.selectedRunId)
+                                    if (selected >= 0
+                                        && currentIndex !== selected) {
+                                        currentIndex = selected
+                                    }
+                                }
+
+                                Component.onCompleted:
+                                    synchronizeSelection()
+                                onModelChanged:
+                                    Qt.callLater(synchronizeSelection)
+                                onActivated: selectedIndex =>
+                                    window.viewer.selectedRunId =
+                                        valueAt(selectedIndex)
+
+                                Connections {
+                                    target: window.viewer
+
+                                    function onRunsChanged() {
+                                        Qt.callLater(
+                                            runSelector.synchronizeSelection)
+                                    }
+                                    function onSelectedRunChanged() {
+                                        runSelector.synchronizeSelection()
+                                    }
+                                }
+                            }
+
+                            StyledComboBox {
+                                id: renderModeSelector
+                                objectName: "renderModeSelector"
+                                Layout.preferredWidth: 180
+                                Layout.alignment: Qt.AlignVCenter
+                                enabled: window.viewer.loaded
+                                model: gpuRayTracingView.supported
+                                       ? [
+                                             { "text": qsTr("Textured"),
+                                               "value": "textured" },
+                                             { "text": qsTr("Textured (RT)"),
+                                               "value": "textured-rt" },
+                                             { "text": qsTr("Neutral"),
+                                               "value": "neutral" },
+                                             { "text": qsTr("Collision"),
+                                               "value": "collision" },
+                                             { "text": qsTr("Wireframe"),
+                                               "value": "wireframe" },
+                                             { "text": qsTr("High Contrast"),
+                                               "value": "material-debug" }
+                                         ]
+                                       : [
+                                             { "text": qsTr("Textured"),
+                                               "value": "textured" },
+                                             { "text": qsTr("Neutral"),
+                                               "value": "neutral" },
+                                             { "text": qsTr("Collision"),
+                                               "value": "collision" },
+                                             { "text": qsTr("Wireframe"),
+                                               "value": "wireframe" },
+                                             { "text": qsTr("High Contrast"),
+                                               "value": "material-debug" }
+                                         ]
+                                textRole: "text"
+                                valueRole: "value"
+                                onActivated:
+                                    window.renderMode = currentValue
+
+                                ToolTip.visible:
+                                    hovered
+                                    && currentValue === "textured-rt"
+                                ToolTip.delay: 350
+                                ToolTip.text:
+                                    currentValue === "textured-rt"
+                                    ? gpuRayTracingView.status : ""
+                            }
+
                             Button {
+                                objectName: "resetViewButton"
+                                Layout.alignment: Qt.AlignVCenter
                                 text: qsTr("Reset view")
                                 enabled: window.viewer.loaded
                                 onClicked: {
                                     viewport.orbitYaw = 35
                                     viewport.orbitPitch = -20
                                     viewport.orbitDistance = 38
-                                }
-                            }
-                        }
-
-                        StyledComboBox {
-                            id: runSelector
-
-                            objectName: "runSelector"
-                            anchors.centerIn: parent
-                            width: 180
-                            model: window.viewer.runOptions
-                            textRole: "name"
-                            valueRole: "id"
-                            enabled: count > 0
-
-                            function synchronizeSelection() {
-                                const selected = indexOfValue(
-                                    window.viewer.selectedRunId)
-                                if (selected >= 0 && currentIndex !== selected)
-                                    currentIndex = selected
-                            }
-
-                            Component.onCompleted: synchronizeSelection()
-                            onModelChanged: Qt.callLater(synchronizeSelection)
-                            onActivated: selectedIndex =>
-                                window.viewer.selectedRunId =
-                                    valueAt(selectedIndex)
-
-                            Connections {
-                                target: window.viewer
-
-                                function onRunsChanged() {
-                                    Qt.callLater(runSelector.synchronizeSelection)
-                                }
-                                function onSelectedRunChanged() {
-                                    runSelector.synchronizeSelection()
                                 }
                             }
                         }
@@ -559,6 +800,7 @@ ApplicationWindow {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 20
+                        z: 3
                         width: 190
                         height: 58
                         radius: 16

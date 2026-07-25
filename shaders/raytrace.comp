@@ -1,0 +1,429 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const float PI = 3.14159265358979323846;
+const float RAY_EPSILON = 0.002;
+const float FAR_DISTANCE = 1.0e30;
+const int MAX_CAR_ELLIPSOIDS = 16;
+
+struct Vertex {
+    vec4 position;
+    vec4 normal;
+    vec4 uv;
+    vec4 color;
+};
+
+struct Triangle {
+    uvec4 data;
+};
+
+struct BvhNode {
+    vec4 boundsMin;
+    vec4 boundsMax;
+    uvec4 metadata;
+};
+
+struct Material {
+    vec4 baseColor;
+    vec4 parameters;
+};
+
+layout(std140, binding = 0) uniform CameraData {
+    vec4 cameraOrigin;
+    vec4 cameraForward;
+    vec4 cameraRight;
+    vec4 cameraUp;
+    vec4 sunDirection;
+    vec4 viewportFrame;
+    vec4 renderInfo;
+    vec4 carColor;
+    vec4 ellipsoidCenter[MAX_CAR_ELLIPSOIDS];
+    vec4 ellipsoidRadii[MAX_CAR_ELLIPSOIDS];
+    vec4 ellipsoidInverseRotation[MAX_CAR_ELLIPSOIDS];
+} camera;
+
+layout(std430, binding = 1) readonly buffer BvhNodes {
+    BvhNode bvhNodes[];
+};
+layout(std430, binding = 2) readonly buffer Triangles {
+    Triangle triangles[];
+};
+layout(std430, binding = 3) readonly buffer Vertices {
+    Vertex vertices[];
+};
+layout(std430, binding = 4) readonly buffer Materials {
+    Material materials[];
+};
+layout(binding = 5) uniform sampler2DArray materialTextures;
+layout(binding = 6) uniform sampler2D environmentTexture;
+layout(rgba32f, binding = 7) uniform image2D outputImage;
+
+struct Hit {
+    float distance;
+    uint triangleIndex;
+    vec2 barycentric;
+    int ellipsoidIndex;
+};
+
+vec3 quaternionRotate(vec4 quaternion, vec3 value) {
+    return value +
+           2.0 * cross(quaternion.xyz,
+                       cross(quaternion.xyz, value) +
+                       quaternion.w * value);
+}
+
+float boundsDistance(vec3 origin,
+                     vec3 inverseDirection,
+                     BvhNode node,
+                     float maximumDistance) {
+    vec3 first = (node.boundsMin.xyz - origin) * inverseDirection;
+    vec3 second = (node.boundsMax.xyz - origin) * inverseDirection;
+    vec3 nearPlane = min(first, second);
+    vec3 farPlane = max(first, second);
+    float nearDistance =
+            max(max(nearPlane.x, nearPlane.y), nearPlane.z);
+    float farDistance =
+            min(min(farPlane.x, farPlane.y), farPlane.z);
+    return farDistance >= max(nearDistance, 0.0) &&
+                   nearDistance < maximumDistance
+            ? max(nearDistance, 0.0)
+            : FAR_DISTANCE;
+}
+
+bool intersectTriangle(vec3 origin,
+                       vec3 direction,
+                       uint triangleIndex,
+                       inout Hit hit) {
+    Triangle triangle = triangles[triangleIndex];
+    vec3 a = vertices[triangle.data.x].position.xyz;
+    vec3 b = vertices[triangle.data.y].position.xyz;
+    vec3 c = vertices[triangle.data.z].position.xyz;
+    vec3 edgeAB = b - a;
+    vec3 edgeAC = c - a;
+    vec3 p = cross(direction, edgeAC);
+    float determinant = dot(edgeAB, p);
+    if (abs(determinant) < 1.0e-8) return false;
+    float inverseDeterminant = 1.0 / determinant;
+    vec3 t = origin - a;
+    float u = dot(t, p) * inverseDeterminant;
+    if (u < 0.0 || u > 1.0) return false;
+    vec3 q = cross(t, edgeAB);
+    float v = dot(direction, q) * inverseDeterminant;
+    if (v < 0.0 || u + v > 1.0) return false;
+    float distance = dot(edgeAC, q) * inverseDeterminant;
+    if (distance <= RAY_EPSILON || distance >= hit.distance) return false;
+    hit.distance = distance;
+    hit.triangleIndex = triangleIndex;
+    hit.barycentric = vec2(u, v);
+    hit.ellipsoidIndex = -1;
+    return true;
+}
+
+bool intersectEllipsoid(vec3 origin,
+                        vec3 direction,
+                        int ellipsoidIndex,
+                        inout Hit hit) {
+    vec3 center = camera.ellipsoidCenter[ellipsoidIndex].xyz;
+    vec3 radii = max(camera.ellipsoidRadii[ellipsoidIndex].xyz,
+                     vec3(0.001));
+    vec4 inverseRotation =
+            camera.ellipsoidInverseRotation[ellipsoidIndex];
+    vec3 localOrigin =
+            quaternionRotate(inverseRotation, origin - center) / radii;
+    vec3 localDirection =
+            quaternionRotate(inverseRotation, direction) / radii;
+    float a = dot(localDirection, localDirection);
+    float b = dot(localOrigin, localDirection);
+    float c = dot(localOrigin, localOrigin) - 1.0;
+    float discriminant = b * b - a * c;
+    if (discriminant < 0.0) return false;
+    float root = sqrt(discriminant);
+    float distance = (-b - root) / a;
+    if (distance <= RAY_EPSILON) distance = (-b + root) / a;
+    if (distance <= RAY_EPSILON || distance >= hit.distance) return false;
+    hit.distance = distance;
+    hit.ellipsoidIndex = ellipsoidIndex;
+    return true;
+}
+
+Hit traceScene(vec3 origin, vec3 direction, float maximumDistance) {
+    Hit hit;
+    hit.distance = maximumDistance;
+    hit.triangleIndex = 0u;
+    hit.barycentric = vec2(0.0);
+    hit.ellipsoidIndex = -1;
+
+    vec3 safeDirection = vec3(
+            abs(direction.x) < 1.0e-8 ? 1.0e-8 : direction.x,
+            abs(direction.y) < 1.0e-8 ? 1.0e-8 : direction.y,
+            abs(direction.z) < 1.0e-8 ? 1.0e-8 : direction.z);
+    vec3 inverseDirection = 1.0 / safeDirection;
+    uint stack[64];
+    int stackSize = 1;
+    stack[0] = 0u;
+    while (stackSize > 0) {
+        uint nodeIndex = stack[--stackSize];
+        BvhNode node = bvhNodes[nodeIndex];
+        if (boundsDistance(origin, inverseDirection, node,
+                           hit.distance) >= FAR_DISTANCE) {
+            continue;
+        }
+        uint triangleCount = node.metadata.w;
+        if (triangleCount > 0u) {
+            for (uint index = 0u; index < triangleCount; ++index) {
+                intersectTriangle(origin, direction,
+                                  node.metadata.z + index, hit);
+            }
+        } else if (stackSize <= 61) {
+            uint leftIndex = node.metadata.x;
+            uint rightIndex = node.metadata.y;
+            float leftDistance = boundsDistance(
+                    origin, inverseDirection, bvhNodes[leftIndex],
+                    hit.distance);
+            float rightDistance = boundsDistance(
+                    origin, inverseDirection, bvhNodes[rightIndex],
+                    hit.distance);
+            if (leftDistance < rightDistance) {
+                if (rightDistance < FAR_DISTANCE)
+                    stack[stackSize++] = rightIndex;
+                if (leftDistance < FAR_DISTANCE)
+                    stack[stackSize++] = leftIndex;
+            } else {
+                if (leftDistance < FAR_DISTANCE)
+                    stack[stackSize++] = leftIndex;
+                if (rightDistance < FAR_DISTANCE)
+                    stack[stackSize++] = rightIndex;
+            }
+        }
+    }
+
+    int ellipsoidCount = int(camera.renderInfo.z + 0.5);
+    for (int index = 0; index < ellipsoidCount; ++index) {
+        intersectEllipsoid(origin, direction, index, hit);
+    }
+    return hit;
+}
+
+bool sceneOccluded(vec3 origin,
+                   vec3 direction,
+                   float maximumDistance) {
+    vec3 safeDirection = vec3(
+            abs(direction.x) < 1.0e-8 ? 1.0e-8 : direction.x,
+            abs(direction.y) < 1.0e-8 ? 1.0e-8 : direction.y,
+            abs(direction.z) < 1.0e-8 ? 1.0e-8 : direction.z);
+    vec3 inverseDirection = 1.0 / safeDirection;
+    uint stack[64];
+    int stackSize = 1;
+    stack[0] = 0u;
+    while (stackSize > 0) {
+        uint nodeIndex = stack[--stackSize];
+        BvhNode node = bvhNodes[nodeIndex];
+        if (boundsDistance(origin, inverseDirection, node,
+                           maximumDistance) >= FAR_DISTANCE) {
+            continue;
+        }
+        uint triangleCount = node.metadata.w;
+        if (triangleCount > 0u) {
+            Hit candidate;
+            candidate.distance = maximumDistance;
+            candidate.ellipsoidIndex = -1;
+            for (uint index = 0u; index < triangleCount; ++index) {
+                if (intersectTriangle(
+                            origin, direction,
+                            node.metadata.z + index, candidate)) {
+                    return true;
+                }
+            }
+        } else if (stackSize <= 61) {
+            stack[stackSize++] = node.metadata.x;
+            stack[stackSize++] = node.metadata.y;
+        }
+    }
+
+    int ellipsoidCount = int(camera.renderInfo.z + 0.5);
+    Hit candidate;
+    candidate.distance = maximumDistance;
+    candidate.ellipsoidIndex = -1;
+    for (int index = 0; index < ellipsoidCount; ++index) {
+        if (intersectEllipsoid(
+                    origin, direction, index, candidate)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+vec3 environmentColor(vec3 direction) {
+    float longitude = atan(direction.z, direction.x);
+    float latitude = acos(clamp(direction.y, -1.0, 1.0));
+    vec2 uv = vec2(longitude / (2.0 * PI) + 0.5,
+                   latitude / PI);
+    return textureLod(environmentTexture, uv, 0.0).rgb;
+}
+
+void triangleSurface(Hit hit,
+                     vec3 incomingDirection,
+                     out vec3 normal,
+                     out vec3 baseColor,
+                     out vec4 parameters,
+                     out uint materialIndex) {
+    Triangle triangle = triangles[hit.triangleIndex];
+    Vertex a = vertices[triangle.data.x];
+    Vertex b = vertices[triangle.data.y];
+    Vertex c = vertices[triangle.data.z];
+    float w = 1.0 - hit.barycentric.x - hit.barycentric.y;
+    normal = normalize(a.normal.xyz * w +
+                       b.normal.xyz * hit.barycentric.x +
+                       c.normal.xyz * hit.barycentric.y);
+    if (dot(normal, incomingDirection) > 0.0) normal = -normal;
+    vec2 uv = a.uv.xy * w + b.uv.xy * hit.barycentric.x +
+              c.uv.xy * hit.barycentric.y;
+    vec4 vertexColor = a.color * w +
+                       b.color * hit.barycentric.x +
+                       c.color * hit.barycentric.y;
+    materialIndex = min(triangle.data.w, 16u);
+    float textureLodValue = clamp(
+            log2(max(hit.distance, 1.0)) * 0.55 - 1.0,
+            0.0, 8.0);
+    vec3 textureColor = textureLod(
+            materialTextures,
+            vec3(fract(uv), float(materialIndex)),
+            textureLodValue).rgb;
+    bool usesVertexColor =
+            materialIndex > 3u && materialIndex != 15u;
+    baseColor = textureColor *
+                (usesVertexColor ? vertexColor.rgb : vec3(1.0));
+    parameters = materials[materialIndex].parameters;
+}
+
+void surfaceData(Hit hit,
+                 vec3 hitPosition,
+                 vec3 incomingDirection,
+                 out vec3 normal,
+                 out vec3 baseColor,
+                 out vec4 parameters) {
+    if (hit.ellipsoidIndex >= 0) {
+        vec3 center =
+                camera.ellipsoidCenter[hit.ellipsoidIndex].xyz;
+        vec3 radii = max(
+                camera.ellipsoidRadii[hit.ellipsoidIndex].xyz,
+                vec3(0.001));
+        vec4 inverseRotation =
+                camera.ellipsoidInverseRotation[hit.ellipsoidIndex];
+        vec4 worldRotation =
+                vec4(-inverseRotation.xyz, inverseRotation.w);
+        vec3 localPosition =
+                quaternionRotate(inverseRotation,
+                                 hitPosition - center);
+        vec3 localNormal =
+                normalize(localPosition / (radii * radii));
+        normal = normalize(
+                quaternionRotate(worldRotation, localNormal));
+        if (dot(normal, incomingDirection) > 0.0)
+            normal = -normal;
+        baseColor = camera.carColor.rgb;
+        parameters = vec4(camera.carColor.a, 0.62, 1.0, 0.0);
+    } else {
+        uint materialIndex;
+        triangleSurface(hit, incomingDirection, normal, baseColor,
+                        parameters, materialIndex);
+    }
+}
+
+vec3 reflectedSurfaceColor(Hit hit,
+                           vec3 origin,
+                           vec3 direction) {
+    if (hit.distance >= FAR_DISTANCE * 0.5)
+        return environmentColor(direction);
+    vec3 hitPosition = origin + direction * hit.distance;
+    vec3 normal;
+    vec3 baseColor;
+    vec4 parameters;
+    surfaceData(hit, hitPosition, direction, normal, baseColor,
+                parameters);
+    vec3 environment = environmentColor(normal);
+    return baseColor * (0.12 + environment * 0.32) +
+           baseColor * max(parameters.w, 0.0) * 2.0;
+}
+
+vec3 realTimeRayTrace(vec3 origin, vec3 direction) {
+    Hit hit = traceScene(origin, direction, FAR_DISTANCE);
+    if (hit.distance >= FAR_DISTANCE * 0.5)
+        return environmentColor(direction);
+
+    vec3 hitPosition = origin + direction * hit.distance;
+    vec3 normal;
+    vec3 baseColor;
+    vec4 parameters;
+    surfaceData(hit, hitPosition, direction, normal, baseColor,
+                parameters);
+
+    float roughness = clamp(parameters.x, 0.04, 1.0);
+    float metalness = clamp(parameters.y, 0.0, 1.0);
+    vec3 environment = environmentColor(normal);
+    vec3 radiance =
+            baseColor * (0.11 + environment * 0.30) +
+            baseColor * max(parameters.w, 0.0) * 2.0;
+
+    float sunCosine =
+            max(dot(normal, camera.sunDirection.xyz), 0.0);
+    if (sunCosine > 0.0 &&
+        !sceneOccluded(
+                hitPosition + normal * RAY_EPSILON * 2.0,
+                camera.sunDirection.xyz, FAR_DISTANCE)) {
+        vec3 fresnelColor =
+                mix(vec3(0.04), baseColor, metalness);
+        vec3 diffuse = baseColor * (1.0 - metalness);
+        vec3 reflected = reflect(direction, normal);
+        float specularPower = mix(160.0, 3.0, roughness);
+        float specular = pow(
+                max(dot(reflected, camera.sunDirection.xyz), 0.0),
+                specularPower);
+        radiance += diffuse * sunCosine * 2.8 +
+                    fresnelColor * specular * 3.8;
+    }
+
+    float viewCosine = max(dot(-direction, normal), 0.0);
+    vec3 fresnel = mix(vec3(0.04), baseColor, metalness) +
+                   (vec3(1.0) -
+                    mix(vec3(0.04), baseColor, metalness)) *
+                           pow(1.0 - viewCosine, 5.0);
+    float reflectionStrength =
+            clamp(max(metalness, (1.0 - roughness) * 0.45),
+                  0.0, 0.92);
+    if (reflectionStrength > 0.04) {
+        vec3 reflectionDirection = reflect(direction, normal);
+        vec3 reflectionOrigin =
+                hitPosition + normal * RAY_EPSILON * 2.0;
+        Hit reflectionHit = traceScene(
+                reflectionOrigin, reflectionDirection, FAR_DISTANCE);
+        vec3 reflectionColor = reflectedSurfaceColor(
+                reflectionHit, reflectionOrigin,
+                reflectionDirection);
+        radiance = mix(
+                radiance, reflectionColor * fresnel +
+                                  radiance * (vec3(1.0) - fresnel),
+                reflectionStrength);
+    }
+    return radiance;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imageSizeValue = imageSize(outputImage);
+    if (pixel.x >= imageSizeValue.x || pixel.y >= imageSizeValue.y) return;
+
+    vec2 pixelPosition = vec2(pixel) + vec2(0.5);
+    vec2 screen = pixelPosition / camera.viewportFrame.xy * 2.0 - 1.0;
+    float aspect = camera.renderInfo.w;
+    vec3 direction = normalize(
+            camera.cameraForward.xyz +
+            camera.cameraRight.xyz * screen.x *
+                    camera.renderInfo.x * aspect +
+            camera.cameraUp.xyz * screen.y * camera.renderInfo.x);
+
+    vec3 sampleColor = realTimeRayTrace(
+            camera.cameraOrigin.xyz, direction);
+    imageStore(outputImage, pixel, vec4(sampleColor, 1.0));
+}
