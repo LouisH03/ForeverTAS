@@ -190,11 +190,12 @@ QVariantMap MaterialMap(ReplacementMaterialClass materialClass) {
     map.insert(QStringLiteral("roughness"), replacement.roughness);
     map.insert(QStringLiteral("metalness"), replacement.metalness);
     map.insert(QStringLiteral("opacity"), replacement.opacity);
-    map.insert(QStringLiteral("textureScale"), replacement.textureScale);
+    map.insert(QStringLiteral("textureScale"),
+               replacement.worldUvScale > 0.0f
+                       ? 1.0f
+                       : replacement.textureScale);
     map.insert(QStringLiteral("emissiveStrength"),
                replacement.emissiveStrength);
-    map.insert(QStringLiteral("alphaCutoff"), replacement.alphaCutoff);
-    map.insert(QStringLiteral("alphaMask"), replacement.alphaMask);
     map.insert(QStringLiteral("twoSided"), replacement.twoSided);
     map.insert(QStringLiteral("unknown"),
                materialClass == ReplacementMaterialClass::Unknown);

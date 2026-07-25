@@ -382,6 +382,8 @@ ApplicationWindow {
                                     scaleU: modelData.textureScale
                                     scaleV: modelData.textureScale
                                     generateMipmaps: true
+                                    minFilter: Texture.Linear
+                                    magFilter: Texture.Linear
                                     mipFilter: Texture.Linear
                                 }
 
@@ -394,6 +396,8 @@ ApplicationWindow {
                                     scaleU: modelData.textureScale
                                     scaleV: modelData.textureScale
                                     generateMipmaps: true
+                                    minFilter: Texture.Linear
+                                    magFilter: Texture.Linear
                                     mipFilter: Texture.Linear
                                 }
 
@@ -423,12 +427,9 @@ ApplicationWindow {
                                            ? 0
                                            : modelData.metalness
                                 opacity: modelData.opacity
-                                alphaMode: modelData.alphaMask
-                                           ? PrincipledMaterial.Mask
-                                           : (modelData.opacity < 0.999
-                                              ? PrincipledMaterial.Blend
-                                              : PrincipledMaterial.Opaque)
-                                alphaCutoff: modelData.alphaCutoff
+                                alphaMode: modelData.opacity < 0.999
+                                           ? PrincipledMaterial.Blend
+                                           : PrincipledMaterial.Opaque
                                 cullMode: modelData.twoSided
                                           ? Material.NoCulling
                                           : Material.BackFaceCulling

@@ -130,8 +130,8 @@ bool TestClassification() {
     grassClipContext.blockName = "StadiumGrassClip";
     grassClipContext.purpose = PhysicsSandboxScenePurpose::Clip;
     okay &= Check(ClassifyMaterial(grassClip, grassClipContext) ==
-                          ReplacementMaterialClass::GrassFoliage,
-                  "grass clip did not classify as alpha-masked foliage");
+                          ReplacementMaterialClass::Grass,
+                  "grass clip did not classify as ground grass");
     PhysicsSandboxRenderMaterial groundCover =
             Named("UnclassifiedSurface");
     groundCover.surfaceMaterialId = 0u;
@@ -161,24 +161,24 @@ bool TestReplacementParametersAndTextures() {
             ReplacementFor(ReplacementMaterialClass::Emissive);
     const auto grass =
             ReplacementFor(ReplacementMaterialClass::Grass);
-    const auto grassFoliage =
-            ReplacementFor(ReplacementMaterialClass::GrassFoliage);
+    const auto dirt = ReplacementFor(ReplacementMaterialClass::Dirt);
+    const auto concrete =
+            ReplacementFor(ReplacementMaterialClass::Concrete);
     okay &= Check(glass.opacity < 1.0f && glass.twoSided,
                   "glass replacement is not transparent and two-sided");
     okay &= Check(water.opacity < 1.0f && water.twoSided,
                   "water replacement is not transparent and two-sided");
     okay &= Check(emissive.emissiveStrength > 0.0f,
                   "emissive replacement has no emission");
-    okay &= Check(!grass.alphaMask && !grass.applyVertexColors &&
-                          grassFoliage.alphaMask &&
-                          !grassFoliage.applyVertexColors &&
-                          grassFoliage.twoSided &&
-                          grassFoliage.alphaCutoff > 0.0f &&
-                          grassFoliage.alphaCutoff < 1.0f,
-                  "grass ground cover and foliage transparency were conflated");
+    okay &= Check(!grass.applyVertexColors && !dirt.applyVertexColors &&
+                          !concrete.applyVertexColors &&
+                          std::fabs(grass.worldUvScale - 0.25f) < 0.001f &&
+                          std::fabs(dirt.worldUvScale - 0.25f) < 0.001f &&
+                          std::fabs(concrete.worldUvScale - 0.25f) < 0.001f,
+                  "ground materials do not use consistent world-space UVs");
 
-    constexpr std::array<const char *, 18> names{{
-            "asphalt", "concrete", "dirt", "grass", "grass_foliage", "metal",
+    constexpr std::array<const char *, 17> names{{
+            "asphalt", "concrete", "dirt", "grass", "metal",
             "painted_metal", "plastic", "rubber", "glass", "signage",
             "emissive", "turbo", "checkpoint", "start_finish", "water",
             "neutral", "unknown"}};
@@ -275,21 +275,6 @@ bool TestReplacementParametersAndTextures() {
     okay &= Check(grassGreen * 4 > grassRed * 5 &&
                           grassGreen * 6 > grassBlue * 7,
                   "grass ground cover is not recognizably green");
-
-    const QImage grassFoliageBase(
-            textureRoot + QStringLiteral("grass_foliage_base.png"));
-    bool hasTransparentGrass = false;
-    bool hasOpaqueGrass = false;
-    for (int y = 0; y < grassFoliageBase.height(); y += 4) {
-        for (int x = 0; x < grassFoliageBase.width(); x += 4) {
-            const int alpha = grassFoliageBase.pixelColor(x, y).alpha();
-            hasTransparentGrass |= alpha < 64;
-            hasOpaqueGrass |= alpha > 192;
-        }
-    }
-    okay &= Check(grassFoliageBase.hasAlphaChannel() &&
-                          hasTransparentGrass && hasOpaqueGrass,
-                  "grass foliage texture does not contain a useful alpha mask");
 
     const QImage turboBase(textureRoot + QStringLiteral("turbo_base.png"));
     const auto countArrowPixels =
@@ -390,6 +375,39 @@ PhysicsSandboxRenderMesh TriangleMesh() {
     return mesh;
 }
 
+PhysicsSandboxRenderMesh GrassBladeMesh() {
+    PhysicsSandboxRenderMesh mesh;
+    mesh.vertices.resize(64u);
+    mesh.indices.reserve(96u);
+    constexpr float ZStep = 15.75f / 4.0f;
+    for (std::uint32_t quad = 0u; quad < 16u; ++quad) {
+        const float x = static_cast<float>(quad % 4u) * 8.0f;
+        const float z = static_cast<float>(quad / 4u) * ZStep;
+        const std::uint32_t base = quad * 4u;
+        const std::array<forevervalidator::Vector3, 4> positions{{
+                {x, 0.0f, z},
+                {x + 8.0f, 0.0f, z},
+                {x + 8.0f, 0.5f, z + ZStep},
+                {x, 0.5f, z + ZStep}}};
+        for (std::uint32_t corner = 0u; corner < 4u; ++corner) {
+            auto &vertex = mesh.vertices[base + corner];
+            vertex.position = positions[corner];
+            vertex.normal = {0.0f, 1.0f, 0.0f};
+            vertex.tangent = {1.0f, 0.0f, 0.0f, 1.0f};
+        }
+        mesh.indices.insert(mesh.indices.end(),
+                            {base, base + 1u, base + 2u,
+                             base, base + 2u, base + 3u});
+    }
+    mesh.subsets = {{0u, static_cast<std::uint32_t>(mesh.indices.size()), 0u}};
+    mesh.boundsMin = {0.0f, 0.0f, 0.0f};
+    mesh.boundsMax = {32.0f, 0.5f, 15.75f};
+    mesh.hasNormals = true;
+    mesh.hasTangents = true;
+    mesh.hasUv0 = true;
+    return mesh;
+}
+
 bool TestStaticBatching() {
     PhysicsSandboxRenderScene scene;
     scene.meshes.push_back(TriangleMesh());
@@ -398,6 +416,7 @@ bool TestStaticBatching() {
     groundCoverMesh.vertices[2].position.z = 32.0f;
     groundCoverMesh.boundsMax = {32.0f, 0.0f, 32.0f};
     scene.meshes.push_back(std::move(groundCoverMesh));
+    scene.meshes.push_back(GrassBladeMesh());
     PhysicsSandboxRenderMaterial turbo;
     turbo.surfaceMaterialId = 7u;
     scene.materials.push_back(turbo);
@@ -422,8 +441,17 @@ bool TestStaticBatching() {
     clip.materialIndex = 1u;
     clip.purpose = PhysicsSandboxScenePurpose::Clip;
     clip.provenance.blockName = "StadiumGrassClip";
+    clip.worldTransform.basisX = {1.0f, 0.0f, 0.0f};
+    clip.worldTransform.basisY = {0.0f, 1.0f, 0.0f};
+    clip.worldTransform.basisZ = {0.0f, 0.0f, 1.0f};
     clip.worldTransform.translation = {-5.0f, 0.0f, 0.0f};
     scene.instances.push_back(clip);
+
+    PhysicsSandboxRenderInstance blades = clip;
+    blades.meshIndex = 2u;
+    blades.purpose = PhysicsSandboxScenePurpose::PlacedBlock;
+    blades.provenance.blockName = "StadiumGrass";
+    scene.instances.push_back(blades);
 
     PhysicsSandboxRenderInstance hidden = placed;
     hidden.visible = false;
@@ -431,12 +459,15 @@ bool TestStaticBatching() {
 
     const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
     bool okay = Check(
-            result.visibleSourceInstanceCount == 3u &&
+            result.visibleSourceInstanceCount == 4u &&
                     result.defaultVisibleInstanceCount == 2u &&
                     result.defaultTriangleCount == 2u &&
                     result.duplicateInstanceCount == 1u &&
+                    result.skippedGrassBladeInstanceCount == 1u &&
+                    result.skippedGrassBladeTriangleCount == 32u &&
                     result.batches.size() == 2u,
-            "static batch counts or duplicate suppression were incorrect");
+            "static batch counts, blade removal, or duplicate suppression "
+            "were incorrect");
     const auto turboBatch = std::find_if(
             result.batches.cbegin(), result.batches.cend(),
             [](const StaticVisualBatch &batch) {
@@ -453,6 +484,17 @@ bool TestStaticBatching() {
             });
     okay &= Check(grassClipBatch != result.batches.cend(),
                   "intentional grass ground-cover clip did not reach the scene");
+    if (grassClipBatch != result.batches.cend()) {
+        constexpr std::size_t FloatCount = 17u;
+        const auto *vertices = reinterpret_cast<const float *>(
+                grassClipBatch->vertices.constData());
+        okay &= Check(
+                std::fabs(vertices[9] + 1.25f) < 0.001f &&
+                        std::fabs(vertices[FloatCount + 9] - 6.75f) < 0.001f &&
+                        std::fabs(vertices[FloatCount + 9] - vertices[9] -
+                                  8.0f) < 0.001f,
+                "grass ground did not receive a stable four-meter world tile");
+    }
     if (turboBatch != result.batches.cend()) {
         constexpr std::size_t FloatCount = 17u;
         const auto *vertices = reinterpret_cast<const float *>(

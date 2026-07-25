@@ -17,12 +17,8 @@ License: [Poly Haven CC0](https://polyhaven.com/license).
 
 Grass ground cover uses ambientCG's CC0
 [Grass 001](https://ambientcg.com/view?id=Grass001) Color and NormalGL maps.
-Grass blade cards use its CC0
-[Foliage 001](https://ambientcg.com/view?id=Foliage001) atlas; the Color,
-NormalGL, and Opacity maps are combined into the committed alpha-masked
-`grass_foliage_base.png` and `grass_foliage_normal.png`. Keeping these separate
-prevents the grass bordering dirt blocks from becoming transparent while
-removing the pale rectangles around individual blades.
+Grass blades are intentionally not rendered; every grass appearance uses this
+opaque ground material.
 
 License: [ambientCG CC0](https://ambientcg.com/license).
 

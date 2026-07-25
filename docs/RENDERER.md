@@ -24,19 +24,21 @@ start/finish components use a checker pattern. Concrete is a deliberately flat
 gray. Broad, horizontal surface-0 meshes attached to authored blocks are
 recognized as grass ground cover instead of inheriting the generic concrete
 fallback. This makes gameplay surfaces recognizable even when every source
-material path is empty. Grass blade clips use a separate CC0 foliage atlas with
-alpha masking, so their transparent background does not replace the opaque
-grass bordering dirt and road blocks. Grass replacements also ignore source
-vertex-color tint because those channels encode game-specific data that turns
-the authored green textures pale or orange.
+material path is empty. Dense grass-blade and grass-overlay meshes are removed
+before batching; only opaque ground surfaces remain. Grass, dirt, and concrete
+also ignore source vertex-color tint because those channels encode
+game-specific data that can turn replacement textures pale or orange.
 
 Unknown materials use a conspicuous magenta replacement. Missing UV0 receives
-a deterministic X/Z projection; missing normals are accumulated from indexed
-triangles; missing tangents use a stable orthogonal basis. Water, cube maps,
-render targets and complex shaders are reduced to deterministic replacement
-material parameters. Glass and water use alpha blending, foliage uses alpha
-masking, emissive materials use an emissive factor, and thin classes disable
-culling.
+a deterministic X/Z projection. Ground materials instead use a dominant-axis
+world-space projection with one texture tile every four meters. This replaces
+the tiny authored UV spans that previously reduced a 32-meter block to only a
+few sampled pixels, and keeps standalone grass, block borders, and grass clips
+at the same density. Missing normals are accumulated from indexed triangles;
+missing tangents use a stable orthogonal basis. Water, cube maps, render
+targets and complex shaders are reduced to deterministic replacement material
+parameters. Glass and water use alpha blending, emissive materials use an
+emissive factor, and thin classes disable culling.
 
 ## Qt Quick 3D
 
@@ -55,11 +57,11 @@ are disabled by default.
 
 The default scene includes authored blocks, the enclosing stadium
 environment, intentional generated stadium objects, and `StadiumGrassClip`
-meshes that restore real block-side and ground-cover geometry. Other clips,
-checkpoint/start helpers, triggers, and initial-collision geometry stay hidden.
-The purpose selector can show all geometry or inspect any exported purpose in
-isolation. On TASmania, the overlap audit found no exact duplicates, no
-cross-purpose coincident transforms, and no coincident conflicting materials.
+meshes that restore real block-side and ground-cover geometry. Dense blade
+layers within those clips are still omitted. Other clips, checkpoint/start
+helpers, triggers, and initial-collision geometry stay hidden.
+On TASmania, the overlap audit found no exact duplicates, no cross-purpose
+coincident transforms, and no coincident conflicting materials.
 
 Camera near/far planes are recalculated from camera position, orbit distance,
 and the default visible-scene bounds. There is no fixed 5000-unit minimum. The
@@ -82,9 +84,9 @@ default visibility, transformed batching, exact vertex attributes, packaged
 replacement images, shared QML material and texture objects, every render mode,
 and transactional repeated reloads.
 
-The pinned TASmania build has 7,026 default-visible source objects, 31 total
-debuggable batches, 1,572,048 default-visible triangles, and zero map shadows.
-The interactive textured view measured 62-63 FPS on the development machine.
+After removing the blade overlays, the pinned TASmania build has 30 debuggable
+batches, 260,116 default-visible triangles, and zero map shadows. The
+interactive textured view measured 61-63 FPS on the development machine.
 
 [`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is the
 pre-optimization reference. The corrected textured frame is captured in

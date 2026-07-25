@@ -152,10 +152,6 @@ ReplacementMaterialClass ClassifySemanticContext(
         return ReplacementMaterialClass::Asphalt;
     }
     if (ContainsAny(block, {"grass"}) && IsSurface(surface, {2u, 20u})) {
-        if (context.purpose ==
-            forevervalidator::experimental::PhysicsSandboxScenePurpose::Clip) {
-            return ReplacementMaterialClass::GrassFoliage;
-        }
         return ReplacementMaterialClass::Grass;
     }
     if (ContainsAny(block, {"pool"}) && surface == 13u) {
@@ -289,27 +285,25 @@ ReplacementMaterial ReplacementFor(
                     "asphalt_base.png", "asphalt_normal.png",
                     0.88f, 0.0f, 0.16f);
     case ReplacementMaterialClass::Concrete:
-        return Make(materialClass, "Concrete", "#a8aaa5", "#d8d8d8",
-                    "concrete_base.png", "concrete_normal.png",
-                    0.82f, 0.0f, 0.13f);
+        result = Make(materialClass, "Concrete", "#a8aaa5", "#d8d8d8",
+                      "concrete_base.png", "concrete_normal.png",
+                      0.82f, 0.0f);
+        result.worldUvScale = 0.25f;
+        result.applyVertexColors = false;
+        return result;
     case ReplacementMaterialClass::Dirt:
-        return Make(materialClass, "Dirt", "#816746", "#9c5b22",
-                    "dirt_base.png", "dirt_normal.png",
-                    0.94f, 0.0f, 0.12f);
+        result = Make(materialClass, "Dirt", "#816746", "#9c5b22",
+                      "dirt_base.png", "dirt_normal.png",
+                      0.94f, 0.0f);
+        result.worldUvScale = 0.25f;
+        result.applyVertexColors = false;
+        return result;
     case ReplacementMaterialClass::Grass:
         result = Make(materialClass, "Grass", "#527144", "#40d153",
                       "grass_base.png", "grass_normal.png",
-                      0.9f, 0.0f, 0.1f);
+                      0.9f, 0.0f);
+        result.worldUvScale = 0.25f;
         result.applyVertexColors = false;
-        return result;
-    case ReplacementMaterialClass::GrassFoliage:
-        result = Make(materialClass, "Grass foliage", "#527144", "#40d153",
-                      "grass_foliage_base.png", "grass_foliage_normal.png",
-                      0.9f, 0.0f, 1.0f);
-        result.alphaMask = true;
-        result.alphaCutoff = 0.3f;
-        result.applyVertexColors = false;
-        result.twoSided = true;
         return result;
     case ReplacementMaterialClass::Metal:
         return Make(materialClass, "Metal", "#899092", "#8ea6ff",

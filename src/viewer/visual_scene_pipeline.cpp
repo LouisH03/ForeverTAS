@@ -278,10 +278,64 @@ bool IsGrassGroundCover(const PhysicsSandboxRenderMesh &mesh,
     return horizontalNormals * 100u >= mesh.vertices.size() * 95u;
 }
 
+bool IsGrassBladeGeometry(const PhysicsSandboxRenderMesh &mesh,
+                          const PhysicsSandboxRenderInstance &instance,
+                          std::uint8_t surfaceMaterialId) {
+    if (!mesh.hasNormals || mesh.vertices.empty() ||
+        instance.provenance.blockName.empty() ||
+        (instance.purpose != PhysicsSandboxScenePurpose::PlacedBlock &&
+         instance.purpose != PhysicsSandboxScenePurpose::Clip) ||
+        (surfaceMaterialId != 0u && surfaceMaterialId != 2u &&
+         surfaceMaterialId != 20u && surfaceMaterialId != 25u) ||
+        mesh.vertices.size() < 64u || mesh.indices.size() % 3u != 0u) {
+        return false;
+    }
+    const float width = mesh.boundsMax.x - mesh.boundsMin.x;
+    const float height = mesh.boundsMax.y - mesh.boundsMin.y;
+    const float depth = mesh.boundsMax.z - mesh.boundsMin.z;
+    if (height > 1.0f || std::max(width, depth) < 16.0f) {
+        return false;
+    }
+    const std::size_t horizontalNormals = std::count_if(
+            mesh.vertices.cbegin(), mesh.vertices.cend(),
+            [](const auto &vertex) {
+                return std::fabs(vertex.normal.y) >= 0.9f;
+            });
+    if (horizontalNormals * 100u < mesh.vertices.size() * 95u) {
+        return false;
+    }
+    return (mesh.indices.size() / 3u) * 2u == mesh.vertices.size();
+}
+
+void ApplyWorldUvProjection(VisualVertex &vertex,
+                            const QVector3D &position,
+                            const QVector3D &normal,
+                            float scale,
+                            QVector3D &tangent) {
+    const QVector3D absoluteNormal(std::fabs(normal.x()),
+                                   std::fabs(normal.y()),
+                                   std::fabs(normal.z()));
+    if (absoluteNormal.y() >= absoluteNormal.x() &&
+        absoluteNormal.y() >= absoluteNormal.z()) {
+        vertex.uv0[0] = position.x() * scale;
+        vertex.uv0[1] = position.z() * scale;
+        tangent = {1.0f, 0.0f, 0.0f};
+    } else if (absoluteNormal.x() >= absoluteNormal.z()) {
+        vertex.uv0[0] = position.z() * scale;
+        vertex.uv0[1] = position.y() * scale;
+        tangent = {0.0f, 0.0f, 1.0f};
+    } else {
+        vertex.uv0[0] = position.x() * scale;
+        vertex.uv0[1] = position.y() * scale;
+        tangent = {1.0f, 0.0f, 0.0f};
+    }
+}
+
 void AppendInstance(BatchAccumulator &batch,
                     const std::vector<VisualVertex> &sourceVertices,
                     const std::vector<std::uint32_t> &sourceIndices,
-                    const PhysicsSandboxTransform &transform) {
+                    const PhysicsSandboxTransform &transform,
+                    float worldUvScale) {
     if (batch.vertices.size() >
         std::numeric_limits<std::uint32_t>::max() - sourceVertices.size()) {
         throw std::runtime_error("static visual batch exceeds U32 indices");
@@ -299,6 +353,10 @@ void AppendInstance(BatchAccumulator &batch,
         QVector3D tangent = TransformDirection(
                 transform,
                 {source.tangent[0], source.tangent[1], source.tangent[2]});
+        if (worldUvScale > 0.0f) {
+            ApplyWorldUvProjection(vertex, position, normal, worldUvScale,
+                                   tangent);
+        }
         tangent -= normal * QVector3D::dotProduct(normal, tangent);
         tangent = tangent.lengthSquared() > 1.0e-12f
                           ? tangent.normalized()
@@ -416,6 +474,14 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
         }
 
         const PhysicsSandboxRenderMesh &mesh = scene.meshes[instance.meshIndex];
+        const std::uint8_t surfaceMaterialId =
+                scene.materials[instance.materialIndex].surfaceMaterialId;
+        if (IsGrassBladeGeometry(mesh, instance, surfaceMaterialId)) {
+            ++result.skippedGrassBladeInstanceCount;
+            result.skippedGrassBladeTriangleCount +=
+                    mesh.indices.size() / 3u;
+            continue;
+        }
         const MaterialSemanticContext context{
                 instance.provenance.blockName,
                 instance.provenance.descriptorPath,
@@ -424,6 +490,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                 IsGrassGroundCover(mesh, instance)};
         const ReplacementMaterialClass materialClass = ClassifyMaterial(
                 scene.materials[instance.materialIndex], context);
+        const ReplacementMaterial replacement = ReplacementFor(materialClass);
         const bool defaultVisible = IsDefaultVisualInstance(
                 instance.purpose, instance.provenance.blockName);
         const BatchKey key =
@@ -431,7 +498,8 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                              mesh.hasVertexColors, defaultVisible,
                              instance.worldTransform);
         AppendInstance(accumulators[key], preparedMeshes[instance.meshIndex],
-                       mesh.indices, instance.worldTransform);
+                       mesh.indices, instance.worldTransform,
+                       replacement.worldUvScale);
 
         if (defaultVisible) {
             ++result.defaultVisibleInstanceCount;

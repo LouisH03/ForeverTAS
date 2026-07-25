@@ -58,6 +58,8 @@ struct StaticVisualBatchResult {
     std::uint64_t defaultTriangleCount = 0u;
     std::uint64_t duplicateInstanceCount = 0u;
     std::uint64_t invalidInstanceCount = 0u;
+    std::uint64_t skippedGrassBladeInstanceCount = 0u;
+    std::uint64_t skippedGrassBladeTriangleCount = 0u;
 };
 
 StaticVisualBatchResult BuildStaticVisualBatches(
