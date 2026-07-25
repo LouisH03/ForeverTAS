@@ -161,6 +161,8 @@ bool TestReplacementParametersAndTextures() {
             ReplacementFor(ReplacementMaterialClass::Emissive);
     const auto grass =
             ReplacementFor(ReplacementMaterialClass::Grass);
+    const auto asphalt =
+            ReplacementFor(ReplacementMaterialClass::Asphalt);
     const auto dirt = ReplacementFor(ReplacementMaterialClass::Dirt);
     const auto concrete =
             ReplacementFor(ReplacementMaterialClass::Concrete);
@@ -170,12 +172,15 @@ bool TestReplacementParametersAndTextures() {
                   "water replacement is not transparent and two-sided");
     okay &= Check(emissive.emissiveStrength > 0.0f,
                   "emissive replacement has no emission");
-    okay &= Check(!grass.applyVertexColors && !dirt.applyVertexColors &&
+    okay &= Check(!asphalt.applyVertexColors &&
+                          !grass.applyVertexColors &&
+                          !dirt.applyVertexColors &&
                           !concrete.applyVertexColors &&
+                          std::fabs(asphalt.worldUvScale - 0.25f) < 0.001f &&
                           std::fabs(grass.worldUvScale - 0.25f) < 0.001f &&
                           std::fabs(dirt.worldUvScale - 0.25f) < 0.001f &&
                           std::fabs(concrete.worldUvScale - 0.25f) < 0.001f,
-                  "ground materials do not use consistent world-space UVs");
+                  "driving surfaces do not use consistent world-space UVs");
 
     constexpr std::array<const char *, 17> names{{
             "asphalt", "concrete", "dirt", "grass", "metal",

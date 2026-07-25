@@ -25,20 +25,21 @@ gray. Broad, horizontal surface-0 meshes attached to authored blocks are
 recognized as grass ground cover instead of inheriting the generic concrete
 fallback. This makes gameplay surfaces recognizable even when every source
 material path is empty. Dense grass-blade and grass-overlay meshes are removed
-before batching; only opaque ground surfaces remain. Grass, dirt, and concrete
-also ignore source vertex-color tint because those channels encode
+before batching; only opaque ground surfaces remain. Asphalt, grass, dirt, and
+concrete also ignore source vertex-color tint because those channels encode
 game-specific data that can turn replacement textures pale or orange.
 
 Unknown materials use a conspicuous magenta replacement. Missing UV0 receives
-a deterministic X/Z projection. Ground materials instead use a dominant-axis
-world-space projection with one texture tile every four meters. This replaces
-the tiny authored UV spans that previously reduced a 32-meter block to only a
-few sampled pixels, and keeps standalone grass, block borders, and grass clips
-at the same density. Missing normals are accumulated from indexed triangles;
-missing tangents use a stable orthogonal basis. Water, cube maps, render
-targets and complex shaders are reduced to deterministic replacement material
-parameters. Glass and water use alpha blending, emissive materials use an
-emissive factor, and thin classes disable culling.
+a deterministic X/Z projection. Asphalt and ground materials instead use a
+dominant-axis world-space projection with one texture tile every four meters.
+This replaces the tiny authored UV spans that previously reduced a 32-meter
+block to only a few sampled pixels, and keeps road centers, standalone grass,
+block borders, and grass clips at the same density. Missing normals are
+accumulated from indexed triangles; missing tangents use a stable orthogonal
+basis. Water, cube maps, render targets and complex shaders are reduced to
+deterministic replacement material parameters. Glass and water use alpha
+blending, emissive materials use an emissive factor, and thin classes disable
+culling.
 
 ## Qt Quick 3D
 

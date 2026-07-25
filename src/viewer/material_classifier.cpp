@@ -281,9 +281,12 @@ ReplacementMaterial ReplacementFor(
     ReplacementMaterial result;
     switch (materialClass) {
     case ReplacementMaterialClass::Asphalt:
-        return Make(materialClass, "Asphalt", "#626563", "#343434",
-                    "asphalt_base.png", "asphalt_normal.png",
-                    0.88f, 0.0f, 0.16f);
+        result = Make(materialClass, "Asphalt", "#626563", "#343434",
+                      "asphalt_base.png", "asphalt_normal.png",
+                      0.88f, 0.0f);
+        result.worldUvScale = 0.25f;
+        result.applyVertexColors = false;
+        return result;
     case ReplacementMaterialClass::Concrete:
         result = Make(materialClass, "Concrete", "#a8aaa5", "#d8d8d8",
                       "concrete_base.png", "concrete_normal.png",
