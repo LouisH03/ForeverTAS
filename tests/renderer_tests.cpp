@@ -123,6 +123,15 @@ bool TestClassification() {
     okay &= Check(contextual(2u, "StadiumGrass") ==
                           ReplacementMaterialClass::Grass,
                   "grass provenance did not classify grass");
+    PhysicsSandboxRenderMaterial grassClip =
+            Named("UnclassifiedSurface");
+    grassClip.surfaceMaterialId = 2u;
+    MaterialSemanticContext grassClipContext;
+    grassClipContext.blockName = "StadiumGrassClip";
+    grassClipContext.purpose = PhysicsSandboxScenePurpose::Clip;
+    okay &= Check(ClassifyMaterial(grassClip, grassClipContext) ==
+                          ReplacementMaterialClass::GrassFoliage,
+                  "grass clip did not classify as alpha-masked foliage");
     PhysicsSandboxRenderMaterial groundCover =
             Named("UnclassifiedSurface");
     groundCover.surfaceMaterialId = 0u;
@@ -150,17 +159,29 @@ bool TestReplacementParametersAndTextures() {
     const auto water = ReplacementFor(ReplacementMaterialClass::Water);
     const auto emissive =
             ReplacementFor(ReplacementMaterialClass::Emissive);
+    const auto grass =
+            ReplacementFor(ReplacementMaterialClass::Grass);
+    const auto grassFoliage =
+            ReplacementFor(ReplacementMaterialClass::GrassFoliage);
     okay &= Check(glass.opacity < 1.0f && glass.twoSided,
                   "glass replacement is not transparent and two-sided");
     okay &= Check(water.opacity < 1.0f && water.twoSided,
                   "water replacement is not transparent and two-sided");
     okay &= Check(emissive.emissiveStrength > 0.0f,
                   "emissive replacement has no emission");
+    okay &= Check(!grass.alphaMask && !grass.applyVertexColors &&
+                          grassFoliage.alphaMask &&
+                          !grassFoliage.applyVertexColors &&
+                          grassFoliage.twoSided &&
+                          grassFoliage.alphaCutoff > 0.0f &&
+                          grassFoliage.alphaCutoff < 1.0f,
+                  "grass ground cover and foliage transparency were conflated");
 
-    constexpr std::array<const char *, 17> names{
-            {"asphalt", "concrete", "dirt", "grass", "metal", "painted_metal",
-             "plastic", "rubber", "glass", "signage", "emissive", "turbo",
-             "checkpoint", "start_finish", "water", "neutral", "unknown"}};
+    constexpr std::array<const char *, 18> names{{
+            "asphalt", "concrete", "dirt", "grass", "grass_foliage", "metal",
+            "painted_metal", "plastic", "rubber", "glass", "signage",
+            "emissive", "turbo", "checkpoint", "start_finish", "water",
+            "neutral", "unknown"}};
     QSet<QByteArray> baseTextureHashes;
     QSet<QByteArray> normalTextureHashes;
     for (const char *name : names) {
@@ -170,12 +191,27 @@ bool TestReplacementParametersAndTextures() {
                 QStringLiteral("_base.png");
         const QString normalPath = root + QString::fromLatin1(name) +
                 QStringLiteral("_normal.png");
-        okay &= Check(
-                !QImage(basePath).isNull(),
-                "replacement base texture did not load");
-        okay &= Check(
-                !QImage(normalPath).isNull(),
-                "replacement normal texture did not load");
+        const QImage baseImage(basePath);
+        const QImage normalImage(normalPath);
+        okay &= Check(!baseImage.isNull(),
+                      "replacement base texture did not load");
+        okay &= Check(!normalImage.isNull(),
+                      "replacement normal texture did not load");
+        okay &= Check(baseImage.width() >= 512 &&
+                              baseImage.height() >= 512 &&
+                              normalImage.size() == baseImage.size(),
+                      "replacement texture is undersized or mismatched");
+        if (std::string(name) != "concrete") {
+            QSet<QRgb> sampledBaseColors;
+            for (int y = 0; y < baseImage.height(); y += 4) {
+                for (int x = 0; x < baseImage.width(); x += 4) {
+                    sampledBaseColors.insert(baseImage.pixel(x, y));
+                }
+            }
+            okay &= Check(
+                    sampledBaseColors.size() > 64,
+                    "replacement base texture is a low-information placeholder");
+        }
         QFile baseFile(basePath);
         QFile normalFile(normalPath);
         okay &= Check(baseFile.open(QIODevice::ReadOnly) &&
@@ -219,14 +255,69 @@ bool TestReplacementParametersAndTextures() {
     };
     okay &= Check(isUniform(concreteBase) && isUniform(concreteNormal),
                   "concrete replacement is not flat gray");
+    okay &= Check(concreteBase.pixelColor(0, 0) == QColor("#a4a69f") &&
+                          concreteNormal.pixelColor(0, 0) ==
+                                  QColor("#8080ff"),
+                  "concrete replacement does not use the requested flat values");
+
+    const QImage grassBase(textureRoot + QStringLiteral("grass_base.png"));
+    std::int64_t grassRed = 0;
+    std::int64_t grassGreen = 0;
+    std::int64_t grassBlue = 0;
+    for (int y = 0; y < grassBase.height(); y += 4) {
+        for (int x = 0; x < grassBase.width(); x += 4) {
+            const QColor color = grassBase.pixelColor(x, y);
+            grassRed += color.red();
+            grassGreen += color.green();
+            grassBlue += color.blue();
+        }
+    }
+    okay &= Check(grassGreen * 4 > grassRed * 5 &&
+                          grassGreen * 6 > grassBlue * 7,
+                  "grass ground cover is not recognizably green");
+
+    const QImage grassFoliageBase(
+            textureRoot + QStringLiteral("grass_foliage_base.png"));
+    bool hasTransparentGrass = false;
+    bool hasOpaqueGrass = false;
+    for (int y = 0; y < grassFoliageBase.height(); y += 4) {
+        for (int x = 0; x < grassFoliageBase.width(); x += 4) {
+            const int alpha = grassFoliageBase.pixelColor(x, y).alpha();
+            hasTransparentGrass |= alpha < 64;
+            hasOpaqueGrass |= alpha > 192;
+        }
+    }
+    okay &= Check(grassFoliageBase.hasAlphaChannel() &&
+                          hasTransparentGrass && hasOpaqueGrass,
+                  "grass foliage texture does not contain a useful alpha mask");
 
     const QImage turboBase(textureRoot + QStringLiteral("turbo_base.png"));
-    const QColor forwardArrow = turboBase.pixelColor(45, 40);
-    const QColor reverseArrow = turboBase.pixelColor(35, 40);
-    okay &= Check(forwardArrow.green() > 150 &&
-                          forwardArrow.blue() > 150 &&
-                          reverseArrow.green() < 150,
-                  "turbo arrow texture points backward");
+    const auto countArrowPixels =
+            [&turboBase](int left, int right, bool yellow) {
+        int count = 0;
+        for (int y = 0; y < turboBase.height(); ++y) {
+            for (int x = left; x < right; ++x) {
+                const QColor color = turboBase.pixelColor(x, y);
+                const bool match =
+                        yellow
+                        ? color.red() > 130 && color.green() > 90 &&
+                                  color.red() > color.blue() * 1.5 &&
+                                  color.green() > color.blue() * 1.4
+                        : color.blue() > 110 && color.green() > 100 &&
+                                  color.blue() > color.red() * 1.3 &&
+                                  color.green() > color.red() * 1.3;
+                count += match ? 1 : 0;
+            }
+        }
+        return count;
+    };
+    const int cyanTail = countArrowPixels(96, 160, false);
+    const int cyanHead = countArrowPixels(256, 320, false);
+    const int yellowTail = countArrowPixels(288, 352, true);
+    const int yellowHead = countArrowPixels(448, 512, true);
+    okay &= Check(cyanTail > cyanHead * 2 &&
+                          yellowTail > yellowHead * 2,
+                  "turbo chevrons do not point right");
     return okay;
 }
 
@@ -361,7 +452,7 @@ bool TestStaticBatching() {
                        batch.defaultVisible;
             });
     okay &= Check(grassClipBatch != result.batches.cend(),
-                  "intentional grass clip did not reach the default scene");
+                  "intentional grass ground-cover clip did not reach the scene");
     if (turboBatch != result.batches.cend()) {
         constexpr std::size_t FloatCount = 17u;
         const auto *vertices = reinterpret_cast<const float *>(

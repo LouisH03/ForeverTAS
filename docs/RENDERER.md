@@ -16,20 +16,27 @@ checkpoint, start/finish, road, dirt road, grass, pool/water, signage, and
 emissive components. Path keywords remain a secondary hint for scenes that
 provide them.
 
-The rules never load game texture pixels. They select original PNGs under
-`assets/materials`. Turbo uses forward-facing cyan and yellow directional
-arrows, checkpoints use colored bands, and start/finish components use a
-checker pattern. Concrete is a deliberately flat gray. Broad, horizontal
-surface-0 meshes attached to authored blocks are recognized as grass ground
-cover instead of inheriting the generic concrete fallback. This makes gameplay
-surfaces recognizable even when every source material path is empty.
+The rules never load game texture pixels. They select photo-scanned CC0 PBR
+materials and purpose-built ImageGen textures under `assets/materials`; every
+source is listed in `assets/materials/PROVENANCE.md`. Turbo uses right-facing
+cyan and yellow directional arrows, checkpoints use colored bands, and
+start/finish components use a checker pattern. Concrete is a deliberately flat
+gray. Broad, horizontal surface-0 meshes attached to authored blocks are
+recognized as grass ground cover instead of inheriting the generic concrete
+fallback. This makes gameplay surfaces recognizable even when every source
+material path is empty. Grass blade clips use a separate CC0 foliage atlas with
+alpha masking, so their transparent background does not replace the opaque
+grass bordering dirt and road blocks. Grass replacements also ignore source
+vertex-color tint because those channels encode game-specific data that turns
+the authored green textures pale or orange.
 
 Unknown materials use a conspicuous magenta replacement. Missing UV0 receives
 a deterministic X/Z projection; missing normals are accumulated from indexed
 triangles; missing tangents use a stable orthogonal basis. Water, cube maps,
 render targets and complex shaders are reduced to deterministic replacement
-material parameters. Glass and water use alpha blending, emissive materials
-use an emissive factor, and thin classes disable culling.
+material parameters. Glass and water use alpha blending, foliage uses alpha
+masking, emissive materials use an emissive factor, and thin classes disable
+culling.
 
 ## Qt Quick 3D
 

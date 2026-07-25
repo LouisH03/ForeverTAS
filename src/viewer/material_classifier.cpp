@@ -152,6 +152,10 @@ ReplacementMaterialClass ClassifySemanticContext(
         return ReplacementMaterialClass::Asphalt;
     }
     if (ContainsAny(block, {"grass"}) && IsSurface(surface, {2u, 20u})) {
+        if (context.purpose ==
+            forevervalidator::experimental::PhysicsSandboxScenePurpose::Clip) {
+            return ReplacementMaterialClass::GrassFoliage;
+        }
         return ReplacementMaterialClass::Grass;
     }
     if (ContainsAny(block, {"pool"}) && surface == 13u) {
@@ -296,6 +300,15 @@ ReplacementMaterial ReplacementFor(
         result = Make(materialClass, "Grass", "#527144", "#40d153",
                       "grass_base.png", "grass_normal.png",
                       0.9f, 0.0f, 0.1f);
+        result.applyVertexColors = false;
+        return result;
+    case ReplacementMaterialClass::GrassFoliage:
+        result = Make(materialClass, "Grass foliage", "#527144", "#40d153",
+                      "grass_foliage_base.png", "grass_foliage_normal.png",
+                      0.9f, 0.0f, 1.0f);
+        result.alphaMask = true;
+        result.alphaCutoff = 0.3f;
+        result.applyVertexColors = false;
         result.twoSided = true;
         return result;
     case ReplacementMaterialClass::Metal:

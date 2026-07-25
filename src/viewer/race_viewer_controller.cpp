@@ -193,6 +193,8 @@ QVariantMap MaterialMap(ReplacementMaterialClass materialClass) {
     map.insert(QStringLiteral("textureScale"), replacement.textureScale);
     map.insert(QStringLiteral("emissiveStrength"),
                replacement.emissiveStrength);
+    map.insert(QStringLiteral("alphaCutoff"), replacement.alphaCutoff);
+    map.insert(QStringLiteral("alphaMask"), replacement.alphaMask);
     map.insert(QStringLiteral("twoSided"), replacement.twoSided);
     map.insert(QStringLiteral("unknown"),
                materialClass == ReplacementMaterialClass::Unknown);
@@ -320,22 +322,25 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
         for (std::size_t batchIndex = 0u;
              batchIndex < result.visualBatches.size(); ++batchIndex) {
             const StaticVisualBatch &batch = result.visualBatches[batchIndex];
+            const bool applyVertexColors =
+                    batch.hasVertexColors &&
+                    ReplacementFor(batch.materialClass).applyVertexColors;
             std::size_t materialBindingIndex = 0u;
             for (; materialBindingIndex < materialBindings.size();
                  ++materialBindingIndex) {
                 const MaterialBindingKey &binding =
                         materialBindings[materialBindingIndex];
                 if (binding.materialClass == batch.materialClass &&
-                    binding.vertexColors == batch.hasVertexColors) {
+                    binding.vertexColors == applyVertexColors) {
                     break;
                 }
             }
             if (materialBindingIndex == materialBindings.size()) {
                 materialBindings.push_back(
-                        {batch.materialClass, batch.hasVertexColors});
+                        {batch.materialClass, applyVertexColors});
                 QVariantMap binding = MaterialMap(batch.materialClass);
                 binding.insert(QStringLiteral("vertexColors"),
-                               batch.hasVertexColors);
+                               applyVertexColors);
                 if (batch.materialClass == ReplacementMaterialClass::Unknown) {
                     ++result.diagnosticCount;
                 }

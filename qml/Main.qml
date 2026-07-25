@@ -423,9 +423,12 @@ ApplicationWindow {
                                            ? 0
                                            : modelData.metalness
                                 opacity: modelData.opacity
-                                alphaMode: modelData.opacity < 0.999
-                                           ? PrincipledMaterial.Blend
-                                           : PrincipledMaterial.Opaque
+                                alphaMode: modelData.alphaMask
+                                           ? PrincipledMaterial.Mask
+                                           : (modelData.opacity < 0.999
+                                              ? PrincipledMaterial.Blend
+                                              : PrincipledMaterial.Opaque)
+                                alphaCutoff: modelData.alphaCutoff
                                 cullMode: modelData.twoSided
                                           ? Material.NoCulling
                                           : Material.BackFaceCulling
