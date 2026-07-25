@@ -176,12 +176,13 @@ struct BatchKey {
     PhysicsSandboxScenePurpose purpose =
             PhysicsSandboxScenePurpose::Environment;
     bool vertexColors = false;
+    bool defaultVisible = false;
     int transparentCellX = 0;
     int transparentCellZ = 0;
 
     auto asTuple() const {
-        return std::tie(materialClass, purpose, vertexColors, transparentCellX,
-                        transparentCellZ);
+        return std::tie(materialClass, purpose, vertexColors, defaultVisible,
+                        transparentCellX, transparentCellZ);
     }
 };
 
@@ -205,8 +206,9 @@ bool IsTransparent(ReplacementMaterialClass materialClass) {
 
 BatchKey MakeBatchKey(ReplacementMaterialClass materialClass,
                       PhysicsSandboxScenePurpose purpose, bool vertexColors,
+                      bool defaultVisible,
                       const PhysicsSandboxTransform &transform) {
-    BatchKey key{materialClass, purpose, vertexColors, 0, 0};
+    BatchKey key{materialClass, purpose, vertexColors, defaultVisible, 0, 0};
     if (IsTransparent(materialClass)) {
         constexpr float CellSize = 64.0f;
         key.transparentCellX = static_cast<int>(
@@ -252,6 +254,28 @@ DuplicateInstanceKey DuplicateKey(
              instance.worldTransform.basisZ.x,
              instance.worldTransform.basisZ.y,
              instance.worldTransform.basisZ.z}};
+}
+
+bool IsGrassGroundCover(const PhysicsSandboxRenderMesh &mesh,
+                        const PhysicsSandboxRenderInstance &instance) {
+    if (!mesh.hasNormals || !mesh.hasUv0 || mesh.vertices.empty() ||
+        instance.provenance.blockName.empty() ||
+        (instance.purpose != PhysicsSandboxScenePurpose::PlacedBlock &&
+         instance.purpose != PhysicsSandboxScenePurpose::Clip)) {
+        return false;
+    }
+    const float width = mesh.boundsMax.x - mesh.boundsMin.x;
+    const float height = mesh.boundsMax.y - mesh.boundsMin.y;
+    const float depth = mesh.boundsMax.z - mesh.boundsMin.z;
+    if (height > 1.0f || width < 16.0f || depth < 16.0f) {
+        return false;
+    }
+    const std::size_t horizontalNormals = std::count_if(
+            mesh.vertices.cbegin(), mesh.vertices.cend(),
+            [](const auto &vertex) {
+                return std::fabs(vertex.normal.y) >= 0.9f;
+            });
+    return horizontalNormals * 100u >= mesh.vertices.size() * 95u;
 }
 
 void AppendInstance(BatchAccumulator &batch,
@@ -354,6 +378,15 @@ bool IsDefaultVisualPurpose(PhysicsSandboxScenePurpose purpose) {
     return false;
 }
 
+bool IsDefaultVisualInstance(PhysicsSandboxScenePurpose purpose,
+                             std::string_view blockName) {
+    if (IsDefaultVisualPurpose(purpose)) {
+        return true;
+    }
+    return purpose == PhysicsSandboxScenePurpose::Clip &&
+           blockName == "StadiumGrassClip";
+}
+
 StaticVisualBatchResult
 BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
     StaticVisualBatchResult result;
@@ -387,16 +420,20 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                 instance.provenance.blockName,
                 instance.provenance.descriptorPath,
                 instance.provenance.sceneObjectId,
-                instance.provenance.componentIndex, instance.purpose};
+                instance.provenance.componentIndex, instance.purpose,
+                IsGrassGroundCover(mesh, instance)};
         const ReplacementMaterialClass materialClass = ClassifyMaterial(
                 scene.materials[instance.materialIndex], context);
+        const bool defaultVisible = IsDefaultVisualInstance(
+                instance.purpose, instance.provenance.blockName);
         const BatchKey key =
                 MakeBatchKey(materialClass, instance.purpose,
-                             mesh.hasVertexColors, instance.worldTransform);
+                             mesh.hasVertexColors, defaultVisible,
+                             instance.worldTransform);
         AppendInstance(accumulators[key], preparedMeshes[instance.meshIndex],
                        mesh.indices, instance.worldTransform);
 
-        if (IsDefaultVisualPurpose(instance.purpose)) {
+        if (defaultVisible) {
             ++result.defaultVisibleInstanceCount;
             result.defaultTriangleCount += mesh.indices.size() / 3u;
             const QVector3D minimum = ToQt(mesh.boundsMin);
@@ -439,6 +476,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
         batch.materialClass = key.materialClass;
         batch.purpose = key.purpose;
         batch.hasVertexColors = key.vertexColors;
+        batch.defaultVisible = key.defaultVisible;
         batch.sourceInstanceCount = accumulator.sourceInstanceCount;
         batch.triangleCount = accumulator.indices.size() / 3u;
         result.batches.push_back(std::move(batch));

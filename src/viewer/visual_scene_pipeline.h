@@ -10,6 +10,7 @@
 #include <QVector3D>
 
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace forevertas::viewer {
@@ -28,6 +29,9 @@ CameraClipPlanes CalculateCameraClipPlanes(const QVector3D &cameraPosition,
 
 bool IsDefaultVisualPurpose(
         forevervalidator::experimental::PhysicsSandboxScenePurpose purpose);
+bool IsDefaultVisualInstance(
+        forevervalidator::experimental::PhysicsSandboxScenePurpose purpose,
+        std::string_view blockName);
 
 struct StaticVisualBatch {
     QByteArray vertices;
@@ -39,6 +43,7 @@ struct StaticVisualBatch {
             forevervalidator::experimental::PhysicsSandboxScenePurpose::
                     Environment;
     bool hasVertexColors = false;
+    bool defaultVisible = false;
     std::uint64_t sourceInstanceCount = 0u;
     std::uint64_t triangleCount = 0u;
 };

@@ -350,7 +350,7 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
             item.insert(QStringLiteral("materialClass"),
                         MaterialClassName(batch.materialClass));
             item.insert(QStringLiteral("defaultVisible"),
-                        IsDefaultVisualPurpose(batch.purpose));
+                        batch.defaultVisible);
             item.insert(QStringLiteral("sourceInstanceCount"),
                         static_cast<qint64>(batch.sourceInstanceCount));
             item.insert(QStringLiteral("triangleCount"),

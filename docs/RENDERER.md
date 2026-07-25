@@ -17,10 +17,12 @@ emissive components. Path keywords remain a secondary hint for scenes that
 provide them.
 
 The rules never load game texture pixels. They select original PNGs under
-`assets/materials`. Turbo uses cyan and yellow directional arrows, checkpoints
-use colored bands, and start/finish components use a checker pattern. This
-makes gameplay surfaces recognizable even when every source material path is
-empty.
+`assets/materials`. Turbo uses forward-facing cyan and yellow directional
+arrows, checkpoints use colored bands, and start/finish components use a
+checker pattern. Concrete is a deliberately flat gray. Broad, horizontal
+surface-0 meshes attached to authored blocks are recognized as grass ground
+cover instead of inheriting the generic concrete fallback. This makes gameplay
+surfaces recognizable even when every source material path is empty.
 
 Unknown materials use a conspicuous magenta replacement. Missing UV0 receives
 a deterministic X/Z projection; missing normals are accumulated from indexed
@@ -45,7 +47,8 @@ playback updates car transforms without touching map resources. Map shadows
 are disabled by default.
 
 The default scene includes authored blocks, the enclosing stadium
-environment, and intentional generated stadium objects. Collision clips,
+environment, intentional generated stadium objects, and `StadiumGrassClip`
+meshes that restore real block-side and ground-cover geometry. Other clips,
 checkpoint/start helpers, triggers, and initial-collision geometry stay hidden.
 The purpose selector can show all geometry or inspect any exported purpose in
 isolation. On TASmania, the overlap audit found no exact duplicates, no
@@ -72,10 +75,12 @@ default visibility, transformed batching, exact vertex attributes, packaged
 replacement images, shared QML material and texture objects, every render mode,
 and transactional repeated reloads.
 
-The pinned TASmania build has 6,305 default-visible source objects, 31 total
-debuggable batches, 1,508,669 default-visible triangles, and zero map shadows.
+The pinned TASmania build has 7,026 default-visible source objects, 31 total
+debuggable batches, 1,572,048 default-visible triangles, and zero map shadows.
 The interactive textured view measured 62-63 FPS on the development machine.
 
 [`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is the
 pre-optimization reference. The corrected textured frame is captured in
 [`evidence/tasmania-textured-optimized.png`](evidence/tasmania-textured-optimized.png).
+Restored grass clips and the corrected ground-cover material are shown in
+[`evidence/tasmania-grass-clips.png`](evidence/tasmania-grass-clips.png).

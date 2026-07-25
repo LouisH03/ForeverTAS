@@ -123,6 +123,15 @@ bool TestClassification() {
     okay &= Check(contextual(2u, "StadiumGrass") ==
                           ReplacementMaterialClass::Grass,
                   "grass provenance did not classify grass");
+    PhysicsSandboxRenderMaterial groundCover =
+            Named("UnclassifiedSurface");
+    groundCover.surfaceMaterialId = 0u;
+    MaterialSemanticContext groundCoverContext;
+    groundCoverContext.blockName = "StadiumRoadDirtHigh";
+    groundCoverContext.grassGroundCover = true;
+    okay &= Check(ClassifyMaterial(groundCover, groundCoverContext) ==
+                          ReplacementMaterialClass::Grass,
+                  "flat block ground cover did not classify as grass");
     okay &= Check(contextual(13u, "StadiumPool") ==
                           ReplacementMaterialClass::Water,
                   "pool provenance did not classify water");
@@ -187,11 +196,43 @@ bool TestReplacementParametersAndTextures() {
     okay &= Check(normalTextureHashes.size() ==
                           static_cast<qsizetype>(names.size()),
                   "replacement normal textures are not distinct assets");
+
+    const QString textureRoot = QStringLiteral(FOREVERTAS_SOURCE_DIR) +
+            QStringLiteral("/assets/materials/");
+    const QImage concreteBase(textureRoot +
+                              QStringLiteral("concrete_base.png"));
+    const QImage concreteNormal(textureRoot +
+                                QStringLiteral("concrete_normal.png"));
+    const auto isUniform = [](const QImage &image) {
+        if (image.isNull()) {
+            return false;
+        }
+        const QColor color = image.pixelColor(0, 0);
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                if (image.pixelColor(x, y) != color) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    okay &= Check(isUniform(concreteBase) && isUniform(concreteNormal),
+                  "concrete replacement is not flat gray");
+
+    const QImage turboBase(textureRoot + QStringLiteral("turbo_base.png"));
+    const QColor forwardArrow = turboBase.pixelColor(45, 40);
+    const QColor reverseArrow = turboBase.pixelColor(35, 40);
+    okay &= Check(forwardArrow.green() > 150 &&
+                          forwardArrow.blue() > 150 &&
+                          reverseArrow.green() < 150,
+                  "turbo arrow texture points backward");
     return okay;
 }
 
 bool TestClipPlanesAndPurposeFiltering() {
     using forevertas::viewer::CalculateCameraClipPlanes;
+    using forevertas::viewer::IsDefaultVisualInstance;
     using forevertas::viewer::IsDefaultVisualPurpose;
     const auto closeCamera = CalculateCameraClipPlanes(
             {0.0f, 2.0f, 30.0f}, 30.0f, {-100.0f, -10.0f, -150.0f},
@@ -225,8 +266,14 @@ bool TestClipPlanesAndPurposeFiltering() {
                     !IsDefaultVisualPurpose(
                             PhysicsSandboxScenePurpose::Helper) &&
                     !IsDefaultVisualPurpose(
-                            PhysicsSandboxScenePurpose::CheckpointTrigger),
-            "default purpose filtering includes auxiliary geometry");
+                            PhysicsSandboxScenePurpose::CheckpointTrigger) &&
+                    IsDefaultVisualInstance(
+                            PhysicsSandboxScenePurpose::Clip,
+                            "StadiumGrassClip") &&
+                    !IsDefaultVisualInstance(
+                            PhysicsSandboxScenePurpose::Clip,
+                            "CollisionClip"),
+            "default purpose filtering lost intentional grass clips");
     return okay;
 }
 
@@ -255,6 +302,11 @@ PhysicsSandboxRenderMesh TriangleMesh() {
 bool TestStaticBatching() {
     PhysicsSandboxRenderScene scene;
     scene.meshes.push_back(TriangleMesh());
+    PhysicsSandboxRenderMesh groundCoverMesh = TriangleMesh();
+    groundCoverMesh.vertices[1].position.x = 32.0f;
+    groundCoverMesh.vertices[2].position.z = 32.0f;
+    groundCoverMesh.boundsMax = {32.0f, 0.0f, 32.0f};
+    scene.meshes.push_back(std::move(groundCoverMesh));
     PhysicsSandboxRenderMaterial turbo;
     turbo.surfaceMaterialId = 7u;
     scene.materials.push_back(turbo);
@@ -275,6 +327,7 @@ bool TestStaticBatching() {
     scene.instances.push_back(placed);
 
     PhysicsSandboxRenderInstance clip = placed;
+    clip.meshIndex = 1u;
     clip.materialIndex = 1u;
     clip.purpose = PhysicsSandboxScenePurpose::Clip;
     clip.provenance.blockName = "StadiumGrassClip";
@@ -288,8 +341,8 @@ bool TestStaticBatching() {
     const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
     bool okay = Check(
             result.visibleSourceInstanceCount == 3u &&
-                    result.defaultVisibleInstanceCount == 1u &&
-                    result.defaultTriangleCount == 1u &&
+                    result.defaultVisibleInstanceCount == 2u &&
+                    result.defaultTriangleCount == 2u &&
                     result.duplicateInstanceCount == 1u &&
                     result.batches.size() == 2u,
             "static batch counts or duplicate suppression were incorrect");
@@ -300,6 +353,15 @@ bool TestStaticBatching() {
             });
     okay &= Check(turboBatch != result.batches.cend(),
                   "turbo geometry did not reach a turbo batch");
+    const auto grassClipBatch = std::find_if(
+            result.batches.cbegin(), result.batches.cend(),
+            [](const StaticVisualBatch &batch) {
+                return batch.materialClass == ReplacementMaterialClass::Grass &&
+                       batch.purpose == PhysicsSandboxScenePurpose::Clip &&
+                       batch.defaultVisible;
+            });
+    okay &= Check(grassClipBatch != result.batches.cend(),
+                  "intentional grass clip did not reach the default scene");
     if (turboBatch != result.batches.cend()) {
         constexpr std::size_t FloatCount = 17u;
         const auto *vertices = reinterpret_cast<const float *>(

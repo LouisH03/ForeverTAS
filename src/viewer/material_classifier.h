@@ -55,6 +55,7 @@ struct MaterialSemanticContext {
     forevervalidator::experimental::PhysicsSandboxScenePurpose purpose =
             forevervalidator::experimental::PhysicsSandboxScenePurpose::
                     Environment;
+    bool grassGroundCover = false;
 };
 
 ReplacementMaterialClass ClassifyMaterial(

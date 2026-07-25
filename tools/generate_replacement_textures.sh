@@ -60,6 +60,15 @@ generate_pair turbo '#153b43' 115 0.055
 generate_pair checkpoint '#146fa7' 116 0.04
 generate_pair start_finish '#292e30' 117 0.035
 
+# Concrete is intentionally flat: the procedural highlights read as white
+# aggregate at the scale used by the stadium ground-cover meshes.
+magick -size 128x128 xc:'#a4a69f' -colorspace sRGB -depth 8 \
+    -define png:exclude-chunk=date,time \
+    "${output}/concrete_base.png"
+magick -size 128x128 xc:'#8080ff' -colorspace sRGB -depth 8 \
+    -define png:exclude-chunk=date,time \
+    "${output}/concrete_normal.png"
+
 # Add deterministic, clearly synthetic markings to the graphic classes.
 magick "${output}/signage_base.png" \
     -stroke '#cf3434' -strokewidth 12 -draw 'line 0,32 128,32' \
@@ -72,9 +81,9 @@ magick "${output}/emissive_base.png" \
     "${output}/emissive_base.png"
 magick "${output}/turbo_base.png" \
     -fill '#12e5f3' \
-    -draw 'polygon 8,64 40,30 40,50 72,50 72,78 40,78 40,98' \
+    -draw 'polygon 70,64 38,30 38,50 8,50 8,78 38,78 38,98' \
     -fill '#ffd437' \
-    -draw 'polygon 58,64 90,30 90,50 122,50 122,78 90,78 90,98' \
+    -draw 'polygon 122,64 90,30 90,50 60,50 60,78 90,78 90,98' \
     -stroke '#071316' -strokewidth 5 -fill none \
     -draw 'line 0,8 128,8 line 0,120 128,120' \
     -define png:exclude-chunk=date,time \
