@@ -159,6 +159,12 @@ qt_add_resources(forevertas "replacement-materials"
     PREFIX "/materials"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials"
     FILES ${FOREVERTAS_REPLACEMENT_TEXTURES})
+file(GLOB FOREVERTAS_ENVIRONMENT_TEXTURES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment/*.png")
+qt_add_resources(forevertas "environment-textures"
+    PREFIX "/environment"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment"
+    FILES ${FOREVERTAS_ENVIRONMENT_TEXTURES})
 target_link_libraries(forevertas PRIVATE
     forevertas_gui
     Qt6::Gui
@@ -334,6 +340,11 @@ if(BUILD_TESTING)
             PREFIX "/materials"
             BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials"
             FILES ${FOREVERTAS_REPLACEMENT_TEXTURES})
+        qt_add_resources(forevertas-viewer-qml-smoke
+            "environment-textures-test"
+            PREFIX "/environment"
+            BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment"
+            FILES ${FOREVERTAS_ENVIRONMENT_TEXTURES})
         target_compile_definitions(forevertas-viewer-qml-smoke PRIVATE
             FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(forevertas-viewer-qml-smoke PRIVATE

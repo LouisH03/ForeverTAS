@@ -4,7 +4,6 @@ import QtQuick.Layouts
 import QtQuick.Shapes
 import QtQml.Models
 import QtQuick3D
-import QtQuick3D.Helpers
 import "settings"
 import ForeverTAS.Viewer 1.0
 
@@ -326,30 +325,15 @@ ApplicationWindow {
                             antialiasingMode: SceneEnvironment.MSAA
                             antialiasingQuality: SceneEnvironment.Medium
                             tonemapMode: SceneEnvironment.TonemapModeAces
-                            probeExposure: 0.75
+                            probeExposure: 1.0
+                            skyboxBlurAmount: 0.0
                             specularAAEnabled: true
 
                             lightProbe: Texture {
-                                textureData: ProceduralSkyTextureData {
-                                    objectName: "daySkyTexture"
-                                    textureQuality:
-                                        ProceduralSkyTextureData.SkyTextureQualityLow
-                                    skyTopColor: "#0587d1"
-                                    skyHorizonColor: "#75c9ef"
-                                    skyCurve: 0.22
-                                    skyEnergy: 2.2
-                                    groundBottomColor: "#5f7258"
-                                    groundHorizonColor: "#d5e4d5"
-                                    groundCurve: 0.1
-                                    groundEnergy: 0.45
-                                    sunColor: "#fff0c8"
-                                    sunLatitude: 52
-                                    sunLongitude: -32
-                                    sunAngleMin: 0.6
-                                    sunAngleMax: 4
-                                    sunCurve: 0.2
-                                    sunEnergy: 1.35
-                                }
+                                objectName: "daySkyTexture"
+                                source: "qrc:/environment/day_sky.png"
+                                mappingMode: Texture.LightProbe
+                                generateMipmaps: true
                             }
                         }
 

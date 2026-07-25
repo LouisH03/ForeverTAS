@@ -282,6 +282,8 @@ int main(int argc, char **argv) {
         std::size_t placedBlockInstances = 0u;
         std::size_t transformedInstances = 0u;
         std::size_t sharedMeshInstances = 0u;
+        std::size_t backgroundInstances = 0u;
+        std::uint64_t backgroundTriangles = 0u;
         bool repeatedMeshHasDifferentTransform = false;
         std::uint64_t instancedTriangles = 0u;
         std::uint64_t instancedVertices = 0u;
@@ -356,6 +358,18 @@ int main(int argc, char **argv) {
                 const std::uint64_t triangles =
                         renderScene->meshes[instance.meshIndex].indices.size() /
                         3u;
+                if (instance.renderLayer ==
+                    PhysicsSandboxRenderLayer::Background) {
+                    ++backgroundInstances;
+                    backgroundTriangles += triangles;
+                    okay &= Check(
+                            (instance.purpose ==
+                                     PhysicsSandboxScenePurpose::Environment ||
+                             instance.purpose ==
+                                     PhysicsSandboxScenePurpose::Decoration) &&
+                                    !instance.castsShadows,
+                            "background layer contains ordinary world geometry");
+                }
                 instancedTriangles += triangles;
                 instancedVertices +=
                         renderScene->meshes[instance.meshIndex].vertices.size();
@@ -469,6 +483,9 @@ int main(int argc, char **argv) {
                       "world transforms were not exported");
         okay &= Check(resourceTriangles > 0u && instancedTriangles > 0u,
                       "visual triangle counts are empty");
+        okay &= Check(backgroundInstances > 0u &&
+                              backgroundTriangles > 0u,
+                      "enclosing render backdrop was not identified");
         okay &= Check(instancedTriangles !=
                               collisionScene.collisionTriangles.size(),
                       "visual scene aliases the collision triangle stream");
@@ -483,6 +500,8 @@ int main(int argc, char **argv) {
                   << ", referencedUvVertices=" << referencedUvVertices
                   << ", authoredInstances=" << authoredInstances
                   << ", sharedMeshInstances=" << sharedMeshInstances
+                  << ", backgroundInstances=" << backgroundInstances
+                  << ", backgroundTriangles=" << backgroundTriangles
                   << ", resourceTriangles=" << resourceTriangles
                   << ", instancedVertices=" << instancedVertices
                   << ", instancedTriangles=" << instancedTriangles

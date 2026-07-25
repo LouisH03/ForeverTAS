@@ -24,6 +24,7 @@ using forevertas::viewer::ReplacementFor;
 using forevertas::viewer::ReplacementMaterialClass;
 using forevertas::viewer::StaticVisualBatch;
 using forevervalidator::experimental::PhysicsSandboxRenderInstance;
+using forevervalidator::experimental::PhysicsSandboxRenderLayer;
 using forevervalidator::experimental::PhysicsSandboxRenderMaterial;
 using forevervalidator::experimental::PhysicsSandboxRenderMesh;
 using forevervalidator::experimental::PhysicsSandboxRenderScene;
@@ -478,6 +479,10 @@ bool TestStaticBatching() {
     dirtGround.worldTransform.translation = {35.0f, 0.0f, 0.0f};
     scene.instances.push_back(dirtGround);
 
+    PhysicsSandboxRenderInstance background = placed;
+    background.renderLayer = PhysicsSandboxRenderLayer::Background;
+    scene.instances.push_back(background);
+
     PhysicsSandboxRenderInstance hidden = placed;
     hidden.visible = false;
     scene.instances.push_back(hidden);
@@ -485,10 +490,12 @@ bool TestStaticBatching() {
     const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
     const auto repeat = forevertas::viewer::BuildStaticVisualBatches(scene);
     bool okay = Check(
-            result.visibleSourceInstanceCount == 6u &&
+            result.visibleSourceInstanceCount == 7u &&
                     result.defaultVisibleInstanceCount == 4u &&
                     result.defaultTriangleCount == 4u &&
                     result.duplicateInstanceCount == 1u &&
+                    result.skippedBackgroundInstanceCount == 1u &&
+                    result.skippedBackgroundTriangleCount == 1u &&
                     result.skippedGrassBladeInstanceCount == 1u &&
                     result.skippedGrassBladeTriangleCount == 32u &&
                     result.batches.size() == 3u,

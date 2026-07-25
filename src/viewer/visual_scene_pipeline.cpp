@@ -18,6 +18,7 @@ namespace forevertas::viewer {
 namespace {
 
 using forevervalidator::experimental::PhysicsSandboxRenderInstance;
+using forevervalidator::experimental::PhysicsSandboxRenderLayer;
 using forevervalidator::experimental::PhysicsSandboxRenderMesh;
 using forevervalidator::experimental::PhysicsSandboxRenderScene;
 using forevervalidator::experimental::PhysicsSandboxScenePurpose;
@@ -1052,6 +1053,13 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
             continue;
         }
         ++result.visibleSourceInstanceCount;
+        if (instance.renderLayer ==
+            PhysicsSandboxRenderLayer::Background) {
+            ++result.skippedBackgroundInstanceCount;
+            result.skippedBackgroundTriangleCount +=
+                    scene.meshes[instance.meshIndex].indices.size() / 3u;
+            continue;
+        }
         if (!seenInstances.insert(DuplicateKey(instance)).second) {
             ++result.duplicateInstanceCount;
             continue;

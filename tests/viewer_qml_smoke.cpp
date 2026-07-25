@@ -1297,12 +1297,11 @@ int main(int argc, char **argv) {
                                                                          "ws")
                                                                     .toBool();
                                                 });
-                                const QColor skyTopColor =
+                                const QUrl skySource =
                                         daySkyTexture != nullptr
-                                        ? daySkyTexture
-                                                  ->property("skyTopColor")
-                                                  .value<QColor>()
-                                        : QColor();
+                                        ? daySkyTexture->property("source")
+                                                  .toUrl()
+                                        : QUrl();
                                 const bool daylightEnvironment =
                                         mapEnvironment != nullptr &&
                                         daySkyTexture != nullptr &&
@@ -1312,20 +1311,19 @@ int main(int argc, char **argv) {
                                                         ->property(
                                                                 "probeExposure")
                                                         .toDouble() >=
-                                                0.5 &&
-                                        daySkyTexture
-                                                        ->property("skyEnergy")
-                                                        .toDouble() >=
-                                                1.0 &&
-                                        daySkyTexture
-                                                        ->property("sunEnergy")
-                                                        .toDouble() >=
-                                                1.0 &&
-                                        skyTopColor.isValid() &&
-                                        skyTopColor.blue() >
-                                                skyTopColor.green() &&
-                                        skyTopColor.green() >
-                                                skyTopColor.red() &&
+                                                0.8 &&
+                                        mapEnvironment
+                                                        ->property(
+                                                                "skyboxBlur"
+                                                                "Amount")
+                                                        .toDouble() ==
+                                                0.0 &&
+                                        skySource.scheme() ==
+                                                QStringLiteral("qrc") &&
+                                        skySource.path() ==
+                                                QStringLiteral(
+                                                        "/environment/"
+                                                        "day_sky.png") &&
                                         mainMapLight
                                                         ->property("brightness")
                                                         .toDouble() >=

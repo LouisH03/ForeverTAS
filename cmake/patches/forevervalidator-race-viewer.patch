@@ -49,7 +49,7 @@ index 20ca5f8..8cac368 100644
  ## Library API
  
 diff --git a/include/forevervalidator/experimental/physics_sandbox.h b/include/forevervalidator/experimental/physics_sandbox.h
-index 87c8427..47b0165 100644
+index 87c8427..246e534 100644
 --- a/include/forevervalidator/experimental/physics_sandbox.h
 +++ b/include/forevervalidator/experimental/physics_sandbox.h
 @@ -10,6 +10,7 @@
@@ -69,7 +69,7 @@ index 87c8427..47b0165 100644
  };
  
  struct PhysicsSandboxInputEvent {
-@@ -91,9 +92,165 @@ struct PhysicsSandboxCarState {
+@@ -91,9 +92,172 @@ struct PhysicsSandboxCarState {
      Vector3 torque{};
  };
  
@@ -119,6 +119,11 @@ index 87c8427..47b0165 100644
 +    Decoration,
 +    Terrain,
 +    Generated,
++};
++
++enum class PhysicsSandboxRenderLayer : std::uint8_t {
++    World,
++    Background,
 +};
 +
 +struct PhysicsSandboxRenderProvenance {
@@ -190,6 +195,8 @@ index 87c8427..47b0165 100644
 +    PhysicsSandboxRenderProvenance provenance{};
 +    PhysicsSandboxScenePurpose purpose =
 +            PhysicsSandboxScenePurpose::Environment;
++    PhysicsSandboxRenderLayer renderLayer =
++            PhysicsSandboxRenderLayer::World;
 +    std::uint32_t lodLevel = 0u;
 +    float lodFarDistance = 0.0f;
 +    bool visible = true;
@@ -235,7 +242,7 @@ index 87c8427..47b0165 100644
      MapEnvironment mapEnvironment = MapEnvironment::Unknown;
      VehicleModel vehicleModel = VehicleModel::Unknown;
      std::optional<PlayMode> playMode;
-@@ -152,6 +309,9 @@ public:
+@@ -152,6 +316,9 @@ public:
      PhysicsSandboxResult<PhysicsSandboxStateView> RestoreState(
              const PhysicsSandboxState &state) noexcept;
      PhysicsSandboxResult<PhysicsSandboxStateView> ReadState() const noexcept;
@@ -1273,16 +1280,19 @@ index f9183dc..87c2066 100644
  
  bool AtOrAfter(s32 timeMs, const std::optional<s32> &thresholdMs) {
 diff --git a/src/simulation/runtime/replay_simulation_session.cpp b/src/simulation/runtime/replay_simulation_session.cpp
-index a428b6c..b4de91e 100644
+index a428b6c..5d63292 100644
 --- a/src/simulation/runtime/replay_simulation_session.cpp
 +++ b/src/simulation/runtime/replay_simulation_session.cpp
-@@ -1,8 +1,20 @@
+@@ -1,8 +1,23 @@
  #include "simulation/runtime/replay_simulation_session.h"
++#include <algorithm>
 +#include <array>
 +#include <cmath>
 +#include <limits>
++#include <map>
  #include <new>
 +#include <string>
++#include <tuple>
 +#include <unordered_map>
  #include <utility>
  
@@ -1297,7 +1307,7 @@ index a428b6c..b4de91e 100644
  #include "simulation/replay/replay_map_scene.h"
  #include "simulation/runtime/replay_environment.h"
  #include "simulation/runtime/replay_physics_world.h"
-@@ -13,6 +25,537 @@
+@@ -13,6 +28,726 @@
  #include "simulation/runtime/replay_deterministic_execution.h"
  namespace {
  
@@ -1531,6 +1541,194 @@ index a428b6c..b4de91e 100644
 +             source.translation.z}};
 +}
 +
++namespace {
++
++struct RenderBounds {
++    forevervalidator::Vector3 minimum{};
++    forevervalidator::Vector3 maximum{};
++    bool valid = false;
++};
++
++forevervalidator::Vector3 TransformRenderPoint(
++        const sandbox::PhysicsSandboxTransform &transform,
++        const forevervalidator::Vector3 &point) {
++    return {
++            transform.translation.x +
++                    transform.basisX.x * point.x +
++                    transform.basisY.x * point.y +
++                    transform.basisZ.x * point.z,
++            transform.translation.y +
++                    transform.basisX.y * point.x +
++                    transform.basisY.y * point.y +
++                    transform.basisZ.y * point.z,
++            transform.translation.z +
++                    transform.basisX.z * point.x +
++                    transform.basisY.z * point.y +
++                    transform.basisZ.z * point.z};
++}
++
++void IncludePoint(RenderBounds &bounds,
++                  const forevervalidator::Vector3 &point) {
++    if (!bounds.valid) {
++        bounds.minimum = point;
++        bounds.maximum = point;
++        bounds.valid = true;
++        return;
++    }
++    bounds.minimum.x = std::min(bounds.minimum.x, point.x);
++    bounds.minimum.y = std::min(bounds.minimum.y, point.y);
++    bounds.minimum.z = std::min(bounds.minimum.z, point.z);
++    bounds.maximum.x = std::max(bounds.maximum.x, point.x);
++    bounds.maximum.y = std::max(bounds.maximum.y, point.y);
++    bounds.maximum.z = std::max(bounds.maximum.z, point.z);
++}
++
++void IncludeBounds(RenderBounds &target, const RenderBounds &source) {
++    if (!source.valid) {
++        return;
++    }
++    IncludePoint(target, source.minimum);
++    IncludePoint(target, source.maximum);
++}
++
++RenderBounds InstanceRenderBounds(
++        const sandbox::PhysicsSandboxRenderScene &scene,
++        const sandbox::PhysicsSandboxRenderInstance &instance) {
++    RenderBounds bounds;
++    if (instance.meshIndex >= scene.meshes.size()) {
++        return bounds;
++    }
++    const sandbox::PhysicsSandboxRenderMesh &mesh =
++            scene.meshes[instance.meshIndex];
++    for (unsigned corner = 0u; corner < 8u; ++corner) {
++        const forevervalidator::Vector3 local{
++                (corner & 1u) != 0u ? mesh.boundsMax.x : mesh.boundsMin.x,
++                (corner & 2u) != 0u ? mesh.boundsMax.y : mesh.boundsMin.y,
++                (corner & 4u) != 0u ? mesh.boundsMax.z : mesh.boundsMin.z};
++        IncludePoint(
++                bounds,
++                TransformRenderPoint(instance.worldTransform, local));
++    }
++    return bounds;
++}
++
++float MaximumSpan(const RenderBounds &bounds) {
++    return std::max({
++            bounds.maximum.x - bounds.minimum.x,
++            bounds.maximum.y - bounds.minimum.y,
++            bounds.maximum.z - bounds.minimum.z});
++}
++
++float MinimumSpan(const RenderBounds &bounds) {
++    return std::min({
++            bounds.maximum.x - bounds.minimum.x,
++            bounds.maximum.y - bounds.minimum.y,
++            bounds.maximum.z - bounds.minimum.z});
++}
++
++bool ContainsBounds(const RenderBounds &outer,
++                    const RenderBounds &inner,
++                    float tolerance) {
++    return outer.valid && inner.valid &&
++            outer.minimum.x <= inner.minimum.x + tolerance &&
++            outer.minimum.y <= inner.minimum.y + tolerance &&
++            outer.minimum.z <= inner.minimum.z + tolerance &&
++            outer.maximum.x >= inner.maximum.x - tolerance &&
++            outer.maximum.y >= inner.maximum.y - tolerance &&
++            outer.maximum.z >= inner.maximum.z - tolerance;
++}
++
++bool IsBackgroundPurpose(sandbox::PhysicsSandboxScenePurpose purpose) {
++    return purpose == sandbox::PhysicsSandboxScenePurpose::Environment ||
++            purpose == sandbox::PhysicsSandboxScenePurpose::Decoration;
++}
++
++struct RenderGroupKey {
++    sandbox::PhysicsSandboxScenePurpose purpose =
++            sandbox::PhysicsSandboxScenePurpose::Environment;
++    std::string blockName;
++    std::string descriptorPath;
++    std::string sceneObjectId;
++    std::optional<std::uint64_t> placementIdentity;
++
++    bool operator<(const RenderGroupKey &other) const {
++        return std::tie(
++                       purpose, blockName, descriptorPath, sceneObjectId,
++                       placementIdentity) <
++                std::tie(
++                       other.purpose, other.blockName,
++                       other.descriptorPath, other.sceneObjectId,
++                       other.placementIdentity);
++    }
++};
++
++struct RenderGroup {
++    RenderBounds bounds;
++    std::vector<std::size_t> instances;
++};
++
++}  // namespace
++
++void ClassifyRenderLayers(
++        sandbox::PhysicsSandboxRenderScene &scene) {
++    RenderBounds foregroundBounds;
++    for (const sandbox::PhysicsSandboxRenderInstance &instance :
++         scene.instances) {
++        if (!instance.visible || instance.lodLevel != 0u ||
++            IsBackgroundPurpose(instance.purpose)) {
++            continue;
++        }
++        IncludeBounds(
++                foregroundBounds,
++                InstanceRenderBounds(scene, instance));
++    }
++    if (!foregroundBounds.valid) {
++        return;
++    }
++
++    std::map<RenderGroupKey, RenderGroup> groups;
++    for (std::size_t index = 0u; index < scene.instances.size(); ++index) {
++        const sandbox::PhysicsSandboxRenderInstance &instance =
++                scene.instances[index];
++        if (!instance.visible || instance.lodLevel != 0u ||
++            !IsBackgroundPurpose(instance.purpose)) {
++            continue;
++        }
++        const sandbox::PhysicsSandboxRenderProvenance &provenance =
++                instance.provenance;
++        RenderGroup &group = groups[{
++                instance.purpose,
++                provenance.blockName,
++                provenance.descriptorPath,
++                provenance.sceneObjectId,
++                provenance.placementIdentity}];
++        IncludeBounds(group.bounds, InstanceRenderBounds(scene, instance));
++        group.instances.push_back(index);
++    }
++
++    const float foregroundSpan = MaximumSpan(foregroundBounds);
++    if (!(foregroundSpan > 0.0f) || !std::isfinite(foregroundSpan)) {
++        return;
++    }
++    constexpr float BackgroundScaleRatio = 4.0f;
++    const float tolerance = foregroundSpan * 0.01f;
++    for (const auto &[key, group] : groups) {
++        static_cast<void>(key);
++        if (!ContainsBounds(group.bounds, foregroundBounds, tolerance) ||
++            MaximumSpan(group.bounds) <
++                    foregroundSpan * BackgroundScaleRatio ||
++            MinimumSpan(group.bounds) <
++                    foregroundSpan * BackgroundScaleRatio * 0.5f) {
++            continue;
++        }
++        for (std::size_t index : group.instances) {
++            scene.instances[index].renderLayer =
++                    sandbox::PhysicsSandboxRenderLayer::Background;
++            scene.instances[index].castsShadows = false;
++        }
++    }
++}
++
 +std::string PreferredPath(const std::string &selected,
 +                          const std::string &plain) {
 +    return !selected.empty() ? selected : plain;
@@ -1565,6 +1763,7 @@ index a428b6c..b4de91e 100644
 +            AppendTree(model, *root, model.WorldIso(), nullptr, true, 0u,
 +                       0.0f);
 +        }
++        ClassifyRenderLayers(*scene_);
 +        return scene_;
 +    }
 +
@@ -1835,7 +2034,19 @@ index a428b6c..b4de91e 100644
  ReplayTrajectoryObservation ObserveReplayTrajectory(
          const ReplaySimulationStepExecution &execution,
          const ReplayControlTick &tick) {
-@@ -56,6 +599,8 @@ struct ReplaySimulationInstance {
+@@ -42,6 +777,11 @@ ReplayTrajectoryObservation ObserveReplayTrajectory(
+ 
+ }  // namespace
+ 
++void ClassifyPhysicsSandboxRenderLayers(
++        sandbox::PhysicsSandboxRenderScene &scene) {
++    ClassifyRenderLayers(scene);
++}
++
+ struct ReplaySimulationInstance {
+     CTrackManiaRace race;
+     std::unique_ptr<ReplaySimulationRuntime> runtime;
+@@ -56,6 +796,8 @@ struct ReplaySimulationInstance {
  struct ReplaySimulationSession::Impl {
      ReplayMapScene mapScene;
      ReplaySimulationInstance instance;
@@ -1844,7 +2055,7 @@ index a428b6c..b4de91e 100644
  
      void ResetRuntime() { instance.ResetRuntime(); }
  };
-@@ -68,6 +613,8 @@ ReplaySimulationSession::~ReplaySimulationSession() = default;
+@@ -68,6 +810,8 @@ ReplaySimulationSession::~ReplaySimulationSession() = default;
  void ReplaySimulationSession::Reset() {
      impl->ResetRuntime();
      impl->mapScene.Reset(impl->instance.race);
@@ -1853,7 +2064,7 @@ index a428b6c..b4de91e 100644
  }
  
  bool ReplaySimulationSession::PreloadChallenge(
-@@ -78,8 +625,18 @@ bool ReplaySimulationSession::PreloadChallenge(
+@@ -78,8 +822,18 @@ bool ReplaySimulationSession::PreloadChallenge(
  
  bool ReplaySimulationSession::InstallStaticScene(
          StaticSceneModelCollection models) {
@@ -1874,7 +2085,7 @@ index a428b6c..b4de91e 100644
  }
  
  void ReplaySimulationSession::ActivateStaticScene() {
-@@ -95,6 +652,16 @@ void ReplaySimulationSession::ConfigureReplayRace(
+@@ -95,6 +849,16 @@ void ReplaySimulationSession::ConfigureReplayRace(
              isLapRace ? lapCount : 1u);
  }
  
@@ -1892,7 +2103,7 @@ index a428b6c..b4de91e 100644
          const ReplaySimulationDefinition &simulationDefinition,
          const std::vector<ReplayControlTick> &controlTicks,
 diff --git a/src/simulation/runtime/replay_simulation_session.h b/src/simulation/runtime/replay_simulation_session.h
-index 2037631..81c9e70 100644
+index 2037631..78d83ce 100644
 --- a/src/simulation/runtime/replay_simulation_session.h
 +++ b/src/simulation/runtime/replay_simulation_session.h
 @@ -6,6 +6,7 @@
@@ -1903,7 +2114,7 @@ index 2037631..81c9e70 100644
  #include "engine/game/game_ctn_types.h"
  #include "simulation/replay/replay_challenge_construction.h"
  #include "simulation/control/replay_control_timeline.h"
-@@ -35,6 +36,12 @@ struct ReplaySimulationStateView {
+@@ -35,12 +36,21 @@ struct ReplaySimulationStateView {
      std::uint32_t respawnCount = 0u;
  };
  
@@ -1916,7 +2127,16 @@ index 2037631..81c9e70 100644
  struct ReplaySimulationInstanceClone {
      CTrackManiaRace::RuntimeClone race;
      ReplaySimulationRuntime::RuntimeClone runtime;
-@@ -70,6 +77,10 @@ public:
+     std::uint32_t incrementalRespawnCount = 0u;
+ };
+ 
++void ClassifyPhysicsSandboxRenderLayers(
++        forevervalidator::experimental::PhysicsSandboxRenderScene &scene);
++
+ class ReplaySimulationSession {
+ public:
+     ReplaySimulationSession();
+@@ -70,6 +80,10 @@ public:
              std::size_t begin,
              std::size_t count);
      std::optional<ReplaySimulationStateView> CurrentState() const;
@@ -2150,15 +2370,16 @@ index 2cd2d32..bddd1b0 100644
          json.Append("null");
 diff --git a/tests/render_scene_tests.cpp b/tests/render_scene_tests.cpp
 new file mode 100644
-index 0000000..73748b6
+index 0000000..0ba503a
 --- /dev/null
 +++ b/tests/render_scene_tests.cpp
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,232 @@
 +#include <forevervalidator/experimental/physics_sandbox.h>
 +
 +#include "engine/rendering/plug_tree.h"
 +#include "engine/scene/static_scene_model.h"
 +#include "format/static_solid/static_solid_geometry_decoder.h"
++#include "simulation/runtime/replay_simulation_session.h"
 +
 +#include <cmath>
 +#include <cstdint>
@@ -2317,11 +2538,71 @@ index 0000000..73748b6
 +    return okay;
 +}
 +
++bool TestGenericBackgroundLayerClassification() {
++    using forevervalidator::experimental::PhysicsSandboxRenderInstance;
++    using forevervalidator::experimental::PhysicsSandboxRenderLayer;
++    using forevervalidator::experimental::PhysicsSandboxRenderMesh;
++    using forevervalidator::experimental::PhysicsSandboxRenderScene;
++    using forevervalidator::experimental::PhysicsSandboxScenePurpose;
++
++    const auto mesh = [](forevervalidator::Vector3 minimum,
++                         forevervalidator::Vector3 maximum) {
++        PhysicsSandboxRenderMesh result;
++        result.boundsMin = minimum;
++        result.boundsMax = maximum;
++        return result;
++    };
++    PhysicsSandboxRenderScene scene;
++    scene.meshes.push_back(mesh(
++            {-10.0f, 0.0f, -10.0f}, {10.0f, 10.0f, 10.0f}));
++    scene.meshes.push_back(mesh(
++            {-100.0f, -100.0f, -100.0f}, {100.0f, 0.0f, 100.0f}));
++    scene.meshes.push_back(mesh(
++            {-100.0f, 0.0f, -100.0f}, {100.0f, 100.0f, 100.0f}));
++    scene.meshes.push_back(mesh(
++            {-20.0f, -5.0f, -20.0f}, {20.0f, 20.0f, 20.0f}));
++
++    PhysicsSandboxRenderInstance foreground;
++    foreground.meshIndex = 0u;
++    foreground.purpose = PhysicsSandboxScenePurpose::PlacedBlock;
++    scene.instances.push_back(foreground);
++
++    PhysicsSandboxRenderInstance lowerBackground;
++    lowerBackground.meshIndex = 1u;
++    lowerBackground.purpose = PhysicsSandboxScenePurpose::Environment;
++    lowerBackground.provenance.descriptorPath = "Shared/Backdrop";
++    scene.instances.push_back(lowerBackground);
++    PhysicsSandboxRenderInstance upperBackground = lowerBackground;
++    upperBackground.meshIndex = 2u;
++    scene.instances.push_back(upperBackground);
++
++    PhysicsSandboxRenderInstance nearbyEnvironment;
++    nearbyEnvironment.meshIndex = 3u;
++    nearbyEnvironment.purpose = PhysicsSandboxScenePurpose::Environment;
++    nearbyEnvironment.provenance.descriptorPath = "Shared/Scenery";
++    scene.instances.push_back(nearbyEnvironment);
++
++    ClassifyPhysicsSandboxRenderLayers(scene);
++    return Check(
++            scene.instances[0].renderLayer ==
++                            PhysicsSandboxRenderLayer::World &&
++                    scene.instances[1].renderLayer ==
++                            PhysicsSandboxRenderLayer::Background &&
++                    scene.instances[2].renderLayer ==
++                            PhysicsSandboxRenderLayer::Background &&
++                    !scene.instances[1].castsShadows &&
++                    !scene.instances[2].castsShadows &&
++                    scene.instances[3].renderLayer ==
++                            PhysicsSandboxRenderLayer::World,
++            "generic enclosing backdrop was not separated from world geometry");
++}
++
 +}  // namespace
 +
 +int main() {
 +    bool okay = TestUvDecoding();
 +    okay &= TestTransformComposition();
 +    okay &= TestProvenanceAndImmutableScene();
++    okay &= TestGenericBackgroundLayerClassification();
 +    return okay ? 0 : 1;
 +}

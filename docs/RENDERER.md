@@ -56,26 +56,30 @@ objects. Static geometry is rebuilt only after a successful replay reload;
 playback updates car transforms without touching map resources. Map shadows
 are disabled by default.
 
-The textured viewport uses Qt Quick 3D's procedural environment map as both a
-blue daytime skybox and an image-based light probe. ACES tone mapping keeps the
-sunlit concrete and emissive surfaces below clipping, while a warm directional
-key and restrained cool fill keep the stadium readable without enabling costly
-map shadows. The environment and light levels are covered by the QML smoke
-test.
+The textured viewport uses the project-owned 2:1 equirectangular panorama in
+`assets/environment/day_sky.png` as both a true Qt Quick 3D skybox and an
+image-based light probe. ACES tone mapping keeps the sunlit concrete and
+emissive surfaces below clipping, while a warm directional key and restrained
+cool fill keep the stadium readable without enabling costly map shadows. The
+environment resource and light levels are covered by the QML smoke test.
 
-The default scene includes authored blocks, the enclosing stadium
-environment, intentional generated stadium objects, and `StadiumGrassClip`
-meshes that restore real block-side and ground-cover geometry. Dense blade
-layers within those clips are still omitted. Other clips, checkpoint/start
-helpers, triggers, and initial-collision geometry stay hidden.
+ForeverValidator labels enclosing backdrop geometry with a generic
+`PhysicsSandboxRenderLayer::Background` value. Classification is based on
+purpose, shared provenance, relative bounds, and enclosure of ordinary world
+geometry; it contains no map, environment, or block-name special cases. The
+viewer omits that backdrop from normal map batches so it cannot occlude the
+real skybox. Authored blocks, ordinary environment scenery, intentional
+generated stadium objects, and `StadiumGrassClip` meshes remain world
+geometry. Dense blade layers within those clips are still omitted. Other
+clips, checkpoint/start helpers, triggers, and initial-collision geometry stay
+hidden.
 On TASmania, the overlap audit found no exact duplicates, no cross-purpose
 coincident transforms, and no coincident conflicting materials.
 
 Camera near/far planes are recalculated from camera position, orbit distance,
 and the default visible-scene bounds. There is no fixed 5000-unit minimum. The
-near plane also tracks the far plane to maintain a useful depth ratio; the
-56-kilometer enclosing stadium sky shell explains TASmania's large reset-view
-far plane.
+near plane also tracks the far plane to maintain a useful depth ratio.
+Background-layer bounds do not inflate the camera range.
 
 The viewer provides Textured, Neutral, Collision, Wireframe, and High Contrast
 modes. Collision and Wireframe continue to use the legacy collision buffers.
@@ -92,14 +96,16 @@ default visibility, transformed batching, exact vertex attributes, packaged
 replacement images, shared QML material and texture objects, every render mode,
 and transactional repeated reloads.
 
-After removing the blade overlays, the pinned TASmania build has 30 debuggable
-batches, 260,116 default-visible triangles, and zero map shadows. The
-interactive textured view measured 61-63 FPS on the development machine.
+After removing the blade overlays and the enclosing backdrop, the pinned
+TASmania build has 29 debuggable batches, 259,156 default-visible triangles,
+and zero map shadows. The interactive textured view measured 61-63 FPS on the
+development machine.
 
 [`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is the
 pre-optimization reference. The corrected textured frame is captured in
 [`evidence/tasmania-textured-optimized.png`](evidence/tasmania-textured-optimized.png).
 Restored grass clips and the corrected ground-cover material are shown in
 [`evidence/tasmania-grass-clips.png`](evidence/tasmania-grass-clips.png).
-The latter two captures use the final daytime environment and the `7.86s`
-TASmania runtime frame.
+Those two material captures use the `7.86s` TASmania runtime frame. The true
+daytime skybox and final `259,156`-triangle scene are shown in
+[`evidence/tasmania-skybox.png`](evidence/tasmania-skybox.png).
