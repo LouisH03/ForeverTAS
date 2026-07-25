@@ -252,15 +252,17 @@ int main(int argc, char **argv) {
                             QStringLiteral("trackFilledModel"));
                     QObject *const wire = root->findChild<QObject *>(
                             QStringLiteral("trackWireModel"));
-                    QObject *const renderModeSelector =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("renderModeSelector"));
-                    QObject *const rayTracingToggle =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("rayTracingToggle"));
+                    auto *const renderModeSelector =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "renderModeSelector")));
                     QObject *const gpuRayTracingView =
                             root->findChild<QObject *>(
                                     QStringLiteral("gpuRayTracingView"));
+                    QObject *const rasterMapView =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("rasterMapView"));
                     QObject *const viewCamera = root->findChild<QObject *>(
                             QStringLiteral("viewCamera"));
                     QObject *const mapEnvironment =
@@ -285,9 +287,24 @@ int main(int argc, char **argv) {
                     auto *const raceViewerHeader = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("raceViewerHeader")));
+                    auto *const headerControlsRow =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "headerControlsRow")));
+                    auto *const raceViewerTitleBlock =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "raceViewerTitleBlock")));
                     auto *const runSelector = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("runSelector")));
+                    auto *const resetViewButton =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "resetViewButton")));
                     QObject *const playPause = root->findChild<QObject *>(
                             QStringLiteral("playPauseButton"));
                     auto *const playIcon = qobject_cast<QQuickItem *>(
@@ -426,13 +443,36 @@ int main(int argc, char **argv) {
                                     QStringLiteral("Left") &&
                             stepForward->property("sequence").toString() ==
                                     QStringLiteral("Right");
+                    const auto rowCenter =
+                            [](const QQuickItem *item) {
+                                return item != nullptr
+                                        ? item->y() + item->height() * 0.5
+                                        : -1.0;
+                            };
                     const bool runSelectorValid =
                             raceViewerHeader != nullptr &&
+                            headerControlsRow != nullptr &&
+                            raceViewerTitleBlock != nullptr &&
                             runSelector != nullptr &&
-                            runSelector->parentItem() == raceViewerHeader &&
-                            std::abs(runSelector->x() +
-                                             runSelector->width() * 0.5 -
-                                     raceViewerHeader->width() * 0.5) < 0.6 &&
+                            renderModeSelector != nullptr &&
+                            resetViewButton != nullptr &&
+                            headerControlsRow->parentItem() ==
+                                    raceViewerHeader &&
+                            raceViewerTitleBlock->parentItem() ==
+                                    headerControlsRow &&
+                            runSelector->parentItem() ==
+                                    headerControlsRow &&
+                            renderModeSelector->parentItem() ==
+                                    headerControlsRow &&
+                            resetViewButton->parentItem() ==
+                                    headerControlsRow &&
+                            std::abs(rowCenter(raceViewerTitleBlock) -
+                                     rowCenter(runSelector)) < 0.6 &&
+                            std::abs(rowCenter(runSelector) -
+                                     rowCenter(renderModeSelector)) < 0.6 &&
+                            std::abs(rowCenter(renderModeSelector) -
+                                     rowCenter(resetViewButton)) < 0.6 &&
+                            renderModeSelector->width() >= 179.0 &&
                             runSelector->property("count").toInt() == 1 &&
                             runSelector->property("currentValue").toString() ==
                                     QStringLiteral("baseline") &&
@@ -1147,8 +1187,8 @@ int main(int argc, char **argv) {
                     QTimer::singleShot(
                             250, &application,
                             [&, filled, wire, quickWindow, runSelector,
-                             renderModeSelector, rayTracingToggle,
-                             gpuRayTracingView, viewCamera,
+                             renderModeSelector, gpuRayTracingView,
+                             rasterMapView, viewCamera,
                              mapEnvironment, daySkyTexture, mainMapLight,
                              fillMapLight, baselineTickCount, bestPosition]() {
                                 const QList<QObject *> carRoots =
@@ -1208,14 +1248,41 @@ int main(int argc, char **argv) {
                                         !wireGeometry.isNull();
                                 const int initialVisibleVisualModels =
                                         VisibleModelCount(visualModels);
+                                const bool rayTracingSupported =
+                                        gpuRayTracingView != nullptr &&
+                                        gpuRayTracingView
+                                                ->property("supported")
+                                                .toBool();
+                                const int wireframeIndex =
+                                        rayTracingSupported ? 4 : 3;
+                                const int highContrastIndex =
+                                        rayTracingSupported ? 5 : 4;
                                 bool renderModeOptionsValid =
                                         renderModeSelector != nullptr &&
                                         renderModeSelector->property("count")
-                                                        .toInt() == 5;
+                                                        .toInt() ==
+                                                (rayTracingSupported ? 6 : 5);
                                 if (renderModeOptionsValid) {
+                                    if (rayTracingSupported) {
+                                        renderModeSelector->setProperty(
+                                                "currentIndex", 1);
+                                        renderModeOptionsValid =
+                                                renderModeSelector
+                                                                ->property(
+                                                                        "currentValue")
+                                                                .toString() ==
+                                                        QStringLiteral(
+                                                                "textured-rt") &&
+                                                renderModeSelector
+                                                                ->property(
+                                                                        "displayText")
+                                                                .toString() ==
+                                                        QStringLiteral(
+                                                                "Textured (RT)");
+                                    }
                                     renderModeSelector->setProperty(
-                                            "currentIndex", 3);
-                                    renderModeOptionsValid =
+                                            "currentIndex", wireframeIndex);
+                                    renderModeOptionsValid &=
                                             renderModeSelector
                                                     ->property("currentValue")
                                                     .toString() ==
@@ -1227,7 +1294,8 @@ int main(int argc, char **argv) {
                                                     QStringLiteral(
                                                             "Wireframe");
                                     renderModeSelector->setProperty(
-                                            "currentIndex", 4);
+                                            "currentIndex",
+                                            highContrastIndex);
                                     renderModeOptionsValid &=
                                             renderModeSelector
                                                     ->property("currentValue")
@@ -1275,12 +1343,9 @@ int main(int argc, char **argv) {
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         false);
-                                const bool rayTracingControlsValid =
-                                        rayTracingToggle != nullptr &&
+                                bool rayTracingModeValid =
                                         gpuRayTracingView != nullptr &&
-                                        !rayTracingToggle
-                                                 ->property("checked")
-                                                 .toBool() &&
+                                        rasterMapView != nullptr &&
                                         !gpuRayTracingView
                                                  ->property("visible")
                                                  .toBool() &&
@@ -1291,6 +1356,42 @@ int main(int argc, char **argv) {
                                                  ->property("status")
                                                  .toString()
                                                  .isEmpty();
+                                if (rayTracingSupported) {
+                                    root->setProperty(
+                                            "renderMode",
+                                            QStringLiteral("textured-rt"));
+                                    QCoreApplication::processEvents();
+                                    rayTracingModeValid &=
+                                            root->property(
+                                                        "rayTracingEnabled")
+                                                            .toBool() &&
+                                            gpuRayTracingView
+                                                    ->property("visible")
+                                                    .toBool() &&
+                                            gpuRayTracingView
+                                                    ->property("active")
+                                                    .toBool() &&
+                                            !rasterMapView
+                                                     ->property("visible")
+                                                     .toBool();
+                                    root->setProperty(
+                                            "renderMode",
+                                            QStringLiteral("textured"));
+                                    QCoreApplication::processEvents();
+                                    rayTracingModeValid &=
+                                            !root->property(
+                                                         "rayTracingEnabled")
+                                                     .toBool() &&
+                                            !gpuRayTracingView
+                                                     ->property("visible")
+                                                     .toBool() &&
+                                            !gpuRayTracingView
+                                                     ->property("active")
+                                                     .toBool() &&
+                                            rasterMapView
+                                                    ->property("visible")
+                                                    .toBool();
+                                }
                                 const bool optimizedRenderState =
                                         viewCamera != nullptr &&
                                         viewCamera->property("clipNear")
@@ -1497,7 +1598,7 @@ int main(int argc, char **argv) {
                                                         materialDebugState &&
                                                         wireframeState &&
                                                         restoredState &&
-                                                        rayTracingControlsValid &&
+                                                        rayTracingModeValid &&
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
                                                         editorStructure

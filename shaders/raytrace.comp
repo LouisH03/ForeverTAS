@@ -416,7 +416,6 @@ void main() {
 
     vec2 pixelPosition = vec2(pixel) + vec2(0.5);
     vec2 screen = pixelPosition / camera.viewportFrame.xy * 2.0 - 1.0;
-    screen.y = -screen.y;
     float aspect = camera.renderInfo.w;
     vec3 direction = normalize(
             camera.cameraForward.xyz +

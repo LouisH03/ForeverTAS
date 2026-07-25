@@ -774,6 +774,12 @@ bool TestRayTracingShaders() {
                     !rayTracingSource.contains("pathTrace("),
             "ray tracing shader did not use the real-time game lighting "
             "path");
+    okay &= Check(
+            rayTracingSource.contains(
+                    "vec2 screen = pixelPosition / "
+                    "camera.viewportFrame.xy * 2.0 - 1.0;") &&
+                    !rayTracingSource.contains("screen.y = -screen.y"),
+            "ray tracing camera inverted the viewport Y coordinate");
     return okay;
 }
 

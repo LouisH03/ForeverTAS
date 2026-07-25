@@ -81,12 +81,13 @@ and the default visible-scene bounds. There is no fixed 5000-unit minimum. The
 near plane also tracks the far plane to maintain a useful depth ratio.
 Background-layer bounds do not inflate the camera range.
 
-The viewer provides Textured, Neutral, Collision, Wireframe, and High Contrast
-modes. Collision and Wireframe continue to use the legacy collision buffers.
+The viewer provides Textured, Textured (RT), Neutral, Collision, Wireframe, and
+High Contrast modes. Textured (RT) is available when the build supports GPU ray
+tracing. Collision and Wireframe continue to use the legacy collision buffers.
 
 ## Real-time GPU ray tracing
 
-The Ray tracing switch replaces the Qt Quick 3D raster viewport with a
+The Textured (RT) mode replaces the Qt Quick 3D raster viewport with a
 `QQuickRhiItem` renderer. On Qt 6.7 or newer, it uploads the final
 default-visible textured triangles, a balanced four-triangle-leaf BVH, the
 replacement-material table, a texture array, and the daytime environment map
@@ -107,7 +108,7 @@ runs in a compute shader over the project-owned BVH instead of using vendor RT
 cores. It is nevertheless real GPU ray tracing and intentionally consumes the
 GPU continuously while enabled. The feature is compiled when Qt GuiPrivate and
 ShaderTools are available with Qt 6.7 or newer. Qt 6.5 and 6.6 retain the
-complete raster renderer and show the ray-tracing switch disabled rather than
+complete raster renderer and omit only the Textured (RT) mode rather than
 failing configuration or startup.
 
 ## Verification
