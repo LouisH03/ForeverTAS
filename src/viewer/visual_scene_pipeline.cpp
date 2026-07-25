@@ -307,27 +307,211 @@ bool IsGrassBladeGeometry(const PhysicsSandboxRenderMesh &mesh,
     return (mesh.indices.size() / 3u) * 2u == mesh.vertices.size();
 }
 
-void ApplyWorldUvProjection(VisualVertex &vertex,
-                            const QVector3D &position,
-                            const QVector3D &normal,
-                            float scale,
-                            QVector3D &tangent) {
+enum class ProjectionAxis {
+    X,
+    Y,
+    Z,
+};
+
+ProjectionAxis DominantProjectionAxis(const QVector3D &normal) {
     const QVector3D absoluteNormal(std::fabs(normal.x()),
                                    std::fabs(normal.y()),
                                    std::fabs(normal.z()));
     if (absoluteNormal.y() >= absoluteNormal.x() &&
         absoluteNormal.y() >= absoluteNormal.z()) {
-        vertex.uv0[0] = position.x() * scale;
-        vertex.uv0[1] = position.z() * scale;
-        tangent = {1.0f, 0.0f, 0.0f};
-    } else if (absoluteNormal.x() >= absoluteNormal.z()) {
-        vertex.uv0[0] = position.z() * scale;
-        vertex.uv0[1] = position.y() * scale;
-        tangent = {0.0f, 0.0f, 1.0f};
+        return ProjectionAxis::Y;
+    }
+    return absoluteNormal.x() >= absoluteNormal.z() ? ProjectionAxis::X
+                                                    : ProjectionAxis::Z;
+}
+
+QVector2D ProjectedUv(const QVector3D &position, ProjectionAxis axis,
+                      float scale) {
+    switch (axis) {
+    case ProjectionAxis::X:
+        return {position.z() * scale, position.y() * scale};
+    case ProjectionAxis::Y:
+        return {position.x() * scale, position.z() * scale};
+    case ProjectionAxis::Z:
+        return {position.x() * scale, position.y() * scale};
+    }
+    return {};
+}
+
+std::pair<QVector3D, QVector3D> ProjectionTangents(ProjectionAxis axis) {
+    switch (axis) {
+    case ProjectionAxis::X:
+        return {{0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}};
+    case ProjectionAxis::Y:
+        return {{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    case ProjectionAxis::Z:
+        return {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}};
+    }
+    return {};
+}
+
+void ApplyUvRotation(VisualVertex &vertex, float u, float v,
+                     ProjectionAxis axis, unsigned quarterTurns,
+                     QVector3D &tangent) {
+    const auto [tangentU, tangentV] = ProjectionTangents(axis);
+    switch (quarterTurns % 4u) {
+    case 1u:
+        vertex.uv0[0] = 1.0f - v;
+        vertex.uv0[1] = u;
+        tangent = -tangentV;
+        break;
+    case 2u:
+        vertex.uv0[0] = 1.0f - u;
+        vertex.uv0[1] = 1.0f - v;
+        tangent = -tangentU;
+        break;
+    case 3u:
+        vertex.uv0[0] = v;
+        vertex.uv0[1] = 1.0f - u;
+        tangent = tangentV;
+        break;
+    case 0u:
+    default:
+        vertex.uv0[0] = u;
+        vertex.uv0[1] = v;
+        tangent = tangentU;
+        break;
+    }
+}
+
+void ApplyWorldUvProjection(VisualVertex &vertex,
+                            const QVector3D &position,
+                            const QVector3D &normal,
+                            float scale,
+                            QVector3D &tangent) {
+    const ProjectionAxis axis = DominantProjectionAxis(normal);
+    const QVector2D uv = ProjectedUv(position, axis, scale);
+    ApplyUvRotation(vertex, uv.x(), uv.y(), axis, 0u, tangent);
+}
+
+unsigned GrassTileQuarterTurns(std::int64_t tileU, std::int64_t tileV,
+                               ProjectionAxis axis) {
+    const auto coordinateHash = [](std::int64_t coordinate) {
+        const std::uint64_t bits = static_cast<std::uint64_t>(coordinate);
+        return static_cast<std::uint32_t>(bits ^ (bits >> 32u));
+    };
+    std::uint32_t hash = 0x9e3779b9u;
+    const auto mix = [&hash](std::uint32_t value) {
+        hash ^= value + 0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+        hash ^= hash >> 16u;
+        hash *= 0x7feb352du;
+        hash ^= hash >> 15u;
+    };
+    mix(coordinateHash(tileU));
+    mix(coordinateHash(tileV));
+    mix(static_cast<std::uint32_t>(axis));
+    return hash & 3u;
+}
+
+VisualVertex LerpVertex(const VisualVertex &left, const VisualVertex &right,
+                        float amount) {
+    VisualVertex result;
+    const auto interpolate = [amount](const float *a, const float *b,
+                                      float *output, std::size_t count) {
+        for (std::size_t index = 0u; index < count; ++index) {
+            output[index] = a[index] + (b[index] - a[index]) * amount;
+        }
+    };
+    interpolate(left.position, right.position, result.position, 3u);
+    interpolate(left.normal, right.normal, result.normal, 3u);
+    interpolate(left.tangent, right.tangent, result.tangent, 3u);
+    interpolate(left.uv0, right.uv0, result.uv0, 2u);
+    interpolate(left.uv1, right.uv1, result.uv1, 2u);
+    interpolate(left.color, right.color, result.color, 4u);
+    return result;
+}
+
+std::vector<VisualVertex> ClipProjectedPolygon(
+        const std::vector<VisualVertex> &input, ProjectionAxis axis,
+        float scale, bool clipU, float boundary, bool keepGreater) {
+    std::vector<VisualVertex> output;
+    if (input.empty()) {
+        return output;
+    }
+    output.reserve(input.size() + 1u);
+    const auto coordinate = [axis, scale, clipU](const VisualVertex &vertex) {
+        const QVector2D uv = ProjectedUv(
+                {vertex.position[0], vertex.position[1], vertex.position[2]},
+                axis, scale);
+        return clipU ? uv.x() : uv.y();
+    };
+    VisualVertex previous = input.back();
+    float previousCoordinate = coordinate(previous);
+    bool previousInside = keepGreater ? previousCoordinate >= boundary
+                                      : previousCoordinate <= boundary;
+    for (const VisualVertex &current : input) {
+        const float currentCoordinate = coordinate(current);
+        const bool currentInside = keepGreater
+                                           ? currentCoordinate >= boundary
+                                           : currentCoordinate <= boundary;
+        if (currentInside != previousInside) {
+            const float denominator = currentCoordinate - previousCoordinate;
+            const float amount = std::fabs(denominator) > 1.0e-12f
+                                         ? std::clamp(
+                                                   (boundary -
+                                                    previousCoordinate) /
+                                                           denominator,
+                                                   0.0f, 1.0f)
+                                         : 0.0f;
+            output.push_back(LerpVertex(previous, current, amount));
+        }
+        if (currentInside) {
+            output.push_back(current);
+        }
+        previous = current;
+        previousCoordinate = currentCoordinate;
+        previousInside = currentInside;
+    }
+    return output;
+}
+
+VisualVertex TransformVertex(const VisualVertex &source,
+                             const PhysicsSandboxTransform &transform) {
+    VisualVertex vertex = source;
+    const QVector3D position = TransformPoint(
+            transform,
+            {source.position[0], source.position[1], source.position[2]});
+    const QVector3D normal =
+            TransformNormal(transform, {source.normal[0], source.normal[1],
+                                        source.normal[2]});
+    QVector3D tangent = TransformDirection(
+            transform,
+            {source.tangent[0], source.tangent[1], source.tangent[2]});
+    tangent -= normal * QVector3D::dotProduct(normal, tangent);
+    tangent = tangent.lengthSquared() > 1.0e-12f
+                      ? tangent.normalized()
+                      : OrthogonalTangent(normal);
+    vertex.position[0] = position.x();
+    vertex.position[1] = position.y();
+    vertex.position[2] = position.z();
+    vertex.normal[0] = normal.x();
+    vertex.normal[1] = normal.y();
+    vertex.normal[2] = normal.z();
+    vertex.tangent[0] = tangent.x();
+    vertex.tangent[1] = tangent.y();
+    vertex.tangent[2] = tangent.z();
+    return vertex;
+}
+
+void AppendVertex(BatchAccumulator &batch, const VisualVertex &vertex) {
+    if (batch.vertices.size() ==
+        std::numeric_limits<std::uint32_t>::max()) {
+        throw std::runtime_error("static visual batch exceeds U32 indices");
+    }
+    batch.vertices.push_back(vertex);
+    const QVector3D position(vertex.position[0], vertex.position[1],
+                             vertex.position[2]);
+    if (!batch.hasBounds) {
+        batch.boundsMin = position;
+        batch.boundsMax = position;
+        batch.hasBounds = true;
     } else {
-        vertex.uv0[0] = position.x() * scale;
-        vertex.uv0[1] = position.y() * scale;
-        tangent = {1.0f, 0.0f, 0.0f};
+        ExpandBounds(position, batch.boundsMin, batch.boundsMax);
     }
 }
 
@@ -343,16 +527,13 @@ void AppendInstance(BatchAccumulator &batch,
     const std::uint32_t baseVertex =
             static_cast<std::uint32_t>(batch.vertices.size());
     for (const VisualVertex &source : sourceVertices) {
-        VisualVertex vertex = source;
-        const QVector3D position = TransformPoint(
-                transform,
-                {source.position[0], source.position[1], source.position[2]});
-        const QVector3D normal =
-                TransformNormal(transform, {source.normal[0], source.normal[1],
-                                            source.normal[2]});
-        QVector3D tangent = TransformDirection(
-                transform,
-                {source.tangent[0], source.tangent[1], source.tangent[2]});
+        VisualVertex vertex = TransformVertex(source, transform);
+        const QVector3D position(vertex.position[0], vertex.position[1],
+                                 vertex.position[2]);
+        const QVector3D normal(vertex.normal[0], vertex.normal[1],
+                               vertex.normal[2]);
+        QVector3D tangent(vertex.tangent[0], vertex.tangent[1],
+                          vertex.tangent[2]);
         if (worldUvScale > 0.0f) {
             ApplyWorldUvProjection(vertex, position, normal, worldUvScale,
                                    tangent);
@@ -361,26 +542,144 @@ void AppendInstance(BatchAccumulator &batch,
         tangent = tangent.lengthSquared() > 1.0e-12f
                           ? tangent.normalized()
                           : OrthogonalTangent(normal);
-        vertex.position[0] = position.x();
-        vertex.position[1] = position.y();
-        vertex.position[2] = position.z();
-        vertex.normal[0] = normal.x();
-        vertex.normal[1] = normal.y();
-        vertex.normal[2] = normal.z();
         vertex.tangent[0] = tangent.x();
         vertex.tangent[1] = tangent.y();
         vertex.tangent[2] = tangent.z();
-        batch.vertices.push_back(vertex);
-        if (!batch.hasBounds) {
-            batch.boundsMin = position;
-            batch.boundsMax = position;
-            batch.hasBounds = true;
-        } else {
-            ExpandBounds(position, batch.boundsMin, batch.boundsMax);
-        }
+        AppendVertex(batch, vertex);
     }
     for (std::uint32_t index : sourceIndices) {
         batch.indices.push_back(baseVertex + index);
+    }
+    ++batch.sourceInstanceCount;
+}
+
+void AppendRandomizedGrassInstance(
+        BatchAccumulator &batch,
+        const std::vector<VisualVertex> &sourceVertices,
+        const std::vector<std::uint32_t> &sourceIndices,
+        const PhysicsSandboxTransform &transform, float worldUvScale) {
+    std::vector<VisualVertex> vertices;
+    vertices.reserve(sourceVertices.size());
+    for (const VisualVertex &source : sourceVertices) {
+        vertices.push_back(TransformVertex(source, transform));
+    }
+
+    constexpr float BoundaryEpsilon = 1.0e-5f;
+    for (std::size_t index = 0u; index + 2u < sourceIndices.size();
+         index += 3u) {
+        const std::uint32_t ia = sourceIndices[index];
+        const std::uint32_t ib = sourceIndices[index + 1u];
+        const std::uint32_t ic = sourceIndices[index + 2u];
+        if (ia >= vertices.size() || ib >= vertices.size() ||
+            ic >= vertices.size()) {
+            continue;
+        }
+        const QVector3D averageNormal(
+                vertices[ia].normal[0] + vertices[ib].normal[0] +
+                        vertices[ic].normal[0],
+                vertices[ia].normal[1] + vertices[ib].normal[1] +
+                        vertices[ic].normal[1],
+                vertices[ia].normal[2] + vertices[ib].normal[2] +
+                        vertices[ic].normal[2]);
+        const ProjectionAxis axis = DominantProjectionAxis(averageNormal);
+        const std::array<QVector2D, 3> projected{{
+                ProjectedUv({vertices[ia].position[0],
+                             vertices[ia].position[1],
+                             vertices[ia].position[2]},
+                            axis, worldUvScale),
+                ProjectedUv({vertices[ib].position[0],
+                             vertices[ib].position[1],
+                             vertices[ib].position[2]},
+                            axis, worldUvScale),
+                ProjectedUv({vertices[ic].position[0],
+                             vertices[ic].position[1],
+                             vertices[ic].position[2]},
+                            axis, worldUvScale),
+        }};
+        const auto [minimumU, maximumU] = std::minmax(
+                {projected[0].x(), projected[1].x(), projected[2].x()});
+        const auto [minimumV, maximumV] = std::minmax(
+                {projected[0].y(), projected[1].y(), projected[2].y()});
+        std::int64_t firstTileU = static_cast<std::int64_t>(
+                std::floor(minimumU + BoundaryEpsilon));
+        std::int64_t lastTileU = static_cast<std::int64_t>(
+                std::floor(maximumU - BoundaryEpsilon));
+        std::int64_t firstTileV = static_cast<std::int64_t>(
+                std::floor(minimumV + BoundaryEpsilon));
+        std::int64_t lastTileV = static_cast<std::int64_t>(
+                std::floor(maximumV - BoundaryEpsilon));
+        if (lastTileU < firstTileU) {
+            firstTileU = lastTileU = static_cast<std::int64_t>(
+                    std::floor((minimumU + maximumU) * 0.5f));
+        }
+        if (lastTileV < firstTileV) {
+            firstTileV = lastTileV = static_cast<std::int64_t>(
+                    std::floor((minimumV + maximumV) * 0.5f));
+        }
+
+        for (std::int64_t tileU = firstTileU; tileU <= lastTileU; ++tileU) {
+            for (std::int64_t tileV = firstTileV; tileV <= lastTileV;
+                 ++tileV) {
+                std::vector<VisualVertex> polygon{
+                        vertices[ia], vertices[ib], vertices[ic]};
+                polygon = ClipProjectedPolygon(
+                        polygon, axis, worldUvScale, true,
+                        static_cast<float>(tileU), true);
+                polygon = ClipProjectedPolygon(
+                        polygon, axis, worldUvScale, true,
+                        static_cast<float>(tileU + 1), false);
+                polygon = ClipProjectedPolygon(
+                        polygon, axis, worldUvScale, false,
+                        static_cast<float>(tileV), true);
+                polygon = ClipProjectedPolygon(
+                        polygon, axis, worldUvScale, false,
+                        static_cast<float>(tileV + 1), false);
+                if (polygon.size() < 3u) {
+                    continue;
+                }
+
+                const unsigned quarterTurns =
+                        GrassTileQuarterTurns(tileU, tileV, axis);
+                const std::uint32_t baseVertex =
+                        static_cast<std::uint32_t>(batch.vertices.size());
+                for (VisualVertex &vertex : polygon) {
+                    const QVector3D position(
+                            vertex.position[0], vertex.position[1],
+                            vertex.position[2]);
+                    QVector3D normal(vertex.normal[0], vertex.normal[1],
+                                     vertex.normal[2]);
+                    normal = normal.lengthSquared() > 1.0e-12f
+                                     ? normal.normalized()
+                                     : QVector3D(0.0f, 1.0f, 0.0f);
+                    const QVector2D projectedUv =
+                            ProjectedUv(position, axis, worldUvScale);
+                    QVector3D tangent;
+                    ApplyUvRotation(
+                            vertex,
+                            projectedUv.x() - static_cast<float>(tileU),
+                            projectedUv.y() - static_cast<float>(tileV), axis,
+                            quarterTurns, tangent);
+                    tangent -= normal * QVector3D::dotProduct(normal, tangent);
+                    tangent = tangent.lengthSquared() > 1.0e-12f
+                                      ? tangent.normalized()
+                                      : OrthogonalTangent(normal);
+                    vertex.normal[0] = normal.x();
+                    vertex.normal[1] = normal.y();
+                    vertex.normal[2] = normal.z();
+                    vertex.tangent[0] = tangent.x();
+                    vertex.tangent[1] = tangent.y();
+                    vertex.tangent[2] = tangent.z();
+                    AppendVertex(batch, vertex);
+                }
+                for (std::uint32_t corner = 1u;
+                     corner + 1u < polygon.size(); ++corner) {
+                    batch.indices.insert(
+                            batch.indices.end(),
+                            {baseVertex, baseVertex + corner,
+                             baseVertex + corner + 1u});
+                }
+            }
+        }
     }
     ++batch.sourceInstanceCount;
 }
@@ -497,9 +796,16 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                 MakeBatchKey(materialClass, instance.purpose,
                              mesh.hasVertexColors, defaultVisible,
                              instance.worldTransform);
-        AppendInstance(accumulators[key], preparedMeshes[instance.meshIndex],
-                       mesh.indices, instance.worldTransform,
-                       replacement.worldUvScale);
+        if (materialClass == ReplacementMaterialClass::Grass) {
+            AppendRandomizedGrassInstance(
+                    accumulators[key], preparedMeshes[instance.meshIndex],
+                    mesh.indices, instance.worldTransform,
+                    replacement.worldUvScale);
+        } else {
+            AppendInstance(accumulators[key],
+                           preparedMeshes[instance.meshIndex], mesh.indices,
+                           instance.worldTransform, replacement.worldUvScale);
+        }
 
         if (defaultVisible) {
             ++result.defaultVisibleInstanceCount;

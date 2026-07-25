@@ -493,12 +493,63 @@ bool TestStaticBatching() {
         constexpr std::size_t FloatCount = 17u;
         const auto *vertices = reinterpret_cast<const float *>(
                 grassClipBatch->vertices.constData());
+        const std::size_t vertexCount =
+                static_cast<std::size_t>(grassClipBatch->vertices.size()) /
+                (FloatCount * sizeof(float));
+        bool uvInsideTile = true;
+        bool hasUTangent = false;
+        bool hasVTangent = false;
+        for (std::size_t vertexIndex = 0u; vertexIndex < vertexCount;
+             ++vertexIndex) {
+            const float *vertex = vertices + vertexIndex * FloatCount;
+            uvInsideTile &= vertex[9] >= -0.001f &&
+                            vertex[9] <= 1.001f &&
+                            vertex[10] >= -0.001f &&
+                            vertex[10] <= 1.001f;
+            hasUTangent |= std::fabs(vertex[6]) > 0.9f;
+            hasVTangent |= std::fabs(vertex[8]) > 0.9f;
+        }
+        const auto *indices = reinterpret_cast<const std::uint32_t *>(
+                grassClipBatch->indices.constData());
+        const std::size_t indexCount =
+                static_cast<std::size_t>(grassClipBatch->indices.size()) /
+                sizeof(std::uint32_t);
+        float projectedArea = 0.0f;
+        bool hasDegenerateTriangle = false;
+        for (std::size_t index = 0u; index + 2u < indexCount; index += 3u) {
+            const float *a = vertices + indices[index] * FloatCount;
+            const float *b = vertices + indices[index + 1u] * FloatCount;
+            const float *c = vertices + indices[index + 2u] * FloatCount;
+            const float area =
+                    std::fabs((b[0] - a[0]) * (c[2] - a[2]) -
+                              (b[2] - a[2]) * (c[0] - a[0])) *
+                    0.5f;
+            projectedArea += area;
+            hasDegenerateTriangle |= area < 0.0001f;
+        }
+        const auto repeat =
+                forevertas::viewer::BuildStaticVisualBatches(scene);
+        const auto repeatedGrassClipBatch = std::find_if(
+                repeat.batches.cbegin(), repeat.batches.cend(),
+                [](const StaticVisualBatch &batch) {
+                    return batch.materialClass ==
+                                   ReplacementMaterialClass::Grass &&
+                           batch.purpose ==
+                                   PhysicsSandboxScenePurpose::Clip &&
+                           batch.defaultVisible;
+                });
         okay &= Check(
-                std::fabs(vertices[9] + 1.25f) < 0.001f &&
-                        std::fabs(vertices[FloatCount + 9] - 6.75f) < 0.001f &&
-                        std::fabs(vertices[FloatCount + 9] - vertices[9] -
-                                  8.0f) < 0.001f,
-                "grass ground did not receive a stable four-meter world tile");
+                grassClipBatch->triangleCount > 1u &&
+                        vertexCount > 3u && uvInsideTile && hasUTangent &&
+                        hasVTangent && !hasDegenerateTriangle &&
+                        std::fabs(projectedArea - 512.0f) < 0.01f &&
+                        repeatedGrassClipBatch != repeat.batches.cend() &&
+                        grassClipBatch->vertices ==
+                                repeatedGrassClipBatch->vertices &&
+                        grassClipBatch->indices ==
+                                repeatedGrassClipBatch->indices,
+                "grass ground did not receive stable randomized four-meter "
+                "tiles");
     }
     if (turboBatch != result.batches.cend()) {
         constexpr std::size_t FloatCount = 17u;
