@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSet>
 #include <QTimer>
 
 #include <algorithm>
@@ -152,6 +153,10 @@ int main(int argc, char **argv) {
                 if (viewer.loaded()) {
                     verificationStarted = true;
                     std::cout << viewer.triangleCount() << " triangles, "
+                              << viewer.visualTriangleCount()
+                              << " visual triangles, "
+                              << viewer.visualMeshCount() << " visual meshes, "
+                              << viewer.materialCount() << " materials, "
                               << viewer.ellipsoidCount() << " ellipsoids, "
                               << viewer.durationMs() << " ms, "
                               << viewer.tickCount() << " ticks\n";
@@ -301,7 +306,36 @@ int main(int argc, char **argv) {
                     const bool timeLabelUnambiguous =
                             viewer.timeText().startsWith(
                                     QStringLiteral("00:00:01 / "));
+                    QSet<QString> visibleMaterialClasses;
+                    for (const QVariant &entry :
+                         viewer.visualInstances()) {
+                        const QVariantMap instance = entry.toMap();
+                        if (instance
+                                            .value(
+                                                    QStringLiteral(
+                                                            "sourceVisible"))
+                                            .toBool() &&
+                            instance
+                                            .value(
+                                                    QStringLiteral(
+                                                            "lodLevel"))
+                                            .toLongLong() == 0) {
+                            visibleMaterialClasses.insert(
+                                    instance
+                                            .value(QStringLiteral(
+                                                    "materialClass"))
+                                            .toString());
+                        }
+                    }
                     const bool sceneValid = viewer.triangleCount() > 0 &&
+                            viewer.visualTriangleCount() > 0 &&
+                            viewer.visualMeshCount() > 0 &&
+                            viewer.materialCount() > 0 &&
+                            !viewer.visualInstances().isEmpty() &&
+                            viewer.visualInstances().size() >
+                                    viewer.visualMeshCount() &&
+                            viewer.diagnosticCount() > 0 &&
+                            visibleMaterialClasses.size() >= 3 &&
                             viewer.ellipsoidCount() > 0 &&
                             viewer.durationMs() > 0 &&
                             viewer.tickCount() ==
@@ -353,7 +387,19 @@ int main(int argc, char **argv) {
                                 << ", rightDragZoomsIn="
                                 << rightDragZoomsIn
                                 << ", timeLabelUnambiguous="
-                                << timeLabelUnambiguous << '\n';
+                                << timeLabelUnambiguous
+                                << ", visualTriangles="
+                                << viewer.visualTriangleCount()
+                                << ", visualMeshes="
+                                << viewer.visualMeshCount()
+                                << ", materials="
+                                << viewer.materialCount()
+                                << ", visualInstances="
+                                << viewer.visualInstances().size()
+                                << ", diagnostics="
+                                << viewer.diagnosticCount()
+                                << ", visibleMaterialClasses="
+                                << visibleMaterialClasses.size() << '\n';
                     }
 
                     viewer.jumpToStart();

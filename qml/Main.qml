@@ -13,6 +13,7 @@ ApplicationWindow {
     required property var viewer
 
     property bool wireframeMode: false
+    property string renderMode: "textured"
     readonly property var settingsWheelRedirectorObject:
         settingsWheelRedirector
 
@@ -320,10 +321,121 @@ ApplicationWindow {
                             }
                         }
 
+                        DirectionalLight {
+                            eulerRotation.x: -55
+                            eulerRotation.y: -30
+                            brightness: 1.25
+                            color: "#fff8e8"
+                            castsShadow: true
+                            shadowFactor: 38
+                        }
+
+                        DirectionalLight {
+                            eulerRotation.x: -20
+                            eulerRotation.y: 145
+                            brightness: 0.55
+                            color: "#b8d8ef"
+                            castsShadow: false
+                        }
+
+                        Repeater3D {
+                            model: window.viewer.visualInstances
+
+                            delegate: Model {
+                                required property var modelData
+
+                                objectName: "trackVisualModel"
+                                visible: window.viewer.loaded
+                                         && !window.wireframeMode
+                                         && window.renderMode !== "collision"
+                                         && modelData.sourceVisible
+                                         && modelData.lodLevel === 0
+                                geometry: modelData.geometry
+                                position: modelData.position
+                                rotation: modelData.rotation
+                                scale: modelData.scale
+                                castsShadows: modelData.castsShadows
+
+                                Texture {
+                                    id: replacementBaseMap
+                                    source: modelData.baseTexture
+                                    tilingModeHorizontal: Texture.Repeat
+                                    tilingModeVertical: Texture.Repeat
+                                    scaleU: modelData.textureScale
+                                    scaleV: modelData.textureScale
+                                    generateMipmaps: true
+                                    mipFilter: Texture.Linear
+                                }
+
+                                Texture {
+                                    id: replacementNormalMap
+                                    source: modelData.normalTexture
+                                    tilingModeHorizontal: Texture.Repeat
+                                    tilingModeVertical: Texture.Repeat
+                                    scaleU: modelData.textureScale
+                                    scaleV: modelData.textureScale
+                                    generateMipmaps: true
+                                    mipFilter: Texture.Linear
+                                }
+
+                                PrincipledMaterial {
+                                    id: replacementMaterial
+                                    lighting:
+                                        PrincipledMaterial.FragmentLighting
+                                    baseColor: window.renderMode ===
+                                               "neutral"
+                                               ? "#aeb3af"
+                                               : (window.renderMode ===
+                                                  "material-debug"
+                                                  ? modelData.debugColor
+                                                  : modelData.baseColor)
+                                    baseColorMap: window.renderMode ===
+                                                  "textured"
+                                                  ? replacementBaseMap
+                                                  : null
+                                    normalMap: window.renderMode ===
+                                               "textured"
+                                               ? replacementNormalMap
+                                               : null
+                                    roughness: window.renderMode ===
+                                               "neutral"
+                                               ? 0.74
+                                               : modelData.roughness
+                                    metalness: window.renderMode ===
+                                               "neutral"
+                                               ? 0
+                                               : modelData.metalness
+                                    opacity: modelData.opacity
+                                    alphaMode: modelData.opacity < 0.999
+                                               ? PrincipledMaterial.Blend
+                                               : PrincipledMaterial.Opaque
+                                    cullMode: modelData.twoSided
+                                              ? Material.NoCulling
+                                              : Material.BackFaceCulling
+                                    vertexColorsEnabled:
+                                        modelData.vertexColors
+                                        && window.renderMode === "textured"
+                                    emissiveFactor: window.renderMode ===
+                                                    "textured"
+                                                    ? Qt.vector3d(
+                                                          modelData.baseColor.r
+                                                          * modelData.emissiveStrength,
+                                                          modelData.baseColor.g
+                                                          * modelData.emissiveStrength,
+                                                          modelData.baseColor.b
+                                                          * modelData.emissiveStrength)
+                                                    : Qt.vector3d(0, 0, 0)
+                                }
+
+                                materials: [replacementMaterial]
+                            }
+                        }
+
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
                                      && !window.wireframeMode
+                                     && window.renderMode === "collision"
                             geometry: window.viewer.loaded
                                       ? window.viewer.trackFilledGeometry
                                       : null
@@ -475,10 +587,10 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: window.viewer.loaded
-                                      ? qsTr("%1 triangles · %2 runs · %3 ellipsoids/run")
-                                            .arg(window.viewer.triangleCount)
+                                      ? qsTr("%1 visual triangles · %2 materials · %3 runs")
+                                            .arg(window.viewer.visualTriangleCount)
+                                            .arg(window.viewer.materialCount)
                                             .arg(window.viewer.runCount)
-                                            .arg(window.viewer.ellipsoidCount)
                                       : window.viewer.statusText
                                 color: "#aeb8b0"
                                 elide: Text.ElideRight
@@ -502,6 +614,30 @@ ApplicationWindow {
                                     font: wireframeSwitch.font
                                     color: "#ffffff"
                                     verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+
+                            StyledComboBox {
+                                id: renderModeSelector
+                                objectName: "renderModeSelector"
+                                Layout.preferredWidth: 152
+                                enabled: window.viewer.loaded
+                                model: [
+                                    { "text": qsTr("Textured"),
+                                      "value": "textured" },
+                                    { "text": qsTr("Neutral"),
+                                      "value": "neutral" },
+                                    { "text": qsTr("Collision"),
+                                      "value": "collision" },
+                                    { "text": qsTr("Material debug"),
+                                      "value": "material-debug" }
+                                ]
+                                textRole: "text"
+                                valueRole: "value"
+                                onActivated: {
+                                    window.renderMode = currentValue
+                                    window.wireframeMode = false
+                                    wireframeSwitch.checked = false
                                 }
                             }
 

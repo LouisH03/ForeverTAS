@@ -51,14 +51,34 @@ struct RaceViewerMeshBuffers {
     QVector3D boundsMax{};
 };
 
+struct RaceViewerVisualMeshBuffers {
+    QByteArray vertices;
+    QByteArray indices;
+    QVector3D boundsMin{};
+    QVector3D boundsMax{};
+    std::vector<std::pair<int, int>> subsets;
+    bool hasNormals = false;
+    bool hasTangents = false;
+    bool hasUv0 = false;
+    bool hasUv1 = false;
+    bool hasVertexColors = false;
+};
+
 struct RaceViewerLoadResult {
     QString error;
     QString packsDirectory;
     QString replayPath;
     RaceViewerMeshBuffers track;
+    std::vector<RaceViewerVisualMeshBuffers> visualMeshes;
+    QVariantList visualInstances;
+    QVector3D visualBoundsMin{};
+    QVector3D visualBoundsMax{};
     std::vector<RaceViewerFrame> frames;
     QVariantList carEllipsoids;
     std::int64_t triangleCount = 0;
+    std::int64_t visualTriangleCount = 0;
+    std::int64_t materialCount = 0;
+    std::int64_t diagnosticCount = 0;
 };
 
 class RaceViewerController final : public QObject {
@@ -73,6 +93,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(QQuick3DGeometry *ellipsoidWireGeometry READ
                        ellipsoidWireGeometry CONSTANT)
     Q_PROPERTY(QVariantList carEllipsoids READ carEllipsoids NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(QVariantList visualInstances READ visualInstances NOTIFY
                        sceneChanged)
     Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
     Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
@@ -93,6 +115,13 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(qint64 triangleCount READ triangleCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 visualTriangleCount READ visualTriangleCount NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(qint64 visualMeshCount READ visualMeshCount NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(qint64 materialCount READ materialCount NOTIFY sceneChanged)
+    Q_PROPERTY(qint64 diagnosticCount READ diagnosticCount NOTIFY
+                       sceneChanged)
     Q_PROPERTY(qint64 ellipsoidCount READ ellipsoidCount NOTIFY sceneChanged)
     Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY sceneChanged)
 
@@ -105,6 +134,7 @@ public:
     QQuick3DGeometry *ellipsoidFilledGeometry();
     QQuick3DGeometry *ellipsoidWireGeometry();
     QVariantList carEllipsoids() const;
+    QVariantList visualInstances() const;
     QVariantList runOptions() const;
     QVariantList runPoses() const;
     qint64 runCount() const;
@@ -122,6 +152,10 @@ public:
     bool loading() const;
     QString statusText() const;
     qint64 triangleCount() const;
+    qint64 visualTriangleCount() const;
+    qint64 visualMeshCount() const;
+    qint64 materialCount() const;
+    qint64 diagnosticCount() const;
     qint64 ellipsoidCount() const;
     double sceneRadius() const;
     RaceViewerInputSample inputSample(qint64 tick) const noexcept;
@@ -174,6 +208,7 @@ private:
 
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
+    std::vector<std::unique_ptr<RaceGeometry>> visualGeometries_;
     std::vector<std::unique_ptr<RaceGeometry>>
             ellipsoidFilledGeometries_;
     RaceGeometry ellipsoidWireGeometry_;
@@ -191,6 +226,7 @@ private:
     std::optional<ReplayLoadRequest> queuedReplayLoad_;
     std::optional<PendingRun> pendingRun_;
     QVariantList carEllipsoids_;
+    QVariantList visualInstances_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
     QString statusText_ = QStringLiteral("No replay loaded");
@@ -200,6 +236,9 @@ private:
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;
+    qint64 visualTriangleCount_ = 0;
+    qint64 materialCount_ = 0;
+    qint64 diagnosticCount_ = 0;
     double sceneRadius_ = 1.0;
     qint64 playbackStartTick_ = 0;
     bool loaded_ = false;

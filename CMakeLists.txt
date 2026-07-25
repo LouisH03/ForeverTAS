@@ -93,6 +93,8 @@ target_link_libraries(forevertas_core PUBLIC
     ForeverValidator::native)
 
 add_library(forevertas_gui STATIC
+    src/viewer/material_classifier.cpp
+    src/viewer/material_classifier.h
     src/viewer/race_geometry.cpp
     src/viewer/race_geometry.h
     src/viewer/race_timeline_item.cpp
@@ -149,6 +151,12 @@ qt_add_qml_module(forevertas
         qml/settings/Vector3Settings.qml
         qml/settings/VelocityEvaluationSettings.qml
         qml/settings/VolumeEntryEvaluationSettings.qml)
+file(GLOB FOREVERTAS_REPLACEMENT_TEXTURES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/*.png")
+qt_add_resources(forevertas "replacement-materials"
+    PREFIX "/materials"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials"
+    FILES ${FOREVERTAS_REPLACEMENT_TEXTURES})
 target_link_libraries(forevertas PRIVATE
     forevertas_gui
     Qt6::Gui
@@ -174,10 +182,20 @@ if(BUILD_TESTING)
         forevertas_gui
         Qt6::Test)
 
+    add_executable(forevertas-renderer-tests
+        tests/renderer_tests.cpp)
+    target_compile_definitions(forevertas-renderer-tests PRIVATE
+        FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(forevertas-renderer-tests PRIVATE
+        forevertas_gui
+        Qt6::Gui)
+
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(forevertas-strategy-tests PRIVATE
             -Wall -Wextra -Werror)
         target_compile_options(forevertas-controller-tests PRIVATE
+            -Wall -Wextra -Werror)
+        target_compile_options(forevertas-renderer-tests PRIVATE
             -Wall -Wextra -Werror)
     endif()
 
@@ -185,6 +203,10 @@ if(BUILD_TESTING)
              COMMAND forevertas-strategy-tests)
     add_test(NAME forevertas-controller
              COMMAND forevertas-controller-tests)
+    add_test(NAME forevertas-renderer
+             COMMAND forevertas-renderer-tests)
+    set_tests_properties(forevertas-renderer PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME forevertas-qml-smoke
              COMMAND forevertas --qml-smoke-test)
     set_tests_properties(forevertas-qml-smoke PROPERTIES

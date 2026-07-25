@@ -1,13 +1,78 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7e8e359..ecab3b4 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -91,3 +91,16 @@ if(FOREVERVALIDATOR_BUILD_CLI)
+     endif()
+     forevervalidator_configure_target(forevervalidator)
+ endif()
++
++if(FOREVERVALIDATOR_BUILD_TESTS)
++    enable_testing()
++    add_executable(forevervalidator-render-scene-tests
++        tests/render_scene_tests.cpp)
++    target_include_directories(forevervalidator-render-scene-tests PRIVATE
++        "${CMAKE_CURRENT_SOURCE_DIR}/src")
++    target_link_libraries(forevervalidator-render-scene-tests PRIVATE
++        forevervalidator_core)
++    forevervalidator_configure_target(forevervalidator-render-scene-tests)
++    add_test(NAME forevervalidator-render-scene
++             COMMAND forevervalidator-render-scene-tests)
++endif()
+diff --git a/README.md b/README.md
+index 20ca5f8..8cac368 100644
+--- a/README.md
++++ b/README.md
+@@ -29,10 +29,9 @@ Platform, and Puzzle validate completion, time, and respawns where recorded.
+ Stunts validates completion, respawns, and the independently simulated stunt
+ score.
+ 
+-TMInterface replays are detected from the input clock marker written by
+-TMInterface. ForeverValidator normalizes their recorded input timeline and
++Scripted-input replays are detected from their input clock marker. ForeverValidator normalizes their recorded input timeline and
+ checks whether those inputs reproduce the stored ghost, while clearly marking
+-the replay as TMInterface-generated. These replays remain invalid for
++the replay as script-generated. These replays remain invalid for
+ competitive validation even when the inputs and ghost match.
+ 
+ ## Game files
+@@ -128,9 +127,9 @@ nonzero error code when replay decoding, asset loading, or simulation cannot
+ be completed. JSON includes typed map environment, vehicle, play mode,
+ replay provenance, input/ghost match, expected and observed outcomes,
+ trajectory counts, maximum deviation, and the first divergence when present.
+-TMInterface replays use the `tminterface_replay` status and expose
++Scripted replays use the `scripted_replay` status and expose
+ `replay_file_metadata.replay_provenance` plus `input_ghost_match`; the CLI also
+-prints the TMInterface classification to stderr.
++prints the scripted-input classification to stderr.
+ 
+ ## Library API
+ 
 diff --git a/include/forevervalidator/experimental/physics_sandbox.h b/include/forevervalidator/experimental/physics_sandbox.h
-index 87c842749864b20a8a77171ce150b910e0115bc7..606b1753f5f927f2438b94349e46ad3488ac6d89 100644
+index 87c8427..47b0165 100644
 --- a/include/forevervalidator/experimental/physics_sandbox.h
 +++ b/include/forevervalidator/experimental/physics_sandbox.h
-@@ -12,0 +13 @@
+@@ -10,6 +10,7 @@
+ #include <string>
+ #include <vector>
+ 
 +#include <forevervalidator/input_state.h>
-@@ -73 +74 @@ struct PhysicsSandboxInputValue {
+ #include <forevervalidator/validation.h>
+ 
+ namespace forevervalidator::experimental {
+@@ -70,7 +71,7 @@ struct PhysicsSandboxInputValue {
+     PhysicsSandboxInputValueKind kind = PhysicsSandboxInputValueKind::None;
+     PhysicsSandboxSwitchState switchState =
+             PhysicsSandboxSwitchState::Released;
 -    float analog = 0.0f;
 +    AnalogInputState analog = 0;
-@@ -93,0 +95,20 @@ struct PhysicsSandboxCarState {
+ };
+ 
+ struct PhysicsSandboxInputEvent {
+@@ -91,9 +92,165 @@ struct PhysicsSandboxCarState {
+     Vector3 torque{};
+ };
+ 
 +struct PhysicsSandboxCollisionTriangle {
 +    Vector3 a{};
 +    Vector3 b{};
@@ -23,18 +88,166 @@ index 87c842749864b20a8a77171ce150b910e0115bc7..606b1753f5f927f2438b94349e46ad34
 +    Vector3 radii{};
 +};
 +
++struct PhysicsSandboxVector2 {
++    float x = 0.0f;
++    float y = 0.0f;
++};
++
++struct PhysicsSandboxVector4 {
++    float x = 0.0f;
++    float y = 0.0f;
++    float z = 0.0f;
++    float w = 0.0f;
++};
++
++struct PhysicsSandboxTransform {
++    Vector3 basisX{1.0f, 0.0f, 0.0f};
++    Vector3 basisY{0.0f, 1.0f, 0.0f};
++    Vector3 basisZ{0.0f, 0.0f, 1.0f};
++    Vector3 translation{};
++};
++
++enum class PhysicsSandboxScenePurpose : std::uint8_t {
++    Environment,
++    PlacedBlock,
++    SubMobil,
++    Clip,
++    Helper,
++    CheckpointTrigger,
++    DedicatedInitialCollision,
++    Pylon,
++    Decoration,
++    Terrain,
++    Generated,
++};
++
++struct PhysicsSandboxRenderProvenance {
++    std::string blockName;
++    std::string collection;
++    std::string descriptorPath;
++    std::string sceneObjectId;
++    std::optional<std::uint64_t> placementIdentity;
++    std::optional<std::uint32_t> blockInstanceId;
++    std::optional<std::uint32_t> variant;
++    std::uint32_t componentIndex = 0u;
++    bool authored = false;
++};
++
++struct PhysicsSandboxRenderVertex {
++    Vector3 position{};
++    Vector3 normal{0.0f, 1.0f, 0.0f};
++    PhysicsSandboxVector4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
++    PhysicsSandboxVector4 color{1.0f, 1.0f, 1.0f, 1.0f};
++    PhysicsSandboxVector2 uv0{};
++    PhysicsSandboxVector2 uv1{};
++};
++
++struct PhysicsSandboxRenderSubset {
++    std::uint32_t indexOffset = 0u;
++    std::uint32_t indexCount = 0u;
++    std::uint32_t materialSlot = 0u;
++};
++
++struct PhysicsSandboxRenderMesh {
++    std::uint64_t id = 0u;
++    std::vector<PhysicsSandboxRenderVertex> vertices;
++    std::vector<std::uint32_t> indices;
++    std::vector<PhysicsSandboxRenderSubset> subsets;
++    Vector3 boundsMin{};
++    Vector3 boundsMax{};
++    bool hasNormals = false;
++    bool hasTangents = false;
++    bool hasVertexColors = false;
++    bool hasUv0 = false;
++    bool hasUv1 = false;
++};
++
++struct PhysicsSandboxMaterialBitmap {
++    std::string samplerName;
++    std::string sourcePath;
++    std::uint32_t bitmapClassId = 0u;
++    std::uint32_t renderClassId = 0u;
++};
++
++struct PhysicsSandboxRenderMaterial {
++    std::uint64_t id = 0u;
++    std::string sourcePath;
++    std::string modelPath;
++    std::string shaderPath;
++    std::vector<PhysicsSandboxMaterialBitmap> bitmaps;
++    std::uint32_t shaderFlags = 0u;
++    std::uint8_t surfaceMaterialId = 0u;
++    bool water = false;
++    bool cubeMap = false;
++    bool renderTarget = false;
++};
++
++struct PhysicsSandboxRenderInstance {
++    std::uint64_t id = 0u;
++    std::uint32_t meshIndex = 0u;
++    std::uint32_t materialIndex = 0u;
++    PhysicsSandboxTransform worldTransform{};
++    PhysicsSandboxRenderProvenance provenance{};
++    PhysicsSandboxScenePurpose purpose =
++            PhysicsSandboxScenePurpose::Environment;
++    std::uint32_t lodLevel = 0u;
++    float lodFarDistance = 0.0f;
++    bool visible = true;
++    bool castsShadows = true;
++};
++
++enum class PhysicsSandboxRenderDiagnosticCode : std::uint8_t {
++    MissingUv,
++    MissingNormal,
++    MissingTangent,
++    MissingMaterial,
++    UnsupportedVisual,
++    InvalidTopology,
++    CollisionOnlyObjectSkipped,
++};
++
++struct PhysicsSandboxRenderDiagnostic {
++    PhysicsSandboxRenderDiagnosticCode code =
++            PhysicsSandboxRenderDiagnosticCode::UnsupportedVisual;
++    std::string message;
++    PhysicsSandboxRenderProvenance provenance{};
++};
++
++struct PhysicsSandboxRenderScene {
++    std::vector<PhysicsSandboxRenderMesh> meshes;
++    std::vector<PhysicsSandboxRenderMaterial> materials;
++    std::vector<PhysicsSandboxRenderInstance> instances;
++    std::vector<PhysicsSandboxRenderDiagnostic> diagnostics;
++};
++
++using PhysicsSandboxRenderSceneHandle =
++        std::shared_ptr<const PhysicsSandboxRenderScene>;
++
 +struct PhysicsSandboxSceneView {
 +    std::vector<PhysicsSandboxCollisionTriangle> collisionTriangles;
 +    std::vector<PhysicsSandboxEllipsoid> carEllipsoids;
 +};
 +
-@@ -96,0 +118 @@ struct PhysicsSandboxStateView {
+ struct PhysicsSandboxStateView {
+     std::uint64_t tick = 0u;
+     std::uint64_t timeMs = 0u;
 +    std::uint64_t durationMs = 0u;
-@@ -154,0 +177 @@ public:
+     MapEnvironment mapEnvironment = MapEnvironment::Unknown;
+     VehicleModel vehicleModel = VehicleModel::Unknown;
+     std::optional<PlayMode> playMode;
+@@ -152,6 +309,9 @@ public:
+     PhysicsSandboxResult<PhysicsSandboxStateView> RestoreState(
+             const PhysicsSandboxState &state) noexcept;
+     PhysicsSandboxResult<PhysicsSandboxStateView> ReadState() const noexcept;
++    PhysicsSandboxResult<PhysicsSandboxRenderSceneHandle> ReadRenderScene()
++            const noexcept;
 +    PhysicsSandboxResult<PhysicsSandboxSceneView> ReadScene() const noexcept;
+ 
+ private:
+     struct Impl;
 diff --git a/include/forevervalidator/input_state.h b/include/forevervalidator/input_state.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..43876a7925e6446c8fc62ad1d65aac356603675d
+index 0000000..43876a7
 --- /dev/null
 +++ b/include/forevervalidator/input_state.h
 @@ -0,0 +1,20 @@
@@ -58,13 +271,281 @@ index 0000000000000000000000000000000000000000..43876a7925e6446c8fc62ad1d65aac35
 +}  // namespace forevervalidator
 +
 +#endif
+diff --git a/include/forevervalidator/validation.h b/include/forevervalidator/validation.h
+index da16f22..bfca2eb 100644
+--- a/include/forevervalidator/validation.h
++++ b/include/forevervalidator/validation.h
+@@ -186,7 +186,7 @@ enum class ValidationStatus {
+     RespawnExpectationUnavailable, ObservationError,
+     IncompatibleReplayVersion = 11,
+     InputUnavailable = 12,
+-    TMInterfaceReplay = 13,
++    ScriptedReplay = 13,
+ };
+ 
+ enum class ValidationOutcome { Invalid, Valid, WrongSimulation, Unavailable, Error };
+@@ -194,7 +194,7 @@ enum class ObservationError { NonFiniteDistance, ReplayMetadataUnavailable };
+ 
+ enum class ReplayProvenance : std::uint8_t {
+     Unmarked,
+-    TMInterface,
++    Scripted,
+ };
+ 
+ enum class InputGhostMatch : std::uint8_t {
+diff --git a/src/app/cli/forevervalidator.cpp b/src/app/cli/forevervalidator.cpp
+index 17fd472..3b60519 100644
+--- a/src/app/cli/forevervalidator.cpp
++++ b/src/app/cli/forevervalidator.cpp
+@@ -157,11 +157,11 @@ const char *InputGhostMatchName(forevervalidator::InputGhostMatch match) {
+ void ReportReplayClassification(const ValidationAttempt &attempt) {
+     if (!attempt.HasValue() ||
+         attempt.Value().replayProvenance !=
+-                forevervalidator::ReplayProvenance::TMInterface) {
++                forevervalidator::ReplayProvenance::Scripted) {
+         return;
+     }
+     std::fprintf(stderr,
+-                 "TMInterface replay: input-vs-ghost=%s\n",
++                 "Scripted replay: input-vs-ghost=%s\n",
+                  InputGhostMatchName(attempt.Value().inputGhostMatch));
+ }
+ 
+diff --git a/src/engine/scene/replay_scene_static_corpus_installer.cpp b/src/engine/scene/replay_scene_static_corpus_installer.cpp
+index af96a56..abd3d30 100644
+--- a/src/engine/scene/replay_scene_static_corpus_installer.cpp
++++ b/src/engine/scene/replay_scene_static_corpus_installer.cpp
+@@ -3,20 +3,59 @@
+ 
+ #include "engine/scene/replay_scene_composite_asset.h"
+ #include "engine/scene/replay_scene_placements.h"
++#include "engine/game/game_ctn_block.h"
+ namespace {
+ 
++std::string IdName(const CMwId &id) {
++    const char *name = id.GetString();
++    return name != nullptr ? name : "";
++}
++
++StaticSceneProvenance BlockProvenance(
++        const ReplaySceneBlockPlacement &placement,
++        u32 componentIndex = 0u) {
++    const CGameCtnBlock &block = placement.Block();
++    StaticSceneProvenance provenance;
++    provenance.blockName = IdName(block.Identifier().id);
++    provenance.collection = IdName(block.Identifier().collection);
++    provenance.placementIdentity = placement.InstallationOrdinal();
++    if (block.BlockInstanceId().has_value()) {
++        provenance.blockInstanceId = block.BlockInstanceId()->Value();
++    }
++    provenance.variant = block.VariantIndex();
++    provenance.componentIndex = componentIndex;
++    provenance.authored =
++            block.Origin() == CGameCtnBlock::PlacementOrigin::Authored;
++    return provenance;
++}
++
++StaticScenePurpose BlockPurpose(
++        const ReplaySceneBlockPlacement &placement,
++        StaticScenePurpose defaultPurpose) {
++    const CGameCtnBlock::PlacementOrigin origin = placement.Block().Origin();
++    return origin == CGameCtnBlock::PlacementOrigin::TerrainModifier ||
++                   origin == CGameCtnBlock::PlacementOrigin::
++                                     AutomaticBaseTerrainModifier
++            ? StaticScenePurpose::Terrain
++            : defaultPurpose;
++}
++
+ bool AddCompositeModel(
+         ReplaySceneCompositeAsset &composite,
+         const GmIso4 &worldIso,
+         StaticScenePurpose purpose,
++        StaticSceneProvenance provenance,
+         StaticSceneModelCollection &models) {
+     if (composite.Empty()) {
+         return true;
+     }
+     StaticSolidPrototype prototype = composite.TakePrototype();
+-    return prototype.IsValid() &&
+-           models.Add(StaticSceneModel(
+-                   std::move(prototype), worldIso, purpose));
++    if (!prototype.IsValid()) {
++        return false;
++    }
++    StaticSceneModel model(std::move(prototype), worldIso, purpose);
++    model.SetProvenance(std::move(provenance));
++    return models.Add(std::move(model));
+ }
+ 
+ bool AddHelperModel(
+@@ -37,6 +76,7 @@ bool AddHelperModel(
+     return AddCompositeModel(composite,
+                              placement.WorldIso(),
+                              StaticScenePurpose::Helper,
++                             BlockProvenance(placement),
+                              models);
+ }
+ 
+@@ -48,6 +88,7 @@ bool AddClipModel(
+     return AddCompositeModel(composite,
+                              placement.WorldIso(),
+                              StaticScenePurpose::Clip,
++                             BlockProvenance(placement),
+                              models);
+ }
+ 
+@@ -72,6 +113,7 @@ bool AddCheckpointTriggerModel(
+     StaticSceneModel model(prototype,
+                            *worldIso,
+                            StaticScenePurpose::CheckpointTrigger);
++    model.SetProvenance(BlockProvenance(placement));
+     model.SetItemProperties(placement.CheckpointTriggerProperties());
+     model.SetCheckpoint(placement.CheckpointIdentity(),
+                         placement.BlockSpawnIso());
+@@ -82,6 +124,7 @@ bool AddSubMobilModels(
+         const ReplaySceneBlockPlacement &placement,
+         StaticSceneModelCollection &models,
+         bool &complete) {
++    u32 componentIndex = 0u;
+     for (const ReplaySceneAssetPlacement &asset :
+          placement.SubMobilAssetPlacements()) {
+         const StaticSolidPrototype prototype = asset.Prototype();
+@@ -89,10 +132,13 @@ bool AddSubMobilModels(
+             complete = false;
+             continue;
+         }
+-        if (!models.Add(StaticSceneModel(
+-                    prototype,
+-                    placement.WorldIso(),
+-                    StaticScenePurpose::PlacedBlock))) {
++        StaticSceneModel model(
++                prototype,
++                placement.WorldIso(),
++                BlockPurpose(placement, StaticScenePurpose::SubMobil));
++        model.SetProvenance(
++                BlockProvenance(placement, componentIndex++));
++        if (!models.Add(std::move(model))) {
+             return false;
+         }
+     }
+@@ -128,7 +174,10 @@ bool AddBlockPlacement(
+                     placement.WorldIso(),
+                     isDedicatedCollision
+                             ? StaticScenePurpose::DedicatedInitialCollision
+-                            : StaticScenePurpose::PlacedBlock);
++                            : BlockPurpose(
++                                      placement,
++                                      StaticScenePurpose::PlacedBlock));
++            model.SetProvenance(BlockProvenance(placement));
+             if (isDedicatedCollision) {
+                 const std::optional<CHmsItem::Properties> properties =
+                         placement.DedicatedCollisionProperties();
+@@ -162,6 +211,10 @@ bool AddPylonPlacement(
+     StaticSceneModel model(asset->Prototype(),
+                            placement.WorldIso(),
+                            StaticScenePurpose::Pylon);
++    StaticSceneProvenance provenance;
++    provenance.placementIdentity = placement.InstallationOrdinal();
++    provenance.authored = false;
++    model.SetProvenance(std::move(provenance));
+     model.SetItemProperties(placement.ItemProperties());
+     return models.Add(std::move(model));
+ }
+diff --git a/src/engine/scene/static_scene_model.cpp b/src/engine/scene/static_scene_model.cpp
+index ca0fbff..072f965 100644
+--- a/src/engine/scene/static_scene_model.cpp
++++ b/src/engine/scene/static_scene_model.cpp
+@@ -21,6 +21,14 @@ StaticScenePurpose StaticSceneModel::Purpose() const {
+     return purpose_;
+ }
+ 
++void StaticSceneModel::SetProvenance(StaticSceneProvenance provenance) {
++    provenance_ = std::move(provenance);
++}
++
++const StaticSceneProvenance &StaticSceneModel::Provenance() const {
++    return provenance_;
++}
++
+ void StaticSceneModel::SetItemProperties(
+         const CHmsItem::Properties &properties) {
+     itemProperties_ = properties;
+diff --git a/src/engine/scene/static_scene_model.h b/src/engine/scene/static_scene_model.h
+index 63b3ba0..15a15dd 100644
+--- a/src/engine/scene/static_scene_model.h
++++ b/src/engine/scene/static_scene_model.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
++#include <cstdint>
+ #include <optional>
++#include <string>
+ #include <vector>
+ 
+ #include "engine/core/gm_types.h"
+@@ -10,11 +12,27 @@
+ enum class StaticScenePurpose {
+     Environment,
+     PlacedBlock,
++    SubMobil,
+     Clip,
+     Helper,
+     CheckpointTrigger,
+     DedicatedInitialCollision,
+     Pylon,
++    Decoration,
++    Terrain,
++    Generated,
++};
++
++struct StaticSceneProvenance {
++    std::string blockName;
++    std::string collection;
++    std::string descriptorPath;
++    std::string sceneObjectId;
++    std::optional<std::uint64_t> placementIdentity;
++    std::optional<std::uint32_t> blockInstanceId;
++    std::optional<std::uint32_t> variant;
++    std::uint32_t componentIndex = 0u;
++    bool authored = false;
+ };
+ 
+ class StaticSceneModel {
+@@ -26,6 +44,8 @@ public:
+     const StaticSolidPrototype &Prototype() const;
+     const GmIso4 &WorldIso() const;
+     StaticScenePurpose Purpose() const;
++    void SetProvenance(StaticSceneProvenance provenance);
++    const StaticSceneProvenance &Provenance() const;
+ 
+     void SetItemProperties(const CHmsItem::Properties &properties);
+     const std::optional<CHmsItem::Properties> &ItemProperties() const;
+@@ -42,6 +62,7 @@ private:
+     StaticSolidPrototype prototype_;
+     GmIso4 worldIso_{};
+     StaticScenePurpose purpose_ = StaticScenePurpose::PlacedBlock;
++    StaticSceneProvenance provenance_;
+     std::optional<CHmsItem::Properties> itemProperties_;
+     std::optional<CGameCtnReplayCheckpointTrigger::RaceCheckpointIdentity>
+             checkpointIdentity_;
 diff --git a/src/format/replay/replay_file_reader.cpp b/src/format/replay/replay_file_reader.cpp
-index d02327c4558d61d148520720ec726ffb42abdd8d..0b8acada45e5130e73eb23ac4ab58e3832a76db8 100644
+index d02327c..196bc3b 100644
 --- a/src/format/replay/replay_file_reader.cpp
 +++ b/src/format/replay/replay_file_reader.cpp
-@@ -82 +81,0 @@ constexpr Nat32 GhostEncodedSampleBytes = 61u;
+@@ -79,8 +79,7 @@ constexpr Nat32 GhostFixedTimeStep = 1u;
+ constexpr Nat32 GhostEncodingMode = 0u;
+ constexpr Nat32 GhostStateVersion = 9u;
+ constexpr Nat32 GhostEncodedSampleBytes = 61u;
 -constexpr double InputAxisScale = 1.0 / 65536.0;
-@@ -1624,3 +1623,5 @@ ReplayInputActionValue DecodeInputValue(
+-constexpr Nat32 TMInterfaceInputClockOffsetMs = 0xffffu;
++constexpr Nat32 ScriptedInputClockOffsetMs = 0xffffu;
+ 
+ struct Bytes {
+     const Byte *data = nullptr;
+@@ -1621,9 +1620,11 @@ ReplayInputActionValue DecodeInputValue(
+         Nat32 encoded) {
+     if (action == ReplayInputActionKind::Gas ||
+         action == ReplayInputActionKind::Steer) {
 -        return ReplayInputActionValue::Analog(static_cast<float>(
 -                static_cast<double>(DecodeSigned24(encoded)) *
 -                InputAxisScale));
@@ -73,61 +554,700 @@ index d02327c4558d61d148520720ec726ffb42abdd8d..0b8acada45e5130e73eb23ac4ab58e38
 +        return ReplayInputActionValue::Analog(
 +                static_cast<forevervalidator::AnalogInputState>(
 +                        scriptInputState));
+     }
+     if (action == ReplayInputActionKind::Unmapped) {
+         return ReplayInputActionValue::None();
+@@ -1637,7 +1638,7 @@ ReplayInputActionValue DecodeInputValue(
+     return ReplayInputActionValue::Switch(state);
+ }
+ 
+-bool NormalizeTMInterfaceInputClock(
++bool NormalizeScriptedInputClock(
+         std::vector<ReplayInputEvent> *events,
+         const ReplayInputMetadata &metadata,
+         ReplayInputProvenance *provenance) {
+@@ -1646,23 +1647,23 @@ bool NormalizeTMInterfaceInputClock(
+     }
+     *provenance = ReplayInputProvenance::Unmarked;
+ 
+-    bool isTMInterfaceClock = false;
++    bool isScriptedClock = false;
+     for (const ReplayInputEvent &event : *events) {
+         if (event.action == ReplayInputActionKind::RaceRunning &&
+             event.timeMs % 10u == 5u) {
+-            isTMInterfaceClock = true;
++            isScriptedClock = true;
+             break;
+         }
+     }
+-    if (!isTMInterfaceClock) {
++    if (!isScriptedClock) {
+         return true;
+     }
+ 
+     for (ReplayInputEvent &event : *events) {
+-        if (event.timeMs < TMInterfaceInputClockOffsetMs) {
++        if (event.timeMs < ScriptedInputClockOffsetMs) {
+             return false;
+         }
+-        event.timeMs -= TMInterfaceInputClockOffsetMs;
++        event.timeMs -= ScriptedInputClockOffsetMs;
+     }
+ 
+     const ReplayInputEvent *raceRunning = nullptr;
+@@ -1683,7 +1684,7 @@ bool NormalizeTMInterfaceInputClock(
+          finishLine->timeMs - raceRunning->timeMs != metadata.durationMs)) {
+         return false;
+     }
+-    *provenance = ReplayInputProvenance::TMInterface;
++    *provenance = ReplayInputProvenance::Scripted;
+     return true;
+ }
+ 
+@@ -1818,7 +1819,7 @@ ReplayFileReadError DecodeInputTimeline(
+     }
+ 
+     ReplayInputProvenance provenance = ReplayInputProvenance::Unmarked;
+-    if (!NormalizeTMInterfaceInputClock(&events, metadata, &provenance)) {
++    if (!NormalizeScriptedInputClock(&events, metadata, &provenance)) {
+         return ReplayFileReadError::InvalidInputTimeline;
+     }
+ 
 diff --git a/src/format/replay/replay_input_timeline.h b/src/format/replay/replay_input_timeline.h
-index 262b7a01a17202d43eedfefc439a01fa80782736..4a6a8725ee8ce945c6a4e3968533c3b93836eded 100644
+index 262b7a0..0fbb9de 100644
 --- a/src/format/replay/replay_input_timeline.h
 +++ b/src/format/replay/replay_input_timeline.h
-@@ -7 +6,0 @@
+@@ -4,12 +4,13 @@
+ #include <stddef.h>
+ #include <stdint.h>
+ 
 -#include <cmath>
-@@ -12,0 +12,2 @@
+ #include <limits>
+ #include <optional>
+ #include <utility>
+ #include <vector>
+ 
 +#include <forevervalidator/input_state.h>
 +
-@@ -51 +52,2 @@ public:
+ enum class ReplayInputActionKind {
+     Unmapped,
+     Accelerate,
+@@ -48,7 +49,8 @@ public:
+         return value;
+     }
+ 
 -    static ReplayInputActionValue Analog(float analog) {
 +    static ReplayInputActionValue Analog(
 +            forevervalidator::AnalogInputState analog) {
-@@ -72 +74 @@ public:
+         ReplayInputActionValue value;
+         value.kind_ = ReplayInputActionValueKind::Analog;
+         value.analog_ = analog;
+@@ -69,14 +71,14 @@ public:
+                switchState_ == ReplayInputSwitchState::Pressed;
+     }
+ 
 -    float AnalogValue() const {
 +    forevervalidator::AnalogInputState AnalogValue() const {
-@@ -79 +81 @@ private:
+         return analog_;
+     }
+ 
+ private:
+     ReplayInputActionValueKind kind_ = ReplayInputActionValueKind::None;
+     ReplayInputSwitchState switchState_ = ReplayInputSwitchState::Released;
 -    float analog_ = 0.0f;
 +    forevervalidator::AnalogInputState analog_ = 0;
-@@ -149 +151,2 @@ public:
+ };
+ 
+ struct ReplayInputEvent {
+@@ -95,7 +97,7 @@ struct ReplayInputMetadata {
+ 
+ enum class ReplayInputProvenance {
+     Unmarked,
+-    TMInterface,
++    Scripted,
+ };
+ 
+ enum class ReplayInputTimelineCreateResult {
+@@ -146,7 +148,8 @@ public:
+                     ValueKindForAction(event.action);
+             if (event.value.Kind() != expectedValueKind ||
+                 (expectedValueKind == ReplayInputActionValueKind::Analog &&
 -                 !std::isfinite(event.value.AnalogValue()))) {
 +                 !forevervalidator::IsAnalogInputStateValid(
 +                         event.value.AnalogValue()))) {
+                 return ReplayInputTimelineCreateResult::InvalidValue;
+             }
+         }
+diff --git a/src/format/static_solid/static_scene_asset_linker.cpp b/src/format/static_solid/static_scene_asset_linker.cpp
+index 0873186..de15c60 100644
+--- a/src/format/static_solid/static_scene_asset_linker.cpp
++++ b/src/format/static_solid/static_scene_asset_linker.cpp
+@@ -1,5 +1,7 @@
+ #include "format/static_solid/static_scene_asset_linker.h"
+ #include <memory>
++#include <algorithm>
++#include <cctype>
+ #include <string>
+ #include <utility>
+ #include <vector>
+@@ -229,9 +231,35 @@ bool AddArchiveSceneModels(
+             models.MarkIncomplete();
+             return 1;
+         }
++        std::string lowerPath = record.source.selectedDescriptorPath;
++        std::transform(
++                lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
++                [](unsigned char value) {
++                    return static_cast<char>(std::tolower(value));
++                });
++        StaticScenePurpose purpose = StaticScenePurpose::Environment;
++        if (!record.source.sceneObjectId.empty()) {
++            purpose = StaticScenePurpose::Generated;
++        }
++        if (lowerPath.find("terrain") != std::string::npos ||
++            lowerPath.find("ground") != std::string::npos ||
++            lowerPath.find("land") != std::string::npos) {
++            purpose = StaticScenePurpose::Terrain;
++        } else if (lowerPath.find("decoration") != std::string::npos ||
++                   lowerPath.find("sky") != std::string::npos) {
++            purpose = StaticScenePurpose::Decoration;
++        }
+         StaticSceneModel model(source.Prototype(),
+                                source.WorldIso(),
+-                               StaticScenePurpose::Environment);
++                               purpose);
++        StaticSceneProvenance provenance;
++        provenance.descriptorPath =
++                record.source.selectedDescriptorPath;
++        provenance.sceneObjectId = record.source.sceneObjectId;
++        provenance.componentIndex =
++                record.source.treeNodeIndex.value_or(0u);
++        provenance.authored = false;
++        model.SetProvenance(std::move(provenance));
+         if (source.ItemProperties().has_value()) {
+             model.SetItemProperties(*source.ItemProperties());
+         }
+diff --git a/src/format/static_solid/static_solid_archive_definitions.cpp b/src/format/static_solid/static_solid_archive_definitions.cpp
+index 6503d24..546274c 100644
+--- a/src/format/static_solid/static_solid_archive_definitions.cpp
++++ b/src/format/static_solid/static_solid_archive_definitions.cpp
+@@ -1,4 +1,5 @@
+ #include "format/static_solid/static_solid_archive_definitions.h"
++#include <new>
+ #include "format/archive/gm_wire_conversion.h"
+ #include "engine/scene/plug_solid.h"
+ namespace {
+@@ -338,6 +339,25 @@ void CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::BindVertexRecords
+     vertexRecords = newVertexRecords;
+ }
+ 
++bool CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::
++        AppendTexCoordStream(
++                u32 dimension,
++                CGameCtnReplayStaticSolidArchivePayloadSlice records) {
++    try {
++        texCoordStreams.push_back({dimension, records});
++        return true;
++    } catch (const std::bad_alloc &) {
++        return false;
++    }
++}
++
++void CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::BindTangents(
++        CGameCtnReplayStaticSolidArchivePayloadSlice newTangents,
++        CGameCtnReplayStaticSolidArchivePayloadSlice newBinormals) {
++    tangents = newTangents;
++    binormals = newBinormals;
++}
++
+ void CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::BindIndexBuffer(
+         u32 newIndexCount,
+         CGameCtnReplayStaticSolidArchivePayloadSlice newIndices) {
+@@ -370,6 +390,24 @@ CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::VertexRecords()
+     return vertexRecords;
+ }
+ 
++const std::vector<
++        CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::
++                TexCoordStream> &
++CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::TexCoordStreams()
++        const {
++    return texCoordStreams;
++}
++
++CGameCtnReplayStaticSolidArchivePayloadSlice
++CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::Tangents() const {
++    return tangents;
++}
++
++CGameCtnReplayStaticSolidArchivePayloadSlice
++CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::Binormals() const {
++    return binormals;
++}
++
+ CGameCtnReplayStaticSolidArchivePayloadSlice
+ CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition::Indices()
+         const {
+diff --git a/src/format/static_solid/static_solid_archive_definitions.h b/src/format/static_solid/static_solid_archive_definitions.h
+index fad16d8..8d64359 100644
+--- a/src/format/static_solid/static_solid_archive_definitions.h
++++ b/src/format/static_solid/static_solid_archive_definitions.h
+@@ -9,6 +9,7 @@
+ #include "engine/rendering/plug_tree.h"
+ #include "format/static_solid/static_solid_archive_identity.h"
+ #include "format/static_solid/static_solid_archive_payload_slice.h"
++#include <vector>
+ class CGameCtnReplayStaticSolidArchiveMeshPayload {
+ public:
+     static constexpr u32 VertexRecordBytes = 12u;
+@@ -154,12 +155,24 @@ private:
+ 
+ class CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition {
+ public:
++    struct TexCoordStream {
++        u32 dimension = 2u;
++        CGameCtnReplayStaticSolidArchivePayloadSlice records =
++                CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
++    };
++
+     void BeginGeometry(CGameCtnReplayStaticSolidArchiveNodeIdentity visual,
+                        u32 serializedFlags,
+                        u32 vertexCount,
+                        const GmBoxAligned &boundingBox);
+     void BindVertexRecords(
+             CGameCtnReplayStaticSolidArchivePayloadSlice vertexRecords);
++    bool AppendTexCoordStream(
++            u32 dimension,
++            CGameCtnReplayStaticSolidArchivePayloadSlice records);
++    void BindTangents(
++            CGameCtnReplayStaticSolidArchivePayloadSlice tangents,
++            CGameCtnReplayStaticSolidArchivePayloadSlice binormals);
+     void BindIndexBuffer(u32 indexCount,
+                         CGameCtnReplayStaticSolidArchivePayloadSlice indices);
+     CGameCtnReplayStaticSolidArchiveNodeIdentity VisualProvider() const;
+@@ -169,6 +182,9 @@ public:
+     u32 VertexCount() const;
+     u32 IndexCount() const;
+     CGameCtnReplayStaticSolidArchivePayloadSlice VertexRecords() const;
++    const std::vector<TexCoordStream> &TexCoordStreams() const;
++    CGameCtnReplayStaticSolidArchivePayloadSlice Tangents() const;
++    CGameCtnReplayStaticSolidArchivePayloadSlice Binormals() const;
+     CGameCtnReplayStaticSolidArchivePayloadSlice Indices() const;
+     const GmBoxAligned &BoundingBox() const;
+ 
+@@ -180,6 +196,11 @@ private:
+     u32 indexCount = 0u;
+     CGameCtnReplayStaticSolidArchivePayloadSlice vertexRecords =
+             CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
++    std::vector<TexCoordStream> texCoordStreams;
++    CGameCtnReplayStaticSolidArchivePayloadSlice tangents =
++            CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
++    CGameCtnReplayStaticSolidArchivePayloadSlice binormals =
++            CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
+     CGameCtnReplayStaticSolidArchivePayloadSlice indices =
+             CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
+     GmBoxAligned boundingBox{};
+diff --git a/src/format/static_solid/static_solid_archive_visual_provider_reader.cpp b/src/format/static_solid/static_solid_archive_visual_provider_reader.cpp
+index 1142f2f..f00cb39 100644
+--- a/src/format/static_solid/static_solid_archive_visual_provider_reader.cpp
++++ b/src/format/static_solid/static_solid_archive_visual_provider_reader.cpp
+@@ -7,6 +7,8 @@
+ #include "format/static_solid/static_solid_archive_visual_provider_state.h"
+ #include "format/archive/tmnf_archive_ids.h"
+ #include "format/archive/gbx_archive_format.h"
++#include <new>
++#include <vector>
+ namespace {
+ 
+ class CPlugVisualTexCoordArchiveStream {
+@@ -15,6 +17,7 @@ public:
+     static int FromArchiveWord(u32 archiveWord,
+                                CPlugVisualTexCoordArchiveStream *streamOut);
+     u32 BytesPerVertex() const;
++    u32 Dimension() const;
+ 
+ private:
+     explicit CPlugVisualTexCoordArchiveStream(u32 bytesPerVertex);
+@@ -57,6 +60,10 @@ u32 CPlugVisualTexCoordArchiveStream::BytesPerVertex() const {
+     return bytesPerVertex;
+ }
+ 
++u32 CPlugVisualTexCoordArchiveStream::Dimension() const {
++    return bytesPerVertex / sizeof(float);
++}
++
+ int ApplyIndexBufferFeedback(
+         CGameCtnReplayStaticSolidArchiveByteStream *byteStream,
+         CGameCtnReplayStaticSolidArchiveFeedback *feedback) {
+@@ -144,6 +151,17 @@ int StaticSolidArchiveVisualReader::
+         return 0;
+     }
+ 
++    struct ParsedTexCoordStream {
++        u32 dimension = 2u;
++        CGameCtnReplayStaticSolidArchivePayloadSlice records =
++                CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
++    };
++    std::vector<ParsedTexCoordStream> texCoordStreams;
++    try {
++        texCoordStreams.reserve(texcoordStreamCount);
++    } catch (const std::bad_alloc &) {
++        return 0;
++    }
+     for (u32 i = 0u; i < texcoordStreamCount; i++) {
+         u32 texCoordArchiveWord = 0u;
+         if (!byteStream->ReadU32(&texCoordArchiveWord)) {
+@@ -152,11 +170,25 @@ int StaticSolidArchiveVisualReader::
+         CPlugVisualTexCoordArchiveStream texCoordStream;
+         if (!CPlugVisualTexCoordArchiveStream::FromArchiveWord(
+                     texCoordArchiveWord,
+-                    &texCoordStream) ||
+-            !byteStream->SkipCounted(vertexCount,
++                    &texCoordStream)) {
++            return 0;
++        }
++        const u32 recordOffset = byteStream->Offset();
++        if (!byteStream->SkipCounted(vertexCount,
+                                      texCoordStream.BytesPerVertex())) {
+             return 0;
+         }
++        try {
++            texCoordStreams.push_back({
++                    texCoordStream.Dimension(),
++                    CGameCtnReplayStaticSolidArchivePayloadSlice::
++                            FromRecords(
++                                    recordOffset,
++                                    vertexCount,
++                                    texCoordStream.BytesPerVertex())});
++        } catch (const std::bad_alloc &) {
++            return 0;
++        }
+     }
+     if ((flags & 7u) != 0u) {
+         return 0;
+@@ -179,6 +211,12 @@ int StaticSolidArchiveVisualReader::
+                                       flags,
+                                       vertexCount,
+                                       boundingBox);
++    for (const ParsedTexCoordStream &stream : texCoordStreams) {
++        if (!geometry.AppendTexCoordStream(
++                    stream.dimension, stream.records)) {
++            return 0;
++        }
++    }
+     if (!state->StartGeometryAndCommit(store, geometry)) {
+         return 0;
+     }
+@@ -225,10 +263,27 @@ int StaticSolidArchiveVisualReader::
+     }
+ 
+     u32 tangentCount = 0u;
+-    return byteStream->ReadU32(&tangentCount) &&
+-           byteStream->SkipCounted(tangentCount, 4u) &&
+-           byteStream->ReadU32(&tangentCount) &&
+-           byteStream->SkipCounted(tangentCount, 4u);
++    if (!byteStream->ReadU32(&tangentCount)) {
++        return 0;
++    }
++    const u32 tangentOffset = byteStream->Offset();
++    if (!byteStream->SkipCounted(tangentCount, 4u)) {
++        return 0;
++    }
++    u32 binormalCount = 0u;
++    if (!byteStream->ReadU32(&binormalCount)) {
++        return 0;
++    }
++    const u32 binormalOffset = byteStream->Offset();
++    if (!byteStream->SkipCounted(binormalCount, 4u)) {
++        return 0;
++    }
++    geometry.BindTangents(
++            CGameCtnReplayStaticSolidArchivePayloadSlice::FromRecords(
++                    tangentOffset, tangentCount, 4u),
++            CGameCtnReplayStaticSolidArchivePayloadSlice::FromRecords(
++                    binormalOffset, binormalCount, 4u));
++    return state->CommitActiveGeometry(store);
+ }
+ 
+ int StaticSolidArchiveVisualReader::
+diff --git a/src/format/static_solid/static_solid_archive_visual_provider_state.cpp b/src/format/static_solid/static_solid_archive_visual_provider_state.cpp
+index fbb0c76..174872e 100644
+--- a/src/format/static_solid/static_solid_archive_visual_provider_state.cpp
++++ b/src/format/static_solid/static_solid_archive_visual_provider_state.cpp
+@@ -148,6 +148,19 @@ void CGameCtnReplayStaticSolidVisualGeometryDefinition::BindVertexRecords(
+     definition.BindVertexRecords(vertexRecords);
+ }
+ 
++bool CGameCtnReplayStaticSolidVisualGeometryDefinition::
++        AppendTexCoordStream(
++                u32 dimension,
++                CGameCtnReplayStaticSolidArchivePayloadSlice records) {
++    return definition.AppendTexCoordStream(dimension, records);
++}
++
++void CGameCtnReplayStaticSolidVisualGeometryDefinition::BindTangents(
++        CGameCtnReplayStaticSolidArchivePayloadSlice tangents,
++        CGameCtnReplayStaticSolidArchivePayloadSlice binormals) {
++    definition.BindTangents(tangents, binormals);
++}
++
+ void CGameCtnReplayStaticSolidVisualGeometryDefinition::BindIndexBuffer(
+         u32 indexCount,
+         CGameCtnReplayStaticSolidArchivePayloadSlice indices) {
+diff --git a/src/format/static_solid/static_solid_archive_visual_provider_state.h b/src/format/static_solid/static_solid_archive_visual_provider_state.h
+index 773a15d..716ca35 100644
+--- a/src/format/static_solid/static_solid_archive_visual_provider_state.h
++++ b/src/format/static_solid/static_solid_archive_visual_provider_state.h
+@@ -42,6 +42,12 @@ public:
+     u32 FaceRecordStride() const;
+     void BindVertexRecords(
+             CGameCtnReplayStaticSolidArchivePayloadSlice vertexRecords);
++    bool AppendTexCoordStream(
++            u32 dimension,
++            CGameCtnReplayStaticSolidArchivePayloadSlice records);
++    void BindTangents(
++            CGameCtnReplayStaticSolidArchivePayloadSlice tangents,
++            CGameCtnReplayStaticSolidArchivePayloadSlice binormals);
+     void BindIndexBuffer(u32 indexCount,
+                          CGameCtnReplayStaticSolidArchivePayloadSlice indices);
+     const CGameCtnReplayStaticSolidArchiveVisualGeometryDefinition &ArchiveDefinition()
+diff --git a/src/format/static_solid/static_solid_geometry_decoder.cpp b/src/format/static_solid/static_solid_geometry_decoder.cpp
+index 754ca8b..50c1086 100644
+--- a/src/format/static_solid/static_solid_geometry_decoder.cpp
++++ b/src/format/static_solid/static_solid_geometry_decoder.cpp
+@@ -4,10 +4,61 @@
+ 
+ #include "format/static_solid/static_scene_archive_loader.h"
+ #include "format/static_solid/static_solid_archive_visual_provider_state.h"
++#include "format/archive/archive_binary32.h"
+ namespace {
+ 
++float ReadF32(const uint8_t *bytes) {
++    return TmnfArchiveBinary32::ReadLittleEndian(bytes);
++}
++
++GmVec3 UnpackSnorm10(const uint8_t *bytes) {
++    const u32 packed =
++            TmnfArchiveBinary32::ReadU32LittleEndian(bytes);
++    const int sx = (static_cast<int32_t>(packed << 22u)) >> 22;
++    const int sy = (static_cast<int32_t>(packed << 12u)) >> 22;
++    const int sz = (static_cast<int32_t>(packed << 2u)) >> 22;
++    return {
++            static_cast<float>(static_cast<double>(sx) / 511.0),
++            static_cast<float>(static_cast<double>(sy) / 511.0),
++            static_cast<float>(static_cast<double>(sz) / 511.0)};
++}
++
+ }  // namespace
+ 
++bool DecodeStaticSolidTexCoordStream(
++        const uint8_t *bytes,
++        u32 recordCount,
++        u32 dimension,
++        u32 recordStride,
++        GxTexCoordSet *destination) {
++    if (bytes == nullptr || destination == nullptr ||
++        dimension < 2u || dimension > 4u ||
++        recordStride != dimension * sizeof(float)) {
++        return false;
++    }
++    GxTexCoordSet decoded = GxTexCoordSet::Create(
++            static_cast<GxTexCoordDimension>(dimension - 2u),
++            recordCount);
++    for (u32 vertex = 0u; vertex < recordCount; ++vertex) {
++        const uint8_t *source =
++                bytes + static_cast<size_t>(vertex) * recordStride;
++        GxTexCoord4 coordinate{
++                ReadF32(source),
++                ReadF32(source + 4u),
++                0.0f,
++                1.0f};
++        if (dimension >= 3u) {
++            coordinate.w = ReadF32(source + 8u);
++        }
++        if (dimension >= 4u) {
++            coordinate.q = ReadF32(source + 12u);
++        }
++        decoded.SetCoordinate(vertex, coordinate);
++    }
++    *destination = std::move(decoded);
++    return true;
++}
++
+ StaticSolidDecodedPayloads::
+         StaticSolidDecodedPayloads(
+                 StaticSolidArchiveLoadSession &archive)
+@@ -60,6 +111,43 @@ StaticSolidDecodedVisualGeometry::FromArchiveDefinition(
+                                      ? indexBytes.Bytes()
+                                      : nullptr,
+                              indexRecords);
++
++    for (const auto &stream : definition.TexCoordStreams()) {
++        const StaticSolidArchiveDecodedBytes bytes =
++                decodedPayloads.Slice(
++                        definition.VisualProvider().Payload(),
++                        stream.records);
++        if (!bytes.IsAvailable()) {
++            continue;
++        }
++        GxTexCoordSet set;
++        if (DecodeStaticSolidTexCoordStream(
++                    bytes.Bytes(),
++                    definition.VertexCount(),
++                    stream.dimension,
++                    stream.records.RecordStride(),
++                    &set)) {
++            geometry.texCoordSets.push_back(std::move(set));
++        }
++    }
++
++    const auto decodePackedVectors =
++            [&](CGameCtnReplayStaticSolidArchivePayloadSlice records,
++                std::vector<GmVec3> &destination) {
++        const StaticSolidArchiveDecodedBytes bytes =
++                decodedPayloads.Slice(
++                        definition.VisualProvider().Payload(), records);
++        if (!bytes.IsAvailable() || records.RecordStride() != 4u) {
++            return;
++        }
++        destination.reserve(records.RecordCount());
++        for (u32 index = 0u; index < records.RecordCount(); ++index) {
++            destination.push_back(UnpackSnorm10(
++                    bytes.Bytes() + static_cast<size_t>(index) * 4u));
++        }
++    };
++    decodePackedVectors(definition.Tangents(), geometry.tangents);
++    decodePackedVectors(definition.Binormals(), geometry.binormals);
+     return geometry;
+ }
+ 
+@@ -139,6 +227,21 @@ StaticSolidDecodedVisualGeometry::BoundingBox() const {
+     return boundingBox;
+ }
+ 
++const std::vector<GxTexCoordSet> &
++StaticSolidDecodedVisualGeometry::TexCoordSets() const {
++    return texCoordSets;
++}
++
++const std::vector<GmVec3> &
++StaticSolidDecodedVisualGeometry::Tangents() const {
++    return tangents;
++}
++
++const std::vector<GmVec3> &
++StaticSolidDecodedVisualGeometry::Binormals() const {
++    return binormals;
++}
++
+ void StaticSolidArchiveVisual::InstallGeometry(
+         StaticSolidDecodedVisualGeometry newGeometry) {
+     std::vector<GxVertex> ownedVertices(newGeometry.VertexCount());
+@@ -151,6 +254,13 @@ void StaticSolidArchiveVisual::InstallGeometry(
+         newGeometry.CopyIndicesTo(ownedIndices.data());
+     }
+     SetOwnedGeometry(std::move(ownedVertices), std::move(ownedIndices));
++    RemoveTexCoordSetAll();
++    for (const GxTexCoordSet &source : newGeometry.TexCoordSets()) {
++        GxTexCoordSet copy = source;
++        AddTexCoordSet(copy);
++    }
++    tangents = newGeometry.Tangents();
++    binormals = newGeometry.Binormals();
+     archiveTexCoordVertexCount = newGeometry.TexCoordVertexCount();
+     SetBoundingBox(newGeometry.BoundingBox());
+ }
+diff --git a/src/format/static_solid/static_solid_geometry_decoder.h b/src/format/static_solid/static_solid_geometry_decoder.h
+index ada70bd..2b436d7 100644
+--- a/src/format/static_solid/static_solid_geometry_decoder.h
++++ b/src/format/static_solid/static_solid_geometry_decoder.h
+@@ -22,6 +22,13 @@ enum class StaticSolidMaterialRemap {
+     DecorationSkin,
+ };
+ 
++bool DecodeStaticSolidTexCoordStream(
++        const uint8_t *bytes,
++        u32 recordCount,
++        u32 dimension,
++        u32 recordStride,
++        GxTexCoordSet *destination);
++
+ class StaticSolidDecodedPayloads {
+ public:
+     explicit StaticSolidDecodedPayloads(
+@@ -123,6 +130,9 @@ public:
+     int CopyVerticesToGx(GxVertex *destination) const;
+     void CopyIndicesTo(uint16_t *destination) const;
+     const GmBoxAligned &BoundingBox() const;
++    const std::vector<GxTexCoordSet> &TexCoordSets() const;
++    const std::vector<GmVec3> &Tangents() const;
++    const std::vector<GmVec3> &Binormals() const;
+ 
+ private:
+     void BindBox(const GmBoxAligned &boundingBox);
+@@ -147,6 +157,9 @@ private:
+     CGameCtnReplayStaticSolidArchivePayloadSlice indices =
+             CGameCtnReplayStaticSolidArchivePayloadSlice::Empty();
+     GmBoxAligned boundingBox{};
++    std::vector<GxTexCoordSet> texCoordSets;
++    std::vector<GmVec3> tangents;
++    std::vector<GmVec3> binormals;
+ };
+ 
+ class StaticSolidArchiveVisual
 diff --git a/src/simulation/control/replay_control_plan.cpp b/src/simulation/control/replay_control_plan.cpp
-index f9183dc680c6e6798d2afb05faef395726d834c1..87c206692f48b0b5c9545eee6587096d4b766de4 100644
+index f9183dc..87c2066 100644
 --- a/src/simulation/control/replay_control_plan.cpp
 +++ b/src/simulation/control/replay_control_plan.cpp
-@@ -42 +42 @@ struct ReplayControlState {
+@@ -39,11 +39,11 @@ struct ReplayControlState {
+     s32 steerLeftTime = 0;
+     s32 steerRightTime = 0;
+     s32 steerTime = 0;
 -    double steerValue = 0.0;
 +    forevervalidator::AnalogInputState steerValue = 0;
-@@ -46 +46 @@ struct ReplayControlState {
+     s32 accelerateTime = 0;
+     s32 brakeTime = 0;
+     s32 gasTime = 0;
 -    double gasValue = 0.0;
 +    forevervalidator::AnalogInputState gasValue = 0;
-@@ -145 +145 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     std::array<u32,
+                static_cast<std::size_t>(ReplayStuntInputAction::Count)>
+             stuntInputLastChangeTimeMs{};
+@@ -142,43 +142,41 @@ ReplayStuntInputState StuntInputStateFromControlState(
+ }
+ 
+ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
 -    double steering = 0.0;
 +    float steering = 0.0f;
-@@ -151 +151 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     const s32 digitalSteerTime = ((state.steerLeftTime) > (state.steerRightTime) ? (state.steerLeftTime) : (state.steerRightTime));
+     const bool analogSteeringWins =
+             state.steerTime > digitalSteerTime ||
+             (state.steerTime == digitalSteerTime &&
+              !state.steerLeft && !state.steerRight &&
 -             std::fabs(state.steerValue) > 0.0099999998);
 +             std::abs(state.steerValue) > 655);
-@@ -153 +153,2 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     if (analogSteeringWins) {
 -        steering = -state.steerValue;
 +        steering = static_cast<float>(state.steerValue) /
 +                static_cast<float>(forevervalidator::kAnalogInputScale);
-@@ -155 +156 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     } else if (state.steerLeft) {
 -        steering = -1.0;
 +        steering = -1.0f;
-@@ -157 +158 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     } else if (state.steerRight) {
 -        steering = 1.0;
 +        steering = 1.0f;
-@@ -160,2 +161,2 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     }
+ 
 -    double lowSpeedGateA = 0.0;
 -    double lowSpeedGateB = 0.0;
 +    float lowSpeedGateA = 0.0f;
 +    float lowSpeedGateB = 0.0f;
-@@ -168,4 +169,4 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     const s32 digitalGateTime = ((state.accelerateTime) > (state.brakeTime) ? (state.accelerateTime) : (state.brakeTime));
+     const bool analogGasWins =
+             state.gasTime > digitalGateTime ||
+             (state.gasTime == digitalGateTime &&
+              !state.accelerate && !state.brake);
+     if (analogGasWins) {
 -        if (state.gasValue >= 0.30000001) {
 -            lowSpeedGateA = 1.0;
 -        } else if (state.gasValue <= -0.30000001) {
@@ -136,29 +1256,51 @@ index f9183dc680c6e6798d2afb05faef395726d834c1..87c206692f48b0b5c9545eee6587096d
 +            lowSpeedGateA = 1.0f;
 +        } else if (state.gasValue >= 19661) {
 +            lowSpeedGateB = 1.0f;
-@@ -174,2 +175,2 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+         }
+     } else {
 -        lowSpeedGateA = state.accelerate ? 1.0 : 0.0;
 -        lowSpeedGateB = state.brake ? 1.0 : 0.0;
 +        lowSpeedGateA = state.accelerate ? 1.0f : 0.0f;
 +        lowSpeedGateB = state.brake ? 1.0f : 0.0f;
-@@ -178,4 +179 @@ ReplayVehicleControlState ControlsFromState(const ReplayControlState &state) {
+     }
+ 
 -    return {
 -            static_cast<float>(lowSpeedGateA),
 -            static_cast<float>(lowSpeedGateB),
 -            static_cast<float>(steering)};
 +    return {lowSpeedGateA, lowSpeedGateB, steering};
+ }
+ 
+ bool AtOrAfter(s32 timeMs, const std::optional<s32> &thresholdMs) {
 diff --git a/src/simulation/runtime/replay_simulation_session.cpp b/src/simulation/runtime/replay_simulation_session.cpp
-index a428b6cedfeb5ad65384d9f788c81142ffbeaf5f..3bc7beca48fca92b115698b231f9a21141b9597f 100644
+index a428b6c..b4de91e 100644
 --- a/src/simulation/runtime/replay_simulation_session.cpp
 +++ b/src/simulation/runtime/replay_simulation_session.cpp
-@@ -1,0 +2,2 @@
+@@ -1,8 +1,20 @@
+ #include "simulation/runtime/replay_simulation_session.h"
 +#include <array>
 +#include <cmath>
-@@ -5,0 +8,3 @@
++#include <limits>
+ #include <new>
++#include <string>
++#include <unordered_map>
+ #include <utility>
+ 
+ #include "engine/core/binary32_math.h"
 +#include "engine/physics/geometry/gm_surface.h"
 +#include "engine/physics/geometry/plug_surface.h"
 +#include "engine/scene/plug_solid.h"
-@@ -15,0 +21,167 @@ namespace {
++#include "engine/rendering/plug_material.h"
++#include "engine/rendering/plug_tree.h"
++#include "engine/rendering/plug_visual.h"
++#include "format/archive/archive_class_ids.h"
+ #include "simulation/replay/replay_map_scene.h"
+ #include "simulation/runtime/replay_environment.h"
+ #include "simulation/runtime/replay_physics_world.h"
+@@ -13,6 +25,537 @@
+ #include "simulation/runtime/replay_deterministic_execution.h"
+ namespace {
+ 
 +GmVec3 TransformPoint(const GmVec3 &point, const GmIso4 &iso) {
 +    GmVec3 transformed;
 +    transformed.SetMult(point, iso);
@@ -326,44 +1468,502 @@ index a428b6cedfeb5ad65384d9f788c81142ffbeaf5f..3bc7beca48fca92b115698b231f9a211
 +    return true;
 +}
 +
-@@ -58,0 +231 @@ struct ReplaySimulationSession::Impl {
++namespace sandbox = forevervalidator::experimental;
++
++sandbox::PhysicsSandboxScenePurpose PublicPurpose(
++        StaticScenePurpose purpose) {
++    switch (purpose) {
++    case StaticScenePurpose::PlacedBlock:
++        return sandbox::PhysicsSandboxScenePurpose::PlacedBlock;
++    case StaticScenePurpose::SubMobil:
++        return sandbox::PhysicsSandboxScenePurpose::SubMobil;
++    case StaticScenePurpose::Clip:
++        return sandbox::PhysicsSandboxScenePurpose::Clip;
++    case StaticScenePurpose::Helper:
++        return sandbox::PhysicsSandboxScenePurpose::Helper;
++    case StaticScenePurpose::CheckpointTrigger:
++        return sandbox::PhysicsSandboxScenePurpose::CheckpointTrigger;
++    case StaticScenePurpose::DedicatedInitialCollision:
++        return sandbox::PhysicsSandboxScenePurpose::
++                DedicatedInitialCollision;
++    case StaticScenePurpose::Pylon:
++        return sandbox::PhysicsSandboxScenePurpose::Pylon;
++    case StaticScenePurpose::Decoration:
++        return sandbox::PhysicsSandboxScenePurpose::Decoration;
++    case StaticScenePurpose::Terrain:
++        return sandbox::PhysicsSandboxScenePurpose::Terrain;
++    case StaticScenePurpose::Generated:
++        return sandbox::PhysicsSandboxScenePurpose::Generated;
++    case StaticScenePurpose::Environment:
++    default:
++        return sandbox::PhysicsSandboxScenePurpose::Environment;
++    }
++}
++
++sandbox::PhysicsSandboxRenderProvenance PublicProvenance(
++        const StaticSceneProvenance &source) {
++    sandbox::PhysicsSandboxRenderProvenance result;
++    result.blockName = source.blockName;
++    result.collection = source.collection;
++    result.descriptorPath = source.descriptorPath;
++    result.sceneObjectId = source.sceneObjectId;
++    result.placementIdentity = source.placementIdentity;
++    result.blockInstanceId = source.blockInstanceId;
++    result.variant = source.variant;
++    result.componentIndex = source.componentIndex;
++    result.authored = source.authored;
++    return result;
++}
++
++sandbox::PhysicsSandboxTransform PublicTransform(const GmIso4 &source) {
++    return {
++            {source.rotation.basisX.x,
++             source.rotation.basisX.y,
++             source.rotation.basisX.z},
++            {source.rotation.basisY.x,
++             source.rotation.basisY.y,
++             source.rotation.basisY.z},
++            {source.rotation.basisZ.x,
++             source.rotation.basisZ.y,
++             source.rotation.basisZ.z},
++            {source.translation.x,
++             source.translation.y,
++             source.translation.z}};
++}
++
++std::string PreferredPath(const std::string &selected,
++                          const std::string &plain) {
++    return !selected.empty() ? selected : plain;
++}
++
++class StaticRenderSceneBuilder {
++public:
++    sandbox::PhysicsSandboxRenderSceneHandle Build(
++            const StaticSceneModelCollection &models) {
++        scene_ = std::make_shared<sandbox::PhysicsSandboxRenderScene>();
++        for (const StaticSceneModel &model : models.Models()) {
++            if (model.Purpose() ==
++                    StaticScenePurpose::DedicatedInitialCollision) {
++                AddDiagnostic(
++                        sandbox::PhysicsSandboxRenderDiagnosticCode::
++                                CollisionOnlyObjectSkipped,
++                        "collision-only object omitted from visual scene",
++                        model.Provenance());
++                continue;
++            }
++            CPlugSolid *solid = model.Prototype().SourceSolid();
++            CPlugTree *root =
++                    solid != nullptr ? solid->CollisionTree() : nullptr;
++            if (root == nullptr) {
++                AddDiagnostic(
++                        sandbox::PhysicsSandboxRenderDiagnosticCode::
++                                UnsupportedVisual,
++                        "scene model has no visual tree",
++                        model.Provenance());
++                continue;
++            }
++            AppendTree(model, *root, model.WorldIso(), nullptr, true, 0u,
++                       0.0f);
++        }
++        return scene_;
++    }
++
++private:
++    void AddDiagnostic(
++            sandbox::PhysicsSandboxRenderDiagnosticCode code,
++            std::string message,
++            const StaticSceneProvenance &provenance) {
++        scene_->diagnostics.push_back(
++                {code, std::move(message), PublicProvenance(provenance)});
++    }
++
++    std::uint32_t MaterialIndex(const CPlugMaterial *material) {
++        const auto found = materialIndices_.find(material);
++        if (found != materialIndices_.end()) {
++            return found->second;
++        }
++        sandbox::PhysicsSandboxRenderMaterial output;
++        output.id = scene_->materials.size() + 1u;
++        if (material != nullptr) {
++            const MaterialRenderDefinition &definition =
++                    material->ReplayRenderDefinition();
++            output.sourcePath = PreferredPath(
++                    definition.MaterialSelectedPath(),
++                    definition.MaterialPlainPath());
++            output.modelPath = PreferredPath(
++                    definition.MaterialModelSelectedPath(),
++                    definition.MaterialModelPlainPath());
++            output.shaderPath = PreferredPath(
++                    definition.ShaderSelectedPath(),
++                    definition.ShaderPlainPath());
++            output.shaderFlags = definition.ShaderFlags();
++            output.surfaceMaterialId =
++                    static_cast<std::uint8_t>(
++                            material->SurfaceMaterialId());
++            output.water = definition.HasBitmapRenderWater();
++            for (const MaterialRenderBitmapDefinition &bitmap :
++                 definition.Bitmaps()) {
++                output.bitmaps.push_back({
++                        bitmap.samplerName,
++                        PreferredPath(bitmap.selectedPath,
++                                      bitmap.plainPath),
++                        bitmap.bitmapClassId,
++                        bitmap.renderClassId});
++                output.cubeMap = output.cubeMap ||
++                        bitmap.renderClassId ==
++                                TMNF_CLASS_CPlugBitmapRenderCubeMap;
++                output.renderTarget = output.renderTarget ||
++                        bitmap.renderClassId ==
++                                TMNF_CLASS_CPlugBitmapRenderScene3d;
++            }
++        }
++        const std::uint32_t index =
++                static_cast<std::uint32_t>(scene_->materials.size());
++        scene_->materials.push_back(std::move(output));
++        materialIndices_.emplace(material, index);
++        return index;
++    }
++
++    std::optional<std::uint32_t> MeshIndex(
++            CPlugVisual &visual,
++            const StaticSceneProvenance &provenance) {
++        const auto found = meshIndices_.find(&visual);
++        if (found != meshIndices_.end()) {
++            return found->second;
++        }
++        const unsigned long vertexCount = visual.GetTotalVertexCount();
++        std::vector<GxVertex> source =
++                visual.CanonicalVertices(1, 1, 1);
++        if (vertexCount == 0u || source.size() != vertexCount) {
++            AddDiagnostic(
++                    sandbox::PhysicsSandboxRenderDiagnosticCode::
++                            UnsupportedVisual,
++                    "visual has no supported vertex stream",
++                    provenance);
++            return std::nullopt;
++        }
++
++        sandbox::PhysicsSandboxRenderMesh mesh;
++        mesh.id = scene_->meshes.size() + 1u;
++        mesh.vertices.resize(vertexCount);
++
++        GxTexCoordSet uv0;
++        GxTexCoordSet uv1;
++        mesh.hasUv0 = visual.VStreamOrClassic_GetTexCoordSet(
++                uv0, 0u, nullptr) != 0 && uv0.Count() == vertexCount;
++        mesh.hasUv1 = visual.VStreamOrClassic_GetTexCoordSet(
++                uv1, 1u, nullptr) != 0 && uv1.Count() == vertexCount;
++        const auto *visual3d = dynamic_cast<const CPlugVisual3D *>(&visual);
++        mesh.hasTangents = visual3d != nullptr &&
++                visual3d->TangentCount() == vertexCount;
++        mesh.hasNormals = visual.HasVertexNormal();
++        mesh.hasVertexColors = visual.HasVertexColor();
++
++        for (u32 index = 0u; index < vertexCount; ++index) {
++            const GxVertex &input = source[index];
++            auto &output = mesh.vertices[index];
++            output.position = {
++                    input.position.x, input.position.y, input.position.z};
++            output.normal = {
++                    input.normal.x, input.normal.y, input.normal.z};
++            output.color = {
++                    input.color[0], input.color[1],
++                    input.color[2], input.color[3]};
++            if (mesh.hasTangents) {
++                const GmVec3 &tangent = visual3d->tangents[index];
++                output.tangent = {
++                        tangent.x, tangent.y, tangent.z, 1.0f};
++            }
++            if (mesh.hasUv0) {
++                const GxTexCoord4 uv = uv0.Coordinate4At(index);
++                output.uv0 = {uv.u, uv.v};
++            }
++            if (mesh.hasUv1) {
++                const GxTexCoord4 uv = uv1.Coordinate4At(index);
++                output.uv1 = {uv.u, uv.v};
++            }
++        }
++
++        unsigned long indexCount = 0u;
++        unsigned short *indices = nullptr;
++        visual.GetVertexIndexation(indexCount, indices);
++        if (indexCount == 0u) {
++            indexCount = vertexCount;
++            mesh.indices.reserve(indexCount);
++            for (u32 index = 0u; index < indexCount; ++index) {
++                mesh.indices.push_back(index);
++            }
++        } else if (indices == nullptr) {
++            AddDiagnostic(
++                    sandbox::PhysicsSandboxRenderDiagnosticCode::
++                            InvalidTopology,
++                    "visual index stream has no backing storage",
++                    provenance);
++            return std::nullopt;
++        } else {
++            mesh.indices.reserve(indexCount);
++            for (u32 index = 0u; index < indexCount; ++index) {
++                mesh.indices.push_back(indices[index]);
++            }
++        }
++        bool topologyValid = mesh.indices.size() % 3u == 0u;
++        for (std::uint32_t index : mesh.indices) {
++            topologyValid = topologyValid && index < vertexCount;
++        }
++        if (!topologyValid) {
++            AddDiagnostic(
++                    sandbox::PhysicsSandboxRenderDiagnosticCode::
++                            InvalidTopology,
++                    "visual index stream is not a valid triangle list",
++                    provenance);
++            return std::nullopt;
++        }
++
++        const GmBoxAligned &box = visual.BoundingBox();
++        mesh.boundsMin = {
++                box.center.x - std::fabs(box.halfExtents.x),
++                box.center.y - std::fabs(box.halfExtents.y),
++                box.center.z - std::fabs(box.halfExtents.z)};
++        mesh.boundsMax = {
++                box.center.x + std::fabs(box.halfExtents.x),
++                box.center.y + std::fabs(box.halfExtents.y),
++                box.center.z + std::fabs(box.halfExtents.z)};
++        mesh.subsets.push_back(
++                {0u, static_cast<std::uint32_t>(mesh.indices.size()), 0u});
++        const std::uint32_t result =
++                static_cast<std::uint32_t>(scene_->meshes.size());
++        scene_->meshes.push_back(std::move(mesh));
++        meshIndices_.emplace(&visual, result);
++        return result;
++    }
++
++    void AppendTree(
++            const StaticSceneModel &model,
++            CPlugTree &tree,
++            const GmIso4 &parentIso,
++            const CPlugMaterial *inheritedMaterial,
++            bool inheritedVisibility,
++            std::uint32_t lodLevel,
++            float lodFarDistance) {
++        GmIso4 worldIso;
++        tree.ComposeCollisionIso(parentIso, worldIso);
++        const bool visible = inheritedVisibility && tree.IsVisible();
++        const CPlugMaterial *material =
++                tree.Material() != nullptr
++                ? tree.Material()
++                : inheritedMaterial;
++        if (CPlugVisual *visual = tree.Visual()) {
++            const std::optional<std::uint32_t> meshIndex =
++                    MeshIndex(*visual, model.Provenance());
++            if (meshIndex.has_value()) {
++                sandbox::PhysicsSandboxRenderInstance instance;
++                instance.id = scene_->instances.size() + 1u;
++                instance.meshIndex = *meshIndex;
++                instance.materialIndex = MaterialIndex(material);
++                instance.worldTransform = PublicTransform(worldIso);
++                instance.provenance =
++                        PublicProvenance(model.Provenance());
++                instance.purpose = PublicPurpose(model.Purpose());
++                instance.lodLevel = lodLevel;
++                instance.lodFarDistance = lodFarDistance;
++                instance.visible = visible;
++                instance.castsShadows = tree.IsShadowCaster();
++                scene_->instances.push_back(std::move(instance));
++                if (!scene_->meshes[*meshIndex].hasUv0) {
++                    AddDiagnostic(
++                            sandbox::PhysicsSandboxRenderDiagnosticCode::
++                                    MissingUv,
++                            "visual has no authored UV0 stream",
++                            model.Provenance());
++                }
++                if (!scene_->meshes[*meshIndex].hasTangents) {
++                    AddDiagnostic(
++                            sandbox::PhysicsSandboxRenderDiagnosticCode::
++                                    MissingTangent,
++                            "visual has no authored tangent stream",
++                            model.Provenance());
++                }
++                if (material == nullptr) {
++                    AddDiagnostic(
++                            sandbox::PhysicsSandboxRenderDiagnosticCode::
++                                    MissingMaterial,
++                            "visual has no final material assignment",
++                            model.Provenance());
++                }
++            }
++        }
++
++        auto *mip = dynamic_cast<CPlugTreeVisualMip *>(&tree);
++        for (u32 childIndex = 0u;
++             childIndex < tree.GetChildCount();
++             ++childIndex) {
++            CPlugTree *child = tree.GetChild(childIndex);
++            if (child == nullptr) {
++                continue;
++            }
++            std::uint32_t childLod = lodLevel;
++            float childFar = lodFarDistance;
++            if (mip != nullptr) {
++                for (u32 level = 0u; level < mip->LevelCount(); ++level) {
++                    if (mip->LevelTree(level) == child) {
++                        childLod = level;
++                        childFar = mip->LevelFarZ(level);
++                        break;
++                    }
++                }
++            }
++            AppendTree(model, *child, worldIso, material, visible,
++                       childLod, childFar);
++        }
++    }
++
++    std::shared_ptr<sandbox::PhysicsSandboxRenderScene> scene_;
++    std::unordered_map<const CPlugVisual *, std::uint32_t> meshIndices_;
++    std::unordered_map<const CPlugMaterial *, std::uint32_t>
++            materialIndices_;
++};
++
++sandbox::PhysicsSandboxRenderSceneHandle BuildStaticRenderScene(
++        const StaticSceneModelCollection &models) {
++    try {
++        return StaticRenderSceneBuilder().Build(models);
++    } catch (const std::bad_alloc &) {
++        return {};
++    }
++}
++
+ ReplayTrajectoryObservation ObserveReplayTrajectory(
+         const ReplaySimulationStepExecution &execution,
+         const ReplayControlTick &tick) {
+@@ -56,6 +599,8 @@ struct ReplaySimulationInstance {
+ struct ReplaySimulationSession::Impl {
+     ReplayMapScene mapScene;
+     ReplaySimulationInstance instance;
 +    std::vector<ReplayStaticCollisionTriangle> staticCollisionTriangles;
-@@ -81,2 +254,8 @@ bool ReplaySimulationSession::InstallStaticScene(
++    sandbox::PhysicsSandboxRenderSceneHandle staticRenderScene;
+ 
+     void ResetRuntime() { instance.ResetRuntime(); }
+ };
+@@ -68,6 +613,8 @@ ReplaySimulationSession::~ReplaySimulationSession() = default;
+ void ReplaySimulationSession::Reset() {
+     impl->ResetRuntime();
+     impl->mapScene.Reset(impl->instance.race);
++    impl->staticCollisionTriangles.clear();
++    impl->staticRenderScene.reset();
+ }
+ 
+ bool ReplaySimulationSession::PreloadChallenge(
+@@ -78,8 +625,18 @@ bool ReplaySimulationSession::PreloadChallenge(
+ 
+ bool ReplaySimulationSession::InstallStaticScene(
+         StaticSceneModelCollection models) {
 -    return impl->mapScene.InstallModels(std::move(models)) ==
 -           ReplayMapSceneResult::Ready;
 +    std::vector<ReplayStaticCollisionTriangle> triangles;
-+    if (!BuildStaticCollisionTriangles(models, triangles) ||
++    sandbox::PhysicsSandboxRenderSceneHandle renderScene =
++            BuildStaticRenderScene(models);
++    if (!renderScene ||
++        !BuildStaticCollisionTriangles(models, triangles) ||
 +        impl->mapScene.InstallModels(std::move(models)) !=
 +                ReplayMapSceneResult::Ready) {
 +        return false;
 +    }
 +    impl->staticCollisionTriangles = std::move(triangles);
++    impl->staticRenderScene = std::move(renderScene);
 +    return true;
-@@ -97,0 +277,5 @@ void ReplaySimulationSession::ConfigureReplayRace(
+ }
+ 
+ void ReplaySimulationSession::ActivateStaticScene() {
+@@ -95,6 +652,16 @@ void ReplaySimulationSession::ConfigureReplayRace(
+             isLapRace ? lapCount : 1u);
+ }
+ 
 +const std::vector<ReplayStaticCollisionTriangle> &
 +ReplaySimulationSession::StaticCollisionTriangles() const noexcept {
 +    return impl->staticCollisionTriangles;
 +}
 +
++sandbox::PhysicsSandboxRenderSceneHandle
++ReplaySimulationSession::StaticRenderScene() const noexcept {
++    return impl->staticRenderScene;
++}
++
+ ReplaySimulationTimelineResult ReplaySimulationSession::SimulateTimeline(
+         const ReplaySimulationDefinition &simulationDefinition,
+         const std::vector<ReplayControlTick> &controlTicks,
 diff --git a/src/simulation/runtime/replay_simulation_session.h b/src/simulation/runtime/replay_simulation_session.h
-index 20376317f871323a6b065146fa2f1dcfad0dab21..507804b34d13bfa4362a814809ab1953bcead222 100644
+index 2037631..81c9e70 100644
 --- a/src/simulation/runtime/replay_simulation_session.h
 +++ b/src/simulation/runtime/replay_simulation_session.h
-@@ -37,0 +38,6 @@ struct ReplaySimulationStateView {
+@@ -6,6 +6,7 @@
+ #include <optional>
+ #include <vector>
+ 
++#include <forevervalidator/experimental/physics_sandbox.h>
+ #include "engine/game/game_ctn_types.h"
+ #include "simulation/replay/replay_challenge_construction.h"
+ #include "simulation/control/replay_control_timeline.h"
+@@ -35,6 +36,12 @@ struct ReplaySimulationStateView {
+     std::uint32_t respawnCount = 0u;
+ };
+ 
 +struct ReplayStaticCollisionTriangle {
 +    GmVec3 a{};
 +    GmVec3 b{};
 +    GmVec3 c{};
 +};
 +
-@@ -72,0 +79,2 @@ public:
+ struct ReplaySimulationInstanceClone {
+     CTrackManiaRace::RuntimeClone race;
+     ReplaySimulationRuntime::RuntimeClone runtime;
+@@ -70,6 +77,10 @@ public:
+             std::size_t begin,
+             std::size_t count);
+     std::optional<ReplaySimulationStateView> CurrentState() const;
 +    const std::vector<ReplayStaticCollisionTriangle> &
 +            StaticCollisionTriangles() const noexcept;
++    forevervalidator::experimental::PhysicsSandboxRenderSceneHandle
++            StaticRenderScene() const noexcept;
+     std::optional<std::uint32_t> ApplyReplayStuntTimePenalty(
+             std::uint32_t overtimeMs);
+     std::shared_ptr<const ReplaySimulationInstanceClone>
 diff --git a/src/validation/api/validation_api.cpp b/src/validation/api/validation_api.cpp
-index 21f3000d7606605b67d25c8f87feb659967043e3..3e96720fa7c6fc223f942ab27ced63c54a36e13d 100644
+index 21f3000..d2b9b3a 100644
 --- a/src/validation/api/validation_api.cpp
 +++ b/src/validation/api/validation_api.cpp
-@@ -1111,0 +1112,45 @@ PhysicsSandboxInputValue ToSandboxValue(
+@@ -247,8 +247,8 @@ ReplayProvenance ToPublicReplayProvenance(
+     switch (provenance) {
+     case ReplayInputProvenance::Unmarked:
+         return ReplayProvenance::Unmarked;
+-    case ReplayInputProvenance::TMInterface:
+-        return ReplayProvenance::TMInterface;
++    case ReplayInputProvenance::Scripted:
++        return ReplayProvenance::Scripted;
+     }
+     return ReplayProvenance::Unmarked;
+ }
+@@ -283,7 +283,7 @@ ValidationReport ToPublicReport(
+             ToPublicObservationError(source.validation.observationError);
+     report.metadata.replayProvenance = ToPublicReplayProvenance(
+             replay.InputTimeline().Provenance());
+-    if (report.metadata.replayProvenance == ReplayProvenance::TMInterface) {
++    if (report.metadata.replayProvenance == ReplayProvenance::Scripted) {
+         if (source.validation.status ==
+             ReplayValidationStatus::WrongSimulation) {
+             report.inputGhostMatch = InputGhostMatch::Mismatch;
+@@ -295,7 +295,7 @@ ValidationReport ToPublicReport(
+         if (source.validation.status == ReplayValidationStatus::Valid ||
+             source.validation.status == ReplayValidationStatus::ValidPrefix) {
+             report.valid = false;
+-            report.status = ValidationStatus::TMInterfaceReplay;
++            report.status = ValidationStatus::ScriptedReplay;
+             report.outcome = ValidationOutcome::Invalid;
+             report.wrongSimulation = false;
+         }
+@@ -1109,6 +1109,51 @@ PhysicsSandboxInputValue ToSandboxValue(
+     return result;
+ }
+ 
 +PhysicsSandboxSceneView BuildSandboxScene(
 +        const ReplaySimulationSession &session,
 +        const ReplaySimulationDefinition &definition) {
@@ -409,22 +2009,65 @@ index 21f3000d7606605b67d25c8f87feb659967043e3..3e96720fa7c6fc223f942ab27ced63c5
 +    return scene;
 +}
 +
-@@ -1185,0 +1231 @@ struct PhysicsSandbox::Impl {
+ ReplayInputActionValue FromSandboxValue(
+         const PhysicsSandboxInputValue &value) {
+     switch (value.kind) {
+@@ -1183,6 +1228,8 @@ struct PhysicsSandbox::Impl {
+     ReplayAssetRoute route{};
+     ReplayIdentity identity{};
+     std::uint64_t scenarioFingerprint = 0u;
 +    PhysicsSandboxSceneView scene{};
-@@ -1207 +1253 @@ struct PhysicsSandbox::Impl {
++    PhysicsSandboxRenderSceneHandle renderScene;
+     std::size_t cursor = 0u;
+     std::size_t prestartTicks = 0u;
+     bool loaded = false;
+@@ -1204,7 +1251,7 @@ struct PhysicsSandbox::Impl {
+             if (absoluteTime < 0 || absoluteTime >
+                     std::numeric_limits<std::uint32_t>::max() ||
+                 (event.value.kind == PhysicsSandboxInputValueKind::Analog &&
 -                 !std::isfinite(event.value.analog))) {
 +                 !IsAnalogInputStateValid(event.value.analog))) {
-@@ -1324,0 +1371 @@ struct PhysicsSandbox::Impl {
+                 return PhysicsSandboxResult<ReplayControlPlan>::Failure(
+                         SandboxError(PhysicsSandboxErrorCode::InvalidRequest,
+                                      "sandbox input is out of range"));
+@@ -1322,6 +1369,7 @@ struct PhysicsSandbox::Impl {
+         PhysicsSandboxStateView view;
+         view.tick = cursor - prestartTicks;
+         view.timeMs = view.tick * options.tickDurationMs;
 +        view.durationMs = inputMetadata.durationMs;
-@@ -1477,0 +1525,2 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
+         view.mapEnvironment = ToPublicMapEnvironment(route.mapEnvironment);
+         view.vehicleModel = ToPublicVehicleModel(route.vehicleModel);
+         view.playMode = ToPublicPlayMode(
+@@ -1475,6 +1523,16 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
+                     ToSandboxValue(event.value)});
+         }
+ 
 +        PhysicsSandboxSceneView scene = BuildSandboxScene(
 +                *session, definition.Value());
-@@ -1486,0 +1536 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
++        PhysicsSandboxRenderSceneHandle renderScene =
++                session->StaticRenderScene();
++        if (!renderScene) {
++            return PhysicsSandboxResult<PhysicsSandboxStateView>::Failure(
++                    SandboxError(
++                            PhysicsSandboxErrorCode::MapLoadingFailed,
++                            "sandbox visual scene could not be built"));
++        }
+         impl_->session = std::move(session);
+         impl_->definition = std::move(definition).Value();
+         impl_->inputMetadata = replay.InputTimeline().Metadata();
+@@ -1484,6 +1542,8 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
+         impl_->route = route;
+         impl_->identity = identity;
+         impl_->scenarioFingerprint = Fingerprint(replayBytes);
 +        impl_->scene = std::move(scene);
-@@ -1738,0 +1789,21 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::ReadState()
-+    }
-+}
-+
++        impl_->renderScene = std::move(renderScene);
+         impl_->inputs = std::move(inputs);
+         impl_->prestartTicks =
+                 impl_->options.prestartDurationMs /
+@@ -1739,6 +1799,48 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::ReadState()
+     }
+ }
+ 
 +PhysicsSandboxResult<PhysicsSandboxSceneView> PhysicsSandbox::ReadScene()
 +        const noexcept {
 +    try {
@@ -443,3 +2086,223 @@ index 21f3000d7606605b67d25c8f87feb659967043e3..3e96720fa7c6fc223f942ab27ced63c5
 +        return PhysicsSandboxResult<PhysicsSandboxSceneView>::Failure(
 +                SandboxError(PhysicsSandboxErrorCode::UnexpectedFailure,
 +                             "unexpected sandbox scene read failure"));
++    }
++}
++
++PhysicsSandboxResult<PhysicsSandboxRenderSceneHandle>
++PhysicsSandbox::ReadRenderScene() const noexcept {
++    try {
++        if (!impl_ || !impl_->loaded || !impl_->renderScene) {
++            return PhysicsSandboxResult<
++                    PhysicsSandboxRenderSceneHandle>::Failure(
++                    SandboxError(PhysicsSandboxErrorCode::InvalidSandbox,
++                                 "sandbox has no loaded render scene"));
++        }
++        return PhysicsSandboxResult<
++                PhysicsSandboxRenderSceneHandle>::Success(
++                impl_->renderScene);
++    } catch (...) {
++        return PhysicsSandboxResult<
++                PhysicsSandboxRenderSceneHandle>::Failure(
++                SandboxError(
++                        PhysicsSandboxErrorCode::UnexpectedFailure,
++                        "unexpected sandbox render scene read failure"));
++    }
++}
++
+ PhysicsSandboxResult<PhysicsSandbox> CreatePhysicsSandbox(
+         AssetSource source,
+         const PhysicsSandboxOptions &options) noexcept {
+diff --git a/src/validation/serialization/validation_json.cpp b/src/validation/serialization/validation_json.cpp
+index 2cd2d32..bddd1b0 100644
+--- a/src/validation/serialization/validation_json.cpp
++++ b/src/validation/serialization/validation_json.cpp
+@@ -34,8 +34,8 @@ const char *ValidationStatusName(ValidationStatus status) {
+         return "incompatible_replay_version";
+     case ValidationStatus::InputUnavailable:
+         return "validation_input_unavailable";
+-    case ValidationStatus::TMInterfaceReplay:
+-        return "tminterface_replay";
++    case ValidationStatus::ScriptedReplay:
++        return "scripted_replay";
+     }
+     return "unexpected_validation_status";
+ }
+@@ -43,7 +43,7 @@ const char *ValidationStatusName(ValidationStatus status) {
+ const char *ReplayProvenanceName(ReplayProvenance provenance) {
+     switch (provenance) {
+     case ReplayProvenance::Unmarked: return "Unmarked";
+-    case ReplayProvenance::TMInterface: return "TMInterface";
++    case ReplayProvenance::Scripted: return "Scripted";
+     }
+     return "Unmarked";
+ }
+@@ -179,8 +179,8 @@ void AppendValidationMessageJson(
+                 "\"Replay version: TMr.6 is not compatible with current "
+                 "game version: TMr.7\"");
+         break;
+-    case ValidationStatus::TMInterfaceReplay:
+-        json.Append("\"TMInterface replay is invalid\"");
++    case ValidationStatus::ScriptedReplay:
++        json.Append("\"Scripted replay is invalid\"");
+         break;
+     default:
+         json.Append("null");
+diff --git a/tests/render_scene_tests.cpp b/tests/render_scene_tests.cpp
+new file mode 100644
+index 0000000..6fa1051
+--- /dev/null
++++ b/tests/render_scene_tests.cpp
+@@ -0,0 +1,152 @@
++#include <forevervalidator/experimental/physics_sandbox.h>
++
++#include "engine/rendering/plug_tree.h"
++#include "engine/scene/static_scene_model.h"
++#include "format/static_solid/static_solid_geometry_decoder.h"
++
++#include <cmath>
++#include <cstdint>
++#include <cstring>
++#include <iostream>
++#include <memory>
++#include <type_traits>
++#include <utility>
++#include <vector>
++
++namespace {
++
++bool Check(bool condition, const char *message) {
++    if (!condition) {
++        std::cerr << message << '\n';
++    }
++    return condition;
++}
++
++void AppendFloat(std::vector<std::uint8_t> *bytes, float value) {
++    const std::size_t offset = bytes->size();
++    bytes->resize(offset + sizeof(value));
++    std::memcpy(bytes->data() + offset, &value, sizeof(value));
++}
++
++bool NearlyEqual(float lhs, float rhs) {
++    return std::fabs(lhs - rhs) < 0.0001f;
++}
++
++bool TestUvDecoding() {
++    std::vector<std::uint8_t> uv2Bytes;
++    for (float value : {0.25f, 0.75f, -1.0f, 2.0f}) {
++        AppendFloat(&uv2Bytes, value);
++    }
++    GxTexCoordSet uv2;
++    bool okay = Check(
++            DecodeStaticSolidTexCoordStream(
++                    uv2Bytes.data(), 2u, 2u, 8u, &uv2),
++            "2D UV stream was rejected");
++    const GxTexCoord4 first = uv2.Coordinate4At(0u);
++    const GxTexCoord4 second = uv2.Coordinate4At(1u);
++    okay &= Check(
++            uv2.Dimension() == GxTexCoordDimension::Two &&
++                    uv2.Count() == 2u &&
++                    NearlyEqual(first.u, 0.25f) &&
++                    NearlyEqual(first.v, 0.75f) &&
++                    NearlyEqual(second.u, -1.0f) &&
++                    NearlyEqual(second.v, 2.0f),
++            "2D UV values were not preserved");
++
++    std::vector<std::uint8_t> uv4Bytes;
++    for (float value : {1.0f, 2.0f, 3.0f, 4.0f}) {
++        AppendFloat(&uv4Bytes, value);
++    }
++    GxTexCoordSet uv4;
++    okay &= Check(
++            DecodeStaticSolidTexCoordStream(
++                    uv4Bytes.data(), 1u, 4u, 16u, &uv4),
++            "4D UV stream was rejected");
++    const GxTexCoord4 expanded = uv4.Coordinate4At(0u);
++    okay &= Check(
++            uv4.Dimension() == GxTexCoordDimension::Four &&
++                    NearlyEqual(expanded.u, 1.0f) &&
++                    NearlyEqual(expanded.v, 2.0f) &&
++                    NearlyEqual(expanded.w, 3.0f) &&
++                    NearlyEqual(expanded.q, 4.0f),
++            "4D UV values were not preserved");
++    okay &= Check(
++            !DecodeStaticSolidTexCoordStream(
++                    uv2Bytes.data(), 2u, 2u, 12u, &uv2),
++            "invalid UV stride was accepted");
++    return okay;
++}
++
++bool TestTransformComposition() {
++    GmIso4 parent;
++    parent.SetIdentity();
++    parent.SetTranslation({10.0f, 20.0f, 30.0f});
++    GmIso4 local;
++    local.SetIdentity();
++    local.SetTranslation({1.0f, 2.0f, 3.0f});
++
++    CPlugTree tree;
++    tree.SetUseLocation(1);
++    tree.SetLocation(local);
++    GmIso4 world;
++    tree.ComposeCollisionIso(parent, world);
++    return Check(
++            NearlyEqual(world.translation.x, 11.0f) &&
++                    NearlyEqual(world.translation.y, 22.0f) &&
++                    NearlyEqual(world.translation.z, 33.0f),
++            "tree local transform was not composed with its parent");
++}
++
++bool TestProvenanceAndImmutableScene() {
++    GmIso4 identity;
++    identity.SetIdentity();
++    StaticSceneModel model(
++            StaticSolidPrototype{},
++            identity,
++            StaticScenePurpose::SubMobil);
++    StaticSceneProvenance provenance;
++    provenance.blockName = "StadiumRoadMain";
++    provenance.collection = "Stadium";
++    provenance.descriptorPath = "GameData/StadiumRoad.Block.Gbx";
++    provenance.sceneObjectId = "mobil-3";
++    provenance.placementIdentity = 42u;
++    provenance.blockInstanceId = 7u;
++    provenance.variant = 2u;
++    provenance.componentIndex = 3u;
++    provenance.authored = true;
++    model.SetProvenance(provenance);
++
++    StaticSceneModelCollection models;
++    bool okay = Check(models.Add(std::move(model)),
++                      "scene model could not be stored");
++    const StaticSceneModel &stored = models.Models().front();
++    okay &= Check(
++            stored.Purpose() == StaticScenePurpose::SubMobil &&
++                    stored.Provenance().blockName == "StadiumRoadMain" &&
++                    stored.Provenance().placementIdentity == 42u &&
++                    stored.Provenance().blockInstanceId == 7u &&
++                    stored.Provenance().variant == 2u &&
++                    stored.Provenance().componentIndex == 3u &&
++                    stored.Provenance().authored,
++            "authored provenance changed after scene-model storage");
++
++    using Scene =
++            forevervalidator::experimental::PhysicsSandboxRenderScene;
++    using Handle =
++            forevervalidator::experimental::
++                    PhysicsSandboxRenderSceneHandle;
++    static_assert(std::is_same_v<Handle, std::shared_ptr<const Scene>>);
++    const Handle scene = std::make_shared<const Scene>();
++    okay &= Check(scene->meshes.empty() && scene->instances.empty(),
++                  "immutable render-scene handle was not readable");
++    return okay;
++}
++
++}  // namespace
++
++int main() {
++    bool okay = TestUvDecoding();
++    okay &= TestTransformComposition();
++    okay &= TestProvenanceAndImmutableScene();
++    return okay ? 0 : 1;
++}

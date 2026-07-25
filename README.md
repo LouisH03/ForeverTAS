@@ -44,6 +44,11 @@ The committed dependency hash only needs to change when ForeverTAS deliberately
 adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
+The pinned dependency is extended by
+`cmake/patches/forevervalidator-race-viewer.patch`. The patch is produced from
+a worktree at the pinned revision and adds the immutable visual render-scene
+API without requiring a local Validator checkout at build time.
+
 ## Desktop application
 
 Build and launch the Qt 6 Quick application:
@@ -96,3 +101,6 @@ original orange palette exactly and Best uses the equivalent blue palette.
 
 See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
 extension contracts.
+
+See `docs/RENDERER.md` for visual-scene extraction, replacement materials,
+fallbacks, caching, render modes, and asset ownership.

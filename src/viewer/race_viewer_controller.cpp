@@ -1,11 +1,13 @@
 #include "viewer/race_viewer_controller.h"
 
 #include "time_format.h"
+#include "viewer/material_classifier.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
 #include <QFileInfo>
+#include <QMatrix3x3>
 #include <QMetaObject>
 #include <QThread>
 #include <QVariantMap>
@@ -57,6 +59,15 @@ struct WireVertex {
     float x;
     float y;
     float z;
+};
+
+struct VisualVertex {
+    float position[3];
+    float normal[3];
+    float tangent[3];
+    float uv0[2];
+    float uv1[2];
+    float color[4];
 };
 
 struct ViewerTriangle {
@@ -177,6 +188,198 @@ RaceViewerMeshBuffers BuildMeshBuffers(
     return result;
 }
 
+void GenerateMissingAttributes(
+        std::vector<VisualVertex> &vertices,
+        const std::vector<std::uint32_t> &indices,
+        bool generateNormals,
+        bool generateTangents,
+        bool generateUv0) {
+    if (generateUv0) {
+        for (VisualVertex &vertex : vertices) {
+            vertex.uv0[0] = vertex.position[0] * 0.1f;
+            vertex.uv0[1] = vertex.position[2] * 0.1f;
+        }
+    }
+    if (generateNormals) {
+        for (VisualVertex &vertex : vertices) {
+            vertex.normal[0] = 0.0f;
+            vertex.normal[1] = 0.0f;
+            vertex.normal[2] = 0.0f;
+        }
+        for (std::size_t index = 0u; index + 2u < indices.size();
+             index += 3u) {
+            const std::uint32_t ia = indices[index];
+            const std::uint32_t ib = indices[index + 1u];
+            const std::uint32_t ic = indices[index + 2u];
+            if (ia >= vertices.size() || ib >= vertices.size() ||
+                ic >= vertices.size()) {
+                continue;
+            }
+            const QVector3D a(
+                    vertices[ia].position[0],
+                    vertices[ia].position[1],
+                    vertices[ia].position[2]);
+            const QVector3D b(
+                    vertices[ib].position[0],
+                    vertices[ib].position[1],
+                    vertices[ib].position[2]);
+            const QVector3D c(
+                    vertices[ic].position[0],
+                    vertices[ic].position[1],
+                    vertices[ic].position[2]);
+            const QVector3D normal = QVector3D::crossProduct(b - a, c - a);
+            for (const std::uint32_t vertexIndex : {ia, ib, ic}) {
+                vertices[vertexIndex].normal[0] += normal.x();
+                vertices[vertexIndex].normal[1] += normal.y();
+                vertices[vertexIndex].normal[2] += normal.z();
+            }
+        }
+        for (VisualVertex &vertex : vertices) {
+            QVector3D normal(
+                    vertex.normal[0], vertex.normal[1], vertex.normal[2]);
+            normal = normal.lengthSquared() > 1.0e-12f
+                    ? normal.normalized()
+                    : QVector3D(0.0f, 1.0f, 0.0f);
+            vertex.normal[0] = normal.x();
+            vertex.normal[1] = normal.y();
+            vertex.normal[2] = normal.z();
+        }
+    }
+    if (generateTangents) {
+        for (VisualVertex &vertex : vertices) {
+            const QVector3D normal(
+                    vertex.normal[0], vertex.normal[1], vertex.normal[2]);
+            QVector3D tangent = QVector3D::crossProduct(
+                    std::fabs(normal.y()) < 0.9f
+                            ? QVector3D(0.0f, 1.0f, 0.0f)
+                            : QVector3D(1.0f, 0.0f, 0.0f),
+                    normal);
+            tangent = tangent.lengthSquared() > 1.0e-12f
+                    ? tangent.normalized()
+                    : QVector3D(1.0f, 0.0f, 0.0f);
+            vertex.tangent[0] = tangent.x();
+            vertex.tangent[1] = tangent.y();
+            vertex.tangent[2] = tangent.z();
+        }
+    }
+}
+
+RaceViewerVisualMeshBuffers BuildVisualMesh(
+        const forevervalidator::experimental::PhysicsSandboxRenderMesh
+                &source) {
+    RaceViewerVisualMeshBuffers result;
+    std::vector<VisualVertex> vertices;
+    vertices.reserve(source.vertices.size());
+    for (const auto &vertex : source.vertices) {
+        vertices.push_back({
+                {vertex.position.x, vertex.position.y, vertex.position.z},
+                {vertex.normal.x, vertex.normal.y, vertex.normal.z},
+                {vertex.tangent.x, vertex.tangent.y, vertex.tangent.z},
+                {vertex.uv0.x, vertex.uv0.y},
+                {vertex.uv1.x, vertex.uv1.y},
+                {vertex.color.x, vertex.color.y,
+                 vertex.color.z, vertex.color.w}});
+    }
+    GenerateMissingAttributes(
+            vertices,
+            source.indices,
+            !source.hasNormals,
+            !source.hasTangents,
+            !source.hasUv0);
+    result.vertices = QByteArray(
+            reinterpret_cast<const char *>(vertices.data()),
+            static_cast<qsizetype>(vertices.size() *
+                                   sizeof(VisualVertex)));
+    result.indices = QByteArray(
+            reinterpret_cast<const char *>(source.indices.data()),
+            static_cast<qsizetype>(source.indices.size() *
+                                   sizeof(std::uint32_t)));
+    result.boundsMin = ToQt(source.boundsMin);
+    result.boundsMax = ToQt(source.boundsMax);
+    result.hasNormals = true;
+    result.hasTangents = true;
+    result.hasUv0 = true;
+    result.hasUv1 = source.hasUv1;
+    result.hasVertexColors = source.hasVertexColors;
+    for (const auto &subset : source.subsets) {
+        result.subsets.emplace_back(
+                static_cast<int>(subset.indexOffset),
+                static_cast<int>(subset.indexCount));
+    }
+    return result;
+}
+
+struct DecomposedTransform {
+    QVector3D position;
+    QQuaternion rotation;
+    QVector3D scale{1.0f, 1.0f, 1.0f};
+};
+
+DecomposedTransform Decompose(
+        const forevervalidator::experimental::PhysicsSandboxTransform
+                &transform) {
+    DecomposedTransform result;
+    result.position = ToQt(transform.translation);
+    QVector3D x = ToQt(transform.basisX);
+    QVector3D y = ToQt(transform.basisY);
+    QVector3D z = ToQt(transform.basisZ);
+    result.scale = {x.length(), y.length(), z.length()};
+    if (result.scale.x() > 1.0e-8f) x /= result.scale.x();
+    if (result.scale.y() > 1.0e-8f) y /= result.scale.y();
+    if (result.scale.z() > 1.0e-8f) z /= result.scale.z();
+    if (QVector3D::dotProduct(QVector3D::crossProduct(x, y), z) < 0.0f) {
+        result.scale.setZ(-result.scale.z());
+        z = -z;
+    }
+    QMatrix3x3 matrix;
+    matrix(0, 0) = x.x();
+    matrix(1, 0) = x.y();
+    matrix(2, 0) = x.z();
+    matrix(0, 1) = y.x();
+    matrix(1, 1) = y.y();
+    matrix(2, 1) = y.z();
+    matrix(0, 2) = z.x();
+    matrix(1, 2) = z.y();
+    matrix(2, 2) = z.z();
+    result.rotation = QQuaternion::fromRotationMatrix(matrix).normalized();
+    return result;
+}
+
+QVector3D TransformPoint(
+        const forevervalidator::experimental::PhysicsSandboxTransform
+                &transform,
+        const QVector3D &point) {
+    return ToQt(transform.translation) +
+            ToQt(transform.basisX) * point.x() +
+            ToQt(transform.basisY) * point.y() +
+            ToQt(transform.basisZ) * point.z();
+}
+
+QVariantMap MaterialMap(
+        const forevervalidator::experimental::PhysicsSandboxRenderMaterial
+                &source) {
+    const ReplacementMaterialClass materialClass =
+            ClassifyMaterial(source);
+    const ReplacementMaterial replacement = ReplacementFor(materialClass);
+    QVariantMap map;
+    map.insert(QStringLiteral("materialClass"),
+               MaterialClassName(materialClass));
+    map.insert(QStringLiteral("baseColor"), replacement.baseColor);
+    map.insert(QStringLiteral("debugColor"), replacement.debugColor);
+    map.insert(QStringLiteral("baseTexture"), replacement.baseTexture);
+    map.insert(QStringLiteral("normalTexture"), replacement.normalTexture);
+    map.insert(QStringLiteral("roughness"), replacement.roughness);
+    map.insert(QStringLiteral("metalness"), replacement.metalness);
+    map.insert(QStringLiteral("opacity"), replacement.opacity);
+    map.insert(QStringLiteral("textureScale"), replacement.textureScale);
+    map.insert(QStringLiteral("emissiveStrength"),
+               replacement.emissiveStrength);
+    map.insert(QStringLiteral("twoSided"), replacement.twoSided);
+    map.insert(QStringLiteral("unknown"),
+               materialClass == ReplacementMaterialClass::Unknown);
+    return map;
+}
+
 std::vector<ViewerTriangle> UnitEllipsoidTriangles() {
     constexpr unsigned Latitudes = 12u;
     constexpr unsigned Longitudes = 20u;
@@ -254,6 +457,9 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
                 "loading replay failed");
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
+        PhysicsSandboxRenderSceneHandle renderScene = Require(
+                sandbox.ReadRenderScene(),
+                "reading visual render scene failed");
 
         std::vector<ViewerTriangle> triangles;
         triangles.reserve(scene.collisionTriangles.size());
@@ -264,6 +470,95 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
         }
         result.track = BuildMeshBuffers(triangles, -1);
         result.triangleCount = static_cast<qint64>(triangles.size());
+
+        result.visualMeshes.reserve(renderScene->meshes.size());
+        for (const PhysicsSandboxRenderMesh &mesh : renderScene->meshes) {
+            result.visualMeshes.push_back(BuildVisualMesh(mesh));
+        }
+        std::vector<QVariantMap> materials;
+        materials.reserve(renderScene->materials.size());
+        for (const PhysicsSandboxRenderMaterial &material :
+             renderScene->materials) {
+            QVariantMap replacement = MaterialMap(material);
+            if (replacement.value(QStringLiteral("unknown")).toBool()) {
+                ++result.diagnosticCount;
+            }
+            materials.push_back(std::move(replacement));
+        }
+        result.materialCount =
+                static_cast<qint64>(renderScene->materials.size());
+        result.diagnosticCount +=
+                static_cast<qint64>(renderScene->diagnostics.size());
+
+        bool hasVisualBounds = false;
+        for (const PhysicsSandboxRenderInstance &instance :
+             renderScene->instances) {
+            if (instance.meshIndex >= renderScene->meshes.size() ||
+                instance.materialIndex >= materials.size()) {
+                ++result.diagnosticCount;
+                continue;
+            }
+            const PhysicsSandboxRenderMesh &mesh =
+                    renderScene->meshes[instance.meshIndex];
+            const DecomposedTransform transform =
+                    Decompose(instance.worldTransform);
+            QVariantMap item = materials[instance.materialIndex];
+            item.insert(QStringLiteral("meshIndex"),
+                        static_cast<qint64>(instance.meshIndex));
+            item.insert(QStringLiteral("position"), transform.position);
+            item.insert(QStringLiteral("rotation"), transform.rotation);
+            item.insert(QStringLiteral("scale"), transform.scale);
+            item.insert(QStringLiteral("sourceVisible"), instance.visible);
+            item.insert(QStringLiteral("castsShadows"),
+                        instance.castsShadows);
+            item.insert(QStringLiteral("lodLevel"),
+                        static_cast<qint64>(instance.lodLevel));
+            item.insert(QStringLiteral("lodFarDistance"),
+                        instance.lodFarDistance);
+            item.insert(
+                    QStringLiteral("vertexColors"),
+                    mesh.hasVertexColors);
+            item.insert(
+                    QStringLiteral("blockName"),
+                    QString::fromStdString(instance.provenance.blockName));
+            item.insert(
+                    QStringLiteral("collection"),
+                    QString::fromStdString(instance.provenance.collection));
+            item.insert(
+                    QStringLiteral("descriptorPath"),
+                    QString::fromStdString(
+                            instance.provenance.descriptorPath));
+            result.visualInstances.push_back(std::move(item));
+
+            if (!instance.visible || instance.lodLevel != 0u) {
+                continue;
+            }
+            result.visualTriangleCount +=
+                    static_cast<qint64>(mesh.indices.size() / 3u);
+            const QVector3D minimum = ToQt(mesh.boundsMin);
+            const QVector3D maximum = ToQt(mesh.boundsMax);
+            for (int corner = 0; corner < 8; ++corner) {
+                const QVector3D local(
+                        (corner & 1) != 0 ? maximum.x() : minimum.x(),
+                        (corner & 2) != 0 ? maximum.y() : minimum.y(),
+                        (corner & 4) != 0 ? maximum.z() : minimum.z());
+                const QVector3D world =
+                        TransformPoint(instance.worldTransform, local);
+                if (!hasVisualBounds) {
+                    result.visualBoundsMin = world;
+                    result.visualBoundsMax = world;
+                    hasVisualBounds = true;
+                } else {
+                    ExpandBounds(world,
+                                 result.visualBoundsMin,
+                                 result.visualBoundsMax);
+                }
+            }
+        }
+        if (!hasVisualBounds) {
+            result.visualBoundsMin = result.track.boundsMin;
+            result.visualBoundsMax = result.track.boundsMax;
+        }
 
         for (const PhysicsSandboxEllipsoid &ellipsoid :
              scene.carEllipsoids) {
@@ -432,6 +727,10 @@ QVariantList RaceViewerController::carEllipsoids() const {
     return carEllipsoids_;
 }
 
+QVariantList RaceViewerController::visualInstances() const {
+    return visualInstances_;
+}
+
 QVariantList RaceViewerController::runOptions() const {
     QVariantList options;
     options.reserve(static_cast<qsizetype>(runs_.size()));
@@ -538,6 +837,22 @@ QString RaceViewerController::statusText() const {
 
 qint64 RaceViewerController::triangleCount() const {
     return triangleCount_;
+}
+
+qint64 RaceViewerController::visualTriangleCount() const {
+    return visualTriangleCount_;
+}
+
+qint64 RaceViewerController::visualMeshCount() const {
+    return static_cast<qint64>(visualGeometries_.size());
+}
+
+qint64 RaceViewerController::materialCount() const {
+    return materialCount_;
+}
+
+qint64 RaceViewerController::diagnosticCount() const {
+    return diagnosticCount_;
 }
 
 qint64 RaceViewerController::ellipsoidCount() const {
@@ -706,7 +1021,7 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
     // nodes on some Qt Quick 3D backends.
     setLoading(true);
     setStatusText(QStringLiteral(
-            "Loading collision geometry and sampling replay..."));
+            "Loading visual geometry, materials, and replay..."));
 
     const std::uint64_t loadSerial = ++loadSerial_;
     QThread *const thread = QThread::create(
@@ -776,11 +1091,52 @@ void RaceViewerController::applyLoadResult(
             false,
             result.track.boundsMin,
             result.track.boundsMax);
+    std::vector<std::unique_ptr<RaceGeometry>> visualGeometries;
+    visualGeometries.reserve(result.visualMeshes.size());
+    for (RaceViewerVisualMeshBuffers &mesh : result.visualMeshes) {
+        auto geometry = std::make_unique<RaceGeometry>();
+        geometry->setIndexedMesh(
+                std::move(mesh.vertices),
+                std::move(mesh.indices),
+                static_cast<int>(sizeof(VisualVertex)),
+                mesh.hasNormals,
+                mesh.hasTangents,
+                mesh.hasUv0,
+                mesh.hasUv1,
+                mesh.hasVertexColors,
+                mesh.boundsMin,
+                mesh.boundsMax,
+                mesh.subsets);
+        visualGeometries.push_back(std::move(geometry));
+    }
+    QVariantList visualInstances;
+    visualInstances.reserve(result.visualInstances.size());
+    for (QVariant &entry : result.visualInstances) {
+        QVariantMap item = entry.toMap();
+        const qint64 meshIndex =
+                item.value(QStringLiteral("meshIndex")).toLongLong();
+        if (meshIndex < 0 ||
+            meshIndex >= static_cast<qint64>(visualGeometries.size())) {
+            continue;
+        }
+        item.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(static_cast<QObject *>(
+                        visualGeometries[
+                                static_cast<std::size_t>(meshIndex)].get())));
+        visualInstances.push_back(std::move(item));
+    }
+    visualGeometries_ = std::move(visualGeometries);
+    visualInstances_ = std::move(visualInstances);
     carEllipsoids_ = std::move(result.carEllipsoids);
     triangleCount_ = result.triangleCount;
+    visualTriangleCount_ = result.visualTriangleCount;
+    materialCount_ = result.materialCount;
+    diagnosticCount_ = result.diagnosticCount;
     sceneRadius_ = std::max(
             1.0, 0.5 * static_cast<double>(
-                    (result.track.boundsMax - result.track.boundsMin).length()));
+                    (result.visualBoundsMax -
+                     result.visualBoundsMin).length()));
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
@@ -792,7 +1148,7 @@ void RaceViewerController::applyLoadResult(
               std::move(result.frames),
               true);
     applyPendingRunIfReady();
-    setStatusText(QStringLiteral("Replay loaded"));
+    setStatusText(QStringLiteral("Replay and visual map loaded"));
     if (!queuedReplayLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();

@@ -43,6 +43,28 @@ bool ModelsHaveState(const QList<QObject *> &models,
     return true;
 }
 
+int VisibleModelCount(const QList<QObject *> &models) {
+    return static_cast<int>(std::count_if(
+            models.cbegin(),
+            models.cend(),
+            [](const QObject *model) {
+                return model->property("visible").toBool();
+            }));
+}
+
+bool ModelsHaveGeometry(const QList<QObject *> &models,
+                        int expectedCount) {
+    return models.size() == expectedCount &&
+            std::all_of(
+                    models.cbegin(),
+                    models.cend(),
+                    [](const QObject *model) {
+                        const QVariant geometry =
+                                model->property("geometry");
+                        return geometry.isValid() && !geometry.isNull();
+                    });
+}
+
 bool FilledModelsHaveBakedRunPalettes(
         const QList<QObject *> &models,
         const QList<QObject *> &materials,
@@ -170,6 +192,9 @@ int main(int argc, char **argv) {
                             QStringLiteral("trackFilledModel"));
                     QObject *const wire = root->findChild<QObject *>(
                             QStringLiteral("trackWireModel"));
+                    QObject *const renderModeSelector =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("renderModeSelector"));
                     auto *const timeline = root->findChild<
                             forevertas::viewer::RaceTimelineItem *>(
                             QStringLiteral("raceTimeline"));
@@ -1058,7 +1083,8 @@ int main(int argc, char **argv) {
                             250,
                             &application,
                             [&, filled, wire, quickWindow, runSelector,
-                             baselineTickCount, bestPosition]() {
+                             renderModeSelector, baselineTickCount,
+                             bestPosition]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1074,6 +1100,10 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "runCarWireModel"));
+                                const QList<QObject *> visualModels =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualModel"));
                                 const int expectedCarModels =
                                         static_cast<int>(
                                                 viewer.ellipsoidCount() *
@@ -1098,9 +1128,25 @@ int main(int argc, char **argv) {
                                         !filledGeometry.isNull() &&
                                         wireGeometry.isValid() &&
                                         !wireGeometry.isNull();
+                                const int initialVisibleVisualModels =
+                                        VisibleModelCount(visualModels);
                                 const bool initialModelState =
-                                        filled->property("visible").toBool() &&
+                                        !filled->property("visible").toBool() &&
                                         !wire->property("visible").toBool() &&
+                                        renderModeSelector != nullptr &&
+                                        renderModeSelector
+                                                        ->property("currentValue")
+                                                        .toString() ==
+                                                QStringLiteral("textured") &&
+                                        visualModels.size() ==
+                                                viewer.visualInstances().size() &&
+                                        viewer.visualTriangleCount() > 0 &&
+                                        viewer.visualMeshCount() > 0 &&
+                                        viewer.materialCount() > 0 &&
+                                        initialVisibleVisualModels > 0 &&
+                                        ModelsHaveGeometry(
+                                                visualModels,
+                                                visualModels.size()) &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&
@@ -1162,13 +1208,40 @@ int main(int argc, char **argv) {
                                                 QStringLiteral("best") &&
                                         viewer.tickCount() == 3 &&
                                         (viewer.carPosition() - bestPosition)
-                                                        .length() < 0.001f;
+                                                .length() < 0.001f;
 
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("collision"));
+                                QCoreApplication::processEvents();
+                                const bool collisionModeState =
+                                        filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        ModelsHaveState(
+                                                visualModels,
+                                                visualModels.size(),
+                                                false);
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("material-debug"));
+                                QCoreApplication::processEvents();
+                                const bool materialDebugState =
+                                        !filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels;
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("textured"));
                                 root->setProperty("wireframeMode", true);
                                 QCoreApplication::processEvents();
                                 const bool wireframeState =
                                         !filled->property("visible").toBool() &&
                                         wire->property("visible").toBool() &&
+                                        ModelsHaveState(
+                                                visualModels,
+                                                visualModels.size(),
+                                                false) &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         false) &&
@@ -1178,6 +1251,10 @@ int main(int argc, char **argv) {
                                 root->setProperty("wireframeMode", false);
                                 QCoreApplication::processEvents();
                                 const bool restoredState =
+                                        !filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&
@@ -1191,6 +1268,8 @@ int main(int argc, char **argv) {
                                                 bestSelectedInitially &&
                                                 baselineSelected &&
                                                 bestReselected &&
+                                                collisionModeState &&
+                                                materialDebugState &&
                                                 wireframeState && restoredState &&
                                                 editorStructure
                                         ? 0
@@ -1206,6 +1285,16 @@ int main(int argc, char **argv) {
                                             << carFilledMaterials.size()
                                             << ", wireModels="
                                             << carWireModels.size()
+                                            << ", visualModels="
+                                            << visualModels.size()
+                                            << ", visualInstances="
+                                            << viewer.visualInstances().size()
+                                            << ", visualTriangles="
+                                            << viewer.visualTriangleCount()
+                                            << ", visualMeshes="
+                                            << viewer.visualMeshCount()
+                                            << ", materials="
+                                            << viewer.materialCount()
                                             << ", expectedModels="
                                             << expectedCarModels
                                             << ", initial="
@@ -1216,6 +1305,10 @@ int main(int argc, char **argv) {
                                             << baselineSelected
                                             << ", bestReselected="
                                             << bestReselected
+                                            << ", collisionMode="
+                                            << collisionModeState
+                                            << ", materialDebug="
+                                            << materialDebugState
                                             << ", wireframe="
                                             << wireframeState
                                             << ", restored=" << restoredState
