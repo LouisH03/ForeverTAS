@@ -3,6 +3,7 @@
 #include "viewer/race_viewer_controller.h"
 
 #include <QApplication>
+#include <QColor>
 #include <QCoreApplication>
 #include <QInputDevice>
 #include <QQmlApplicationEngine>
@@ -256,8 +257,16 @@ int main(int argc, char **argv) {
                                     QStringLiteral("renderModeSelector"));
                     QObject *const viewCamera = root->findChild<QObject *>(
                             QStringLiteral("viewCamera"));
+                    QObject *const mapEnvironment =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("mapEnvironment"));
+                    QObject *const daySkyTexture =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("daySkyTexture"));
                     QObject *const mainMapLight = root->findChild<QObject *>(
                             QStringLiteral("mainMapLight"));
+                    QObject *const fillMapLight = root->findChild<QObject *>(
+                            QStringLiteral("fillMapLight"));
                     auto *const timeline = root->findChild<
                             forevertas::viewer::RaceTimelineItem *>(
                             QStringLiteral("raceTimeline"));
@@ -1133,7 +1142,8 @@ int main(int argc, char **argv) {
                             250, &application,
                             [&, filled, wire, quickWindow, runSelector,
                              renderModeSelector, viewCamera,
-                             mainMapLight, baselineTickCount, bestPosition]() {
+                             mapEnvironment, daySkyTexture, mainMapLight,
+                             fillMapLight, baselineTickCount, bestPosition]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1287,6 +1297,43 @@ int main(int argc, char **argv) {
                                                                          "ws")
                                                                     .toBool();
                                                 });
+                                const QColor skyTopColor =
+                                        daySkyTexture != nullptr
+                                        ? daySkyTexture
+                                                  ->property("skyTopColor")
+                                                  .value<QColor>()
+                                        : QColor();
+                                const bool daylightEnvironment =
+                                        mapEnvironment != nullptr &&
+                                        daySkyTexture != nullptr &&
+                                        mainMapLight != nullptr &&
+                                        fillMapLight != nullptr &&
+                                        mapEnvironment
+                                                        ->property(
+                                                                "probeExposure")
+                                                        .toDouble() >=
+                                                0.5 &&
+                                        daySkyTexture
+                                                        ->property("skyEnergy")
+                                                        .toDouble() >=
+                                                1.0 &&
+                                        daySkyTexture
+                                                        ->property("sunEnergy")
+                                                        .toDouble() >=
+                                                1.0 &&
+                                        skyTopColor.isValid() &&
+                                        skyTopColor.blue() >
+                                                skyTopColor.green() &&
+                                        skyTopColor.green() >
+                                                skyTopColor.red() &&
+                                        mainMapLight
+                                                        ->property("brightness")
+                                                        .toDouble() >=
+                                                1.0 &&
+                                        fillMapLight
+                                                        ->property("brightness")
+                                                        .toDouble() >
+                                                0.0;
 
                                 const bool bestSelectedInitially =
                                         viewer.runCount() == 2 &&
@@ -1430,6 +1477,7 @@ int main(int argc, char **argv) {
                                                         wireframeState &&
                                                         restoredState &&
                                                         optimizedRenderState &&
+                                                        daylightEnvironment &&
                                                         editorStructure
                                                 ? 0
                                                 : 1;
@@ -1474,6 +1522,8 @@ int main(int argc, char **argv) {
                                             << ", restored=" << restoredState
                                             << ", optimizedRenderState="
                                             << optimizedRenderState
+                                            << ", daylightEnvironment="
+                                            << daylightEnvironment
                                             << ", clipNear="
                                             << (viewCamera
                                                         ? viewCamera

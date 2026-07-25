@@ -56,6 +56,13 @@ objects. Static geometry is rebuilt only after a successful replay reload;
 playback updates car transforms without touching map resources. Map shadows
 are disabled by default.
 
+The textured viewport uses Qt Quick 3D's procedural environment map as both a
+blue daytime skybox and an image-based light probe. ACES tone mapping keeps the
+sunlit concrete and emissive surfaces below clipping, while a warm directional
+key and restrained cool fill keep the stadium readable without enabling costly
+map shadows. The environment and light levels are covered by the QML smoke
+test.
+
 The default scene includes authored blocks, the enclosing stadium
 environment, intentional generated stadium objects, and `StadiumGrassClip`
 meshes that restore real block-side and ground-cover geometry. Dense blade
@@ -94,3 +101,5 @@ pre-optimization reference. The corrected textured frame is captured in
 [`evidence/tasmania-textured-optimized.png`](evidence/tasmania-textured-optimized.png).
 Restored grass clips and the corrected ground-cover material are shown in
 [`evidence/tasmania-grass-clips.png`](evidence/tasmania-grass-clips.png).
+The latter two captures use the final daytime environment and the `7.86s`
+TASmania runtime frame.

@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Shapes
 import QtQml.Models
 import QtQuick3D
+import QtQuick3D.Helpers
 import "settings"
 import ForeverTAS.Viewer 1.0
 
@@ -320,10 +321,36 @@ ApplicationWindow {
                         anchors.fill: parent
 
                         environment: SceneEnvironment {
-                            backgroundMode: SceneEnvironment.Color
-                            clearColor: "#181b19"
+                            objectName: "mapEnvironment"
+                            backgroundMode: SceneEnvironment.SkyBox
                             antialiasingMode: SceneEnvironment.MSAA
                             antialiasingQuality: SceneEnvironment.Medium
+                            tonemapMode: SceneEnvironment.TonemapModeAces
+                            probeExposure: 0.75
+                            specularAAEnabled: true
+
+                            lightProbe: Texture {
+                                textureData: ProceduralSkyTextureData {
+                                    objectName: "daySkyTexture"
+                                    textureQuality:
+                                        ProceduralSkyTextureData.SkyTextureQualityLow
+                                    skyTopColor: "#0587d1"
+                                    skyHorizonColor: "#75c9ef"
+                                    skyCurve: 0.22
+                                    skyEnergy: 2.2
+                                    groundBottomColor: "#5f7258"
+                                    groundHorizonColor: "#d5e4d5"
+                                    groundCurve: 0.1
+                                    groundEnergy: 0.45
+                                    sunColor: "#fff0c8"
+                                    sunLatitude: 52
+                                    sunLongitude: -32
+                                    sunAngleMin: 0.6
+                                    sunAngleMax: 4
+                                    sunCurve: 0.2
+                                    sunEnergy: 1.35
+                                }
+                            }
                         }
 
                         Node {
@@ -348,10 +375,10 @@ ApplicationWindow {
 
                         DirectionalLight {
                             objectName: "mainMapLight"
-                            eulerRotation.x: -55
-                            eulerRotation.y: -30
-                            brightness: 1.25
-                            color: "#fff8e8"
+                            eulerRotation.x: -52
+                            eulerRotation.y: -32
+                            brightness: 1.2
+                            color: "#fff3d7"
                             castsShadow: false
                         }
 
@@ -359,8 +386,8 @@ ApplicationWindow {
                             objectName: "fillMapLight"
                             eulerRotation.x: -20
                             eulerRotation.y: 145
-                            brightness: 0.55
-                            color: "#b8d8ef"
+                            brightness: 0.35
+                            color: "#b9dbf2"
                             castsShadow: false
                         }
 
