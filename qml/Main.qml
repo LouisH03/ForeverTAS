@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtQml.Models
 import QtQuick3D
 import "settings"
 import ForeverTAS.Viewer 1.0
@@ -338,11 +339,100 @@ ApplicationWindow {
                             castsShadow: false
                         }
 
+                        Instantiator {
+                            id: visualMaterialCache
+                            model: window.viewer.visualMaterials
+
+                            delegate: PrincipledMaterial {
+                                required property var modelData
+
+                                objectName: "trackVisualMaterial"
+                                Texture {
+                                    id: replacementBaseMap
+                                    objectName: "trackVisualBaseTexture"
+                                    source: modelData.baseTexture
+                                    tilingModeHorizontal: Texture.Repeat
+                                    tilingModeVertical: Texture.Repeat
+                                    scaleU: modelData.textureScale
+                                    scaleV: modelData.textureScale
+                                    generateMipmaps: true
+                                    mipFilter: Texture.Linear
+                                }
+
+                                Texture {
+                                    id: replacementNormalMap
+                                    objectName: "trackVisualNormalTexture"
+                                    source: modelData.normalTexture
+                                    tilingModeHorizontal: Texture.Repeat
+                                    tilingModeVertical: Texture.Repeat
+                                    scaleU: modelData.textureScale
+                                    scaleV: modelData.textureScale
+                                    generateMipmaps: true
+                                    mipFilter: Texture.Linear
+                                }
+
+                                lighting:
+                                    PrincipledMaterial.FragmentLighting
+                                baseColor: window.renderMode ===
+                                           "neutral"
+                                           ? "#aeb3af"
+                                           : (window.renderMode ===
+                                              "material-debug"
+                                              ? modelData.debugColor
+                                              : modelData.baseColor)
+                                baseColorMap: window.renderMode ===
+                                              "textured"
+                                              ? replacementBaseMap
+                                              : null
+                                normalMap: window.renderMode ===
+                                           "textured"
+                                           ? replacementNormalMap
+                                           : null
+                                roughness: window.renderMode ===
+                                           "neutral"
+                                           ? 0.74
+                                           : modelData.roughness
+                                metalness: window.renderMode ===
+                                           "neutral"
+                                           ? 0
+                                           : modelData.metalness
+                                opacity: modelData.opacity
+                                alphaMode: modelData.opacity < 0.999
+                                           ? PrincipledMaterial.Blend
+                                           : PrincipledMaterial.Opaque
+                                cullMode: modelData.twoSided
+                                          ? Material.NoCulling
+                                          : Material.BackFaceCulling
+                                vertexColorsEnabled:
+                                    modelData.vertexColors
+                                    && window.renderMode === "textured"
+                                emissiveFactor: window.renderMode ===
+                                                "textured"
+                                                ? Qt.vector3d(
+                                                      modelData.baseColor.r
+                                                      * modelData.emissiveStrength,
+                                                      modelData.baseColor.g
+                                                      * modelData.emissiveStrength,
+                                                      modelData.baseColor.b
+                                                      * modelData.emissiveStrength)
+                                                : Qt.vector3d(0, 0, 0)
+                            }
+                        }
+
                         Repeater3D {
                             model: window.viewer.visualInstances
 
                             delegate: Model {
                                 required property var modelData
+                                readonly property int materialBindingIndex:
+                                    modelData.materialBindingIndex
+                                readonly property var sharedMaterial: {
+                                    const cacheSize = visualMaterialCache.count
+                                    return cacheSize > 0
+                                           ? visualMaterialCache.objectAt(
+                                                 materialBindingIndex)
+                                           : null
+                                }
 
                                 objectName: "trackVisualModel"
                                 visible: window.viewer.loaded
@@ -356,78 +446,8 @@ ApplicationWindow {
                                 scale: modelData.scale
                                 castsShadows: modelData.castsShadows
 
-                                Texture {
-                                    id: replacementBaseMap
-                                    source: modelData.baseTexture
-                                    tilingModeHorizontal: Texture.Repeat
-                                    tilingModeVertical: Texture.Repeat
-                                    scaleU: modelData.textureScale
-                                    scaleV: modelData.textureScale
-                                    generateMipmaps: true
-                                    mipFilter: Texture.Linear
-                                }
-
-                                Texture {
-                                    id: replacementNormalMap
-                                    source: modelData.normalTexture
-                                    tilingModeHorizontal: Texture.Repeat
-                                    tilingModeVertical: Texture.Repeat
-                                    scaleU: modelData.textureScale
-                                    scaleV: modelData.textureScale
-                                    generateMipmaps: true
-                                    mipFilter: Texture.Linear
-                                }
-
-                                PrincipledMaterial {
-                                    id: replacementMaterial
-                                    lighting:
-                                        PrincipledMaterial.FragmentLighting
-                                    baseColor: window.renderMode ===
-                                               "neutral"
-                                               ? "#aeb3af"
-                                               : (window.renderMode ===
-                                                  "material-debug"
-                                                  ? modelData.debugColor
-                                                  : modelData.baseColor)
-                                    baseColorMap: window.renderMode ===
-                                                  "textured"
-                                                  ? replacementBaseMap
-                                                  : null
-                                    normalMap: window.renderMode ===
-                                               "textured"
-                                               ? replacementNormalMap
-                                               : null
-                                    roughness: window.renderMode ===
-                                               "neutral"
-                                               ? 0.74
-                                               : modelData.roughness
-                                    metalness: window.renderMode ===
-                                               "neutral"
-                                               ? 0
-                                               : modelData.metalness
-                                    opacity: modelData.opacity
-                                    alphaMode: modelData.opacity < 0.999
-                                               ? PrincipledMaterial.Blend
-                                               : PrincipledMaterial.Opaque
-                                    cullMode: modelData.twoSided
-                                              ? Material.NoCulling
-                                              : Material.BackFaceCulling
-                                    vertexColorsEnabled:
-                                        modelData.vertexColors
-                                        && window.renderMode === "textured"
-                                    emissiveFactor: window.renderMode ===
-                                                    "textured"
-                                                    ? Qt.vector3d(
-                                                          modelData.baseColor.r
-                                                          * modelData.emissiveStrength,
-                                                          modelData.baseColor.g
-                                                          * modelData.emissiveStrength,
-                                                          modelData.baseColor.b
-                                                          * modelData.emissiveStrength)
-                                                    : Qt.vector3d(0, 0, 0)
-                                }
-
-                                materials: [replacementMaterial]
+                                materials: sharedMaterial
+                                           ? [sharedMaterial] : []
                             }
                         }
 

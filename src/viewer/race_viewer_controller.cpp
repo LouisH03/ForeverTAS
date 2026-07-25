@@ -490,6 +490,11 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
         result.diagnosticCount +=
                 static_cast<qint64>(renderScene->diagnostics.size());
 
+        struct MaterialBindingKey {
+            std::uint32_t materialIndex = 0u;
+            bool vertexColors = false;
+        };
+        std::vector<MaterialBindingKey> materialBindings;
         bool hasVisualBounds = false;
         for (const PhysicsSandboxRenderInstance &instance :
              renderScene->instances) {
@@ -502,9 +507,32 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
                     renderScene->meshes[instance.meshIndex];
             const DecomposedTransform transform =
                     Decompose(instance.worldTransform);
-            QVariantMap item = materials[instance.materialIndex];
+            std::size_t materialBindingIndex = 0u;
+            for (; materialBindingIndex < materialBindings.size();
+                 ++materialBindingIndex) {
+                const MaterialBindingKey &binding =
+                        materialBindings[materialBindingIndex];
+                if (binding.materialIndex == instance.materialIndex &&
+                    binding.vertexColors == mesh.hasVertexColors) {
+                    break;
+                }
+            }
+            if (materialBindingIndex == materialBindings.size()) {
+                materialBindings.push_back(
+                        {instance.materialIndex, mesh.hasVertexColors});
+                QVariantMap binding = materials[instance.materialIndex];
+                binding.insert(QStringLiteral("sourceMaterialIndex"),
+                               static_cast<qint64>(instance.materialIndex));
+                binding.insert(QStringLiteral("vertexColors"),
+                               mesh.hasVertexColors);
+                result.visualMaterials.push_back(std::move(binding));
+            }
+
+            QVariantMap item;
             item.insert(QStringLiteral("meshIndex"),
                         static_cast<qint64>(instance.meshIndex));
+            item.insert(QStringLiteral("materialBindingIndex"),
+                        static_cast<qint64>(materialBindingIndex));
             item.insert(QStringLiteral("position"), transform.position);
             item.insert(QStringLiteral("rotation"), transform.rotation);
             item.insert(QStringLiteral("scale"), transform.scale);
@@ -515,9 +543,6 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
                         static_cast<qint64>(instance.lodLevel));
             item.insert(QStringLiteral("lodFarDistance"),
                         instance.lodFarDistance);
-            item.insert(
-                    QStringLiteral("vertexColors"),
-                    mesh.hasVertexColors);
             item.insert(
                     QStringLiteral("blockName"),
                     QString::fromStdString(instance.provenance.blockName));
@@ -729,6 +754,10 @@ QVariantList RaceViewerController::carEllipsoids() const {
 
 QVariantList RaceViewerController::visualInstances() const {
     return visualInstances_;
+}
+
+QVariantList RaceViewerController::visualMaterials() const {
+    return visualMaterials_;
 }
 
 QVariantList RaceViewerController::runOptions() const {
@@ -1127,6 +1156,7 @@ void RaceViewerController::applyLoadResult(
         visualInstances.push_back(std::move(item));
     }
     visualGeometries_ = std::move(visualGeometries);
+    visualMaterials_ = std::move(result.visualMaterials);
     visualInstances_ = std::move(visualInstances);
     carEllipsoids_ = std::move(result.carEllipsoids);
     triangleCount_ = result.triangleCount;

@@ -70,6 +70,7 @@ struct RaceViewerLoadResult {
     QString replayPath;
     RaceViewerMeshBuffers track;
     std::vector<RaceViewerVisualMeshBuffers> visualMeshes;
+    QVariantList visualMaterials;
     QVariantList visualInstances;
     QVector3D visualBoundsMin{};
     QVector3D visualBoundsMax{};
@@ -95,6 +96,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(QVariantList carEllipsoids READ carEllipsoids NOTIFY
                        sceneChanged)
     Q_PROPERTY(QVariantList visualInstances READ visualInstances NOTIFY
+                       sceneChanged)
+    Q_PROPERTY(QVariantList visualMaterials READ visualMaterials NOTIFY
                        sceneChanged)
     Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
     Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
@@ -135,6 +138,7 @@ public:
     QQuick3DGeometry *ellipsoidWireGeometry();
     QVariantList carEllipsoids() const;
     QVariantList visualInstances() const;
+    QVariantList visualMaterials() const;
     QVariantList runOptions() const;
     QVariantList runPoses() const;
     qint64 runCount() const;
@@ -227,6 +231,7 @@ private:
     std::optional<PendingRun> pendingRun_;
     QVariantList carEllipsoids_;
     QVariantList visualInstances_;
+    QVariantList visualMaterials_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
     QString statusText_ = QStringLiteral("No replay loaded");

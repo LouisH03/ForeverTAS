@@ -1,8 +1,11 @@
 #include "viewer/material_classifier.h"
 #include "viewer/race_geometry.h"
 
+#include <QCryptographicHash>
+#include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QSet>
 
 #include <array>
 #include <cstdint>
@@ -103,18 +106,41 @@ bool TestReplacementParametersAndTextures() {
             "asphalt", "concrete", "dirt", "grass", "metal",
             "painted_metal", "plastic", "rubber", "glass", "signage",
             "emissive", "water", "neutral", "unknown"}};
+    QSet<QByteArray> baseTextureHashes;
+    QSet<QByteArray> normalTextureHashes;
     for (const char *name : names) {
         const QString root = QStringLiteral(FOREVERTAS_SOURCE_DIR) +
                 QStringLiteral("/assets/materials/");
+        const QString basePath = root + QString::fromLatin1(name) +
+                QStringLiteral("_base.png");
+        const QString normalPath = root + QString::fromLatin1(name) +
+                QStringLiteral("_normal.png");
         okay &= Check(
-                !QImage(root + QString::fromLatin1(name) +
-                        QStringLiteral("_base.png")).isNull(),
+                !QImage(basePath).isNull(),
                 "replacement base texture did not load");
         okay &= Check(
-                !QImage(root + QString::fromLatin1(name) +
-                        QStringLiteral("_normal.png")).isNull(),
+                !QImage(normalPath).isNull(),
                 "replacement normal texture did not load");
+        QFile baseFile(basePath);
+        QFile normalFile(normalPath);
+        okay &= Check(baseFile.open(QIODevice::ReadOnly) &&
+                              normalFile.open(QIODevice::ReadOnly),
+                      "replacement texture bytes were not readable");
+        if (baseFile.isOpen()) {
+            baseTextureHashes.insert(QCryptographicHash::hash(
+                    baseFile.readAll(), QCryptographicHash::Sha256));
+        }
+        if (normalFile.isOpen()) {
+            normalTextureHashes.insert(QCryptographicHash::hash(
+                    normalFile.readAll(), QCryptographicHash::Sha256));
+        }
     }
+    okay &= Check(baseTextureHashes.size() ==
+                          static_cast<qsizetype>(names.size()),
+                  "replacement base textures are not visibly distinct assets");
+    okay &= Check(normalTextureHashes.size() ==
+                          static_cast<qsizetype>(names.size()),
+                  "replacement normal textures are not distinct assets");
     return okay;
 }
 
@@ -152,6 +178,45 @@ bool TestIndexedGeometry() {
                       "indexed geometry did not retain its index buffer");
     okay &= Check(geometry.attributeCount() == 7,
                   "indexed geometry did not expose every vertex attribute");
+    constexpr std::array<QQuick3DGeometry::Attribute::Semantic, 7> semantics{{
+            QQuick3DGeometry::Attribute::IndexSemantic,
+            QQuick3DGeometry::Attribute::PositionSemantic,
+            QQuick3DGeometry::Attribute::NormalSemantic,
+            QQuick3DGeometry::Attribute::TangentSemantic,
+            QQuick3DGeometry::Attribute::TexCoord0Semantic,
+            QQuick3DGeometry::Attribute::TexCoord1Semantic,
+            QQuick3DGeometry::Attribute::ColorSemantic}};
+    constexpr std::array<int, 7> offsets{{
+            0,
+            0,
+            3 * static_cast<int>(sizeof(float)),
+            6 * static_cast<int>(sizeof(float)),
+            9 * static_cast<int>(sizeof(float)),
+            11 * static_cast<int>(sizeof(float)),
+            13 * static_cast<int>(sizeof(float))}};
+    constexpr std::array<QQuick3DGeometry::Attribute::ComponentType, 7>
+            componentTypes{{
+                    QQuick3DGeometry::Attribute::U32Type,
+                    QQuick3DGeometry::Attribute::F32Type,
+                    QQuick3DGeometry::Attribute::F32Type,
+                    QQuick3DGeometry::Attribute::F32Type,
+                    QQuick3DGeometry::Attribute::F32Type,
+                    QQuick3DGeometry::Attribute::F32Type,
+                    QQuick3DGeometry::Attribute::F32Type}};
+    okay &= Check(geometry.stride() ==
+                          FloatCount * static_cast<int>(sizeof(float)),
+                  "indexed geometry stride was incorrect");
+    for (int index = 0; index < geometry.attributeCount(); ++index) {
+        const QQuick3DGeometry::Attribute attribute =
+                geometry.attribute(index);
+        okay &= Check(
+                attribute.semantic == semantics[static_cast<std::size_t>(index)] &&
+                        attribute.offset ==
+                                offsets[static_cast<std::size_t>(index)] &&
+                        attribute.componentType ==
+                                componentTypes[static_cast<std::size_t>(index)],
+                "indexed geometry attribute layout was incorrect");
+    }
     okay &= Check(geometry.subsetCount() == 1 &&
                           geometry.subsetOffset(0) == 0 &&
                           geometry.subsetCount(0) == 3,

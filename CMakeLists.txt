@@ -237,16 +237,40 @@ if(BUILD_TESTING)
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
 
+        add_executable(forevertas-render-scene-data-smoke
+            tests/render_scene_data_smoke.cpp)
+        target_link_libraries(forevertas-render-scene-data-smoke PRIVATE
+            forevertas_core)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-render-scene-data-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-render-scene-data
+                 COMMAND forevertas-render-scene-data-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-render-scene-data PROPERTIES
+            TIMEOUT 180)
+
+        add_executable(forevertas-viewer-reload-smoke
+            tests/viewer_reload_smoke.cpp)
+        target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
+            forevertas_gui
+            Qt6::Gui)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(forevertas-viewer-reload-smoke PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME forevertas-viewer-reload-same
+                 COMMAND forevertas-viewer-reload-smoke
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-viewer-reload-same PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 180)
+
         if(FOREVERTAS_TEST_SECOND_REPLAY)
-            add_executable(forevertas-viewer-reload-smoke
-                tests/viewer_reload_smoke.cpp)
-            target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
-                forevertas_gui
-                Qt6::Gui)
-            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-                target_compile_options(forevertas-viewer-reload-smoke PRIVATE
-                    -Wall -Wextra -Werror)
-            endif()
             add_test(NAME forevertas-viewer-reload
                      COMMAND forevertas-viewer-reload-smoke
                          "${FOREVERTAS_TEST_PACK_DIRECTORY}"
@@ -303,6 +327,11 @@ if(BUILD_TESTING)
 
         add_executable(forevertas-viewer-qml-smoke
             tests/viewer_qml_smoke.cpp)
+        qt_add_resources(forevertas-viewer-qml-smoke
+            "replacement-materials-test"
+            PREFIX "/materials"
+            BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/materials"
+            FILES ${FOREVERTAS_REPLACEMENT_TEXTURES})
         target_compile_definitions(forevertas-viewer-qml-smoke PRIVATE
             FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(forevertas-viewer-qml-smoke PRIVATE

@@ -27,9 +27,24 @@ use an emissive factor, and thin classes disable culling.
 
 Each Validator mesh becomes one indexed `QQuick3DGeometry` with position,
 normal, tangent, UV0, optional UV1, color and subset declarations. Instances
-reuse those geometry objects and apply their own transform and material.
+reuse those geometry objects, and material bindings with the same final
+material and vertex-color mode reuse one `PrincipledMaterial` and its two
+`Texture` objects. Each instance applies only its transform and shared binding.
 Static geometry is rebuilt only after a successful replay reload; playback
 updates car transforms without touching map resources.
 
 The viewer provides textured, neutral, collision, wireframe and material-debug
 modes. Collision and wireframe continue to use the legacy collision buffers.
+
+## Verification
+
+The runtime data smoke test loads a native replay through the installed pack,
+then audits the immutable public render scene rather than internal builders. It
+checks indexed visual meshes, authored UVs and normals, material ranges,
+instance transforms, provenance, shared mesh reuse, and separation from the
+collision triangle stream. The viewer smoke tests additionally verify the
+exact Qt vertex layout, packaged replacement images, shared QML material and
+texture objects, every render mode, and transactional repeated reloads.
+
+[`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is a captured
+textured frame from the final pinned build after loading the TASmania replay.

@@ -320,17 +320,30 @@ int main(int argc, char **argv) {
                                                     QStringLiteral(
                                                             "lodLevel"))
                                             .toLongLong() == 0) {
-                            visibleMaterialClasses.insert(
-                                    instance
-                                            .value(QStringLiteral(
-                                                    "materialClass"))
-                                            .toString());
+                            const qint64 bindingIndex = instance
+                                    .value(QStringLiteral(
+                                            "materialBindingIndex"))
+                                    .toLongLong();
+                            if (bindingIndex >= 0 &&
+                                bindingIndex <
+                                        viewer.visualMaterials().size()) {
+                                visibleMaterialClasses.insert(
+                                        viewer.visualMaterials()
+                                                .at(bindingIndex)
+                                                .toMap()
+                                                .value(QStringLiteral(
+                                                        "materialClass"))
+                                                .toString());
+                            }
                         }
                     }
                     const bool sceneValid = viewer.triangleCount() > 0 &&
                             viewer.visualTriangleCount() > 0 &&
                             viewer.visualMeshCount() > 0 &&
                             viewer.materialCount() > 0 &&
+                            !viewer.visualMaterials().isEmpty() &&
+                            viewer.visualMaterials().size() <
+                                    viewer.visualInstances().size() &&
                             !viewer.visualInstances().isEmpty() &&
                             viewer.visualInstances().size() >
                                     viewer.visualMeshCount() &&

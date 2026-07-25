@@ -1,6 +1,5 @@
 #include "viewer/race_viewer_controller.h"
 
-#include <QFileInfo>
 #include <QGuiApplication>
 #include <QTimer>
 
@@ -21,12 +20,6 @@ int main(int argc, char **argv) {
         std::cerr << "usage: forevertas-viewer-reload <Packs> <first> <second>\n";
         return 2;
     }
-    if (QFileInfo(QString::fromLocal8Bit(argv[2])).canonicalFilePath() ==
-        QFileInfo(QString::fromLocal8Bit(argv[3])).canonicalFilePath()) {
-        std::cerr << "reload regression requires two distinct replay files\n";
-        return 2;
-    }
-
     QGuiApplication application(argc, argv);
     forevertas::viewer::RaceViewerController viewer;
     const QString packs = QString::fromLocal8Bit(argv[1]);
@@ -37,6 +30,7 @@ int main(int argc, char **argv) {
     int completedLoads = 0;
     bool loadInProgress = false;
     bool preservedSceneDuringReload = true;
+    QObject *previousVisualGeometry = nullptr;
     bool finished = false;
     int exitCode = 1;
 
@@ -60,6 +54,10 @@ int main(int argc, char **argv) {
 
                 const bool sceneValid = viewer.ellipsoidCount() > 0 &&
                         viewer.runCount() == 1 && viewer.tickCount() > 0 &&
+                        viewer.visualTriangleCount() > 0 &&
+                        viewer.visualMeshCount() > 0 &&
+                        !viewer.visualMaterials().isEmpty() &&
+                        !viewer.visualInstances().isEmpty() &&
                         Finite(viewer.carPosition()) &&
                         !viewer.carRotation().isNull();
                 if (!sceneValid) {
@@ -69,10 +67,25 @@ int main(int argc, char **argv) {
                     application.quit();
                     return;
                 }
+                previousVisualGeometry = viewer.visualInstances()
+                                                 .front()
+                                                 .toMap()
+                                                 .value(QStringLiteral(
+                                                         "geometry"))
+                                                 .value<QObject *>();
 
                 ++completedLoads;
                 if (completedLoads < 3) {
                     viewer.loadReplay(packs, replays[completedLoads]);
+                    const QObject *const publishedAfterRequest =
+                            viewer.visualInstances()
+                                    .front()
+                                    .toMap()
+                                    .value(QStringLiteral("geometry"))
+                                    .value<QObject *>();
+                    preservedSceneDuringReload &=
+                            viewer.loaded() &&
+                            publishedAfterRequest == previousVisualGeometry;
                     return;
                 }
                 finished = true;
@@ -86,7 +99,7 @@ int main(int argc, char **argv) {
     QTimer::singleShot(180000, &application, [&]() {
         if (finished) return;
         finished = true;
-        std::cerr << "distinct replay reload timed out\n";
+        std::cerr << "replay reload timed out\n";
         application.quit();
     });
     viewer.loadReplay(packs, replays[0]);

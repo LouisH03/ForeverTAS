@@ -65,6 +65,65 @@ bool ModelsHaveGeometry(const QList<QObject *> &models,
                     });
 }
 
+bool VisualMaterialsAreBoundAndShared(
+        const QList<QObject *> &models,
+        const QList<QObject *> &materials,
+        const QList<QObject *> &baseTextures,
+        const QList<QObject *> &normalTextures,
+        const forevertas::viewer::RaceViewerController &viewer) {
+    if (materials.size() != viewer.visualMaterials().size() ||
+        baseTextures.size() != materials.size() ||
+        normalTextures.size() != materials.size() ||
+        materials.isEmpty() || materials.size() >= models.size()) {
+        return false;
+    }
+
+    QSet<QObject *> baseTextureObjects(baseTextures.cbegin(),
+                                       baseTextures.cend());
+    QSet<QObject *> normalTextureObjects(normalTextures.cbegin(),
+                                         normalTextures.cend());
+    for (const QObject *texture : baseTextures) {
+        const QUrl source = texture->property("source").toUrl();
+        if (source.scheme() != QStringLiteral("qrc") ||
+            !source.path().startsWith(QStringLiteral("/materials/"))) {
+            return false;
+        }
+    }
+    for (const QObject *texture : normalTextures) {
+        const QUrl source = texture->property("source").toUrl();
+        if (source.scheme() != QStringLiteral("qrc") ||
+            !source.path().startsWith(QStringLiteral("/materials/"))) {
+            return false;
+        }
+    }
+
+    for (const QObject *material : materials) {
+        QObject *const baseMap =
+                material->property("baseColorMap").value<QObject *>();
+        QObject *const normalMap =
+                material->property("normalMap").value<QObject *>();
+        if (!baseTextureObjects.contains(baseMap) ||
+            !normalTextureObjects.contains(normalMap)) {
+            return false;
+        }
+    }
+
+    QSet<QObject *> usedMaterials;
+    bool repeatedBinding = false;
+    for (const QObject *model : models) {
+        const int binding = model->property("materialBindingIndex").toInt();
+        QObject *const material =
+                model->property("sharedMaterial").value<QObject *>();
+        if (binding < 0 || binding >= materials.size() ||
+            material != materials.at(binding)) {
+            return false;
+        }
+        repeatedBinding |= usedMaterials.contains(material);
+        usedMaterials.insert(material);
+    }
+    return repeatedBinding && usedMaterials.size() < models.size();
+}
+
 bool FilledModelsHaveBakedRunPalettes(
         const QList<QObject *> &models,
         const QList<QObject *> &materials,
@@ -1104,6 +1163,18 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "trackVisualModel"));
+                                const QList<QObject *> visualMaterials =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualMaterial"));
+                                const QList<QObject *> visualBaseTextures =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualBaseTexture"));
+                                const QList<QObject *> visualNormalTextures =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trackVisualNormalTexture"));
                                 const int expectedCarModels =
                                         static_cast<int>(
                                                 viewer.ellipsoidCount() *
@@ -1147,6 +1218,12 @@ int main(int argc, char **argv) {
                                         ModelsHaveGeometry(
                                                 visualModels,
                                                 visualModels.size()) &&
+                                        VisualMaterialsAreBoundAndShared(
+                                                visualModels,
+                                                visualMaterials,
+                                                visualBaseTextures,
+                                                visualNormalTextures,
+                                                viewer) &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&
@@ -1212,6 +1289,30 @@ int main(int argc, char **argv) {
 
                                 root->setProperty(
                                         "renderMode",
+                                        QStringLiteral("neutral"));
+                                QCoreApplication::processEvents();
+                                const bool neutralModeState =
+                                        !filled->property("visible").toBool() &&
+                                        !wire->property("visible").toBool() &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels &&
+                                        std::all_of(
+                                                visualMaterials.cbegin(),
+                                                visualMaterials.cend(),
+                                                [](const QObject *material) {
+                                                    return material
+                                                            ->property(
+                                                                    "baseColorMap")
+                                                            .value<QObject *>() ==
+                                                            nullptr &&
+                                                            material
+                                                                    ->property(
+                                                                            "normalMap")
+                                                                    .value<QObject *>() ==
+                                                            nullptr;
+                                                });
+                                root->setProperty(
+                                        "renderMode",
                                         QStringLiteral("collision"));
                                 QCoreApplication::processEvents();
                                 const bool collisionModeState =
@@ -1268,6 +1369,7 @@ int main(int argc, char **argv) {
                                                 bestSelectedInitially &&
                                                 baselineSelected &&
                                                 bestReselected &&
+                                                neutralModeState &&
                                                 collisionModeState &&
                                                 materialDebugState &&
                                                 wireframeState && restoredState &&
@@ -1307,6 +1409,8 @@ int main(int argc, char **argv) {
                                             << bestReselected
                                             << ", collisionMode="
                                             << collisionModeState
+                                            << ", neutralMode="
+                                            << neutralModeState
                                             << ", materialDebug="
                                             << materialDebugState
                                             << ", wireframe="
