@@ -139,7 +139,13 @@ int main(int argc, char **argv) {
                         forevertas::PhysicsBackend::Reference) ||
             !RunBackend(argv[1],
                         argv[2],
-                        forevertas::PhysicsBackend::OptimizedCpu)) {
+                        forevertas::PhysicsBackend::OptimizedCpu)
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+            || !RunBackend(argv[1],
+                           argv[2],
+                           forevertas::PhysicsBackend::SpeculativeTicking)
+#endif
+        ) {
             return 1;
         }
         return 0;

@@ -217,7 +217,13 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
 
     bool okay = Check(controller.canStart(),
                       "valid defaults and paths did not enable Start");
-    okay &= Check(controller.simulationBackendOptions().size() == 2,
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+    constexpr qsizetype expectedBackendCount = 3;
+#else
+    constexpr qsizetype expectedBackendCount = 2;
+#endif
+    okay &= Check(controller.simulationBackendOptions().size() ==
+                          expectedBackendCount,
                   "unexpected physics backend count");
     okay &= Check(controller.simulationBackendId() ==
                           QStringLiteral("reference"),
@@ -231,6 +237,13 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                                   QStringLiteral("optimized-cpu"),
                                   QStringLiteral("CPU Optimized")),
                   "physics backend metadata was not exposed");
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+    okay &= Check(HasBackendOption(
+                          controller.simulationBackendOptions(),
+                          QStringLiteral("speculative-ticking"),
+                          QStringLiteral("Speculative Ticking")),
+                  "SpeculativeTicking metadata was not exposed");
+#endif
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
     okay &= Check(controller.modifierOptions().size() == 5,
@@ -277,6 +290,15 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           QStringLiteral("optimized-cpu") &&
                           controller.canStart(),
                   "CPU Optimized backend was not selectable");
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+    controller.setSimulationBackendId(
+            QStringLiteral("speculative-ticking"));
+    okay &= Check(controller.simulationBackendId() ==
+                          QStringLiteral("speculative-ticking") &&
+                          controller.canStart(),
+                  "SpeculativeTicking backend was not selectable");
+    controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
+#endif
     controller.setSimulationBackendId(QStringLiteral("missing-backend"));
     okay &= Check(controller.simulationBackendId() ==
                           QStringLiteral("optimized-cpu"),

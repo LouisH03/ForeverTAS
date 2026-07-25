@@ -1016,9 +1016,12 @@ ApplicationWindow {
                         Label {
                             Layout.fillWidth: true
                             text: window.controller.simulationBackendId
-                                  === "optimized-cpu"
-                                  ? qsTr("Uses the deterministic optimized CPU physics path.")
-                                  : qsTr("Uses the authoritative reference physics path.")
+                                  === "speculative-ticking"
+                                  ? qsTr("Uses the speculative ticking backend with exact optimized CPU fallback.")
+                                  : window.controller.simulationBackendId
+                                    === "optimized-cpu"
+                                    ? qsTr("Uses the deterministic optimized CPU physics path.")
+                                    : qsTr("Uses the authoritative reference physics path.")
                             color: "#667064"
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11

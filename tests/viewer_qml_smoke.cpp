@@ -420,7 +420,11 @@ int main(int argc, char **argv) {
                     bool backendSelectorValid =
                             simulationBackendCombo != nullptr &&
                             simulationBackendCombo->property("count").toInt() ==
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+                                    3 &&
+#else
                                     2 &&
+#endif
                             simulationBackendCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("reference") &&
@@ -440,6 +444,24 @@ int main(int argc, char **argv) {
                                                 ->property("displayText")
                                                 .toString() ==
                                         QStringLiteral("CPU Optimized");
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+                        if (backendSelectorValid) {
+                            controller.setSimulationBackendId(
+                                    QStringLiteral("speculative-ticking"));
+                            QCoreApplication::processEvents();
+                            backendSelectorValid =
+                                    simulationBackendCombo
+                                                    ->property("currentValue")
+                                                    .toString() ==
+                                            QStringLiteral(
+                                                    "speculative-ticking") &&
+                                    simulationBackendCombo
+                                                    ->property("displayText")
+                                                    .toString() ==
+                                            QStringLiteral(
+                                                    "Speculative Ticking");
+                        }
+#endif
                         controller.setSimulationBackendId(
                                 QStringLiteral("reference"));
                         QCoreApplication::processEvents();

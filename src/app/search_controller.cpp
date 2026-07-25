@@ -78,7 +78,7 @@ QString SearchController::replayPath() const {
 }
 
 QVariantList SearchController::simulationBackendOptions() const {
-    return {
+    QVariantList options{
             QVariantMap{
                     {QStringLiteral("id"),
                      BackendId(PhysicsBackend::Reference)},
@@ -89,6 +89,14 @@ QVariantList SearchController::simulationBackendOptions() const {
                     {QStringLiteral("label"),
                      QStringLiteral("CPU Optimized")}},
     };
+#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+    options.push_back(QVariantMap{
+            {QStringLiteral("id"),
+             BackendId(PhysicsBackend::SpeculativeTicking)},
+            {QStringLiteral("label"),
+             QStringLiteral("Speculative Ticking")}});
+#endif
+    return options;
 }
 
 QString SearchController::simulationBackendId() const {
