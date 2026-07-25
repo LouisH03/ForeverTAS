@@ -419,8 +419,13 @@ bool TestStaticBatching() {
     PhysicsSandboxRenderMesh groundCoverMesh = TriangleMesh();
     groundCoverMesh.vertices[1].position.x = 32.0f;
     groundCoverMesh.vertices[2].position.z = 32.0f;
+    for (auto &vertex : groundCoverMesh.vertices) {
+        vertex.normal = {0.312249f, 0.95f, 0.0f};
+    }
     groundCoverMesh.boundsMax = {32.0f, 0.0f, 32.0f};
+    PhysicsSandboxRenderMesh overlappingGroundCoverMesh = groundCoverMesh;
     scene.meshes.push_back(std::move(groundCoverMesh));
+    scene.meshes.push_back(std::move(overlappingGroundCoverMesh));
     scene.meshes.push_back(GrassBladeMesh());
     PhysicsSandboxRenderMaterial turbo;
     turbo.surfaceMaterialId = 7u;
@@ -455,8 +460,13 @@ bool TestStaticBatching() {
     clip.worldTransform.translation = {-5.0f, 0.0f, 0.0f};
     scene.instances.push_back(clip);
 
+    PhysicsSandboxRenderInstance overlappingClip = clip;
+    overlappingClip.meshIndex = 2u;
+    overlappingClip.worldTransform.translation = {11.0f, 0.0f, 0.0f};
+    scene.instances.push_back(overlappingClip);
+
     PhysicsSandboxRenderInstance blades = clip;
-    blades.meshIndex = 2u;
+    blades.meshIndex = 3u;
     blades.purpose = PhysicsSandboxScenePurpose::PlacedBlock;
     blades.provenance.blockName = "StadiumGrass";
     scene.instances.push_back(blades);
@@ -475,9 +485,9 @@ bool TestStaticBatching() {
     const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
     const auto repeat = forevertas::viewer::BuildStaticVisualBatches(scene);
     bool okay = Check(
-            result.visibleSourceInstanceCount == 5u &&
-                    result.defaultVisibleInstanceCount == 3u &&
-                    result.defaultTriangleCount == 3u &&
+            result.visibleSourceInstanceCount == 6u &&
+                    result.defaultVisibleInstanceCount == 4u &&
+                    result.defaultTriangleCount == 4u &&
                     result.duplicateInstanceCount == 1u &&
                     result.skippedGrassBladeInstanceCount == 1u &&
                     result.skippedGrassBladeTriangleCount == 32u &&
@@ -510,6 +520,7 @@ bool TestStaticBatching() {
         bool uvInsideTile = true;
         bool hasUTangent = false;
         bool hasVTangent = false;
+        bool hasFlatNormals = true;
         for (std::size_t vertexIndex = 0u; vertexIndex < vertexCount;
              ++vertexIndex) {
             const float *vertex = vertices + vertexIndex * FloatCount;
@@ -519,6 +530,9 @@ bool TestStaticBatching() {
                             vertex[10] <= 1.001f;
             hasUTangent |= std::fabs(vertex[6]) > 0.9f;
             hasVTangent |= std::fabs(vertex[8]) > 0.9f;
+            hasFlatNormals &= std::fabs(vertex[3]) < 0.001f &&
+                    std::fabs(vertex[4] - 1.0f) < 0.001f &&
+                    std::fabs(vertex[5]) < 0.001f;
         }
         const auto *indices = reinterpret_cast<const std::uint32_t *>(
                 grassClipBatch->indices.constData());
@@ -550,15 +564,16 @@ bool TestStaticBatching() {
         okay &= Check(
                 grassClipBatch->triangleCount > 1u &&
                         vertexCount > 3u && uvInsideTile && hasUTangent &&
-                        hasVTangent && !hasDegenerateTriangle &&
-                        std::fabs(projectedArea - 512.0f) < 0.01f &&
+                        hasVTangent && hasFlatNormals &&
+                        !hasDegenerateTriangle &&
+                        std::fabs(projectedArea - 896.0f) < 0.01f &&
                         repeatedGrassClipBatch != repeat.batches.cend() &&
                         grassClipBatch->vertices ==
                                 repeatedGrassClipBatch->vertices &&
                         grassClipBatch->indices ==
                                 repeatedGrassClipBatch->indices,
-                "grass ground did not receive stable randomized four-meter "
-                "tiles");
+                "grass ground did not receive stable, overlap-free randomized "
+                "four-meter tiles with geometric flat normals");
     }
     const auto dirtBatch = std::find_if(
             result.batches.cbegin(), result.batches.cend(),

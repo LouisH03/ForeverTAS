@@ -313,6 +313,28 @@ enum class ProjectionAxis {
     Z,
 };
 
+struct CoverageTileKey {
+    ProjectionAxis axis = ProjectionAxis::Y;
+    std::int64_t tileU = 0;
+    std::int64_t tileV = 0;
+
+    auto asTuple() const {
+        return std::tie(axis, tileU, tileV);
+    }
+};
+
+bool operator<(const CoverageTileKey &left, const CoverageTileKey &right) {
+    return left.asTuple() < right.asTuple();
+}
+
+struct CoveragePolygon {
+    float planeCoordinate = 0.0f;
+    std::vector<QVector2D> vertices;
+};
+
+using TerrainCoverage =
+        std::map<CoverageTileKey, std::vector<CoveragePolygon>>;
+
 ProjectionAxis DominantProjectionAxis(const QVector3D &normal) {
     const QVector3D absoluteNormal(std::fabs(normal.x()),
                                    std::fabs(normal.y()),
@@ -470,6 +492,195 @@ std::vector<VisualVertex> ClipProjectedPolygon(
     return output;
 }
 
+float AxisCoordinate(const VisualVertex &vertex, ProjectionAxis axis) {
+    switch (axis) {
+    case ProjectionAxis::X:
+        return vertex.position[0];
+    case ProjectionAxis::Y:
+        return vertex.position[1];
+    case ProjectionAxis::Z:
+        return vertex.position[2];
+    }
+    return vertex.position[1];
+}
+
+bool AxisAlignedPlane(const std::vector<VisualVertex> &polygon,
+                      ProjectionAxis axis, float &planeCoordinate) {
+    if (polygon.empty()) {
+        return false;
+    }
+    float minimum = AxisCoordinate(polygon.front(), axis);
+    float maximum = minimum;
+    for (const VisualVertex &vertex : polygon) {
+        const float coordinate = AxisCoordinate(vertex, axis);
+        minimum = std::min(minimum, coordinate);
+        maximum = std::max(maximum, coordinate);
+    }
+    constexpr float CoplanarEpsilon = 0.001f;
+    planeCoordinate = (minimum + maximum) * 0.5f;
+    return maximum - minimum <= CoplanarEpsilon;
+}
+
+float EdgeSide(const QVector2D &a, const QVector2D &b,
+               const QVector2D &point) {
+    return (b.x() - a.x()) * (point.y() - a.y()) -
+           (b.y() - a.y()) * (point.x() - a.x());
+}
+
+float SignedArea(const std::vector<QVector2D> &polygon) {
+    float twiceArea = 0.0f;
+    for (std::size_t index = 0u; index < polygon.size(); ++index) {
+        const QVector2D &a = polygon[index];
+        const QVector2D &b = polygon[(index + 1u) % polygon.size()];
+        twiceArea += a.x() * b.y() - a.y() * b.x();
+    }
+    return twiceArea * 0.5f;
+}
+
+std::vector<VisualVertex> ClipAgainstProjectedEdge(
+        const std::vector<VisualVertex> &input, ProjectionAxis axis,
+        float scale, const QVector2D &edgeStart, const QVector2D &edgeEnd,
+        bool keepInside) {
+    std::vector<VisualVertex> output;
+    if (input.empty()) {
+        return output;
+    }
+    output.reserve(input.size() + 1u);
+    const auto side = [&](const VisualVertex &vertex) {
+        return EdgeSide(
+                edgeStart, edgeEnd,
+                ProjectedUv({vertex.position[0], vertex.position[1],
+                             vertex.position[2]},
+                            axis, scale));
+    };
+    constexpr float HalfPlaneEpsilon = 1.0e-6f;
+    VisualVertex previous = input.back();
+    float previousSide = side(previous);
+    bool previousInside = keepInside ? previousSide >= -HalfPlaneEpsilon
+                                     : previousSide <= HalfPlaneEpsilon;
+    for (const VisualVertex &current : input) {
+        const float currentSide = side(current);
+        const bool currentInside =
+                keepInside ? currentSide >= -HalfPlaneEpsilon
+                           : currentSide <= HalfPlaneEpsilon;
+        if (currentInside != previousInside) {
+            const float denominator = previousSide - currentSide;
+            const float amount =
+                    std::fabs(denominator) > 1.0e-12f
+                            ? std::clamp(previousSide / denominator, 0.0f, 1.0f)
+                            : 0.0f;
+            output.push_back(LerpVertex(previous, current, amount));
+        }
+        if (currentInside) {
+            output.push_back(current);
+        }
+        previous = current;
+        previousSide = currentSide;
+        previousInside = currentInside;
+    }
+    return output;
+}
+
+std::vector<std::vector<VisualVertex>> SubtractCoveredPolygon(
+        const std::vector<VisualVertex> &subject,
+        const std::vector<QVector2D> &cover, ProjectionAxis axis, float scale) {
+    if (subject.size() < 3u || cover.size() < 3u) {
+        return {subject};
+    }
+    std::vector<QVector2D> orientedCover = cover;
+    if (SignedArea(orientedCover) < 0.0f) {
+        std::reverse(orientedCover.begin(), orientedCover.end());
+    }
+
+    std::vector<std::vector<VisualVertex>> uncovered;
+    std::vector<VisualVertex> intersection = subject;
+    // Peeling the outside of each convex edge partitions subject - cover
+    // without introducing another polygon dependency.
+    for (std::size_t edge = 0u; edge < orientedCover.size(); ++edge) {
+        const QVector2D &start = orientedCover[edge];
+        const QVector2D &end =
+                orientedCover[(edge + 1u) % orientedCover.size()];
+        std::vector<VisualVertex> outside = ClipAgainstProjectedEdge(
+                intersection, axis, scale, start, end, false);
+        if (outside.size() >= 3u) {
+            uncovered.push_back(std::move(outside));
+        }
+        intersection = ClipAgainstProjectedEdge(intersection, axis, scale,
+                                                start, end, true);
+        if (intersection.size() < 3u) {
+            break;
+        }
+    }
+    return uncovered;
+}
+
+void SimplifyProjectedPolygon(std::vector<VisualVertex> &polygon,
+                              ProjectionAxis axis, float scale) {
+    const auto projected = [axis, scale](const VisualVertex &vertex) {
+        return ProjectedUv(
+                {vertex.position[0], vertex.position[1], vertex.position[2]},
+                axis, scale);
+    };
+    constexpr float PositionEpsilonSquared = 1.0e-10f;
+    for (std::size_t index = 0u; polygon.size() >= 2u &&
+                                index < polygon.size();) {
+        const std::size_t next = (index + 1u) % polygon.size();
+        if ((projected(polygon[index]) - projected(polygon[next]))
+                    .lengthSquared() <= PositionEpsilonSquared) {
+            polygon.erase(polygon.begin() + static_cast<std::ptrdiff_t>(next));
+            if (next == 0u) {
+                index = 0u;
+            }
+        } else {
+            ++index;
+        }
+    }
+
+    bool removed = true;
+    while (removed && polygon.size() >= 3u) {
+        removed = false;
+        for (std::size_t index = 0u; index < polygon.size(); ++index) {
+            const QVector2D previous =
+                    projected(polygon[(index + polygon.size() - 1u) %
+                                      polygon.size()]);
+            const QVector2D current = projected(polygon[index]);
+            const QVector2D next =
+                    projected(polygon[(index + 1u) % polygon.size()]);
+            if (std::fabs(EdgeSide(previous, next, current)) <= 1.0e-6f) {
+                polygon.erase(
+                        polygon.begin() + static_cast<std::ptrdiff_t>(index));
+                removed = true;
+                break;
+            }
+        }
+    }
+}
+
+void FlattenAxisAlignedNormal(std::vector<VisualVertex> &polygon,
+                              ProjectionAxis axis,
+                              const QVector3D &authoredNormal) {
+    QVector3D normal;
+    switch (axis) {
+    case ProjectionAxis::X:
+        normal = {1.0f, 0.0f, 0.0f};
+        break;
+    case ProjectionAxis::Y:
+        normal = {0.0f, 1.0f, 0.0f};
+        break;
+    case ProjectionAxis::Z:
+        normal = {0.0f, 0.0f, 1.0f};
+        break;
+    }
+    if (QVector3D::dotProduct(normal, authoredNormal) < 0.0f) {
+        normal = -normal;
+    }
+    for (VisualVertex &vertex : polygon) {
+        vertex.normal[0] = normal.x();
+        vertex.normal[1] = normal.y();
+        vertex.normal[2] = normal.z();
+    }
+}
+
 VisualVertex TransformVertex(const VisualVertex &source,
                              const PhysicsSandboxTransform &transform) {
     VisualVertex vertex = source;
@@ -515,6 +726,47 @@ void AppendVertex(BatchAccumulator &batch, const VisualVertex &vertex) {
     }
 }
 
+void AppendRandomizedFragment(BatchAccumulator &batch,
+                              std::vector<VisualVertex> &fragment,
+                              ProjectionAxis axis, float worldUvScale,
+                              std::int64_t tileU, std::int64_t tileV,
+                              unsigned quarterTurns) {
+    const std::uint32_t baseVertex =
+            static_cast<std::uint32_t>(batch.vertices.size());
+    for (VisualVertex &vertex : fragment) {
+        const QVector3D position(vertex.position[0], vertex.position[1],
+                                 vertex.position[2]);
+        QVector3D normal(vertex.normal[0], vertex.normal[1],
+                         vertex.normal[2]);
+        normal = normal.lengthSquared() > 1.0e-12f
+                         ? normal.normalized()
+                         : QVector3D(0.0f, 1.0f, 0.0f);
+        const QVector2D projectedUv =
+                ProjectedUv(position, axis, worldUvScale);
+        QVector3D tangent;
+        ApplyUvRotation(vertex,
+                        projectedUv.x() - static_cast<float>(tileU),
+                        projectedUv.y() - static_cast<float>(tileV), axis,
+                        quarterTurns, tangent);
+        tangent -= normal * QVector3D::dotProduct(normal, tangent);
+        tangent = tangent.lengthSquared() > 1.0e-12f
+                          ? tangent.normalized()
+                          : OrthogonalTangent(normal);
+        vertex.normal[0] = normal.x();
+        vertex.normal[1] = normal.y();
+        vertex.normal[2] = normal.z();
+        vertex.tangent[0] = tangent.x();
+        vertex.tangent[1] = tangent.y();
+        vertex.tangent[2] = tangent.z();
+        AppendVertex(batch, vertex);
+    }
+    for (std::uint32_t corner = 1u; corner + 1u < fragment.size(); ++corner) {
+        batch.indices.insert(batch.indices.end(),
+                             {baseVertex, baseVertex + corner,
+                              baseVertex + corner + 1u});
+    }
+}
+
 void AppendInstance(BatchAccumulator &batch,
                     const std::vector<VisualVertex> &sourceVertices,
                     const std::vector<std::uint32_t> &sourceIndices,
@@ -557,12 +809,16 @@ void AppendRandomizedTiledInstance(
         BatchAccumulator &batch,
         const std::vector<VisualVertex> &sourceVertices,
         const std::vector<std::uint32_t> &sourceIndices,
-        const PhysicsSandboxTransform &transform, float worldUvScale) {
+        const PhysicsSandboxTransform &transform, float worldUvScale,
+        TerrainCoverage *coverage) {
     std::vector<VisualVertex> vertices;
     vertices.reserve(sourceVertices.size());
     for (const VisualVertex &source : sourceVertices) {
         vertices.push_back(TransformVertex(source, transform));
     }
+    // Only earlier instances cover this one. Triangles within one authored
+    // mesh retain their original topology until the whole instance is done.
+    TerrainCoverage pendingCoverage;
 
     constexpr float BoundaryEpsilon = 1.0e-5f;
     for (std::size_t index = 0u; index + 2u < sourceIndices.size();
@@ -640,44 +896,72 @@ void AppendRandomizedTiledInstance(
 
                 const unsigned quarterTurns =
                         TileQuarterTurns(tileU, tileV, axis);
-                const std::uint32_t baseVertex =
-                        static_cast<std::uint32_t>(batch.vertices.size());
-                for (VisualVertex &vertex : polygon) {
-                    const QVector3D position(
-                            vertex.position[0], vertex.position[1],
-                            vertex.position[2]);
-                    QVector3D normal(vertex.normal[0], vertex.normal[1],
-                                     vertex.normal[2]);
-                    normal = normal.lengthSquared() > 1.0e-12f
-                                     ? normal.normalized()
-                                     : QVector3D(0.0f, 1.0f, 0.0f);
-                    const QVector2D projectedUv =
-                            ProjectedUv(position, axis, worldUvScale);
-                    QVector3D tangent;
-                    ApplyUvRotation(
-                            vertex,
-                            projectedUv.x() - static_cast<float>(tileU),
-                            projectedUv.y() - static_cast<float>(tileV), axis,
-                            quarterTurns, tangent);
-                    tangent -= normal * QVector3D::dotProduct(normal, tangent);
-                    tangent = tangent.lengthSquared() > 1.0e-12f
-                                      ? tangent.normalized()
-                                      : OrthogonalTangent(normal);
-                    vertex.normal[0] = normal.x();
-                    vertex.normal[1] = normal.y();
-                    vertex.normal[2] = normal.z();
-                    vertex.tangent[0] = tangent.x();
-                    vertex.tangent[1] = tangent.y();
-                    vertex.tangent[2] = tangent.z();
-                    AppendVertex(batch, vertex);
+                float planeCoordinate = 0.0f;
+                const bool axisAligned =
+                        AxisAlignedPlane(polygon, axis, planeCoordinate);
+                const CoverageTileKey coverageKey{axis, tileU, tileV};
+                std::vector<std::vector<VisualVertex>> uncovered{polygon};
+                if (axisAligned && coverage != nullptr) {
+                    constexpr float CoplanarEpsilon = 0.001f;
+                    const auto coveredTile = coverage->find(coverageKey);
+                    if (coveredTile != coverage->cend()) {
+                        for (const CoveragePolygon &covered :
+                             coveredTile->second) {
+                            if (std::fabs(covered.planeCoordinate -
+                                          planeCoordinate) >
+                                CoplanarEpsilon) {
+                                continue;
+                            }
+                            std::vector<std::vector<VisualVertex>> next;
+                            for (const auto &fragment : uncovered) {
+                                auto pieces = SubtractCoveredPolygon(
+                                        fragment, covered.vertices, axis,
+                                        worldUvScale);
+                                for (auto &piece : pieces) {
+                                    next.push_back(std::move(piece));
+                                }
+                            }
+                            uncovered = std::move(next);
+                            if (uncovered.empty()) {
+                                break;
+                            }
+                        }
+                    }
                 }
-                for (std::uint32_t corner = 1u;
-                     corner + 1u < polygon.size(); ++corner) {
-                    batch.indices.insert(
-                            batch.indices.end(),
-                            {baseVertex, baseVertex + corner,
-                             baseVertex + corner + 1u});
+
+                for (std::vector<VisualVertex> &fragment : uncovered) {
+                    SimplifyProjectedPolygon(fragment, axis, worldUvScale);
+                    if (fragment.size() < 3u) {
+                        continue;
+                    }
+                    std::vector<QVector2D> projectedFragment;
+                    projectedFragment.reserve(fragment.size());
+                    for (const VisualVertex &vertex : fragment) {
+                        projectedFragment.push_back(ProjectedUv(
+                                {vertex.position[0], vertex.position[1],
+                                 vertex.position[2]},
+                                axis, worldUvScale));
+                    }
+                    if (std::fabs(SignedArea(projectedFragment)) < 1.0e-5f) {
+                        continue;
+                    }
+                    if (axisAligned && coverage != nullptr) {
+                        FlattenAxisAlignedNormal(fragment, axis, averageNormal);
+                        pendingCoverage[coverageKey].push_back(
+                                {planeCoordinate, std::move(projectedFragment)});
+                    }
+                    AppendRandomizedFragment(batch, fragment, axis,
+                                             worldUvScale, tileU, tileV,
+                                             quarterTurns);
                 }
+            }
+        }
+    }
+    if (coverage != nullptr) {
+        for (auto &[key, polygons] : pendingCoverage) {
+            auto &coveredTile = (*coverage)[key];
+            for (auto &polygon : polygons) {
+                coveredTile.push_back(std::move(polygon));
             }
         }
     }
@@ -755,6 +1039,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
     }
 
     std::map<BatchKey, BatchAccumulator> accumulators;
+    std::map<BatchKey, TerrainCoverage> terrainCoverage;
     std::set<DuplicateInstanceKey> seenInstances;
     bool hasDefaultBounds = false;
     for (const PhysicsSandboxRenderInstance &instance : scene.instances) {
@@ -801,7 +1086,10 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
             AppendRandomizedTiledInstance(
                     accumulators[key], preparedMeshes[instance.meshIndex],
                     mesh.indices, instance.worldTransform,
-                    replacement.worldUvScale);
+                    replacement.worldUvScale,
+                    instance.purpose == PhysicsSandboxScenePurpose::Clip
+                            ? &terrainCoverage[key]
+                            : nullptr);
         } else {
             AppendInstance(accumulators[key],
                            preparedMeshes[instance.meshIndex], mesh.indices,
