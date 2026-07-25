@@ -428,6 +428,9 @@ bool TestStaticBatching() {
     PhysicsSandboxRenderMaterial concrete;
     concrete.surfaceMaterialId = 0u;
     scene.materials.push_back(concrete);
+    PhysicsSandboxRenderMaterial dirt;
+    dirt.surfaceMaterialId = 6u;
+    scene.materials.push_back(dirt);
 
     PhysicsSandboxRenderInstance placed;
     placed.meshIndex = 0u;
@@ -458,19 +461,27 @@ bool TestStaticBatching() {
     blades.provenance.blockName = "StadiumGrass";
     scene.instances.push_back(blades);
 
+    PhysicsSandboxRenderInstance dirtGround = clip;
+    dirtGround.materialIndex = 2u;
+    dirtGround.purpose = PhysicsSandboxScenePurpose::PlacedBlock;
+    dirtGround.provenance.blockName = "StadiumRoadDirtHigh";
+    dirtGround.worldTransform.translation = {35.0f, 0.0f, 0.0f};
+    scene.instances.push_back(dirtGround);
+
     PhysicsSandboxRenderInstance hidden = placed;
     hidden.visible = false;
     scene.instances.push_back(hidden);
 
     const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
+    const auto repeat = forevertas::viewer::BuildStaticVisualBatches(scene);
     bool okay = Check(
-            result.visibleSourceInstanceCount == 4u &&
-                    result.defaultVisibleInstanceCount == 2u &&
-                    result.defaultTriangleCount == 2u &&
+            result.visibleSourceInstanceCount == 5u &&
+                    result.defaultVisibleInstanceCount == 3u &&
+                    result.defaultTriangleCount == 3u &&
                     result.duplicateInstanceCount == 1u &&
                     result.skippedGrassBladeInstanceCount == 1u &&
                     result.skippedGrassBladeTriangleCount == 32u &&
-                    result.batches.size() == 2u,
+                    result.batches.size() == 3u,
             "static batch counts, blade removal, or duplicate suppression "
             "were incorrect");
     const auto turboBatch = std::find_if(
@@ -527,8 +538,6 @@ bool TestStaticBatching() {
             projectedArea += area;
             hasDegenerateTriangle |= area < 0.0001f;
         }
-        const auto repeat =
-                forevertas::viewer::BuildStaticVisualBatches(scene);
         const auto repeatedGrassClipBatch = std::find_if(
                 repeat.batches.cbegin(), repeat.batches.cend(),
                 [](const StaticVisualBatch &batch) {
@@ -551,6 +560,31 @@ bool TestStaticBatching() {
                 "grass ground did not receive stable randomized four-meter "
                 "tiles");
     }
+    const auto dirtBatch = std::find_if(
+            result.batches.cbegin(), result.batches.cend(),
+            [](const StaticVisualBatch &batch) {
+                return batch.materialClass == ReplacementMaterialClass::Dirt &&
+                       batch.purpose ==
+                               PhysicsSandboxScenePurpose::PlacedBlock &&
+                       batch.defaultVisible;
+            });
+    const auto repeatedDirtBatch = std::find_if(
+            repeat.batches.cbegin(), repeat.batches.cend(),
+            [](const StaticVisualBatch &batch) {
+                return batch.materialClass == ReplacementMaterialClass::Dirt &&
+                       batch.purpose ==
+                               PhysicsSandboxScenePurpose::PlacedBlock &&
+                       batch.defaultVisible;
+            });
+    okay &= Check(
+            dirtBatch != result.batches.cend() &&
+                    dirtBatch->triangleCount > 1u &&
+                    dirtBatch->vertices.size() >
+                            static_cast<qsizetype>(3u * 17u * sizeof(float)) &&
+                    repeatedDirtBatch != repeat.batches.cend() &&
+                    dirtBatch->vertices == repeatedDirtBatch->vertices &&
+                    dirtBatch->indices == repeatedDirtBatch->indices,
+            "dirt ground did not receive stable randomized four-meter tiles");
     if (turboBatch != result.batches.cend()) {
         constexpr std::size_t FloatCount = 17u;
         const auto *vertices = reinterpret_cast<const float *>(

@@ -389,8 +389,8 @@ void ApplyWorldUvProjection(VisualVertex &vertex,
     ApplyUvRotation(vertex, uv.x(), uv.y(), axis, 0u, tangent);
 }
 
-unsigned GrassTileQuarterTurns(std::int64_t tileU, std::int64_t tileV,
-                               ProjectionAxis axis) {
+unsigned TileQuarterTurns(std::int64_t tileU, std::int64_t tileV,
+                          ProjectionAxis axis) {
     const auto coordinateHash = [](std::int64_t coordinate) {
         const std::uint64_t bits = static_cast<std::uint64_t>(coordinate);
         return static_cast<std::uint32_t>(bits ^ (bits >> 32u));
@@ -553,7 +553,7 @@ void AppendInstance(BatchAccumulator &batch,
     ++batch.sourceInstanceCount;
 }
 
-void AppendRandomizedGrassInstance(
+void AppendRandomizedTiledInstance(
         BatchAccumulator &batch,
         const std::vector<VisualVertex> &sourceVertices,
         const std::vector<std::uint32_t> &sourceIndices,
@@ -639,7 +639,7 @@ void AppendRandomizedGrassInstance(
                 }
 
                 const unsigned quarterTurns =
-                        GrassTileQuarterTurns(tileU, tileV, axis);
+                        TileQuarterTurns(tileU, tileV, axis);
                 const std::uint32_t baseVertex =
                         static_cast<std::uint32_t>(batch.vertices.size());
                 for (VisualVertex &vertex : polygon) {
@@ -796,8 +796,9 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                 MakeBatchKey(materialClass, instance.purpose,
                              mesh.hasVertexColors, defaultVisible,
                              instance.worldTransform);
-        if (materialClass == ReplacementMaterialClass::Grass) {
-            AppendRandomizedGrassInstance(
+        if (materialClass == ReplacementMaterialClass::Grass ||
+            materialClass == ReplacementMaterialClass::Dirt) {
+            AppendRandomizedTiledInstance(
                     accumulators[key], preparedMeshes[instance.meshIndex],
                     mesh.indices, instance.worldTransform,
                     replacement.worldUvScale);
