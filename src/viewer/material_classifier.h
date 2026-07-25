@@ -6,6 +6,9 @@
 #include <QColor>
 #include <QString>
 
+#include <cstdint>
+#include <string>
+
 namespace forevertas::viewer {
 
 enum class ReplacementMaterialClass {
@@ -20,6 +23,9 @@ enum class ReplacementMaterialClass {
     Glass,
     Signage,
     Emissive,
+    Turbo,
+    Checkpoint,
+    StartFinish,
     Water,
     Neutral,
     Unknown,
@@ -41,9 +47,23 @@ struct ReplacementMaterial {
     bool twoSided = false;
 };
 
+struct MaterialSemanticContext {
+    std::string blockName;
+    std::string descriptorPath;
+    std::string componentIdentity;
+    std::uint32_t componentIndex = 0u;
+    forevervalidator::experimental::PhysicsSandboxScenePurpose purpose =
+            forevervalidator::experimental::PhysicsSandboxScenePurpose::
+                    Environment;
+};
+
 ReplacementMaterialClass ClassifyMaterial(
         const forevervalidator::experimental::PhysicsSandboxRenderMaterial
                 &material);
+ReplacementMaterialClass ClassifyMaterial(
+        const forevervalidator::experimental::PhysicsSandboxRenderMaterial
+                &material,
+        const MaterialSemanticContext &context);
 ReplacementMaterial ReplacementFor(
         ReplacementMaterialClass materialClass);
 QString MaterialClassName(ReplacementMaterialClass materialClass);

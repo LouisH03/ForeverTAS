@@ -51,6 +51,9 @@ bool ContainsAny(const std::string &text,
 }
 
 ReplacementMaterialClass ClassifyText(const std::string &text) {
+    if (ContainsAny(text, {"turbo", "booster", "boostpad"})) {
+        return ReplacementMaterialClass::Turbo;
+    }
     if (ContainsAny(text, {"water", "pool", "river"})) {
         return ReplacementMaterialClass::Water;
     }
@@ -99,6 +102,66 @@ ReplacementMaterialClass ClassifyText(const std::string &text) {
     return ReplacementMaterialClass::Unknown;
 }
 
+bool IsSurface(std::uint8_t surfaceId,
+               std::initializer_list<std::uint8_t> values) {
+    return std::find(values.begin(), values.end(), surfaceId) != values.end();
+}
+
+ReplacementMaterialClass ClassifySemanticContext(
+        const forevervalidator::experimental::PhysicsSandboxRenderMaterial
+                &material,
+        const MaterialSemanticContext &context) {
+    const std::string block = Normalize(context.blockName);
+    const std::string component =
+            Normalize(context.componentIdentity + " " + context.descriptorPath);
+    const std::uint8_t surface = material.surfaceMaterialId;
+
+    if (IsSurface(surface, {7u, 26u, 30u})) {
+        return ReplacementMaterialClass::Turbo;
+    }
+    if (material.water || surface == 13u) {
+        return ReplacementMaterialClass::Water;
+    }
+    if (ContainsAny(block, {"startline", "finishline", "multilap"})) {
+        if (surface == 28u) {
+            return ReplacementMaterialClass::StartFinish;
+        }
+        if (surface == 22u) {
+            return ReplacementMaterialClass::Emissive;
+        }
+    }
+    if (ContainsAny(block, {"checkpoint"})) {
+        if (surface == 28u) {
+            return ReplacementMaterialClass::Checkpoint;
+        }
+        if (surface == 22u) {
+            return ReplacementMaterialClass::Emissive;
+        }
+    }
+    if (ContainsAny(block, {"turbo"}) && surface == 22u) {
+        return ReplacementMaterialClass::Emissive;
+    }
+    if (ContainsAny(block, {"dirt"}) && IsSurface(surface, {5u, 6u, 8u, 17u})) {
+        return ReplacementMaterialClass::Dirt;
+    }
+    if (ContainsAny(block, {"road", "platform", "ramp", "loop"}) &&
+        IsSurface(surface, {1u, 16u, 18u, 19u})) {
+        return ReplacementMaterialClass::Asphalt;
+    }
+    if (ContainsAny(block, {"grass"}) && IsSurface(surface, {2u, 20u})) {
+        return ReplacementMaterialClass::Grass;
+    }
+    if (ContainsAny(block, {"pool"}) && surface == 13u) {
+        return ReplacementMaterialClass::Water;
+    }
+    if ((ContainsAny(block, {"pub", "sign", "banner"}) ||
+         ContainsAny(component, {"flags", "sign", "banner"})) &&
+        surface == 28u) {
+        return ReplacementMaterialClass::Signage;
+    }
+    return ReplacementMaterialClass::Unknown;
+}
+
 ReplacementMaterial Make(
         ReplacementMaterialClass materialClass,
         const char *name,
@@ -131,6 +194,18 @@ ReplacementMaterial Make(
 ReplacementMaterialClass ClassifyMaterial(
         const forevervalidator::experimental::PhysicsSandboxRenderMaterial
                 &material) {
+    return ClassifyMaterial(material, {});
+}
+
+ReplacementMaterialClass ClassifyMaterial(
+        const forevervalidator::experimental::PhysicsSandboxRenderMaterial
+                &material,
+        const MaterialSemanticContext &context) {
+    const ReplacementMaterialClass semantic =
+            ClassifySemanticContext(material, context);
+    if (semantic != ReplacementMaterialClass::Unknown) {
+        return semantic;
+    }
     if (material.water) {
         return ReplacementMaterialClass::Water;
     }
@@ -182,7 +257,7 @@ ReplacementMaterialClass ClassifyMaterial(
     case 7u:
     case 26u:
     case 30u:
-        return ReplacementMaterialClass::Emissive;
+        return ReplacementMaterialClass::Turbo;
     case 13u:
         return ReplacementMaterialClass::Water;
     case 15u:
@@ -251,10 +326,28 @@ ReplacementMaterial ReplacementFor(
         result.twoSided = true;
         return result;
     case ReplacementMaterialClass::Emissive:
-        result = Make(materialClass, "Emissive", "#dff8ec", "#ff4fd2",
-                      "emissive_base.png", "emissive_normal.png",
-                      0.28f, 0.0f, 0.25f);
-        result.emissiveStrength = 1.8f;
+        result = Make(materialClass, "Emissive", "#59d7aa", "#ff4fd2",
+                      "emissive_base.png", "emissive_normal.png", 0.28f, 0.0f,
+                      0.25f);
+        result.emissiveStrength = 0.7f;
+        return result;
+    case ReplacementMaterialClass::Turbo:
+        result = Make(materialClass, "Turbo", "#20cde1", "#00fff0",
+                      "turbo_base.png", "turbo_normal.png", 0.3f, 0.18f, 0.48f);
+        result.emissiveStrength = 0.55f;
+        return result;
+    case ReplacementMaterialClass::Checkpoint:
+        result = Make(materialClass, "Checkpoint", "#168bd2", "#168bd2",
+                      "checkpoint_base.png", "checkpoint_normal.png", 0.4f,
+                      0.08f, 0.55f);
+        result.emissiveStrength = 0.22f;
+        result.twoSided = true;
+        return result;
+    case ReplacementMaterialClass::StartFinish:
+        result = Make(materialClass, "Start / finish", "#2d3335", "#f3f4ef",
+                      "start_finish_base.png", "start_finish_normal.png", 0.52f,
+                      0.05f, 0.55f);
+        result.twoSided = true;
         return result;
     case ReplacementMaterialClass::Water:
         result = Make(materialClass, "Water", "#4e9cac", "#267cff",

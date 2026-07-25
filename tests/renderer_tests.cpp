@@ -1,5 +1,6 @@
 #include "viewer/material_classifier.h"
 #include "viewer/race_geometry.h"
+#include "viewer/visual_scene_pipeline.h"
 
 #include <QCryptographicHash>
 #include <QFile>
@@ -7,7 +8,9 @@
 #include <QImage>
 #include <QSet>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -16,9 +19,15 @@
 namespace {
 
 using forevertas::viewer::ClassifyMaterial;
+using forevertas::viewer::MaterialSemanticContext;
 using forevertas::viewer::ReplacementFor;
 using forevertas::viewer::ReplacementMaterialClass;
+using forevertas::viewer::StaticVisualBatch;
+using forevervalidator::experimental::PhysicsSandboxRenderInstance;
 using forevervalidator::experimental::PhysicsSandboxRenderMaterial;
+using forevervalidator::experimental::PhysicsSandboxRenderMesh;
+using forevervalidator::experimental::PhysicsSandboxRenderScene;
+using forevervalidator::experimental::PhysicsSandboxScenePurpose;
 
 bool Check(bool condition, const char *message) {
     if (!condition) {
@@ -86,6 +95,43 @@ bool TestClassification() {
     okay &= Check(ClassifyMaterial(renderTarget) ==
                           ReplacementMaterialClass::Neutral,
                   "render-target fallback was not deterministic");
+
+    const auto contextual = [](std::uint8_t surface, const char *block,
+                               const char *component = "") {
+        PhysicsSandboxRenderMaterial material = Named("UnclassifiedSurface");
+        material.surfaceMaterialId = surface;
+        MaterialSemanticContext context;
+        context.blockName = block;
+        context.componentIdentity = component;
+        return ClassifyMaterial(material, context);
+    };
+    okay &= Check(contextual(7u, "StadiumRoadMainTurbo") ==
+                          ReplacementMaterialClass::Turbo,
+                  "turbo surface did not receive its semantic override");
+    okay &= Check(contextual(28u, "StadiumRoadMainCheckpoint") ==
+                          ReplacementMaterialClass::Checkpoint,
+                  "checkpoint panel did not receive its semantic override");
+    okay &= Check(contextual(28u, "StadiumRoadMainFinishLine") ==
+                          ReplacementMaterialClass::StartFinish,
+                  "finish panel did not receive its semantic override");
+    okay &= Check(contextual(16u, "StadiumRoadMain") ==
+                          ReplacementMaterialClass::Asphalt,
+                  "road provenance did not classify asphalt");
+    okay &= Check(contextual(6u, "StadiumRoadDirtHigh") ==
+                          ReplacementMaterialClass::Dirt,
+                  "dirt-road provenance did not classify dirt");
+    okay &= Check(contextual(2u, "StadiumGrass") ==
+                          ReplacementMaterialClass::Grass,
+                  "grass provenance did not classify grass");
+    okay &= Check(contextual(13u, "StadiumPool") ==
+                          ReplacementMaterialClass::Water,
+                  "pool provenance did not classify water");
+    okay &= Check(contextual(28u, "", "Flags") ==
+                          ReplacementMaterialClass::Signage,
+                  "component identity did not classify signage");
+    okay &= Check(contextual(22u, "StadiumRoadMainStartLine") ==
+                          ReplacementMaterialClass::Emissive,
+                  "start-line light did not classify as emissive");
     return okay;
 }
 
@@ -102,10 +148,10 @@ bool TestReplacementParametersAndTextures() {
     okay &= Check(emissive.emissiveStrength > 0.0f,
                   "emissive replacement has no emission");
 
-    constexpr std::array<const char *, 14> names{{
-            "asphalt", "concrete", "dirt", "grass", "metal",
-            "painted_metal", "plastic", "rubber", "glass", "signage",
-            "emissive", "water", "neutral", "unknown"}};
+    constexpr std::array<const char *, 17> names{
+            {"asphalt", "concrete", "dirt", "grass", "metal", "painted_metal",
+             "plastic", "rubber", "glass", "signage", "emissive", "turbo",
+             "checkpoint", "start_finish", "water", "neutral", "unknown"}};
     QSet<QByteArray> baseTextureHashes;
     QSet<QByteArray> normalTextureHashes;
     for (const char *name : names) {
@@ -141,6 +187,140 @@ bool TestReplacementParametersAndTextures() {
     okay &= Check(normalTextureHashes.size() ==
                           static_cast<qsizetype>(names.size()),
                   "replacement normal textures are not distinct assets");
+    return okay;
+}
+
+bool TestClipPlanesAndPurposeFiltering() {
+    using forevertas::viewer::CalculateCameraClipPlanes;
+    using forevertas::viewer::IsDefaultVisualPurpose;
+    const auto closeCamera = CalculateCameraClipPlanes(
+            {0.0f, 2.0f, 30.0f}, 30.0f, {-100.0f, -10.0f, -150.0f},
+            {100.0f, 80.0f, 150.0f});
+    const auto farCamera = CalculateCameraClipPlanes(
+            {0.0f, 2.0f, 300.0f}, 300.0f, {-100.0f, -10.0f, -150.0f},
+            {100.0f, 80.0f, 150.0f});
+    const auto enclosingSky = CalculateCameraClipPlanes(
+            {0.0f, 2.0f, 3.0f}, 3.0f, {-28000.0f, -15000.0f, -28000.0f},
+            {29000.0f, 15000.0f, 29000.0f});
+    bool okay =
+            Check(closeCamera.nearPlane >= 0.1f &&
+                          closeCamera.farPlane > closeCamera.nearPlane &&
+                          closeCamera.farPlane < 5000.0f,
+                  "camera clip planes retained a forced 5000-unit far plane");
+    okay &= Check(farCamera.nearPlane > closeCamera.nearPlane &&
+                          farCamera.farPlane > closeCamera.farPlane,
+                  "camera clip planes did not respond to camera distance");
+    okay &= Check(enclosingSky.farPlane > 5000.0f &&
+                          enclosingSky.nearPlane < 1.0f &&
+                          enclosingSky.farPlane / enclosingSky.nearPlane <=
+                                  50001.0f,
+                  "enclosing sky bounds made close camera use unusable planes");
+    okay &= Check(
+            IsDefaultVisualPurpose(PhysicsSandboxScenePurpose::PlacedBlock) &&
+                    IsDefaultVisualPurpose(
+                            PhysicsSandboxScenePurpose::Environment) &&
+                    IsDefaultVisualPurpose(
+                            PhysicsSandboxScenePurpose::Generated) &&
+                    !IsDefaultVisualPurpose(PhysicsSandboxScenePurpose::Clip) &&
+                    !IsDefaultVisualPurpose(
+                            PhysicsSandboxScenePurpose::Helper) &&
+                    !IsDefaultVisualPurpose(
+                            PhysicsSandboxScenePurpose::CheckpointTrigger),
+            "default purpose filtering includes auxiliary geometry");
+    return okay;
+}
+
+PhysicsSandboxRenderMesh TriangleMesh() {
+    PhysicsSandboxRenderMesh mesh;
+    mesh.vertices.resize(3u);
+    mesh.vertices[0].position = {0.0f, 0.0f, 0.0f};
+    mesh.vertices[1].position = {1.0f, 0.0f, 0.0f};
+    mesh.vertices[2].position = {0.0f, 0.0f, 1.0f};
+    for (auto &vertex : mesh.vertices) {
+        vertex.normal = {0.0f, 1.0f, 0.0f};
+        vertex.tangent = {1.0f, 0.0f, 0.0f, 1.0f};
+    }
+    mesh.vertices[1].uv0 = {1.0f, 0.0f};
+    mesh.vertices[2].uv0 = {0.0f, 1.0f};
+    mesh.indices = {0u, 1u, 2u};
+    mesh.subsets = {{0u, 3u, 0u}};
+    mesh.boundsMin = {0.0f, 0.0f, 0.0f};
+    mesh.boundsMax = {1.0f, 0.0f, 1.0f};
+    mesh.hasNormals = true;
+    mesh.hasTangents = true;
+    mesh.hasUv0 = true;
+    return mesh;
+}
+
+bool TestStaticBatching() {
+    PhysicsSandboxRenderScene scene;
+    scene.meshes.push_back(TriangleMesh());
+    PhysicsSandboxRenderMaterial turbo;
+    turbo.surfaceMaterialId = 7u;
+    scene.materials.push_back(turbo);
+    PhysicsSandboxRenderMaterial concrete;
+    concrete.surfaceMaterialId = 0u;
+    scene.materials.push_back(concrete);
+
+    PhysicsSandboxRenderInstance placed;
+    placed.meshIndex = 0u;
+    placed.materialIndex = 0u;
+    placed.purpose = PhysicsSandboxScenePurpose::PlacedBlock;
+    placed.provenance.blockName = "StadiumRoadMainTurbo";
+    placed.worldTransform.basisX = {2.0f, 0.0f, 0.0f};
+    placed.worldTransform.basisY = {0.0f, 3.0f, 0.0f};
+    placed.worldTransform.basisZ = {0.0f, 0.0f, 4.0f};
+    placed.worldTransform.translation = {10.0f, 20.0f, 30.0f};
+    scene.instances.push_back(placed);
+    scene.instances.push_back(placed);
+
+    PhysicsSandboxRenderInstance clip = placed;
+    clip.materialIndex = 1u;
+    clip.purpose = PhysicsSandboxScenePurpose::Clip;
+    clip.provenance.blockName = "StadiumGrassClip";
+    clip.worldTransform.translation = {-5.0f, 0.0f, 0.0f};
+    scene.instances.push_back(clip);
+
+    PhysicsSandboxRenderInstance hidden = placed;
+    hidden.visible = false;
+    scene.instances.push_back(hidden);
+
+    const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
+    bool okay = Check(
+            result.visibleSourceInstanceCount == 3u &&
+                    result.defaultVisibleInstanceCount == 1u &&
+                    result.defaultTriangleCount == 1u &&
+                    result.duplicateInstanceCount == 1u &&
+                    result.batches.size() == 2u,
+            "static batch counts or duplicate suppression were incorrect");
+    const auto turboBatch = std::find_if(
+            result.batches.cbegin(), result.batches.cend(),
+            [](const StaticVisualBatch &batch) {
+                return batch.materialClass == ReplacementMaterialClass::Turbo;
+            });
+    okay &= Check(turboBatch != result.batches.cend(),
+                  "turbo geometry did not reach a turbo batch");
+    if (turboBatch != result.batches.cend()) {
+        constexpr std::size_t FloatCount = 17u;
+        const auto *vertices = reinterpret_cast<const float *>(
+                turboBatch->vertices.constData());
+        okay &= Check(
+                turboBatch->sourceInstanceCount == 1u &&
+                        turboBatch->triangleCount == 1u &&
+                        turboBatch->indices.size() ==
+                                static_cast<qsizetype>(3u *
+                                                       sizeof(std::uint32_t)) &&
+                        std::fabs(vertices[0] - 10.0f) < 0.001f &&
+                        std::fabs(vertices[1] - 20.0f) < 0.001f &&
+                        std::fabs(vertices[2] - 30.0f) < 0.001f &&
+                        std::fabs(vertices[FloatCount] - 12.0f) < 0.001f &&
+                        std::fabs(vertices[3] - 0.0f) < 0.001f &&
+                        std::fabs(vertices[4] - 1.0f) < 0.001f &&
+                        std::fabs(vertices[5] - 0.0f) < 0.001f &&
+                        std::fabs(vertices[9] - 0.0f) < 0.001f &&
+                        std::fabs(vertices[FloatCount + 9] - 1.0f) < 0.001f,
+                "static batching did not preserve transforms, normals, or UVs");
+    }
     return okay;
 }
 
@@ -234,6 +414,8 @@ int main(int argc, char **argv) {
     QGuiApplication application(argc, argv);
     bool okay = TestClassification();
     okay &= TestReplacementParametersAndTextures();
+    okay &= TestClipPlanesAndPurposeFiltering();
+    okay &= TestStaticBatching();
     okay &= TestIndexedGeometry();
     return okay ? 0 : 1;
 }

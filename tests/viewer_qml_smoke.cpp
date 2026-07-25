@@ -7,8 +7,8 @@
 #include <QInputDevice>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
-#include <QQuickWindow>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -254,6 +254,10 @@ int main(int argc, char **argv) {
                     QObject *const renderModeSelector =
                             root->findChild<QObject *>(
                                     QStringLiteral("renderModeSelector"));
+                    QObject *const viewCamera = root->findChild<QObject *>(
+                            QStringLiteral("viewCamera"));
+                    QObject *const mainMapLight = root->findChild<QObject *>(
+                            QStringLiteral("mainMapLight"));
                     auto *const timeline = root->findChild<
                             forevertas::viewer::RaceTimelineItem *>(
                             QStringLiteral("raceTimeline"));
@@ -1139,11 +1143,10 @@ int main(int argc, char **argv) {
                     QCoreApplication::processEvents();
 
                     QTimer::singleShot(
-                            250,
-                            &application,
+                            250, &application,
                             [&, filled, wire, quickWindow, runSelector,
-                             renderModeSelector, baselineTickCount,
-                             bestPosition]() {
+                             renderModeSelector, viewCamera,
+                             mainMapLight, baselineTickCount, bestPosition]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1234,6 +1237,35 @@ int main(int argc, char **argv) {
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         false);
+                                const bool optimizedRenderState =
+                                        viewCamera != nullptr &&
+                                        viewCamera->property("clipNear")
+                                                        .toDouble() >= 0.05 &&
+                                        viewCamera->property("clipFar")
+                                                        .toDouble() >
+                                                viewCamera->property("clipNear")
+                                                        .toDouble() &&
+                                        viewCamera->property("clipFar")
+                                                                .toDouble() /
+                                                        viewCamera
+                                                                ->property(
+                                                                        "clipNe"
+                                                                        "ar")
+                                                                .toDouble() <=
+                                                50001.0 &&
+                                        mainMapLight != nullptr &&
+                                        !mainMapLight->property("castsShadow")
+                                                 .toBool() &&
+                                        std::all_of(
+                                                visualModels.cbegin(),
+                                                visualModels.cend(),
+                                                [](const QObject *model) {
+                                                    return !model->property(
+                                                                         "casts"
+                                                                         "Shado"
+                                                                         "ws")
+                                                                    .toBool();
+                                                });
 
                                 const bool bestSelectedInitially =
                                         viewer.runCount() == 2 &&
@@ -1364,21 +1396,25 @@ int main(int argc, char **argv) {
                                                         false);
 
                                 completed = true;
-                                exitCode = geometryAttached && rootsVisible &&
-                                                initialModelState &&
-                                                bestSelectedInitially &&
-                                                baselineSelected &&
-                                                bestReselected &&
-                                                neutralModeState &&
-                                                collisionModeState &&
-                                                materialDebugState &&
-                                                wireframeState && restoredState &&
-                                                editorStructure
-                                        ? 0
-                                        : 1;
+                                exitCode =
+                                        geometryAttached && rootsVisible &&
+                                                        initialModelState &&
+                                                        bestSelectedInitially &&
+                                                        baselineSelected &&
+                                                        bestReselected &&
+                                                        neutralModeState &&
+                                                        collisionModeState &&
+                                                        materialDebugState &&
+                                                        wireframeState &&
+                                                        restoredState &&
+                                                        optimizedRenderState &&
+                                                        editorStructure
+                                                ? 0
+                                                : 1;
                                 if (exitCode != 0) {
                                     std::cerr
-                                            << "viewer run switching failed: geometry="
+                                            << "viewer run switching failed: "
+                                               "geometry="
                                             << geometryAttached
                                             << ", roots=" << carRoots.size()
                                             << ", filledModels="
@@ -1399,8 +1435,7 @@ int main(int argc, char **argv) {
                                             << viewer.materialCount()
                                             << ", expectedModels="
                                             << expectedCarModels
-                                            << ", initial="
-                                            << initialModelState
+                                            << ", initial=" << initialModelState
                                             << ", bestInitial="
                                             << bestSelectedInitially
                                             << ", baselineSelected="
@@ -1413,9 +1448,33 @@ int main(int argc, char **argv) {
                                             << neutralModeState
                                             << ", materialDebug="
                                             << materialDebugState
-                                            << ", wireframe="
-                                            << wireframeState
+                                            << ", wireframe=" << wireframeState
                                             << ", restored=" << restoredState
+                                            << ", optimizedRenderState="
+                                            << optimizedRenderState
+                                            << ", clipNear="
+                                            << (viewCamera
+                                                        ? viewCamera
+                                                                  ->property(
+                                                                          "clip"
+                                                                          "Nea"
+                                                                          "r")
+                                                                  .toDouble()
+                                                        : -1.0)
+                                            << ", clipFar="
+                                            << (viewCamera
+                                                        ? viewCamera
+                                                                  ->property(
+                                                                          "clip"
+                                                                          "Far")
+                                                                  .toDouble()
+                                                        : -1.0)
+                                            << ", mainCastsShadow="
+                                            << (mainMapLight &&
+                                                mainMapLight
+                                                        ->property(
+                                                                "castsShadow")
+                                                        .toBool())
                                             << ", editorStructure="
                                             << editorStructure << '\n';
                                 }

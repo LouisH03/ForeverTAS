@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -62,6 +64,64 @@ bool DifferentTransform(const PhysicsSandboxTransform &left,
             different(left.basisX, right.basisX) ||
             different(left.basisY, right.basisY) ||
             different(left.basisZ, right.basisZ);
+}
+
+Vector3 TransformPoint(const PhysicsSandboxTransform &transform,
+                       const Vector3 &point) {
+    return {transform.translation.x + transform.basisX.x * point.x +
+                    transform.basisY.x * point.y + transform.basisZ.x * point.z,
+            transform.translation.y + transform.basisX.y * point.x +
+                    transform.basisY.y * point.y + transform.basisZ.y * point.z,
+            transform.translation.z + transform.basisX.z * point.x +
+                    transform.basisY.z * point.y +
+                    transform.basisZ.z * point.z};
+}
+
+void ExpandBounds(const Vector3 &point, Vector3 &minimum, Vector3 &maximum) {
+    minimum.x = std::min(minimum.x, point.x);
+    minimum.y = std::min(minimum.y, point.y);
+    minimum.z = std::min(minimum.z, point.z);
+    maximum.x = std::max(maximum.x, point.x);
+    maximum.y = std::max(maximum.y, point.y);
+    maximum.z = std::max(maximum.z, point.z);
+}
+
+const char *PurposeName(PhysicsSandboxScenePurpose purpose) {
+    switch (purpose) {
+    case PhysicsSandboxScenePurpose::Environment:
+        return "Environment";
+    case PhysicsSandboxScenePurpose::PlacedBlock:
+        return "PlacedBlock";
+    case PhysicsSandboxScenePurpose::SubMobil:
+        return "SubMobil";
+    case PhysicsSandboxScenePurpose::Clip:
+        return "Clip";
+    case PhysicsSandboxScenePurpose::Helper:
+        return "Helper";
+    case PhysicsSandboxScenePurpose::CheckpointTrigger:
+        return "CheckpointTrigger";
+    case PhysicsSandboxScenePurpose::DedicatedInitialCollision:
+        return "DedicatedInitialCollision";
+    case PhysicsSandboxScenePurpose::Pylon:
+        return "Pylon";
+    case PhysicsSandboxScenePurpose::Decoration:
+        return "Decoration";
+    case PhysicsSandboxScenePurpose::Terrain:
+        return "Terrain";
+    case PhysicsSandboxScenePurpose::Generated:
+        return "Generated";
+    }
+    return "Unknown";
+}
+
+std::string GeometryPlacementKey(const PhysicsSandboxRenderInstance &instance) {
+    std::string key;
+    key.reserve(sizeof(instance.meshIndex) + sizeof(instance.worldTransform));
+    key.append(reinterpret_cast<const char *>(&instance.meshIndex),
+               sizeof(instance.meshIndex));
+    key.append(reinterpret_cast<const char *>(&instance.worldTransform),
+               sizeof(instance.worldTransform));
+    return key;
 }
 
 }  // namespace
@@ -224,6 +284,37 @@ int main(int argc, char **argv) {
         std::size_t sharedMeshInstances = 0u;
         bool repeatedMeshHasDifferentTransform = false;
         std::uint64_t instancedTriangles = 0u;
+        std::uint64_t instancedVertices = 0u;
+        struct PurposeStats {
+            std::size_t instances = 0u;
+            std::size_t visibleLod0 = 0u;
+            std::uint64_t triangles = 0u;
+            std::set<std::uint32_t> meshes;
+            std::set<std::uint32_t> materials;
+            std::set<std::string> blocks;
+            std::set<std::string> descriptors;
+            std::set<std::string> sceneObjects;
+            Vector3 boundsMin{};
+            Vector3 boundsMax{};
+            bool hasBounds = false;
+        };
+        std::map<PhysicsSandboxScenePurpose, PurposeStats> purposeStats;
+        std::map<std::uint8_t, PurposeStats> surfaceStats;
+        struct BlockStats {
+            std::size_t instances = 0u;
+            std::uint64_t triangles = 0u;
+            std::set<PhysicsSandboxScenePurpose> purposes;
+            std::set<std::uint8_t> surfaces;
+        };
+        std::map<std::string, BlockStats> blockStats;
+        std::map<std::string, PurposeStats> sceneObjectStats;
+        struct PlacementStats {
+            std::size_t count = 0u;
+            std::set<PhysicsSandboxScenePurpose> purposes;
+            std::set<std::uint32_t> materials;
+            std::set<std::string> blocks;
+        };
+        std::map<std::string, PlacementStats> geometryPlacements;
 
         for (const PhysicsSandboxRenderInstance &instance :
              renderScene->instances) {
@@ -262,9 +353,99 @@ int main(int argc, char **argv) {
                     instance.purpose ==
                             PhysicsSandboxScenePurpose::SubMobil;
             if (instance.visible && instance.lodLevel == 0u) {
-                instancedTriangles +=
-                        renderScene->meshes[instance.meshIndex]
-                                .indices.size() /
+                const std::uint64_t triangles =
+                        renderScene->meshes[instance.meshIndex].indices.size() /
+                        3u;
+                instancedTriangles += triangles;
+                instancedVertices +=
+                        renderScene->meshes[instance.meshIndex].vertices.size();
+                PurposeStats &purpose = purposeStats[instance.purpose];
+                ++purpose.visibleLod0;
+                purpose.triangles += triangles;
+                const std::uint8_t surfaceId =
+                        renderScene->materials[instance.materialIndex]
+                                .surfaceMaterialId;
+                PurposeStats &surface = surfaceStats[surfaceId];
+                ++surface.visibleLod0;
+                surface.triangles += triangles;
+                PurposeStats *const sceneObject =
+                        instance.provenance.sceneObjectId.empty()
+                                ? nullptr
+                                : &sceneObjectStats[instance.provenance
+                                                            .sceneObjectId];
+                if (sceneObject != nullptr) {
+                    ++sceneObject->visibleLod0;
+                    sceneObject->triangles += triangles;
+                    sceneObject->meshes.insert(instance.meshIndex);
+                    sceneObject->materials.insert(instance.materialIndex);
+                }
+                const PhysicsSandboxRenderMesh &mesh =
+                        renderScene->meshes[instance.meshIndex];
+                for (int corner = 0; corner < 8; ++corner) {
+                    const Vector3 local{(corner & 1) != 0 ? mesh.boundsMax.x
+                                                          : mesh.boundsMin.x,
+                                        (corner & 2) != 0 ? mesh.boundsMax.y
+                                                          : mesh.boundsMin.y,
+                                        (corner & 4) != 0 ? mesh.boundsMax.z
+                                                          : mesh.boundsMin.z};
+                    const Vector3 world =
+                            TransformPoint(instance.worldTransform, local);
+                    for (PurposeStats *stats : {&purpose, sceneObject}) {
+                        if (stats == nullptr)
+                            continue;
+                        if (!stats->hasBounds) {
+                            stats->boundsMin = world;
+                            stats->boundsMax = world;
+                            stats->hasBounds = true;
+                        } else {
+                            ExpandBounds(world, stats->boundsMin,
+                                         stats->boundsMax);
+                        }
+                    }
+                }
+
+                PlacementStats &placement =
+                        geometryPlacements[GeometryPlacementKey(instance)];
+                ++placement.count;
+                placement.purposes.insert(instance.purpose);
+                placement.materials.insert(instance.materialIndex);
+                if (!instance.provenance.blockName.empty()) {
+                    placement.blocks.insert(instance.provenance.blockName);
+                }
+            }
+            PurposeStats &purpose = purposeStats[instance.purpose];
+            ++purpose.instances;
+            purpose.meshes.insert(instance.meshIndex);
+            purpose.materials.insert(instance.materialIndex);
+            if (!instance.provenance.blockName.empty()) {
+                purpose.blocks.insert(instance.provenance.blockName);
+            }
+            if (!instance.provenance.descriptorPath.empty()) {
+                purpose.descriptors.insert(instance.provenance.descriptorPath);
+            }
+            if (!instance.provenance.sceneObjectId.empty()) {
+                purpose.sceneObjects.insert(instance.provenance.sceneObjectId);
+            }
+            const std::uint8_t surfaceId =
+                    renderScene->materials[instance.materialIndex]
+                            .surfaceMaterialId;
+            PurposeStats &surface = surfaceStats[surfaceId];
+            ++surface.instances;
+            surface.meshes.insert(instance.meshIndex);
+            surface.materials.insert(instance.materialIndex);
+            if (!instance.provenance.blockName.empty()) {
+                surface.blocks.insert(instance.provenance.blockName);
+            }
+            BlockStats &block =
+                    blockStats[instance.provenance.blockName.empty()
+                                       ? std::string("(none)")
+                                       : instance.provenance.blockName];
+            ++block.instances;
+            block.purposes.insert(instance.purpose);
+            block.surfaces.insert(surfaceId);
+            if (instance.visible && instance.lodLevel == 0u) {
+                block.triangles +=
+                        renderScene->meshes[instance.meshIndex].indices.size() /
                         3u;
             }
         }
@@ -298,15 +479,110 @@ int main(int argc, char **argv) {
                   << ", subsets=" << subsetCount
                   << ", indexedMeshes=" << indexedMeshes
                   << ", nonSequentialMeshes=" << nonSequentialMeshes
-                  << ", uv0Meshes=" << uv0Meshes
-                  << ", uv1Meshes=" << uv1Meshes
+                  << ", uv0Meshes=" << uv0Meshes << ", uv1Meshes=" << uv1Meshes
                   << ", referencedUvVertices=" << referencedUvVertices
                   << ", authoredInstances=" << authoredInstances
                   << ", sharedMeshInstances=" << sharedMeshInstances
                   << ", resourceTriangles=" << resourceTriangles
+                  << ", instancedVertices=" << instancedVertices
                   << ", instancedTriangles=" << instancedTriangles
                   << ", collisionTriangles="
                   << collisionScene.collisionTriangles.size() << '\n';
+        for (const auto &[purpose, stats] : purposeStats) {
+            std::cout << "purpose: name=" << PurposeName(purpose)
+                      << ", instances=" << stats.instances
+                      << ", visibleLod0=" << stats.visibleLod0
+                      << ", meshes=" << stats.meshes.size()
+                      << ", materials=" << stats.materials.size()
+                      << ", blocks=" << stats.blocks.size()
+                      << ", descriptors=" << stats.descriptors.size()
+                      << ", sceneObjects=" << stats.sceneObjects.size()
+                      << ", triangles=" << stats.triangles;
+            if (stats.hasBounds) {
+                std::cout << ", bounds=" << stats.boundsMin.x << ":"
+                          << stats.boundsMin.y << ":" << stats.boundsMin.z
+                          << ".." << stats.boundsMax.x << ":"
+                          << stats.boundsMax.y << ":" << stats.boundsMax.z;
+            }
+            if (!stats.descriptors.empty()) {
+                std::cout << ", descriptorNames=";
+                bool first = true;
+                for (const std::string &descriptor : stats.descriptors) {
+                    std::cout << (first ? "" : "|") << descriptor;
+                    first = false;
+                }
+            }
+            if (!stats.sceneObjects.empty()) {
+                std::cout << ", sceneObjectNames=";
+                bool first = true;
+                for (const std::string &object : stats.sceneObjects) {
+                    std::cout << (first ? "" : "|") << object;
+                    first = false;
+                }
+            }
+            std::cout << '\n';
+        }
+        for (const auto &[objectName, stats] : sceneObjectStats) {
+            std::cout << "scene-object: name=" << objectName
+                      << ", visibleLod0=" << stats.visibleLod0
+                      << ", triangles=" << stats.triangles
+                      << ", bounds=" << stats.boundsMin.x << ":"
+                      << stats.boundsMin.y << ":" << stats.boundsMin.z << ".."
+                      << stats.boundsMax.x << ":" << stats.boundsMax.y << ":"
+                      << stats.boundsMax.z << '\n';
+        }
+        for (const auto &[surfaceId, stats] : surfaceStats) {
+            std::cout << "surface: id=" << static_cast<unsigned int>(surfaceId)
+                      << ", instances=" << stats.instances
+                      << ", visibleLod0=" << stats.visibleLod0
+                      << ", meshes=" << stats.meshes.size()
+                      << ", materials=" << stats.materials.size()
+                      << ", blocks=" << stats.blocks.size()
+                      << ", triangles=" << stats.triangles;
+            if (surfaceId == 7u || surfaceId == 26u || surfaceId == 30u) {
+                std::cout << ", turboBlocks=";
+                bool first = true;
+                for (const std::string &block : stats.blocks) {
+                    std::cout << (first ? "" : "|") << block;
+                    first = false;
+                }
+            }
+            std::cout << '\n';
+        }
+        for (const auto &[blockName, stats] : blockStats) {
+            std::cout << "block: name=" << blockName
+                      << ", instances=" << stats.instances
+                      << ", triangles=" << stats.triangles << ", purposes=";
+            bool first = true;
+            for (PhysicsSandboxScenePurpose purpose : stats.purposes) {
+                std::cout << (first ? "" : "|") << PurposeName(purpose);
+                first = false;
+            }
+            std::cout << ", surfaces=";
+            first = true;
+            for (std::uint8_t surfaceId : stats.surfaces) {
+                std::cout << (first ? "" : "|")
+                          << static_cast<unsigned int>(surfaceId);
+                first = false;
+            }
+            std::cout << '\n';
+        }
+        std::size_t duplicatePlacements = 0u;
+        std::size_t crossPurposePlacements = 0u;
+        std::size_t conflictingMaterialPlacements = 0u;
+        for (const auto &[key, stats] : geometryPlacements) {
+            static_cast<void>(key);
+            if (stats.count > 1u) {
+                duplicatePlacements += stats.count - 1u;
+                crossPurposePlacements += stats.purposes.size() > 1u;
+                conflictingMaterialPlacements += stats.materials.size() > 1u;
+            }
+        }
+        std::cout << "overlap-audit: exactDuplicateInstances="
+                  << duplicatePlacements
+                  << ", crossPurposePlacements=" << crossPurposePlacements
+                  << ", conflictingMaterialPlacements="
+                  << conflictingMaterialPlacements << '\n';
         return okay ? 0 : 1;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

@@ -52,18 +52,51 @@ generate_pair plastic '#d5d7d0' 107 0.025
 generate_pair rubber '#343735' 108 0.06
 generate_pair glass '#9bd2dc' 109 0.012
 generate_pair signage '#ede8d6' 110 0.025
-generate_pair emissive '#d9f5e7' 111 0.018
+generate_pair emissive '#58cfa6' 111 0.025
 generate_pair water '#4a98aa' 112 0.055
 generate_pair neutral '#969b97' 113 0.045
 generate_pair unknown '#9f849d' 114 0.06
+generate_pair turbo '#153b43' 115 0.055
+generate_pair checkpoint '#146fa7' 116 0.04
+generate_pair start_finish '#292e30' 117 0.035
 
-# Add deterministic, clearly synthetic markings to the two graphic classes.
+# Add deterministic, clearly synthetic markings to the graphic classes.
 magick "${output}/signage_base.png" \
     -stroke '#cf3434' -strokewidth 12 -draw 'line 0,32 128,32' \
     -stroke '#315c91' -strokewidth 8 -draw 'line 0,92 128,92' \
     -define png:exclude-chunk=date,time \
     "${output}/signage_base.png"
 magick "${output}/emissive_base.png" \
-    -fill '#55ffc0' -draw 'rectangle 0,52 128,76' \
+    -fill '#79ffd0' -draw 'rectangle 0,52 128,76' \
     -define png:exclude-chunk=date,time \
     "${output}/emissive_base.png"
+magick "${output}/turbo_base.png" \
+    -fill '#12e5f3' \
+    -draw 'polygon 8,64 40,30 40,50 72,50 72,78 40,78 40,98' \
+    -fill '#ffd437' \
+    -draw 'polygon 58,64 90,30 90,50 122,50 122,78 90,78 90,98' \
+    -stroke '#071316' -strokewidth 5 -fill none \
+    -draw 'line 0,8 128,8 line 0,120 128,120' \
+    -define png:exclude-chunk=date,time \
+    "${output}/turbo_base.png"
+magick "${output}/checkpoint_base.png" \
+    -fill '#e8f7ff' -draw 'rectangle 0,44 128,58' \
+    -fill '#ff3f55' -draw 'rectangle 0,70 128,84' \
+    -fill '#0c314a' -draw 'rectangle 0,60 128,68' \
+    -define png:exclude-chunk=date,time \
+    "${output}/checkpoint_base.png"
+for ((y = 0; y < 128; y += 32)); do
+    for ((x = 0; x < 128; x += 32)); do
+        if ((((x + y) / 32) % 2 == 0)); then
+            magick "${output}/start_finish_base.png" \
+                -fill '#eef1ec' \
+                -draw "rectangle ${x},${y} $((x + 31)),$((y + 31))" \
+                -define png:exclude-chunk=date,time \
+                "${output}/start_finish_base.png"
+        fi
+    done
+done
+magick "${output}/start_finish_base.png" \
+    -fill '#32d77a' -draw 'rectangle 0,59 128,68' \
+    -define png:exclude-chunk=date,time \
+    "${output}/start_finish_base.png"

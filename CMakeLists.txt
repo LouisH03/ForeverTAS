@@ -101,6 +101,8 @@ add_library(forevertas_gui STATIC
     src/viewer/race_timeline_item.h
     src/viewer/race_viewer_controller.cpp
     src/viewer/race_viewer_controller.h
+    src/viewer/visual_scene_pipeline.cpp
+    src/viewer/visual_scene_pipeline.h
     src/app/search_configuration_model.cpp
     src/app/search_configuration_model.h
     src/app/search_completion.h

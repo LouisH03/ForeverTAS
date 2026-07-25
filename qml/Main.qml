@@ -15,8 +15,27 @@ ApplicationWindow {
 
     property bool wireframeMode: false
     property string renderMode: "textured"
+    property real measuredFps: 0
+    property int framesSinceSample: 0
     readonly property var settingsWheelRedirectorObject:
         settingsWheelRedirector
+
+    FrameAnimation {
+        id: frameRateMonitor
+        objectName: "frameRateMonitor"
+        running: window.visible
+        onTriggered: ++window.framesSinceSample
+    }
+
+    Timer {
+        interval: 1000
+        repeat: true
+        running: window.visible
+        onTriggered: {
+            window.measuredFps = window.framesSinceSample
+            window.framesSinceSample = 0
+        }
+    }
 
     ListModel {
         id: runPoseModel
@@ -314,24 +333,31 @@ ApplicationWindow {
                             eulerRotation.y: viewport.orbitYaw
 
                             PerspectiveCamera {
+                                id: viewCamera
+                                objectName: "viewCamera"
+                                readonly property var dynamicClipPlanes:
+                                    window.viewer.cameraClipPlanes(
+                                        scenePosition,
+                                        viewport.orbitDistance)
+
                                 z: viewport.orbitDistance
-                                clipNear: 0.05
-                                clipFar: Math.max(5000,
-                                                  window.viewer.sceneRadius * 3)
+                                clipNear: dynamicClipPlanes.x
+                                clipFar: dynamicClipPlanes.y
                                 fieldOfView: 55
                             }
                         }
 
                         DirectionalLight {
+                            objectName: "mainMapLight"
                             eulerRotation.x: -55
                             eulerRotation.y: -30
                             brightness: 1.25
                             color: "#fff8e8"
-                            castsShadow: true
-                            shadowFactor: 38
+                            castsShadow: false
                         }
 
                         DirectionalLight {
+                            objectName: "fillMapLight"
                             eulerRotation.x: -20
                             eulerRotation.y: 145
                             brightness: 0.55
@@ -379,7 +405,7 @@ ApplicationWindow {
                                            : (window.renderMode ===
                                               "material-debug"
                                               ? modelData.debugColor
-                                              : modelData.baseColor)
+                                              : "#ffffff")
                                 baseColorMap: window.renderMode ===
                                               "textured"
                                               ? replacementBaseMap
@@ -420,7 +446,7 @@ ApplicationWindow {
                         }
 
                         Repeater3D {
-                            model: window.viewer.visualInstances
+                            model: window.viewer.visualBatches
 
                             delegate: Model {
                                 required property var modelData
@@ -438,13 +464,9 @@ ApplicationWindow {
                                 visible: window.viewer.loaded
                                          && !window.wireframeMode
                                          && window.renderMode !== "collision"
-                                         && modelData.sourceVisible
-                                         && modelData.lodLevel === 0
+                                         && modelData.defaultVisible
                                 geometry: modelData.geometry
-                                position: modelData.position
-                                rotation: modelData.rotation
-                                scale: modelData.scale
-                                castsShadows: modelData.castsShadows
+                                castsShadows: false
 
                                 materials: sharedMaterial
                                            ? [sharedMaterial] : []
@@ -597,23 +619,35 @@ ApplicationWindow {
                             anchors.rightMargin: 14
                             spacing: 12
 
-                            Label {
-                                text: qsTr("Race Viewer")
-                                color: "#eef2ee"
-                                font.pixelSize: 17
-                                font.weight: Font.DemiBold
-                            }
-
-                            Label {
+                            ColumnLayout {
                                 Layout.fillWidth: true
-                                text: window.viewer.loaded
-                                      ? qsTr("%1 visual triangles · %2 materials · %3 runs")
-                                            .arg(window.viewer.visualTriangleCount)
-                                            .arg(window.viewer.materialCount)
-                                            .arg(window.viewer.runCount)
-                                      : window.viewer.statusText
-                                color: "#aeb8b0"
-                                elide: Text.ElideRight
+                                spacing: 0
+
+                                Label {
+                                    text: qsTr("Race Viewer")
+                                    color: "#eef2ee"
+                                    font.pixelSize: 17
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: window.viewer.loaded
+                                          ? qsTr("%1 triangles · %2 batches · %3 FPS")
+                                                .arg(Number(
+                                                         window.viewer.visualTriangleCount)
+                                                         .toLocaleString(
+                                                             Qt.locale(),
+                                                             "f",
+                                                             0))
+                                                .arg(window.viewer.visualBatchCount)
+                                                .arg(Math.round(
+                                                         window.measuredFps))
+                                          : window.viewer.statusText
+                                    color: "#aeb8b0"
+                                    font.pixelSize: 11
+                                    elide: Text.ElideRight
+                                }
                             }
 
                             Switch {

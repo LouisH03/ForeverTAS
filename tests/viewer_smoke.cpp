@@ -152,11 +152,20 @@ int main(int argc, char **argv) {
                 }
                 if (viewer.loaded()) {
                     verificationStarted = true;
+                    const QVector2D clipPlanes = viewer.cameraClipPlanes(
+                            viewer.carPosition() + QVector3D(0.0f, 0.0f, 38.0f),
+                            38.0);
                     std::cout << viewer.triangleCount() << " triangles, "
                               << viewer.visualTriangleCount()
                               << " visual triangles, "
                               << viewer.visualMeshCount() << " visual meshes, "
+                              << viewer.sourceVisualObjectCount()
+                              << " visible source objects, "
+                              << viewer.visualBatchCount() << " batches, "
                               << viewer.materialCount() << " materials, "
+                              << viewer.shadowCount()
+                              << " shadows, clip=" << clipPlanes.x() << ".."
+                              << clipPlanes.y() << ", "
                               << viewer.ellipsoidCount() << " ellipsoids, "
                               << viewer.durationMs() << " ms, "
                               << viewer.tickCount() << " ticks\n";
@@ -307,23 +316,14 @@ int main(int argc, char **argv) {
                             viewer.timeText().startsWith(
                                     QStringLiteral("00:00:01 / "));
                     QSet<QString> visibleMaterialClasses;
-                    for (const QVariant &entry :
-                         viewer.visualInstances()) {
-                        const QVariantMap instance = entry.toMap();
-                        if (instance
-                                            .value(
-                                                    QStringLiteral(
-                                                            "sourceVisible"))
-                                            .toBool() &&
-                            instance
-                                            .value(
-                                                    QStringLiteral(
-                                                            "lodLevel"))
-                                            .toLongLong() == 0) {
-                            const qint64 bindingIndex = instance
-                                    .value(QStringLiteral(
-                                            "materialBindingIndex"))
-                                    .toLongLong();
+                    for (const QVariant &entry : viewer.visualBatches()) {
+                        const QVariantMap batch = entry.toMap();
+                        if (batch.value(QStringLiteral("defaultVisible"))
+                                    .toBool()) {
+                            const qint64 bindingIndex =
+                                    batch.value(QStringLiteral(
+                                                        "materialBindingIndex"))
+                                            .toLongLong();
                             if (bindingIndex >= 0 &&
                                 bindingIndex <
                                         viewer.visualMaterials().size()) {
@@ -337,16 +337,20 @@ int main(int argc, char **argv) {
                             }
                         }
                     }
-                    const bool sceneValid = viewer.triangleCount() > 0 &&
+                    const bool sceneValid =
+                            viewer.triangleCount() > 0 &&
                             viewer.visualTriangleCount() > 0 &&
                             viewer.visualMeshCount() > 0 &&
                             viewer.materialCount() > 0 &&
                             !viewer.visualMaterials().isEmpty() &&
                             viewer.visualMaterials().size() <
-                                    viewer.visualInstances().size() &&
-                            !viewer.visualInstances().isEmpty() &&
-                            viewer.visualInstances().size() >
-                                    viewer.visualMeshCount() &&
+                                    viewer.visualBatches().size() &&
+                            !viewer.visualBatches().isEmpty() &&
+                            viewer.visualBatchCount() ==
+                                    viewer.visualBatches().size() &&
+                            viewer.visualBatchCount() <
+                                    viewer.sourceVisualObjectCount() &&
+                            viewer.shadowCount() == 0 &&
                             viewer.diagnosticCount() > 0 &&
                             visibleMaterialClasses.size() >= 3 &&
                             viewer.ellipsoidCount() > 0 &&
@@ -357,60 +361,47 @@ int main(int argc, char **argv) {
                                             1 &&
                             timelineInputs && naturalScrubDirection &&
                             leftPressDoesNotSnap && dynamicRulerScale &&
-                            fineMarksGrowSmoothly &&
-                            rightDragZoomsIn && timeLabelUnambiguous;
+                            fineMarksGrowSmoothly && rightDragZoomsIn &&
+                            timeLabelUnambiguous;
                     if (!sceneValid) {
                         std::cerr
-                                << "viewer scene checks failed: leftSteeringTick="
+                                << "viewer scene checks failed: "
+                                   "leftSteeringTick="
                                 << leftSteeringTick
-                                << ", rightSteeringTick="
-                                << rightSteeringTick
-                                << ", accelerationTick="
-                                << accelerationTick
-                                << ", brakeTick="
-                                << brakeTick
+                                << ", rightSteeringTick=" << rightSteeringTick
+                                << ", accelerationTick=" << accelerationTick
+                                << ", brakeTick=" << brakeTick
                                 << ", leftSteeringPainted="
                                 << leftSteeringPainted
                                 << ", rightSteeringPainted="
                                 << rightSteeringPainted
                                 << ", accelerationPainted="
                                 << accelerationPainted
-                                << ", brakePainted="
-                                << brakePainted
+                                << ", brakePainted=" << brakePainted
                                 << ", naturalScrubDirection="
                                 << naturalScrubDirection
                                 << ", leftPressDoesNotSnap="
                                 << leftPressDoesNotSnap
-                                << ", baseScaleReadable="
-                                << baseScaleReadable
+                                << ", baseScaleReadable=" << baseScaleReadable
                                 << ", mediumScaleReadable="
                                 << mediumScaleReadable
-                                << ", fineScaleReadable="
-                                << fineScaleReadable
-                                << ", fineLengthAt5="
-                                << fineLengthAt5
-                                << ", fineLengthAt6="
-                                << fineLengthAt6
-                                << ", fineLengthAt7="
-                                << fineLengthAt7
-                                << ", fineLengthAt95="
-                                << fineLengthAt95
-                                << ", fineLengthAt12="
-                                << fineLengthAt12
-                                << ", rightDragZoomsIn="
-                                << rightDragZoomsIn
+                                << ", fineScaleReadable=" << fineScaleReadable
+                                << ", fineLengthAt5=" << fineLengthAt5
+                                << ", fineLengthAt6=" << fineLengthAt6
+                                << ", fineLengthAt7=" << fineLengthAt7
+                                << ", fineLengthAt95=" << fineLengthAt95
+                                << ", fineLengthAt12=" << fineLengthAt12
+                                << ", rightDragZoomsIn=" << rightDragZoomsIn
                                 << ", timeLabelUnambiguous="
-                                << timeLabelUnambiguous
-                                << ", visualTriangles="
+                                << timeLabelUnambiguous << ", visualTriangles="
                                 << viewer.visualTriangleCount()
-                                << ", visualMeshes="
-                                << viewer.visualMeshCount()
-                                << ", materials="
-                                << viewer.materialCount()
+                                << ", visualMeshes=" << viewer.visualMeshCount()
+                                << ", materials=" << viewer.materialCount()
                                 << ", visualInstances="
-                                << viewer.visualInstances().size()
-                                << ", diagnostics="
-                                << viewer.diagnosticCount()
+                                << viewer.visualBatches().size()
+                                << ", sourceVisualObjects="
+                                << viewer.sourceVisualObjectCount()
+                                << ", diagnostics=" << viewer.diagnosticCount()
                                 << ", visibleMaterialClasses="
                                 << visibleMaterialClasses.size() << '\n';
                     }

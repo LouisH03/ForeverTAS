@@ -8,13 +8,19 @@ remains available through the pre-existing scene API.
 
 ## Material selection
 
-`src/viewer/material_classifier.*` lowercases and combines the final material,
-model, shader, sampler and bitmap paths. Ordered keyword rules select asphalt,
-concrete, dirt, grass, metal, painted metal, plastic, rubber, glass, signage,
-emissive, water, neutral or unknown. The rules never load game texture pixels.
-They select the original PNGs under `assets/materials`. When exported paths do
-not identify a surface, the authored surface-material id provides a stable
-fallback category instead of collapsing the map into one unknown material.
+TASmania's exported materials have no source paths, so
+`src/viewer/material_classifier.*` primarily combines the surface-material ID
+with instance provenance: block name, purpose, component identity, component
+index, and descriptor path. Explicit semantic overrides cover turbo,
+checkpoint, start/finish, road, dirt road, grass, pool/water, signage, and
+emissive components. Path keywords remain a secondary hint for scenes that
+provide them.
+
+The rules never load game texture pixels. They select original PNGs under
+`assets/materials`. Turbo uses cyan and yellow directional arrows, checkpoints
+use colored bands, and start/finish components use a checker pattern. This
+makes gameplay surfaces recognizable even when every source material path is
+empty.
 
 Unknown materials use a conspicuous magenta replacement. Missing UV0 receives
 a deterministic X/Z projection; missing normals are accumulated from indexed
@@ -25,13 +31,31 @@ use an emissive factor, and thin classes disable culling.
 
 ## Qt Quick 3D
 
-Each Validator mesh becomes one indexed `QQuick3DGeometry` with position,
-normal, tangent, UV0, optional UV1, color and subset declarations. Instances
-reuse those geometry objects, and material bindings with the same final
-material and vertex-color mode reuse one `PrincipledMaterial` and its two
-`Texture` objects. Each instance applies only its transform and shared binding.
-Static geometry is rebuilt only after a successful replay reload; playback
-updates car transforms without touching map resources.
+`src/viewer/visual_scene_pipeline.*` transforms static LOD0 geometry once on
+load and batches compatible instances by replacement material, purpose, and
+vertex-color mode. Transparent materials are additionally divided into
+64-meter spatial cells. Each batch becomes one indexed `QQuick3DGeometry` with
+preserved normals, tangents, UV0, UV1, colors, and material boundaries. Exact
+duplicate mesh/material/purpose/transform tuples are suppressed.
+
+The QML scene creates one `Model` per batch rather than one per source
+instance. Material classes share a `PrincipledMaterial` and two `Texture`
+objects. Static geometry is rebuilt only after a successful replay reload;
+playback updates car transforms without touching map resources. Map shadows
+are disabled by default.
+
+The default scene includes authored blocks, the enclosing stadium
+environment, and intentional generated stadium objects. Collision clips,
+checkpoint/start helpers, triggers, and initial-collision geometry stay hidden.
+The purpose selector can show all geometry or inspect any exported purpose in
+isolation. On TASmania, the overlap audit found no exact duplicates, no
+cross-purpose coincident transforms, and no coincident conflicting materials.
+
+Camera near/far planes are recalculated from camera position, orbit distance,
+and the default visible-scene bounds. There is no fixed 5000-unit minimum. The
+near plane also tracks the far plane to maintain a useful depth ratio; the
+56-kilometer enclosing stadium sky shell explains TASmania's large reset-view
+far plane.
 
 The viewer provides textured, neutral, collision, wireframe and material-debug
 modes. Collision and wireframe continue to use the legacy collision buffers.
@@ -41,10 +65,17 @@ modes. Collision and wireframe continue to use the legacy collision buffers.
 The runtime data smoke test loads a native replay through the installed pack,
 then audits the immutable public render scene rather than internal builders. It
 checks indexed visual meshes, authored UVs and normals, material ranges,
-instance transforms, provenance, shared mesh reuse, and separation from the
-collision triangle stream. The viewer smoke tests additionally verify the
-exact Qt vertex layout, packaged replacement images, shared QML material and
-texture objects, every render mode, and transactional repeated reloads.
+instance transforms, provenance, shared mesh reuse, purpose bounds, overlap
+conflicts, and separation from the collision triangle stream. Renderer and
+viewer tests additionally verify semantic overrides, clip-plane calculation,
+default visibility, transformed batching, exact vertex attributes, packaged
+replacement images, shared QML material and texture objects, every render mode,
+and transactional repeated reloads.
 
-[`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is a captured
-textured frame from the final pinned build after loading the TASmania replay.
+The pinned TASmania build has 6,305 default-visible source objects, 31 total
+debuggable batches, 1,508,669 default-visible triangles, and zero map shadows.
+The interactive textured view measured 62-63 FPS on the development machine.
+
+[`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is the
+pre-optimization reference. The corrected textured frame is captured in
+[`evidence/tasmania-textured-optimized.png`](evidence/tasmania-textured-optimized.png).

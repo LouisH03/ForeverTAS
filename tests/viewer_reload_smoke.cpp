@@ -52,12 +52,17 @@ int main(int argc, char **argv) {
                 if (!loadInProgress || !viewer.loaded()) return;
                 loadInProgress = false;
 
-                const bool sceneValid = viewer.ellipsoidCount() > 0 &&
-                        viewer.runCount() == 1 && viewer.tickCount() > 0 &&
+                const bool sceneValid =
+                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 1 &&
+                        viewer.tickCount() > 0 &&
                         viewer.visualTriangleCount() > 0 &&
                         viewer.visualMeshCount() > 0 &&
                         !viewer.visualMaterials().isEmpty() &&
-                        !viewer.visualInstances().isEmpty() &&
+                        !viewer.visualBatches().isEmpty() &&
+                        viewer.visualBatchCount() ==
+                                viewer.visualBatches().size() &&
+                        viewer.visualBatchCount() <
+                                viewer.sourceVisualObjectCount() &&
                         Finite(viewer.carPosition()) &&
                         !viewer.carRotation().isNull();
                 if (!sceneValid) {
@@ -67,18 +72,18 @@ int main(int argc, char **argv) {
                     application.quit();
                     return;
                 }
-                previousVisualGeometry = viewer.visualInstances()
-                                                 .front()
-                                                 .toMap()
-                                                 .value(QStringLiteral(
-                                                         "geometry"))
-                                                 .value<QObject *>();
+                previousVisualGeometry =
+                        viewer.visualBatches()
+                                .front()
+                                .toMap()
+                                .value(QStringLiteral("geometry"))
+                                .value<QObject *>();
 
                 ++completedLoads;
                 if (completedLoads < 3) {
                     viewer.loadReplay(packs, replays[completedLoads]);
                     const QObject *const publishedAfterRequest =
-                            viewer.visualInstances()
+                            viewer.visualBatches()
                                     .front()
                                     .toMap()
                                     .value(QStringLiteral("geometry"))
