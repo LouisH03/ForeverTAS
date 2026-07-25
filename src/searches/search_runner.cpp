@@ -75,7 +75,7 @@ std::vector<SearchTimelineFrame> SampleBestTimeline(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory for final sampling");
     PhysicsSandboxOptions options;
-    options.backend = SimulationBackend::Reference;
+    options.backend = ToForeverValidatorBackend(request.backend);
     options.tickDurationMs = kSearchTickDurationMs;
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
@@ -172,7 +172,7 @@ SearchResult RunSearch(const SearchRequest &request,
     CheckCancellation(control);
 
     PhysicsSandboxOptions options;
-    options.backend = SimulationBackend::Reference;
+    options.backend = ToForeverValidatorBackend(request.backend);
     options.tickDurationMs = kSearchTickDurationMs;
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),

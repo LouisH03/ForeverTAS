@@ -228,13 +228,15 @@ std::vector<ViewerTriangle> UnitEllipsoidTriangles() {
 }
 
 RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
-                                    const QString &replayPath) {
+                                    const QString &replayPath,
+                                    PhysicsBackend backend) {
     using namespace forevervalidator;
     using namespace forevervalidator::experimental;
 
     RaceViewerLoadResult result;
     result.packsDirectory = packsDirectory;
     result.replayPath = replayPath;
+    result.backend = backend;
     try {
         const ReplayIdentity identity{replayPath.toStdString()};
         AssetSource source = Require(
@@ -244,7 +246,7 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
                 ReadNativeReplayFile(replayPath.toStdString(), identity),
                 "reading replay failed");
         PhysicsSandboxOptions options;
-        options.backend = SimulationBackend::OptimizedCpu;
+        options.backend = ToForeverValidatorBackend(backend);
         options.tickDurationMs = kViewerTickDurationMs;
         PhysicsSandbox sandbox = Require(
                 CreatePhysicsSandbox(std::move(source), options),
@@ -564,16 +566,34 @@ void RaceViewerController::addSearchRun(
         const QString &packsDirectory,
         const QString &replayPath,
         const std::vector<SearchTimelineFrame> &frames) {
+    addSearchRun(packsDirectory,
+                 replayPath,
+                 frames,
+                 QStringLiteral("optimized-cpu"));
+}
+
+void RaceViewerController::addSearchRun(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const QString &backendId) {
     if (frames.empty()) {
         setStatusText(QStringLiteral("Best run produced no viewable frames."));
+        return;
+    }
+    const std::optional<PhysicsBackend> backend =
+            ParsePhysicsBackend(backendId.toStdString());
+    if (!backend) {
+        setStatusText(QStringLiteral("Select a valid physics backend."));
         return;
     }
     PendingRun pending{
             packsDirectory,
             replayPath,
+            *backend,
             ToViewerFrames(frames)};
     if (loaded_ && loadedPacksDirectory_ == packsDirectory &&
-        loadedReplayPath_ == replayPath) {
+        loadedReplayPath_ == replayPath && loadedBackend_ == *backend) {
         upsertRun(QStringLiteral("best"),
                   QStringLiteral("Best"),
                   std::move(pending.frames),
@@ -583,7 +603,7 @@ void RaceViewerController::addSearchRun(
     }
     pendingRun_ = std::move(pending);
     if (workerThread_ == nullptr) {
-        beginReplayLoad(packsDirectory, replayPath);
+        beginReplayLoad(packsDirectory, replayPath, *backend);
     }
 }
 
@@ -666,20 +686,37 @@ void RaceViewerController::jumpToEnd() {
 
 void RaceViewerController::loadReplay(const QString &packsDirectory,
                                       const QString &replayPath) {
+    loadReplay(packsDirectory,
+               replayPath,
+               QStringLiteral("optimized-cpu"));
+}
+
+void RaceViewerController::loadReplay(const QString &packsDirectory,
+                                      const QString &replayPath,
+                                      const QString &backendId) {
+    const std::optional<PhysicsBackend> backend =
+            ParsePhysicsBackend(backendId.toStdString());
+    if (!backend) {
+        setStatusText(QStringLiteral("Select a valid physics backend."));
+        return;
+    }
     pendingRun_.reset();
     if (workerThread_ != nullptr) {
-        queuedReplayLoad_ = ReplayLoadRequest{packsDirectory, replayPath};
+        queuedReplayLoad_ =
+                ReplayLoadRequest{packsDirectory, replayPath, *backend};
         setLoading(true);
         setStatusText(QStringLiteral("Waiting to load selected replay..."));
         return;
     }
-    beginReplayLoad(packsDirectory, replayPath);
+    beginReplayLoad(packsDirectory, replayPath, *backend);
 }
 
 void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
-                                           const QString &replayPath) {
+                                           const QString &replayPath,
+                                           PhysicsBackend backend) {
     if (workerThread_ != nullptr) {
-        queuedReplayLoad_ = ReplayLoadRequest{packsDirectory, replayPath};
+        queuedReplayLoad_ =
+                ReplayLoadRequest{packsDirectory, replayPath, backend};
         setLoading(true);
         setStatusText(QStringLiteral("Waiting to load selected replay..."));
         return;
@@ -710,9 +747,9 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
 
     const std::uint64_t loadSerial = ++loadSerial_;
     QThread *const thread = QThread::create(
-            [this, packsDirectory, replayPath, loadSerial]() {
+            [this, packsDirectory, replayPath, backend, loadSerial]() {
                 RaceViewerLoadResult result =
-                        LoadReplayData(packsDirectory, replayPath);
+                        LoadReplayData(packsDirectory, replayPath, backend);
                 QMetaObject::invokeMethod(
                         this,
                         [this, loadSerial,
@@ -729,15 +766,19 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
         if (queuedReplayLoad_) {
             const ReplayLoadRequest request = *queuedReplayLoad_;
             queuedReplayLoad_.reset();
-            beginReplayLoad(request.packsDirectory, request.replayPath);
+            beginReplayLoad(request.packsDirectory,
+                            request.replayPath,
+                            request.backend);
             return;
         }
         if (pendingRun_ &&
             (!loaded_ ||
              loadedPacksDirectory_ != pendingRun_->packsDirectory ||
-             loadedReplayPath_ != pendingRun_->replayPath)) {
+             loadedReplayPath_ != pendingRun_->replayPath ||
+             loadedBackend_ != pendingRun_->backend)) {
             beginReplayLoad(pendingRun_->packsDirectory,
-                            pendingRun_->replayPath);
+                            pendingRun_->replayPath,
+                            pendingRun_->backend);
         }
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
@@ -784,6 +825,7 @@ void RaceViewerController::applyLoadResult(
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
+    loadedBackend_ = result.backend;
     loaded_ = true;
     runs_.clear();
     selectedRunId_.clear();

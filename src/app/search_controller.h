@@ -28,6 +28,10 @@ class SearchController final : public QObject {
                        autoDetectedPacksDirectoryChanged)
     Q_PROPERTY(QString replayPath READ replayPath WRITE setReplayPath NOTIFY
                        replayPathChanged)
+    Q_PROPERTY(QVariantList simulationBackendOptions READ
+                       simulationBackendOptions CONSTANT)
+    Q_PROPERTY(QString simulationBackendId READ simulationBackendId WRITE
+                       setSimulationBackendId NOTIFY simulationBackendIdChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
                        CONSTANT)
     Q_PROPERTY(QVariantList modifierOptions READ modifierOptions CONSTANT)
@@ -72,6 +76,8 @@ public:
     QString packsDirectory() const;
     QString autoDetectedPacksDirectory() const;
     QString replayPath() const;
+    QVariantList simulationBackendOptions() const;
+    QString simulationBackendId() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
     QVariantList evaluationTargetOptions() const;
@@ -98,6 +104,7 @@ public:
 public slots:
     void setPacksDirectory(const QString &value);
     void setReplayPath(const QString &value);
+    void setSimulationBackendId(const QString &value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
 
@@ -122,6 +129,7 @@ signals:
     void packsDirectoryChanged();
     void autoDetectedPacksDirectoryChanged();
     void replayPathChanged();
+    void simulationBackendIdChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
     void searchAlgorithmSettingsChanged();
@@ -166,6 +174,7 @@ private:
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
+    PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
     SearchConfigurationModel configuration_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");

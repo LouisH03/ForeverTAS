@@ -17,10 +17,16 @@ namespace {
 
 constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
+constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
 QString StoredValue(const char *key, const QString &fallback) {
     return QSettings().value(QLatin1String(key), fallback).toString();
+}
+
+QString BackendId(PhysicsBackend backend) {
+    const std::string_view id = PhysicsBackendId(backend);
+    return QString::fromLatin1(id.data(), static_cast<qsizetype>(id.size()));
 }
 
 }  // namespace
@@ -40,6 +46,17 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     qRegisterMetaType<SearchCompletionPtr>();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
+    const QString storedBackend = StoredValue(
+            kSimulationBackendKey,
+            BackendId(PhysicsBackend::Reference));
+    const std::optional<PhysicsBackend> parsedBackend =
+            ParsePhysicsBackend(storedBackend.toStdString());
+    simulationBackend_ = parsedBackend.value_or(PhysicsBackend::Reference);
+    if (!parsedBackend) {
+        QSettings().setValue(
+                QLatin1String(kSimulationBackendKey),
+                BackendId(simulationBackend_));
+    }
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
     refreshValidation();
 }
@@ -58,6 +75,24 @@ QString SearchController::autoDetectedPacksDirectory() const {
 
 QString SearchController::replayPath() const {
     return replayPath_;
+}
+
+QVariantList SearchController::simulationBackendOptions() const {
+    return {
+            QVariantMap{
+                    {QStringLiteral("id"),
+                     BackendId(PhysicsBackend::Reference)},
+                    {QStringLiteral("label"), QStringLiteral("Reference")}},
+            QVariantMap{
+                    {QStringLiteral("id"),
+                     BackendId(PhysicsBackend::OptimizedCpu)},
+                    {QStringLiteral("label"),
+                     QStringLiteral("CPU Optimized")}},
+    };
+}
+
+QString SearchController::simulationBackendId() const {
+    return BackendId(simulationBackend_);
 }
 
 QVariantList SearchController::searchAlgorithmOptions() const {
@@ -165,6 +200,17 @@ void SearchController::setSearchAlgorithmId(const QString &value) {
     emit searchAlgorithmIdChanged();
     emit searchAlgorithmSettingsChanged();
     refreshValidation();
+}
+
+void SearchController::setSimulationBackendId(const QString &value) {
+    const std::optional<PhysicsBackend> parsed =
+            ParsePhysicsBackend(value.toStdString());
+    if (!parsed || simulationBackend_ == *parsed) {
+        return;
+    }
+    simulationBackend_ = *parsed;
+    persist(kSimulationBackendKey, BackendId(simulationBackend_));
+    emit simulationBackendIdChanged();
 }
 
 void SearchController::setEvaluationTargetId(const QString &value) {
@@ -417,6 +463,7 @@ SearchController::ValidationResult SearchController::validate() const {
             SearchRequest{
                     packsInfo.absoluteFilePath().toStdString(),
                     replayInfo.absoluteFilePath().toStdString(),
+                    simulationBackend_,
                     configuration.searchAlgorithm,
                     configuration.modifiers,
                     configuration.evaluationTarget},

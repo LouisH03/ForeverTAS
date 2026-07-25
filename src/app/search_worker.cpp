@@ -164,6 +164,9 @@ void SearchWorker::run() {
         completion->packsDirectory =
                 QString::fromStdString(request_.packDirectory);
         completion->replayPath = QString::fromStdString(request_.replayPath);
+        const std::string_view backendId = PhysicsBackendId(request_.backend);
+        completion->simulationBackendId = QString::fromLatin1(
+                backendId.data(), static_cast<qsizetype>(backendId.size()));
         completion->bestInputs = std::move(result.bestInputs);
         completion->bestTimeline = std::move(result.bestTimeline);
         emit succeeded(std::move(completion));

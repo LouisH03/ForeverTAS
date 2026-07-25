@@ -931,7 +931,8 @@ ApplicationWindow {
                             highlighted: true
                             onClicked: window.viewer.loadReplay(
                                 window.controller.packsDirectory,
-                                window.controller.replayPath)
+                                window.controller.replayPath,
+                                window.controller.simulationBackendId)
                         }
                     }
 
@@ -965,6 +966,62 @@ ApplicationWindow {
                                 onClicked:
                                     window.controller.browseForReplay()
                             }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        spacing: 6
+
+                        Label {
+                            text: qsTr("Physics backend")
+                            font.weight: Font.Medium
+                        }
+
+                        StyledComboBox {
+                            id: simulationBackendCombo
+
+                            objectName: "simulationBackendCombo"
+                            Layout.fillWidth: true
+                            model: window.controller.simulationBackendOptions
+                            textRole: "label"
+                            valueRole: "id"
+                            enabled: !window.controller.running
+                                     && !window.viewer.loading
+
+                            function synchronizeSelection() {
+                                const selected = indexOfValue(
+                                    window.controller.simulationBackendId)
+                                if (selected >= 0 && currentIndex !== selected)
+                                    currentIndex = selected
+                            }
+
+                            Component.onCompleted: synchronizeSelection()
+                            onModelChanged: Qt.callLater(synchronizeSelection)
+                            onActivated: selectedIndex =>
+                                window.controller.simulationBackendId =
+                                    valueAt(selectedIndex)
+
+                            Connections {
+                                target: window.controller
+
+                                function onSimulationBackendIdChanged() {
+                                    simulationBackendCombo.synchronizeSelection()
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: window.controller.simulationBackendId
+                                  === "optimized-cpu"
+                                  ? qsTr("Uses the deterministic optimized CPU physics path.")
+                                  : qsTr("Uses the authoritative reference physics path.")
+                            color: "#667064"
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
                         }
                     }
 

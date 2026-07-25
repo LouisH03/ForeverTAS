@@ -1,6 +1,7 @@
 #ifndef FOREVERTAS_VIEWER_RACE_VIEWER_CONTROLLER_H
 #define FOREVERTAS_VIEWER_RACE_VIEWER_CONTROLLER_H
 
+#include "physics_backend.h"
 #include "searches/search_algorithm.h"
 #include "viewer/race_geometry.h"
 
@@ -55,6 +56,7 @@ struct RaceViewerLoadResult {
     QString error;
     QString packsDirectory;
     QString replayPath;
+    PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
     RaceViewerMeshBuffers track;
     std::vector<RaceViewerFrame> frames;
     QVariantList carEllipsoids;
@@ -129,6 +131,11 @@ public:
             const QString &packsDirectory,
             const QString &replayPath,
             const std::vector<SearchTimelineFrame> &frames);
+    void addSearchRun(
+            const QString &packsDirectory,
+            const QString &replayPath,
+            const std::vector<SearchTimelineFrame> &frames,
+            const QString &backendId);
 
 public slots:
     void setTimeMs(qint64 value);
@@ -141,6 +148,9 @@ public slots:
     Q_INVOKABLE void jumpToEnd();
     Q_INVOKABLE void loadReplay(const QString &packsDirectory,
                                 const QString &replayPath);
+    Q_INVOKABLE void loadReplay(const QString &packsDirectory,
+                                const QString &replayPath,
+                                const QString &backendId);
 
 signals:
     void sceneChanged();
@@ -156,7 +166,8 @@ private:
     void applyLoadResult(std::uint64_t loadSerial,
                          RaceViewerLoadResult result);
     void beginReplayLoad(const QString &packsDirectory,
-                         const QString &replayPath);
+                         const QString &replayPath,
+                         PhysicsBackend backend);
     void applyPendingRunIfReady();
     void upsertRun(QString id,
                    QString name,
@@ -180,10 +191,12 @@ private:
     struct ReplayLoadRequest {
         QString packsDirectory;
         QString replayPath;
+        PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
     };
     struct PendingRun {
         QString packsDirectory;
         QString replayPath;
+        PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
         std::vector<RaceViewerFrame> frames;
     };
 
@@ -197,6 +210,7 @@ private:
     QString selectedRunId_;
     QString loadedPacksDirectory_;
     QString loadedReplayPath_;
+    PhysicsBackend loadedBackend_ = PhysicsBackend::OptimizedCpu;
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;

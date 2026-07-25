@@ -5,13 +5,11 @@
 #include <exception>
 #include <iostream>
 
-int main(int argc, char **argv) {
-    if (argc != 3) {
-        std::cerr << "expected Packs directory and replay path\n";
-        return 2;
-    }
+namespace {
 
-    try {
+bool RunBackend(const char *packsDirectory,
+                const char *replayPath,
+                forevertas::PhysicsBackend backend) {
         constexpr std::uint64_t iterationsBeforeStop = 64u;
         bool stopRequested = false;
         bool sawLiveBest = false;
@@ -43,26 +41,28 @@ int main(int argc, char **argv) {
             sawFinalSampling |= progress.stage ==
                     forevertas::SearchProgressStage::FinalSampling;
         };
-        const forevertas::SearchResult result = forevertas::RunSearch(
-                {argv[1], argv[2]}, &control);
+        forevertas::SearchRequest request{packsDirectory, replayPath};
+        request.backend = backend;
+        const forevertas::SearchResult result =
+                forevertas::RunSearch(request, &control);
         const bool mutationWon =
                 result.winnerSource ==
                 forevertas::SearchWinnerSource::Mutation;
         if (mutationWon != (result.mutationImprovementCount > 0u)) {
             std::cerr << "winner and mutation improvement count disagree\n";
-            return 1;
+            return false;
         }
         if (!stopRequested || result.iterations < iterationsBeforeStop) {
             std::cerr << "search returned before the stop request\n";
-            return 1;
+            return false;
         }
         if (!sawLiveBest || liveUpdateCount < 2u) {
             std::cerr << "search did not publish live updates while running\n";
-            return 1;
+            return false;
         }
         if (result.bestInputs.empty()) {
             std::cerr << "best input timeline was not retained\n";
-            return 1;
+            return false;
         }
         for (const forevertas::SandboxInputEvent &event :
              result.bestInputs) {
@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
                 !forevervalidator::IsAnalogInputStateValid(
                         event.value.analog)) {
                 std::cerr << "best inputs contain an out-of-range analog state\n";
-                return 1;
+                return false;
             }
         }
         const std::string inputScript =
@@ -80,17 +80,17 @@ int main(int argc, char **argv) {
             inputScript.find(" release ") != std::string::npos ||
             inputScript.find(" rel ") == std::string::npos) {
             std::cerr << "best inputs were not exported as an input script\n";
-            return 1;
+            return false;
         }
         if (!sawFinalSampling || result.bestTimeline.empty()) {
             std::cerr << "best run was not sampled after Stop\n";
-            return 1;
+            return false;
         }
         if (result.bestTimeline.front().timeMs != 0 ||
             result.bestTimeline.back().timeMs !=
                     static_cast<std::int64_t>(result.bestState.durationMs)) {
             std::cerr << "best run sampling did not cover the full replay\n";
-            return 1;
+            return false;
         }
         for (std::size_t index = 1u;
              index < result.bestTimeline.size();
@@ -99,10 +99,11 @@ int main(int argc, char **argv) {
                         result.bestTimeline[index - 1u].timeMs !=
                 10) {
                 std::cerr << "best run was not sampled every tick\n";
-                return 1;
+                return false;
             }
         }
-        std::cout << "winner="
+        std::cout << "backend=" << forevertas::PhysicsBackendId(backend)
+                  << " winner="
                   << (mutationWon ? "Mutation" : "Baseline")
                   << " score=" << result.bestScore
                   << " improvements="
@@ -115,6 +116,26 @@ int main(int argc, char **argv) {
                   << " iterations=" << result.iterations
                   << " inputs=" << result.bestInputs.size()
                   << " frames=" << result.bestTimeline.size() << '\n';
+        return true;
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        std::cerr << "expected Packs directory and replay path\n";
+        return 2;
+    }
+
+    try {
+        if (!RunBackend(argv[1],
+                        argv[2],
+                        forevertas::PhysicsBackend::Reference) ||
+            !RunBackend(argv[1],
+                        argv[2],
+                        forevertas::PhysicsBackend::OptimizedCpu)) {
+            return 1;
+        }
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

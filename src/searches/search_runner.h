@@ -2,6 +2,7 @@
 #define FOREVERTAS_SEARCHES_SEARCH_RUNNER_H
 
 #include "input_timeline_time.h"
+#include "physics_backend.h"
 #include "searches/algorithm_registry.h"
 #include "searches/search_algorithm.h"
 
@@ -16,6 +17,7 @@ inline constexpr std::uint32_t kSearchTickDurationMs =
 struct SearchRequest {
     std::string packDirectory;
     std::string replayPath;
+    PhysicsBackend backend = PhysicsBackend::Reference;
     OptionConfiguration searchAlgorithm =
             DefaultSearchAlgorithmConfiguration();
     std::vector<OptionConfiguration> modifiers =

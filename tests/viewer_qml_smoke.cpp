@@ -9,6 +9,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QQuickStyle>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -118,6 +119,7 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName(
             QStringLiteral("ViewerQmlSmoke"));
     QStandardPaths::setTestModeEnabled(true);
+    QSettings().clear();
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
@@ -224,6 +226,9 @@ int main(int argc, char **argv) {
                     QObject *const searchAlgorithmCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("searchAlgorithmCombo"));
+                    QObject *const simulationBackendCombo =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("simulationBackendCombo"));
                     QObject *const settingsScroll = root->findChild<QObject *>(
                             QStringLiteral("settingsScroll"));
                     QObject *const settingsWheelRedirector =
@@ -412,6 +417,33 @@ int main(int argc, char **argv) {
                             applyAutoPacks != nullptr &&
                             applyAutoPacks->property("text").toString() ==
                                     QStringLiteral("Apply");
+                    bool backendSelectorValid =
+                            simulationBackendCombo != nullptr &&
+                            simulationBackendCombo->property("count").toInt() ==
+                                    2 &&
+                            simulationBackendCombo->property("currentValue")
+                                            .toString() ==
+                                    QStringLiteral("reference") &&
+                            simulationBackendCombo->property("displayText")
+                                            .toString() ==
+                                    QStringLiteral("Reference");
+                    if (backendSelectorValid) {
+                        controller.setSimulationBackendId(
+                                QStringLiteral("optimized-cpu"));
+                        QCoreApplication::processEvents();
+                        backendSelectorValid =
+                                simulationBackendCombo
+                                                ->property("currentValue")
+                                                .toString() ==
+                                        QStringLiteral("optimized-cpu") &&
+                                simulationBackendCombo
+                                                ->property("displayText")
+                                                .toString() ==
+                                        QStringLiteral("CPU Optimized");
+                        controller.setSimulationBackendId(
+                                QStringLiteral("reference"));
+                        QCoreApplication::processEvents();
+                    }
                     const bool algorithmSelectorsValid =
                             searchAlgorithmCombo != nullptr &&
                             modifierComposition != nullptr &&
@@ -472,9 +504,12 @@ int main(int argc, char **argv) {
                                     0.0 &&
                             searchSection->property("radius").toReal() > 0.0;
                     const bool comboSlotsStyled =
+                            simulationBackendCombo != nullptr &&
                             searchAlgorithmCombo != nullptr &&
                             evaluationTargetCombo != nullptr &&
                             addModifierCombo != nullptr &&
+                            simulationBackendCombo->property("slotStyled")
+                                    .toBool() &&
                             searchAlgorithmCombo->property("slotStyled")
                                     .toBool() &&
                             evaluationTargetCombo->property("slotStyled")
@@ -981,7 +1016,8 @@ int main(int argc, char **argv) {
                             searchControlsValid && searchMetricsUiValid &&
                             removedSectionDescriptions &&
                             wireframeTextIsWhite &&
-                            automaticPacksUi && algorithmSelectorsValid &&
+                            automaticPacksUi && backendSelectorValid &&
+                            algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
                             comboSlotsStyled && settingComboTextValid &&
                             modifierPassLayoutValid &&
@@ -1021,6 +1057,7 @@ int main(int argc, char **argv) {
                                 << ", searchControls=" << searchControlsValid
                                 << ", wireText=" << wireframeTextIsWhite
                                 << ", autoPacks=" << automaticPacksUi
+                                << ", backend=" << backendSelectorValid
                                 << ", selectors=" << algorithmSelectorsValid
                                 << ", panels=" << everyOwnedPanelLoaded
                                 << ", sections=" << configurationSectionsValid

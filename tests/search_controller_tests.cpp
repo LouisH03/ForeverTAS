@@ -86,6 +86,19 @@ bool HasOption(const QVariantList &options,
     return false;
 }
 
+bool HasBackendOption(const QVariantList &options,
+                      const QString &id,
+                      const QString &label) {
+    for (const QVariant &value : options) {
+        const QVariantMap option = value.toMap();
+        if (option.value(QStringLiteral("id")).toString() == id &&
+            option.value(QStringLiteral("label")).toString() == label) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QVariantMap Pass(const SearchController &controller, int index) {
     return controller.modifierPasses().at(index).toMap();
 }
@@ -204,6 +217,20 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
 
     bool okay = Check(controller.canStart(),
                       "valid defaults and paths did not enable Start");
+    okay &= Check(controller.simulationBackendOptions().size() == 2,
+                  "unexpected physics backend count");
+    okay &= Check(controller.simulationBackendId() ==
+                          QStringLiteral("reference"),
+                  "Reference was not the default physics backend");
+    okay &= Check(HasBackendOption(
+                          controller.simulationBackendOptions(),
+                          QStringLiteral("reference"),
+                          QStringLiteral("Reference")) &&
+                          HasBackendOption(
+                                  controller.simulationBackendOptions(),
+                                  QStringLiteral("optimized-cpu"),
+                                  QStringLiteral("CPU Optimized")),
+                  "physics backend metadata was not exposed");
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
     okay &= Check(controller.modifierOptions().size() == 5,
@@ -244,6 +271,17 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           PassId(controller, 0) ==
                                   QStringLiteral("random-steering"),
                   "default modifier pass was incorrect");
+
+    controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
+    okay &= Check(controller.simulationBackendId() ==
+                          QStringLiteral("optimized-cpu") &&
+                          controller.canStart(),
+                  "CPU Optimized backend was not selectable");
+    controller.setSimulationBackendId(QStringLiteral("missing-backend"));
+    okay &= Check(controller.simulationBackendId() ==
+                          QStringLiteral("optimized-cpu"),
+                  "invalid physics backend changed the selection");
+    controller.setSimulationBackendId(QStringLiteral("reference"));
 
 
     controller.setModifierPassSetting(
@@ -333,6 +371,7 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setModifierPassSetting(
                 1, QStringLiteral("steerMaxCount"), QStringLiteral("4"));
         controller.moveModifierPass(1, 0);
+        controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
@@ -342,6 +381,9 @@ bool TestPersistence(const QString &packsDirectory,
     SearchController restored;
     bool okay = Check(restored.searchAlgorithmSettings().isEmpty(),
                       "parameterless search exposed persisted settings");
+    okay &= Check(restored.simulationBackendId() ==
+                          QStringLiteral("optimized-cpu"),
+                  "physics backend selection was not persisted");
     okay &= Check(restored.modifierPasses().size() == 2,
                   "modifier pass count was not persisted");
     okay &= Check(PassId(restored, 0) == QStringLiteral("input-deletion") &&
@@ -364,6 +406,12 @@ bool TestPersistence(const QString &packsDirectory,
     okay &= Check(QSettings().contains(
                           QStringLiteral("composition/modifiers")),
                   "modifier composition JSON was not persisted");
+    okay &= Check(QSettings().value(
+                                  QStringLiteral(
+                                          "selection/simulationBackend"))
+                                  .toString() ==
+                          QStringLiteral("optimized-cpu"),
+                  "physics backend setting was not stored canonically");
     return okay;
 }
 
@@ -489,6 +537,7 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
     QSettings().clear();
     SearchController controller;
     SetValidPaths(controller, packsDirectory, replayPath);
+    controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
     controller.setModifierPassSetting(
             0,
             QStringLiteral("minTimeMs"),
@@ -595,9 +644,11 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
             forevertas::app::SearchCompletionPtr>(
             completionSpy.takeFirst().at(0));
     okay &= Check(completion != nullptr &&
+                          completion->simulationBackendId ==
+                                  QStringLiteral("optimized-cpu") &&
                           !completion->bestInputs.empty() &&
                           !completion->bestTimeline.empty(),
-                  "completed search did not retain its best run");
+                  "completed search did not retain its backend and best run");
     if (completion && !completion->bestTimeline.empty()) {
         okay &= Check(completion->bestTimeline.front().timeMs == 0 &&
                               completion->bestTimeline.back().timeMs > 0,

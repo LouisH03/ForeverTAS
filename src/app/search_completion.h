@@ -16,6 +16,7 @@ struct SearchCompletion {
     QString inputsText;
     QString packsDirectory;
     QString replayPath;
+    QString simulationBackendId;
     std::vector<SandboxInputEvent> bestInputs;
     std::vector<SearchTimelineFrame> bestTimeline;
 };
