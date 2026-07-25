@@ -259,6 +259,13 @@ int main(int argc, char **argv) {
                     QObject *const velocitySettings =
                             root->findChild<QObject *>(QStringLiteral(
                                     "velocityEvaluationSettings"));
+                    auto *const velocityModeCombo =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "velocityModeCombo")));
+                    QObject *const velocityModeComboContent =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "velocityModeComboContent"));
                     QObject *const bestInputsScrollView =
                             root->findChild<QObject *>(QStringLiteral(
                                     "bestInputsScrollView"));
@@ -437,6 +444,18 @@ int main(int argc, char **argv) {
                                     ->property("firstPassSettingsLoaded")
                                     .toBool() &&
                             velocitySettings != nullptr;
+                    const bool settingComboTextValid =
+                            velocityModeCombo != nullptr &&
+                            velocityModeComboContent != nullptr &&
+                            velocityModeCombo->property("displayText")
+                                            .toString() ==
+                                    QStringLiteral("Total speed") &&
+                            velocityModeComboContent->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Total speed") &&
+                            !velocityModeComboContent->property("truncated")
+                                     .toBool() &&
+                            velocityModeCombo->width() >= 160.0;
                     const bool configurationSectionsValid =
                             evaluationSection != nullptr &&
                             modifierSection != nullptr &&
@@ -964,7 +983,8 @@ int main(int argc, char **argv) {
                             wireframeTextIsWhite &&
                             automaticPacksUi && algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
-                            comboSlotsStyled && modifierPassLayoutValid &&
+                            comboSlotsStyled && settingComboTextValid &&
+                            modifierPassLayoutValid &&
                             wheelScrollingValid &&
                             dropdownStateUpdates && insertionSlidersValid &&
                             poseSliderValid && velocitySliderValid &&
@@ -1005,6 +1025,7 @@ int main(int argc, char **argv) {
                                 << ", panels=" << everyOwnedPanelLoaded
                                 << ", sections=" << configurationSectionsValid
                                 << ", comboStyle=" << comboSlotsStyled
+                                << ", comboText=" << settingComboTextValid
                                 << ", passLayout=" << modifierPassLayoutValid
                                 << ", wheel=" << wheelScrollingValid
                                 << ", dropdown=" << dropdownStateUpdates

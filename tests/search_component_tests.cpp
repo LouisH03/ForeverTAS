@@ -1,4 +1,5 @@
 #include "evaluators/iteration_evaluator.h"
+#include "input_timeline_time.h"
 #include "mutations/composite_input_mutator.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/input_event_utils.h"
@@ -161,6 +162,74 @@ std::unique_ptr<forevertas::IterationEvaluator> Evaluator(
     return registration->create(settings, 10u);
 }
 
+
+bool TestUserTimelineTimeOrigin() {
+    const auto firstInput =
+            forevertas::SimulationTimelineTimeFromUserTime(
+                    0, forevertas::kInputTimelineTickDurationMs);
+    const auto laterInput =
+            forevertas::SimulationTimelineTimeFromUserTime(
+                    1000, forevertas::kInputTimelineTickDurationMs);
+    bool okay = Check(firstInput && *firstInput == 10 &&
+                              laterInput && *laterInput == 1010,
+                      "user timeline times were not shifted by one tick");
+    okay &= Check(
+            forevertas::UserTimelineTimeFromSimulationTime(
+                    10, forevertas::kInputTimelineTickDurationMs) == 0 &&
+                    forevertas::UserTimelineTimeFromSimulationTime(
+                            1010,
+                            forevertas::kInputTimelineTickDurationMs) == 1000,
+            "simulation timeline times did not map back to the user origin");
+
+    const OptionSettings sample{{"minTimeMs", "0"},
+                                {"maxTimeMs", "1000"},
+                                {"maxTimeShiftMs", "50"},
+                                {"radiusMs", "200"},
+                                {"maxSteerHoldMs", "300"}};
+    const auto converted =
+            forevertas::SimulationSettingsFromUserTimeline(
+                    sample, forevertas::kInputTimelineTickDurationMs);
+    okay &= Check(converted && converted->at("minTimeMs") == "10" &&
+                              converted->at("maxTimeMs") == "1010" &&
+                              converted->at("maxTimeShiftMs") == "50" &&
+                              converted->at("radiusMs") == "200" &&
+                              converted->at("maxSteerHoldMs") == "300",
+                      "timeline conversion changed a duration setting");
+
+    const auto verifySettings = [&okay](const OptionSettings &settings) {
+        const auto simulation =
+                forevertas::SimulationSettingsFromUserTimeline(
+                        settings,
+                        forevertas::kInputTimelineTickDurationMs);
+        if (!simulation) {
+            okay &= Check(false,
+                          "registered settings could not be timeline-converted");
+            return;
+        }
+        for (const auto &[key, value] : settings) {
+            if (forevertas::IsUserTimelineTimeSetting(key)) {
+                const auto parsed = forevertas::ParseSignedDecimal(value);
+                okay &= Check(parsed &&
+                                      simulation->at(key) ==
+                                              std::to_string(*parsed + 10),
+                              "a registered absolute time was not shifted");
+            } else {
+                okay &= Check(simulation->at(key) == value,
+                              "a registered non-time setting was shifted");
+            }
+        }
+    };
+    for (const auto &registration : forevertas::SearchAlgorithmRegistry()) {
+        verifySettings(registration.defaultSettings);
+    }
+    for (const auto &registration : forevertas::ModifierRegistry()) {
+        verifySettings(registration.defaultSettings);
+    }
+    for (const auto &registration : forevertas::EvaluationTargetRegistry()) {
+        verifySettings(registration.defaultSettings);
+    }
+    return okay;
+}
 
 bool TestHumanDurationFormatting() {
     bool okay = Check(
@@ -385,11 +454,11 @@ bool TestModifierDeterminism() {
     settings["maxTimeMs"] = "2000";
     std::unique_ptr<InputMutator> modifier = registration->create(settings, 10u);
     const std::vector<SandboxInputEvent> baseline{
-            Steering(990, -6554),
-            Steering(1000, -13107),
+            Steering(1000, -6554),
+            Steering(1010, -13107),
             Steering(1500, 19661),
-            Steering(2000, 26214),
-            Steering(2010, 32768)};
+            Steering(2010, 26214),
+            Steering(2020, 32768)};
     const MutationResult first = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult repeated = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult otherIteration = modifier->Mutate(
@@ -641,7 +710,8 @@ bool TestSearchControl() {
 }  // namespace
 
 int main() {
-    const bool okay = TestHumanDurationFormatting() &&
+    const bool okay = TestUserTimelineTimeOrigin() &&
+            TestHumanDurationFormatting() &&
             TestMutableSuffixNormalization() &&
             TestEvaluationTargets() &&
             TestModifierComposition() &&

@@ -1,5 +1,7 @@
 #include "mutations/input_event_formatter.h"
 
+#include "input_timeline_time.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
@@ -13,17 +15,18 @@ namespace {
 using forevervalidator::experimental::PhysicsSandboxInputValueKind;
 using forevervalidator::experimental::PhysicsSandboxSwitchState;
 
-constexpr std::int32_t kInputScriptCommandLeadMs = 10;
-constexpr std::int64_t kInputScriptTickMs = 10;
+constexpr std::int64_t kInputScriptTickMs =
+        static_cast<std::int64_t>(kInputTimelineTickDurationMs);
 
 std::string FormatTime(std::int32_t timeMs,
                        std::int32_t startTimeMs) {
-    const std::int64_t shiftedTimeMs =
-            static_cast<std::int64_t>(timeMs) - startTimeMs -
-            kInputScriptCommandLeadMs;
-    const std::int64_t scriptTimeMs = shiftedTimeMs <= 0
+    const std::int64_t userTimeMs = UserTimelineTimeFromSimulationTime(
+            static_cast<std::int64_t>(timeMs),
+            static_cast<std::uint32_t>(kInputScriptTickMs),
+            static_cast<std::int64_t>(startTimeMs));
+    const std::int64_t scriptTimeMs = userTimeMs == 0
             ? 0
-            : ((shiftedTimeMs + kInputScriptTickMs - 1) /
+            : ((userTimeMs + kInputScriptTickMs - 1) /
                kInputScriptTickMs) * kInputScriptTickMs;
     const std::int64_t hundredths = scriptTimeMs / 10;
     std::ostringstream output;

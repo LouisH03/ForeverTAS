@@ -72,7 +72,11 @@ simulation and records one viewer sample per physics tick. The completed Best
 run is added to the Race Viewer only after that Stop-triggered sampling pass.
 Analog replay and iteration inputs use the exact signed integer state range
 `[-65536, 65536]`; normalized decimal UI settings are quantized once when
-parsed.
+parsed. User-facing input timeline settings are zero-based: `0 ms` selects the
+first actionable input, which is simulation time `10 ms` at 100 Hz. Absolute
+setting keys ending in `TimeMs` are translated by one physics tick exactly once
+when a registry creates a simulation component; stored values and relative
+durations remain user-facing.
 Built-in targets cover finish
 time, cuboid entry time, velocity, point distance, and weighted pose error.
 Built-in modifiers cover existing-event perturbation, smooth steering

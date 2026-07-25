@@ -33,10 +33,20 @@ struct SearchAlgorithmRegistration {
     std::string settingsComponent;
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
-    std::optional<std::string> (*validateSettings)(
+
+    // Internal hooks receive settings after the user timeline origin has been
+    // translated. Application code must use validateSettings() and create().
+    std::optional<std::string> (*validateSimulationSettings)(
             const OptionSettings &, std::uint32_t);
-    std::unique_ptr<SearchAlgorithm> (*create)(
+    std::unique_ptr<SearchAlgorithm> (*createFromSimulationSettings)(
             const OptionSettings &, std::uint32_t);
+
+    std::optional<std::string> validateSettings(
+            const OptionSettings &settings,
+            std::uint32_t tickDurationMs) const;
+    std::unique_ptr<SearchAlgorithm> create(
+            const OptionSettings &settings,
+            std::uint32_t tickDurationMs) const;
 };
 
 struct ModifierRegistration {
@@ -46,10 +56,20 @@ struct ModifierRegistration {
     std::string settingsComponent;
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
-    std::optional<std::string> (*validateSettings)(
+
+    // Internal hooks receive settings after the user timeline origin has been
+    // translated. Application code must use validateSettings() and create().
+    std::optional<std::string> (*validateSimulationSettings)(
             const OptionSettings &, std::uint32_t);
-    std::unique_ptr<InputMutator> (*create)(
+    std::unique_ptr<InputMutator> (*createFromSimulationSettings)(
             const OptionSettings &, std::uint32_t);
+
+    std::optional<std::string> validateSettings(
+            const OptionSettings &settings,
+            std::uint32_t tickDurationMs) const;
+    std::unique_ptr<InputMutator> create(
+            const OptionSettings &settings,
+            std::uint32_t tickDurationMs) const;
 };
 
 struct EvaluationTargetRegistration {
@@ -59,10 +79,20 @@ struct EvaluationTargetRegistration {
     std::string settingsComponent;
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
-    std::optional<std::string> (*validateSettings)(
+
+    // Internal hooks receive settings after the user timeline origin has been
+    // translated. Application code must use validateSettings() and create().
+    std::optional<std::string> (*validateSimulationSettings)(
             const OptionSettings &, std::uint32_t);
-    std::unique_ptr<IterationEvaluator> (*create)(
+    std::unique_ptr<IterationEvaluator> (*createFromSimulationSettings)(
             const OptionSettings &, std::uint32_t);
+
+    std::optional<std::string> validateSettings(
+            const OptionSettings &settings,
+            std::uint32_t tickDurationMs) const;
+    std::unique_ptr<IterationEvaluator> create(
+            const OptionSettings &settings,
+            std::uint32_t tickDurationMs) const;
 };
 
 const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry();

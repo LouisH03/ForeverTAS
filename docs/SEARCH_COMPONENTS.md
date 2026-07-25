@@ -237,6 +237,22 @@ and modification parameters. `EarliestMutationTimeMs()` reports the earliest
 input tick that the pass may change. `CompositeInputMutator` uses the minimum
 across all passes.
 
+### User timeline origin
+
+All UI and persisted input timeline values are zero-based. The simulation's
+first actionable input occurs one physics tick later, so user `0 ms` maps to
+simulation `10 ms` at the current 100 Hz rate. This translation is centralized
+in `input_timeline_time.h` and applied exactly once by the public registry
+validation and factory methods before their simulation-native implementation
+hooks are called.
+
+The naming contract is deliberate: every absolute timeline setting key ends in
+`TimeMs` and is shifted by one tick. Relative durations must use a more specific
+suffix such as `HoldMs`, `ShiftMs`, or `RadiusMs` and are never shifted. Registry
+coverage tests apply this rule to every current option, while input-script
+serialization uses the same inverse conversion. Components must not add local
+time offsets.
+
 ### Composition
 
 Modifier passes run in displayed order. Each pass receives the previous pass's

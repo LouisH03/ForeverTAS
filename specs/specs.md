@@ -85,3 +85,11 @@ All modifiers should (or after all modifiers, in a single pass, but before using
 * Preserve a valid, chronologically ordered input stream.
 * Clamp analog values.
 * Report whether an effective change occurred.
+
+## User timeline origin
+
+User-entered and persisted absolute input timeline settings are zero-based.
+Every setting key ending in `TimeMs` is translated to simulation time by adding
+one physics tick at the component registry boundary; duration keys are not
+translated. User `0 ms` therefore targets the first actionable input at
+simulation `10 ms` for the 100 Hz search.

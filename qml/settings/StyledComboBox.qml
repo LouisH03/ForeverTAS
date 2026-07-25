@@ -11,8 +11,9 @@ ComboBox {
     rightPadding: 38
 
     contentItem: Text {
-        leftPadding: control.leftPadding
-        rightPadding: control.rightPadding
+        objectName: control.objectName.length > 0
+                    ? control.objectName + "Content"
+                    : "styledComboContent"
         text: control.displayText
         color: control.enabled ? "#20251f" : "#7b8278"
         font: control.font

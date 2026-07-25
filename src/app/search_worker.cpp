@@ -23,10 +23,6 @@ QString IterationLabel(
             : QStringLiteral("Mutation");
 }
 
-QString FormattedDuration(std::chrono::steady_clock::duration duration) {
-    return QString::fromStdString(FormatHumanDuration(duration));
-}
-
 QString IterationsPerSecond(const SearchLiveUpdate &live) {
     const double seconds =
             std::chrono::duration<double>(live.elapsed).count();
@@ -36,7 +32,7 @@ QString IterationsPerSecond(const SearchLiveUpdate &live) {
     return QString::number(static_cast<qlonglong>(std::llround(rate)));
 }
 
-QString RoundedElapsedDuration(
+QString RoundedDuration(
         std::chrono::steady_clock::duration duration) {
     return QString::fromStdString(FormatHumanDuration(
             std::chrono::round<std::chrono::seconds>(duration)));
@@ -49,7 +45,7 @@ QString LastImprovementText(const SearchLiveUpdate &live) {
     const auto age = live.elapsed > *live.lastImprovementElapsed
             ? live.elapsed - *live.lastImprovementElapsed
             : std::chrono::steady_clock::duration::zero();
-    return FormattedDuration(age) + QStringLiteral(" ago");
+    return RoundedDuration(age) + QStringLiteral(" ago");
 }
 
 QString FormatLive(const SearchLiveUpdate &live, const QString &heading) {
@@ -153,7 +149,7 @@ void SearchWorker::run() {
         emit metricsChanged(
                 QString::number(static_cast<qulonglong>(live.iterations)),
                 IterationsPerSecond(live),
-                RoundedElapsedDuration(live.elapsed));
+                RoundedDuration(live.elapsed));
         emit bestChanged(
                 FormatLive(live, QStringLiteral("Current best")),
                 latestInputsText);

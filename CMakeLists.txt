@@ -47,6 +47,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
+    src/input_timeline_time.h
     src/evaluators/iteration_evaluator.h
     src/evaluators/evaluator_utils.h
     src/evaluators/finish_time_evaluator.cpp

@@ -1,6 +1,7 @@
 #ifndef FOREVERTAS_SEARCHES_SEARCH_RUNNER_H
 #define FOREVERTAS_SEARCHES_SEARCH_RUNNER_H
 
+#include "input_timeline_time.h"
 #include "searches/algorithm_registry.h"
 #include "searches/search_algorithm.h"
 
@@ -9,7 +10,8 @@
 
 namespace forevertas {
 
-inline constexpr std::uint32_t kSearchTickDurationMs = 10u;
+inline constexpr std::uint32_t kSearchTickDurationMs =
+        kInputTimelineTickDurationMs;
 
 struct SearchRequest {
     std::string packDirectory;

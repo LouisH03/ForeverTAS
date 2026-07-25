@@ -1,4 +1,5 @@
 #include "app/packs_directory_finder.h"
+#include "app/search_configuration_model.h"
 #include "app/search_controller.h"
 
 #include <QCoreApplication>
@@ -104,6 +105,95 @@ void SetValidPaths(SearchController &controller,
                    const QString &replayPath) {
     controller.setPacksDirectory(packsDirectory);
     controller.setReplayPath(replayPath);
+}
+
+bool TestUserTimelineConfigurationBoundary() {
+    QSettings().clear();
+    forevertas::app::SearchConfigurationModel configuration;
+    bool okay = Check(
+            configuration.setModifierPassId(
+                    0, QStringLiteral("smooth-steering")),
+            "failed to select a duration-bearing modifier");
+    okay &= Check(configuration.setModifierPassSetting(
+                              0,
+                              QStringLiteral("minTimeMs"),
+                              QStringLiteral("0")) &&
+                          configuration.setModifierPassSetting(
+                                  0,
+                                  QStringLiteral("maxTimeMs"),
+                                  QStringLiteral("20")) &&
+                          configuration.setModifierPassSetting(
+                                  0,
+                                  QStringLiteral("radiusMs"),
+                                  QStringLiteral("210")),
+                  "failed to configure user timeline modifier values");
+    okay &= Check(configuration.setEvaluationTargetSetting(
+                              QStringLiteral("minTimeMs"),
+                              QStringLiteral("0")) &&
+                          configuration.setEvaluationTargetSetting(
+                                  QStringLiteral("maxTimeMs"),
+                                  QStringLiteral("20")),
+                  "failed to configure user timeline evaluation values");
+
+    const auto validated = configuration.validate(10u);
+    okay &= Check(validated.configuration.has_value() &&
+                          validated.error.isEmpty(),
+                  "zero-based user timeline settings did not validate");
+    if (!validated.configuration) return false;
+
+    const QVariantMap userModifier =
+            configuration.modifierPasses().front().toMap()
+                    .value(QStringLiteral("settings"))
+                    .toMap();
+    const QVariantMap userEvaluation =
+            configuration.evaluationTargetSettings();
+    const forevertas::OptionSettings &configuredModifier =
+            validated.configuration->modifiers.front().settings;
+    const forevertas::OptionSettings &configuredEvaluation =
+            validated.configuration->evaluationTarget.settings;
+    okay &= Check(userModifier.value(QStringLiteral("minTimeMs")).toString() ==
+                                  QStringLiteral("0") &&
+                          userModifier.value(QStringLiteral("maxTimeMs"))
+                                          .toString() ==
+                                  QStringLiteral("20") &&
+                          userModifier.value(QStringLiteral("radiusMs"))
+                                          .toString() ==
+                                  QStringLiteral("210") &&
+                          userEvaluation.value(QStringLiteral("minTimeMs"))
+                                          .toString() ==
+                                  QStringLiteral("0") &&
+                          userEvaluation.value(QStringLiteral("maxTimeMs"))
+                                          .toString() ==
+                                  QStringLiteral("20"),
+                  "validation rewrote persisted user timeline values");
+    okay &= Check(configuredModifier.at("minTimeMs") == "0" &&
+                          configuredModifier.at("maxTimeMs") == "20" &&
+                          configuredModifier.at("radiusMs") == "210" &&
+                          configuredEvaluation.at("minTimeMs") == "0" &&
+                          configuredEvaluation.at("maxTimeMs") == "20",
+                  "validated configuration did not preserve user timeline values");
+
+    const auto *const modifierRegistration = forevertas::FindModifier(
+            validated.configuration->modifiers.front().id);
+    const auto *const evaluationRegistration =
+            forevertas::FindEvaluationTarget(
+                    validated.configuration->evaluationTarget.id);
+    okay &= Check(modifierRegistration != nullptr &&
+                          evaluationRegistration != nullptr,
+                  "validated configuration referenced an unknown component");
+    if (modifierRegistration == nullptr || evaluationRegistration == nullptr) {
+        return false;
+    }
+    const std::unique_ptr<forevertas::InputMutator> modifier =
+            modifierRegistration->create(configuredModifier, 10u);
+    const std::unique_ptr<forevertas::IterationEvaluator> evaluator =
+            evaluationRegistration->create(configuredEvaluation, 10u);
+    const forevertas::EvaluationPlan plan = evaluator->Plan(
+            1000, modifier->EarliestMutationTimeMs(), 10u);
+    okay &= Check(modifier->EarliestMutationTimeMs() == 10 &&
+                          plan.startTimeMs == 10 && plan.endTimeMs == 30,
+                  "registry did not apply exactly one timeline tick");
+    return okay;
 }
 
 bool TestRegistryAndValidation(const QString &packsDirectory,
@@ -399,6 +489,37 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
     QSettings().clear();
     SearchController controller;
     SetValidPaths(controller, packsDirectory, replayPath);
+    controller.setModifierPassSetting(
+            0,
+            QStringLiteral("minTimeMs"),
+            QStringLiteral("0"));
+    controller.setModifierPassSetting(
+            0,
+            QStringLiteral("maxTimeMs"),
+            QStringLiteral("20"));
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("minTimeMs"),
+            QStringLiteral("0"));
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("maxTimeMs"),
+            QStringLiteral("20"));
+    const bool zeroOriginConfigured =
+            PassSettings(controller, 0)
+                            .value(QStringLiteral("minTimeMs"))
+                            .toString() == QStringLiteral("0") &&
+            PassSettings(controller, 0)
+                            .value(QStringLiteral("maxTimeMs"))
+                            .toString() == QStringLiteral("20") &&
+            controller.evaluationTargetSettings()
+                            .value(QStringLiteral("minTimeMs"))
+                            .toString() == QStringLiteral("0") &&
+            controller.evaluationTargetSettings()
+                            .value(QStringLiteral("maxTimeMs"))
+                            .toString() == QStringLiteral("20");
+    if (!Check(zeroOriginConfigured,
+               "failed to configure the zero-based first input")) {
+        return false;
+    }
     if (!Check(controller.canStart(),
                "real replay configuration did not enable Start")) {
         return false;
@@ -426,6 +547,13 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
                                         QLatin1Char('.')) &&
                                 controller.resultText().contains(
                                         QStringLiteral("Last improvement:")) &&
+                                !controller.resultText()
+                                         .section(QStringLiteral(
+                                                          "Last improvement: "),
+                                                  1,
+                                                  1)
+                                         .section(QLatin1Char('\n'), 0, 0)
+                                         .contains(QLatin1Char('.')) &&
                                 !controller.resultText().contains(
                                         QStringLiteral("iterations so far")) &&
                                 !controller.bestInputsText().isEmpty();
@@ -557,6 +685,7 @@ int main(int argc, char **argv) {
     replay.close();
 
     bool okay = TestAutomaticPacksDetection() &&
+            TestUserTimelineConfigurationBoundary() &&
             TestRegistryAndValidation(packsDirectory.path(), replayPath) &&
             TestCompositionEditing(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath) &&

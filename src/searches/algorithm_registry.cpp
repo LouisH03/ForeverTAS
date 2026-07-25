@@ -1,5 +1,6 @@
 #include "searches/algorithm_registry.h"
 
+#include "input_timeline_time.h"
 #include "evaluators/finish_time_evaluator.h"
 #include "evaluators/point_target_evaluator.h"
 #include "evaluators/pose_target_evaluator.h"
@@ -13,9 +14,57 @@
 #include "searches/basic_brute_force_search.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace forevertas {
 namespace {
+
+using SettingsValidator = std::optional<std::string> (*)(
+        const OptionSettings &, std::uint32_t);
+
+template<typename Product>
+using SettingsFactory = std::unique_ptr<Product> (*)(
+        const OptionSettings &, std::uint32_t);
+
+std::optional<std::string> ValidateConfiguredSettings(
+        const OptionSettings &userSettings,
+        std::uint32_t tickDurationMs,
+        SettingsValidator validateSimulationSettings) {
+    if (tickDurationMs == 0u) {
+        return "tick duration must be greater than zero";
+    }
+    const std::optional<OptionSettings> simulationSettings =
+            SimulationSettingsFromUserTimeline(
+                    userSettings, tickDurationMs);
+    if (!simulationSettings) {
+        return "timeline time is too large";
+    }
+    return validateSimulationSettings(*simulationSettings, tickDurationMs);
+}
+
+template<typename Product>
+std::unique_ptr<Product> CreateConfiguredComponent(
+        const OptionSettings &userSettings,
+        std::uint32_t tickDurationMs,
+        SettingsValidator validateSimulationSettings,
+        SettingsFactory<Product> createFromSimulationSettings) {
+    if (tickDurationMs == 0u) {
+        throw std::invalid_argument(
+                "tick duration must be greater than zero");
+    }
+    const std::optional<OptionSettings> simulationSettings =
+            SimulationSettingsFromUserTimeline(
+                    userSettings, tickDurationMs);
+    if (!simulationSettings) {
+        throw std::invalid_argument("timeline time is too large");
+    }
+    if (const auto error = validateSimulationSettings(
+                *simulationSettings, tickDurationMs)) {
+        throw std::invalid_argument(*error);
+    }
+    return createFromSimulationSettings(
+            *simulationSettings, tickDurationMs);
+}
 
 template<typename Registration>
 const Registration *FindRegistration(
@@ -34,6 +83,57 @@ const Registration *FindRegistration(
 }
 
 }  // namespace
+
+std::optional<std::string> SearchAlgorithmRegistration::validateSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) const {
+    return ValidateConfiguredSettings(
+            settings, tickDurationMs, validateSimulationSettings);
+}
+
+std::unique_ptr<SearchAlgorithm> SearchAlgorithmRegistration::create(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) const {
+    return CreateConfiguredComponent<SearchAlgorithm>(
+            settings,
+            tickDurationMs,
+            validateSimulationSettings,
+            createFromSimulationSettings);
+}
+
+std::optional<std::string> ModifierRegistration::validateSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) const {
+    return ValidateConfiguredSettings(
+            settings, tickDurationMs, validateSimulationSettings);
+}
+
+std::unique_ptr<InputMutator> ModifierRegistration::create(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) const {
+    return CreateConfiguredComponent<InputMutator>(
+            settings,
+            tickDurationMs,
+            validateSimulationSettings,
+            createFromSimulationSettings);
+}
+
+std::optional<std::string> EvaluationTargetRegistration::validateSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) const {
+    return ValidateConfiguredSettings(
+            settings, tickDurationMs, validateSimulationSettings);
+}
+
+std::unique_ptr<IterationEvaluator> EvaluationTargetRegistration::create(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs) const {
+    return CreateConfiguredComponent<IterationEvaluator>(
+            settings,
+            tickDurationMs,
+            validateSimulationSettings,
+            createFromSimulationSettings);
+}
 
 const std::vector<SearchAlgorithmRegistration> &SearchAlgorithmRegistry() {
     static const std::vector<SearchAlgorithmRegistration> registrations{
