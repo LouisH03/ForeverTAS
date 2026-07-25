@@ -70,8 +70,8 @@ near plane also tracks the far plane to maintain a useful depth ratio; the
 56-kilometer enclosing stadium sky shell explains TASmania's large reset-view
 far plane.
 
-The viewer provides textured, neutral, collision, wireframe and material-debug
-modes. Collision and wireframe continue to use the legacy collision buffers.
+The viewer provides Textured, Neutral, Collision, Wireframe, and High Contrast
+modes. Collision and Wireframe continue to use the legacy collision buffers.
 
 ## Verification
 

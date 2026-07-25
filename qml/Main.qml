@@ -13,7 +13,6 @@ ApplicationWindow {
     required property var controller
     required property var viewer
 
-    property bool wireframeMode: false
     property string renderMode: "textured"
     property real measuredFps: 0
     property int framesSinceSample: 0
@@ -466,8 +465,8 @@ ApplicationWindow {
 
                                 objectName: "trackVisualModel"
                                 visible: window.viewer.loaded
-                                         && !window.wireframeMode
                                          && window.renderMode !== "collision"
+                                         && window.renderMode !== "wireframe"
                                          && modelData.defaultVisible
                                 geometry: modelData.geometry
                                 castsShadows: false
@@ -480,7 +479,6 @@ ApplicationWindow {
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
-                                     && !window.wireframeMode
                                      && window.renderMode === "collision"
                             geometry: window.viewer.loaded
                                       ? window.viewer.trackFilledGeometry
@@ -496,7 +494,7 @@ ApplicationWindow {
                         Model {
                             objectName: "trackWireModel"
                             visible: window.viewer.loaded
-                                     && window.wireframeMode
+                                     && window.renderMode === "wireframe"
                             geometry: window.viewer.loaded
                                       ? window.viewer.trackWireGeometry
                                       : null
@@ -543,7 +541,8 @@ ApplicationWindow {
 
                                         Model {
                                             objectName: "runCarFilledModel"
-                                            visible: !window.wireframeMode
+                                            visible: window.renderMode !==
+                                                     "wireframe"
                                             geometry: runCarRoot.runGeometry
                                             materials: DefaultMaterial {
                                                 objectName: "runCarFilledMaterial"
@@ -558,7 +557,8 @@ ApplicationWindow {
 
                                         Model {
                                             objectName: "runCarWireModel"
-                                            visible: window.wireframeMode
+                                            visible: window.renderMode ===
+                                                     "wireframe"
                                             geometry:
                                                 window.viewer.ellipsoidWireGeometry
                                             materials: DefaultMaterial {
@@ -654,27 +654,6 @@ ApplicationWindow {
                                 }
                             }
 
-                            Switch {
-                                id: wireframeSwitch
-                                objectName: "wireframeSwitch"
-                                text: qsTr("Wireframe")
-                                checked: window.wireframeMode
-                                enabled: window.viewer.loaded
-                                onToggled:
-                                    window.wireframeMode = checked
-
-                                contentItem: Text {
-                                    objectName: "wireframeLabel"
-                                    leftPadding:
-                                        wireframeSwitch.indicator.width
-                                        + wireframeSwitch.spacing
-                                    text: wireframeSwitch.text
-                                    font: wireframeSwitch.font
-                                    color: "#ffffff"
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-
                             StyledComboBox {
                                 id: renderModeSelector
                                 objectName: "renderModeSelector"
@@ -687,16 +666,15 @@ ApplicationWindow {
                                       "value": "neutral" },
                                     { "text": qsTr("Collision"),
                                       "value": "collision" },
-                                    { "text": qsTr("Material debug"),
+                                    { "text": qsTr("Wireframe"),
+                                      "value": "wireframe" },
+                                    { "text": qsTr("High Contrast"),
                                       "value": "material-debug" }
                                 ]
                                 textRole: "text"
                                 valueRole: "value"
-                                onActivated: {
+                                onActivated:
                                     window.renderMode = currentValue
-                                    window.wireframeMode = false
-                                    wireframeSwitch.checked = false
-                                }
                             }
 
                             Button {

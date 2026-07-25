@@ -273,12 +273,6 @@ int main(int argc, char **argv) {
                     auto *const runSelector = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("runSelector")));
-                    QObject *const wireframeSwitch =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("wireframeSwitch"));
-                    QObject *const wireframeLabel =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("wireframeLabel"));
                     QObject *const playPause = root->findChild<QObject *>(
                             QStringLiteral("playPauseButton"));
                     auto *const playIcon = qobject_cast<QQuickItem *>(
@@ -476,11 +470,6 @@ int main(int argc, char **argv) {
                             !ContainsText(
                                     root,
                                     QStringLiteral("Runs continuously until"));
-                    const bool wireframeTextIsWhite =
-                            wireframeSwitch != nullptr &&
-                            wireframeLabel != nullptr &&
-                            wireframeLabel->property("color").value<QColor>() ==
-                                    QColor(QStringLiteral("#ffffff"));
                     const bool automaticPacksUi =
                             autoPacksSuggestion != nullptr &&
                             autoPacksSuggestionText != nullptr &&
@@ -1049,7 +1038,6 @@ int main(int argc, char **argv) {
                             runSelectorValid && bestInputsUiValid &&
                             searchControlsValid && searchMetricsUiValid &&
                             removedSectionDescriptions &&
-                            wireframeTextIsWhite &&
                             automaticPacksUi && algorithmSelectorsValid &&
                             everyOwnedPanelLoaded && configurationSectionsValid &&
                             comboSlotsStyled && modifierPassLayoutValid &&
@@ -1087,7 +1075,6 @@ int main(int argc, char **argv) {
                                 << "editor checks: runSelector=" << runSelectorValid
                                 << ", bestInputs=" << bestInputsUiValid
                                 << ", searchControls=" << searchControlsValid
-                                << ", wireText=" << wireframeTextIsWhite
                                 << ", autoPacks=" << automaticPacksUi
                                 << ", selectors=" << algorithmSelectorsValid
                                 << ", panels=" << everyOwnedPanelLoaded
@@ -1204,10 +1191,44 @@ int main(int argc, char **argv) {
                                         !wireGeometry.isNull();
                                 const int initialVisibleVisualModels =
                                         VisibleModelCount(visualModels);
+                                bool renderModeOptionsValid =
+                                        renderModeSelector != nullptr &&
+                                        renderModeSelector->property("count")
+                                                        .toInt() == 5;
+                                if (renderModeOptionsValid) {
+                                    renderModeSelector->setProperty(
+                                            "currentIndex", 3);
+                                    renderModeOptionsValid =
+                                            renderModeSelector
+                                                    ->property("currentValue")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "wireframe") &&
+                                            renderModeSelector
+                                                    ->property("displayText")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "Wireframe");
+                                    renderModeSelector->setProperty(
+                                            "currentIndex", 4);
+                                    renderModeOptionsValid &=
+                                            renderModeSelector
+                                                    ->property("currentValue")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "material-debug") &&
+                                            renderModeSelector
+                                                    ->property("displayText")
+                                                    .toString() ==
+                                                    QStringLiteral(
+                                                            "High Contrast");
+                                    renderModeSelector->setProperty(
+                                            "currentIndex", 0);
+                                }
                                 const bool initialModelState =
                                         !filled->property("visible").toBool() &&
                                         !wire->property("visible").toBool() &&
-                                        renderModeSelector != nullptr &&
+                                        renderModeOptionsValid &&
                                         renderModeSelector
                                                         ->property("currentValue")
                                                         .toString() ==
@@ -1365,8 +1386,7 @@ int main(int argc, char **argv) {
                                                 initialVisibleVisualModels;
                                 root->setProperty(
                                         "renderMode",
-                                        QStringLiteral("textured"));
-                                root->setProperty("wireframeMode", true);
+                                        QStringLiteral("wireframe"));
                                 QCoreApplication::processEvents();
                                 const bool wireframeState =
                                         !filled->property("visible").toBool() &&
@@ -1381,7 +1401,9 @@ int main(int argc, char **argv) {
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         true);
-                                root->setProperty("wireframeMode", false);
+                                root->setProperty(
+                                        "renderMode",
+                                        QStringLiteral("textured"));
                                 QCoreApplication::processEvents();
                                 const bool restoredState =
                                         !filled->property("visible").toBool() &&
