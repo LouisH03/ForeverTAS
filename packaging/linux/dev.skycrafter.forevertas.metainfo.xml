@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.skycrafter.forevertas</id>
+  <name>ForeverTAS</name>
+  <developer id="dev.skycrafter">
+    <name>Skycrafter-dev contributors</name>
+  </developer>
+  <summary>Native TrackMania Nations Forever tool-assisted search tool</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      ForeverTAS searches and visualizes deterministic input modifications for
+      TrackMania Nations Forever replays.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.skycrafter.forevertas.desktop</launchable>
+  <url type="homepage">https://github.com/Skycrafter-dev/ForeverTAS</url>
+  <provides>
+    <binary>ForeverTAS</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ForeverTAS
+Comment=Native TrackMania Nations Forever tool-assisted search tool
+Exec=ForeverTAS
+TryExec=ForeverTAS
+Icon=dev.skycrafter.forevertas
+Terminal=false
+Categories=Game;
+Keywords=TrackMania;TAS;Replay;Bruteforce;
+StartupNotify=true

@@ -49,7 +49,7 @@ pre-push check.
 Build and launch the Qt 6 Quick application:
 
 ```sh
-./build/local/forevertas
+./build/local/bin/ForeverTAS
 ```
 
 Select an installed TMUF `Packs` directory and a replay, choose an evaluation
@@ -97,6 +97,15 @@ timeline and camera focus between `Baseline`, `Best`, and future run types,
 while every run remains visible as a separate car in the 3D preview. Car colors
 are baked into separate flat-shaded vertex-color meshes: Baseline preserves the
 original orange palette exactly and Best uses the equivalent blue palette.
+
+## Portable bundles
+
+ForeverTAS can be packaged natively as a Linux AppImage, Windows portable ZIP,
+or macOS application DMG. All three artifacts use the same CMake installation
+definition and include the required Qt and QML runtime files.
+
+See [docs/PACKAGING.md](docs/PACKAGING.md) for local packaging commands, CI
+behavior, artifact layouts, signing notes, and clean-machine release checks.
 
 See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
 extension contracts.

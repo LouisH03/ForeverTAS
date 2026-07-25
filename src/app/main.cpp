@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QTimer>
@@ -16,6 +17,10 @@ int main(int argc, char **argv) {
     QCoreApplication::setOrganizationDomain(
             QStringLiteral("forevertas.local"));
     QCoreApplication::setApplicationName(QStringLiteral("ForeverTAS"));
+    QCoreApplication::setApplicationVersion(
+            QStringLiteral(FOREVERTAS_VERSION));
+    application.setWindowIcon(
+            QIcon(QStringLiteral(":/icons/forevertas.svg")));
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
