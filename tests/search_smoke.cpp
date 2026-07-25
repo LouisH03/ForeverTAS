@@ -102,6 +102,11 @@ bool RunBackend(const char *packsDirectory,
                 return false;
             }
         }
+        const double searchSeconds =
+                std::chrono::duration<double>(previousElapsed).count();
+        const double iterationsPerSecond = searchSeconds > 0.0
+                ? static_cast<double>(result.iterations) / searchSeconds
+                : 0.0;
         std::cout << "backend=" << forevertas::PhysicsBackendId(backend)
                   << " winner="
                   << (mutationWon ? "Mutation" : "Baseline")
@@ -114,6 +119,7 @@ bool RunBackend(const char *packsDirectory,
                                         *result.winningIterationIndex + 1u)
                               : std::string("none"))
                   << " iterations=" << result.iterations
+                  << " iterations_per_second=" << iterationsPerSecond
                   << " inputs=" << result.bestInputs.size()
                   << " frames=" << result.bestTimeline.size() << '\n';
         return true;
