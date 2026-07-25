@@ -1,5 +1,6 @@
 #include "viewer/material_classifier.h"
 #include "viewer/race_geometry.h"
+#include "viewer/ray_tracing_scene.h"
 #include "viewer/visual_scene_pipeline.h"
 
 #include <QCryptographicHash>
@@ -628,6 +629,37 @@ bool TestStaticBatching() {
                         std::fabs(vertices[FloatCount + 9] - 1.0f) < 0.001f,
                 "static batching did not preserve transforms, normals, or UVs");
     }
+    const auto rayTracingScene =
+            forevertas::viewer::BuildRayTracingScene(result.batches);
+    std::uint32_t expectedRayTracingTriangles = 0u;
+    for (const StaticVisualBatch &batch : result.batches) {
+        if (batch.defaultVisible) {
+            expectedRayTracingTriangles +=
+                    static_cast<std::uint32_t>(
+                            batch.indices.size() /
+                            static_cast<qsizetype>(
+                                    3u * sizeof(std::uint32_t)));
+        }
+    }
+    okay &= Check(
+            rayTracingScene != nullptr &&
+                    rayTracingScene->triangleCount ==
+                            expectedRayTracingTriangles &&
+                    rayTracingScene->triangleCount >=
+                            result.defaultTriangleCount &&
+                    rayTracingScene->vertexCount > 0u &&
+                    rayTracingScene->bvhNodeCount > 0u &&
+                    rayTracingScene->bvhNodeCount <
+                            rayTracingScene->triangleCount * 2u &&
+                    rayTracingScene->materialCount == 17u &&
+                    rayTracingScene->triangles.size() ==
+                            static_cast<qsizetype>(
+                                    rayTracingScene->triangleCount * 16u) &&
+                    rayTracingScene->bvhNodes.size() ==
+                            static_cast<qsizetype>(
+                                    rayTracingScene->bvhNodeCount * 48u),
+            "ray tracing scene did not preserve the visible geometry or "
+            "produce a compact GPU BVH");
     return okay;
 }
 
@@ -715,6 +747,36 @@ bool TestIndexedGeometry() {
     return okay;
 }
 
+bool TestRayTracingShaders() {
+    QFile presentVertex(QStringLiteral(
+            FOREVERTAS_SOURCE_DIR
+            "/shaders/raytrace_present.vert"));
+    QFile rayTracingCompute(QStringLiteral(
+            FOREVERTAS_SOURCE_DIR "/shaders/raytrace.comp"));
+    bool okay = Check(
+            presentVertex.open(QIODevice::ReadOnly) &&
+                    rayTracingCompute.open(QIODevice::ReadOnly),
+            "ray tracing shader sources were not available");
+    if (!okay) return false;
+
+    const QByteArray presentSource = presentVertex.readAll();
+    const QByteArray rayTracingSource = rayTracingCompute.readAll();
+    okay &= Check(
+            presentSource.contains("textureCoordinate = position;") &&
+                    !presentSource.contains(
+                            "textureCoordinate = position * 0.5"),
+            "fullscreen ray tracing presentation did not preserve the "
+            "complete viewport");
+    okay &= Check(
+            rayTracingSource.contains("realTimeRayTrace") &&
+                    rayTracingSource.contains("sceneOccluded") &&
+                    rayTracingSource.contains("reflectionHit") &&
+                    !rayTracingSource.contains("pathTrace("),
+            "ray tracing shader did not use the real-time game lighting "
+            "path");
+    return okay;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -724,5 +786,6 @@ int main(int argc, char **argv) {
     okay &= TestClipPlanesAndPurposeFiltering();
     okay &= TestStaticBatching();
     okay &= TestIndexedGeometry();
+    okay &= TestRayTracingShaders();
     return okay ? 0 : 1;
 }

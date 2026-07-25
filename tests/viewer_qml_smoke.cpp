@@ -255,6 +255,12 @@ int main(int argc, char **argv) {
                     QObject *const renderModeSelector =
                             root->findChild<QObject *>(
                                     QStringLiteral("renderModeSelector"));
+                    QObject *const rayTracingToggle =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("rayTracingToggle"));
+                    QObject *const gpuRayTracingView =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("gpuRayTracingView"));
                     QObject *const viewCamera = root->findChild<QObject *>(
                             QStringLiteral("viewCamera"));
                     QObject *const mapEnvironment =
@@ -1141,7 +1147,8 @@ int main(int argc, char **argv) {
                     QTimer::singleShot(
                             250, &application,
                             [&, filled, wire, quickWindow, runSelector,
-                             renderModeSelector, viewCamera,
+                             renderModeSelector, rayTracingToggle,
+                             gpuRayTracingView, viewCamera,
                              mapEnvironment, daySkyTexture, mainMapLight,
                              fillMapLight, baselineTickCount, bestPosition]() {
                                 const QList<QObject *> carRoots =
@@ -1268,6 +1275,22 @@ int main(int argc, char **argv) {
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
                                                         false);
+                                const bool rayTracingControlsValid =
+                                        rayTracingToggle != nullptr &&
+                                        gpuRayTracingView != nullptr &&
+                                        !rayTracingToggle
+                                                 ->property("checked")
+                                                 .toBool() &&
+                                        !gpuRayTracingView
+                                                 ->property("visible")
+                                                 .toBool() &&
+                                        !gpuRayTracingView
+                                                 ->property("active")
+                                                 .toBool() &&
+                                        !gpuRayTracingView
+                                                 ->property("status")
+                                                 .toString()
+                                                 .isEmpty();
                                 const bool optimizedRenderState =
                                         viewCamera != nullptr &&
                                         viewCamera->property("clipNear")
@@ -1474,6 +1497,7 @@ int main(int argc, char **argv) {
                                                         materialDebugState &&
                                                         wireframeState &&
                                                         restoredState &&
+                                                        rayTracingControlsValid &&
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
                                                         editorStructure

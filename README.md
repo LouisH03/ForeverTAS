@@ -93,11 +93,17 @@ shape data are swapped only after the new scene is complete. This avoids
 tearing down nested Qt Quick 3D repeaters between loads and keeps the car visible
 across repeated replay and vehicle-family changes in one application instance.
 
-The Race Viewer stores named runs. A centered selector switches the active
+The Race Viewer stores named runs. A centered header selector switches the active
 timeline and camera focus between `Baseline`, `Best`, and future run types,
 while every run remains visible as a separate car in the 3D preview. Car colors
 are baked into separate flat-shaded vertex-color meshes: Baseline preserves the
 original orange palette exactly and Best uses the equivalent blue palette.
+
+The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
+with ShaderTools, an optional Ray tracing switch enables the real-time QRhi
+compute renderer with GPU BVH traversal, ray-traced shadows and reflections,
+and immediate noise-free output. Qt 6.5 and 6.6 keep the full raster renderer
+and disable only that optional switch.
 
 See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
 extension contracts.

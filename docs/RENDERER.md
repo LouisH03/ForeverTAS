@@ -8,7 +8,7 @@ remains available through the pre-existing scene API.
 
 ## Material selection
 
-TASmania's exported materials have no source paths, so
+Some exported stadium materials have no source paths, so
 `src/viewer/material_classifier.*` primarily combines the surface-material ID
 with instance provenance: block name, purpose, component identity, component
 index, and descriptor path. Explicit semantic overrides cover turbo,
@@ -73,8 +73,8 @@ generated stadium objects, and `StadiumGrassClip` meshes remain world
 geometry. Dense blade layers within those clips are still omitted. Other
 clips, checkpoint/start helpers, triggers, and initial-collision geometry stay
 hidden.
-On TASmania, the overlap audit found no exact duplicates, no cross-purpose
-coincident transforms, and no coincident conflicting materials.
+The overlap audit checks for exact duplicates, cross-purpose coincident
+transforms, and coincident conflicting materials.
 
 Camera near/far planes are recalculated from camera position, orbit distance,
 and the default visible-scene bounds. There is no fixed 5000-unit minimum. The
@@ -83,6 +83,32 @@ Background-layer bounds do not inflate the camera range.
 
 The viewer provides Textured, Neutral, Collision, Wireframe, and High Contrast
 modes. Collision and Wireframe continue to use the legacy collision buffers.
+
+## Real-time GPU ray tracing
+
+The Ray tracing switch replaces the Qt Quick 3D raster viewport with a
+`QQuickRhiItem` renderer. On Qt 6.7 or newer, it uploads the final
+default-visible textured triangles, a balanced four-triangle-leaf BVH, the
+replacement-material table, a texture array, and the daytime environment map
+to QRhi resources. The compute shader casts deterministic primary rays,
+ray-traced sunlight visibility rays, and reflection rays for reflective
+materials. A fullscreen pass applies ACES tone mapping, gamma conversion, and
+edge-aware antialiasing.
+
+This is deliberately a real-time video-game renderer rather than a progressive
+offline path tracer. It has no stochastic diffuse bounce loop and no noisy
+image that must converge. Camera position and vertical field of view come from
+the Qt Quick 3D camera, while the selected replay car is the explicit look
+target. The present triangle maps the complete render texture to the viewport,
+so the selected car remains centered during orbiting and playback.
+
+QRhi does not expose hardware ray-tracing acceleration structures, so traversal
+runs in a compute shader over the project-owned BVH instead of using vendor RT
+cores. It is nevertheless real GPU ray tracing and intentionally consumes the
+GPU continuously while enabled. The feature is compiled when Qt GuiPrivate and
+ShaderTools are available with Qt 6.7 or newer. Qt 6.5 and 6.6 retain the
+complete raster renderer and show the ray-tracing switch disabled rather than
+failing configuration or startup.
 
 ## Verification
 
@@ -96,16 +122,7 @@ default visibility, transformed batching, exact vertex attributes, packaged
 replacement images, shared QML material and texture objects, every render mode,
 and transactional repeated reloads.
 
-After removing the blade overlays and the enclosing backdrop, the pinned
-TASmania build has 29 debuggable batches, 259,156 default-visible triangles,
-and zero map shadows. The interactive textured view measured 61-63 FPS on the
-development machine.
-
-[`evidence/tasmania-textured.png`](evidence/tasmania-textured.png) is the
-pre-optimization reference. The corrected textured frame is captured in
-[`evidence/tasmania-textured-optimized.png`](evidence/tasmania-textured-optimized.png).
-Restored grass clips and the corrected ground-cover material are shown in
-[`evidence/tasmania-grass-clips.png`](evidence/tasmania-grass-clips.png).
-Those two material captures use the `7.86s` TASmania runtime frame. The true
-daytime skybox and final `259,156`-triangle scene are shown in
-[`evidence/tasmania-skybox.png`](evidence/tasmania-skybox.png).
+Runtime smoke validation covers a native replay without publishing that local
+debug fixture. It verifies a clean first frame, centered car framing throughout
+playback, responsive camera updates, and sustained GPU execution while ray
+tracing is enabled.

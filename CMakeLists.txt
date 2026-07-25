@@ -23,6 +23,9 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Quick3D
     QuickControls2
     Widgets)
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
+    find_package(Qt6 QUIET COMPONENTS GuiPrivate ShaderTools)
+endif()
 if(BUILD_TESTING)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
 endif()
@@ -93,10 +96,14 @@ target_link_libraries(forevertas_core PUBLIC
     ForeverValidator::native)
 
 add_library(forevertas_gui STATIC
+    src/viewer/gpu_ray_tracing_view.cpp
+    src/viewer/gpu_ray_tracing_view.h
     src/viewer/material_classifier.cpp
     src/viewer/material_classifier.h
     src/viewer/race_geometry.cpp
     src/viewer/race_geometry.h
+    src/viewer/ray_tracing_scene.cpp
+    src/viewer/ray_tracing_scene.h
     src/viewer/race_timeline_item.cpp
     src/viewer/race_timeline_item.h
     src/viewer/race_viewer_controller.cpp
@@ -123,6 +130,14 @@ target_link_libraries(forevertas_gui PUBLIC
     Qt6::Quick
     Qt6::Quick3D
     Qt6::Widgets)
+if(TARGET Qt6::GuiPrivate AND TARGET Qt6::ShaderTools)
+    target_compile_definitions(forevertas_gui PUBLIC
+        FOREVERTAS_GPU_RAY_TRACING=1)
+    target_link_libraries(forevertas_gui PRIVATE Qt6::GuiPrivate)
+else()
+    target_compile_definitions(forevertas_gui PUBLIC
+        FOREVERTAS_GPU_RAY_TRACING=0)
+endif()
 
 qt_add_executable(forevertas
     src/app/main.cpp)
@@ -165,6 +180,15 @@ qt_add_resources(forevertas "environment-textures"
     PREFIX "/environment"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/environment"
     FILES ${FOREVERTAS_ENVIRONMENT_TEXTURES})
+if(TARGET Qt6::GuiPrivate AND TARGET Qt6::ShaderTools)
+    qt_add_shaders(forevertas "ray-tracing-shaders"
+        PREFIX "/raytracing"
+        GLSL "310 es,430"
+        FILES
+            shaders/raytrace.comp
+            shaders/raytrace_present.vert
+            shaders/raytrace_present.frag)
+endif()
 target_link_libraries(forevertas PRIVATE
     forevertas_gui
     Qt6::Gui

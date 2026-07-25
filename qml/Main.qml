@@ -14,6 +14,7 @@ ApplicationWindow {
     required property var viewer
 
     property string renderMode: "textured"
+    property bool rayTracingEnabled: false
     property real measuredFps: 0
     property int framesSinceSample: 0
     readonly property var settingsWheelRedirectorObject:
@@ -318,6 +319,7 @@ ApplicationWindow {
 
                     View3D {
                         anchors.fill: parent
+                        visible: !window.rayTracingEnabled
 
                         environment: SceneEnvironment {
                             objectName: "mapEnvironment"
@@ -586,8 +588,24 @@ ApplicationWindow {
                         }
                     }
 
+                    GpuRayTracingView {
+                        id: gpuRayTracingView
+                        objectName: "gpuRayTracingView"
+                        anchors.fill: parent
+                        z: 1
+                        visible: window.rayTracingEnabled
+                        active: window.rayTracingEnabled
+                                && window.viewer.loaded
+                        viewer: window.viewer
+                        cameraPosition: viewCamera.scenePosition
+                        cameraTarget: window.viewer.carPosition
+                        cameraUp: viewCamera.up
+                        fieldOfView: viewCamera.fieldOfView
+                    }
+
                     MouseArea {
                         anchors.fill: parent
+                        z: 2
                         acceptedButtons: Qt.LeftButton
                         hoverEnabled: true
                         property real previousX: 0
@@ -625,51 +643,104 @@ ApplicationWindow {
                         anchors.top: parent.top
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        height: 52
+                        z: 3
+                        height: 88
                         color: "#cc111412"
 
-                        RowLayout {
-                            anchors.fill: parent
+                        ColumnLayout {
+                            anchors.left: parent.left
                             anchors.leftMargin: 14
-                            anchors.rightMargin: 14
-                            spacing: 12
+                            anchors.top: parent.top
+                            anchors.topMargin: 8
+                            width: Math.max(
+                                       120,
+                                       Math.min(250,
+                                                runSelector.x - x - 12))
+                            spacing: 0
 
-                            ColumnLayout {
+                            Label {
+                                text: qsTr("Race Viewer")
+                                color: "#eef2ee"
+                                font.pixelSize: 17
+                                font.weight: Font.DemiBold
+                            }
+
+                            Label {
                                 Layout.fillWidth: true
-                                spacing: 0
+                                text: window.viewer.loaded
+                                      ? qsTr("%1 triangles · %2 batches · %3 FPS")
+                                            .arg(Number(
+                                                     window.viewer.visualTriangleCount)
+                                                     .toLocaleString(
+                                                         Qt.locale(),
+                                                         "f",
+                                                         0))
+                                            .arg(window.viewer.visualBatchCount)
+                                            .arg(Math.round(
+                                                     window.measuredFps))
+                                      : window.viewer.statusText
+                                color: "#aeb8b0"
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                        }
 
-                                Label {
-                                    text: qsTr("Race Viewer")
-                                    color: "#eef2ee"
-                                    font.pixelSize: 17
-                                    font.weight: Font.DemiBold
-                                }
+                        StyledComboBox {
+                            id: runSelector
 
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: window.viewer.loaded
-                                          ? qsTr("%1 triangles · %2 batches · %3 FPS")
-                                                .arg(Number(
-                                                         window.viewer.visualTriangleCount)
-                                                         .toLocaleString(
-                                                             Qt.locale(),
-                                                             "f",
-                                                             0))
-                                                .arg(window.viewer.visualBatchCount)
-                                                .arg(Math.round(
-                                                         window.measuredFps))
-                                          : window.viewer.statusText
-                                    color: "#aeb8b0"
-                                    font.pixelSize: 11
-                                    elide: Text.ElideRight
+                            objectName: "runSelector"
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: 8
+                            width: 160
+                            model: window.viewer.runOptions
+                            textRole: "name"
+                            valueRole: "id"
+                            enabled: count > 0
+
+                            function synchronizeSelection() {
+                                const selected = indexOfValue(
+                                    window.viewer.selectedRunId)
+                                if (selected >= 0
+                                    && currentIndex !== selected) {
+                                    currentIndex = selected
                                 }
                             }
+
+                            Component.onCompleted:
+                                synchronizeSelection()
+                            onModelChanged:
+                                Qt.callLater(synchronizeSelection)
+                            onActivated: selectedIndex =>
+                                window.viewer.selectedRunId =
+                                    valueAt(selectedIndex)
+
+                            Connections {
+                                target: window.viewer
+
+                                function onRunsChanged() {
+                                    Qt.callLater(
+                                        runSelector.synchronizeSelection)
+                                }
+                                function onSelectedRunChanged() {
+                                    runSelector.synchronizeSelection()
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 14
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: 7
+                            spacing: 8
 
                             StyledComboBox {
                                 id: renderModeSelector
                                 objectName: "renderModeSelector"
-                                Layout.preferredWidth: 152
+                                Layout.preferredWidth: 130
                                 enabled: window.viewer.loaded
+                                         && !window.rayTracingEnabled
                                 model: [
                                     { "text": qsTr("Textured"),
                                       "value": "textured" },
@@ -688,6 +759,22 @@ ApplicationWindow {
                                     window.renderMode = currentValue
                             }
 
+                            Switch {
+                                id: rayTracingToggle
+                                objectName: "rayTracingToggle"
+                                text: qsTr("Ray tracing")
+                                checked: window.rayTracingEnabled
+                                enabled: window.viewer.loaded
+                                         && gpuRayTracingView.supported
+                                palette.buttonText: "#eef2ee"
+                                onToggled:
+                                    window.rayTracingEnabled = checked
+
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: gpuRayTracingView.status
+                            }
+
                             Button {
                                 text: qsTr("Reset view")
                                 enabled: window.viewer.loaded
@@ -695,42 +782,6 @@ ApplicationWindow {
                                     viewport.orbitYaw = 35
                                     viewport.orbitPitch = -20
                                     viewport.orbitDistance = 38
-                                }
-                            }
-                        }
-
-                        StyledComboBox {
-                            id: runSelector
-
-                            objectName: "runSelector"
-                            anchors.centerIn: parent
-                            width: 180
-                            model: window.viewer.runOptions
-                            textRole: "name"
-                            valueRole: "id"
-                            enabled: count > 0
-
-                            function synchronizeSelection() {
-                                const selected = indexOfValue(
-                                    window.viewer.selectedRunId)
-                                if (selected >= 0 && currentIndex !== selected)
-                                    currentIndex = selected
-                            }
-
-                            Component.onCompleted: synchronizeSelection()
-                            onModelChanged: Qt.callLater(synchronizeSelection)
-                            onActivated: selectedIndex =>
-                                window.viewer.selectedRunId =
-                                    valueAt(selectedIndex)
-
-                            Connections {
-                                target: window.viewer
-
-                                function onRunsChanged() {
-                                    Qt.callLater(runSelector.synchronizeSelection)
-                                }
-                                function onSelectedRunChanged() {
-                                    runSelector.synchronizeSelection()
                                 }
                             }
                         }
@@ -742,6 +793,7 @@ ApplicationWindow {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 20
+                        z: 3
                         width: 190
                         height: 58
                         radius: 16

@@ -3,6 +3,7 @@
 
 #include "searches/search_algorithm.h"
 #include "viewer/race_geometry.h"
+#include "viewer/ray_tracing_scene.h"
 #include "viewer/visual_scene_pipeline.h"
 
 #include <QElapsedTimer>
@@ -59,6 +60,7 @@ struct RaceViewerLoadResult {
     QString replayPath;
     RaceViewerMeshBuffers track;
     std::vector<StaticVisualBatch> visualBatches;
+    std::shared_ptr<const RayTracingSceneData> rayTracingScene;
     QVariantList visualMaterials;
     QVariantList visualBatchItems;
     QVector3D visualBoundsMin{};
@@ -169,6 +171,7 @@ public:
     double sceneRadius() const;
     QVector3D sceneBoundsMin() const;
     QVector3D sceneBoundsMax() const;
+    std::shared_ptr<const RayTracingSceneData> rayTracingScene() const;
     RaceViewerInputSample inputSample(qint64 tick) const noexcept;
     void addSearchRun(
             const QString &packsDirectory,
@@ -222,6 +225,7 @@ private:
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
     std::vector<std::unique_ptr<RaceGeometry>> visualGeometries_;
+    std::shared_ptr<const RayTracingSceneData> rayTracingScene_;
     std::vector<std::unique_ptr<RaceGeometry>>
             ellipsoidFilledGeometries_;
     RaceGeometry ellipsoidWireGeometry_;

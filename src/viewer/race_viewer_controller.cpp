@@ -295,6 +295,7 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
 
         StaticVisualBatchResult batches =
                 BuildStaticVisualBatches(*renderScene);
+        result.rayTracingScene = BuildRayTracingScene(batches.batches);
         result.materialCount =
                 static_cast<qint64>(renderScene->materials.size());
         result.diagnosticCount +=
@@ -694,6 +695,11 @@ QVector3D RaceViewerController::sceneBoundsMax() const {
     return sceneBoundsMax_;
 }
 
+std::shared_ptr<const RayTracingSceneData>
+RaceViewerController::rayTracingScene() const {
+    return rayTracingScene_;
+}
+
 QVector2D
 RaceViewerController::cameraClipPlanes(const QVector3D &cameraPosition,
                                        double cameraDistance) const {
@@ -963,6 +969,7 @@ void RaceViewerController::applyLoadResult(
         visualBatches.push_back(std::move(item));
     }
     visualGeometries_ = std::move(visualGeometries);
+    rayTracingScene_ = std::move(result.rayTracingScene);
     visualMaterials_ = std::move(result.visualMaterials);
     visualBatches_ = std::move(visualBatches);
     carEllipsoids_ = std::move(result.carEllipsoids);
