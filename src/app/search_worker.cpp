@@ -114,6 +114,12 @@ void SearchWorker::run() {
             return;
         }
 
+        if (progress.stage == SearchProgressStage::Calibration) {
+            emit stageChanged(
+                    QStringLiteral("Calibrating CUDA batch size..."), true);
+            return;
+        }
+
         if (progress.stage == SearchProgressStage::FinalSampling) {
             const double value = progress.totalWork == 0u
                     ? 1.0
@@ -127,6 +133,9 @@ void SearchWorker::run() {
                             .arg(static_cast<qulonglong>(
                                     progress.totalWork)));
         }
+    };
+    control.cudaBatchSizeChanged = [this](std::uint32_t batchSize) {
+        emit cudaBatchSizeChanged(batchSize);
     };
     control.liveChanged = [this,
                            latestInputsText = QString(),

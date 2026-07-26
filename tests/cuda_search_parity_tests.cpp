@@ -40,14 +40,25 @@ SearchResult Run(const char *packs,
                  std::uint32_t batchSize,
                  std::uint64_t iterations,
                  std::vector<OptionConfiguration> modifiers,
-                 OptionConfiguration evaluator) {
+                 OptionConfiguration evaluator,
+                 bool calibrate = false,
+                 std::vector<std::uint32_t> *calibrationUpdates = nullptr) {
     SearchRequest request{packs, replay};
     request.backend = backend;
     request.parallelSampleCount = batchSize;
+    request.calibrateCudaParallelSampleCount = calibrate;
     request.modifiers = std::move(modifiers);
     request.evaluationTarget = std::move(evaluator);
     forevertas::SearchRunControl control;
     control.iterationLimit = iterations;
+    control.cudaBatchSizeChanged =
+            [calibrationUpdates](std::uint32_t value) {
+                if (calibrationUpdates != nullptr &&
+                    (calibrationUpdates->empty() ||
+                     calibrationUpdates->back() != value)) {
+                    calibrationUpdates->push_back(value);
+                }
+            };
     return forevertas::RunSearch(request, &control);
 }
 
@@ -175,14 +186,73 @@ bool CheckCancellation(const char *packs, const char *replay) {
     return false;
 }
 
+bool CheckCalibration(const char *packs, const char *replay) {
+    OptionConfiguration insertion = DefaultModifier(
+            forevertas::kInputInsertionModifierId);
+    insertion.settings["minTimeMs"] = "1000";
+    insertion.settings["maxTimeMs"] = "1000";
+    insertion.settings["steerMinCount"] = "1";
+    insertion.settings["steerMaxCount"] = "1";
+    insertion.settings["steerMaxHoldMs"] = "0";
+    insertion.settings["steerOffsetMin"] = "0.1";
+    insertion.settings["steerOffsetMax"] = "0.1";
+    OptionConfiguration velocity = DefaultEvaluator(
+            forevertas::kVelocityEvaluationId);
+    velocity.settings["minTimeMs"] = "1000";
+    velocity.settings["maxTimeMs"] = "1000";
+
+    const SearchResult reference = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Reference,
+            1u,
+            1024u,
+            {insertion},
+            velocity);
+    std::vector<std::uint32_t> updates;
+    const SearchResult calibrated = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Cuda,
+            64u,
+            1024u,
+            {insertion},
+            velocity,
+            true,
+            &updates);
+    const bool grew = std::any_of(
+            updates.begin(),
+            updates.end(),
+            [](std::uint32_t value) {
+                return value > 64u;
+            });
+    if (updates.size() < 3u || updates.front() != 1u || !grew) {
+        std::cerr
+                << "real CUDA calibration depended on the configured "
+                   "batch size or did not grow the live value\n";
+        return false;
+    }
+    return SameAuthoritativeResult(
+            reference, calibrated, "calibrated CUDA winner");
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
+    const bool calibrationOnly =
+            argc == 4 &&
+            std::string(argv[1]) == "--calibration-only";
+    if ((!calibrationOnly && argc != 3) ||
+        (calibrationOnly && argc != 4)) {
         std::cerr << "expected Packs directory and replay path\n";
         return 2;
     }
+    const char *const packs = argv[calibrationOnly ? 2 : 1];
+    const char *const replay = argv[calibrationOnly ? 3 : 2];
     try {
+        if (calibrationOnly) {
+            return CheckCalibration(packs, replay) ? 0 : 1;
+        }
         bool okay = true;
         const OptionConfiguration velocity =
                 DefaultEvaluator(forevertas::kVelocityEvaluationId);
@@ -203,8 +273,8 @@ int main(int argc, char **argv) {
         const OptionConfiguration random = DefaultModifier(
                 forevertas::kRandomSteeringModifierId);
         const SearchResult baselineProbe = Run(
-                argv[1],
-                argv[2],
+                packs,
+                replay,
                 forevertas::PhysicsBackend::Reference,
                 1u,
                 0u,
@@ -381,6 +451,8 @@ int main(int argc, char **argv) {
         }
         std::cout << "cuda_8192_batch_candidates_per_second="
                   << 8192.0 / aboveOldCapSeconds << '\n';
+
+        okay &= CheckCalibration(packs, replay);
 
         const SearchResult replayA = Run(
                 argv[1], argv[2],

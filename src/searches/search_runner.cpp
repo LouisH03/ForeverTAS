@@ -222,6 +222,7 @@ SearchResult RunSearch(const SearchRequest &request,
             *evaluator,
             control,
             request.parallelSampleCount,
+            request.calibrateCudaParallelSampleCount,
             cudaModifiers.empty() ? nullptr : &cudaModifiers,
             cudaEvaluator ? &*cudaEvaluator : nullptr});
     CheckCancellation(control);

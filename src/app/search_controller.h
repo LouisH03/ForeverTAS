@@ -35,6 +35,9 @@ class SearchController final : public QObject {
     Q_PROPERTY(QString cudaParallelSampleCount READ cudaParallelSampleCount WRITE
                        setCudaParallelSampleCount NOTIFY
                        cudaParallelSampleCountChanged)
+    Q_PROPERTY(bool cudaCalibrationEnabled READ cudaCalibrationEnabled WRITE
+                       setCudaCalibrationEnabled NOTIFY
+                       cudaCalibrationEnabledChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
                        CONSTANT)
     Q_PROPERTY(QVariantList modifierOptions READ modifierOptions CONSTANT)
@@ -82,6 +85,7 @@ public:
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
     QString cudaParallelSampleCount() const;
+    bool cudaCalibrationEnabled() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
     QVariantList evaluationTargetOptions() const;
@@ -110,6 +114,7 @@ public slots:
     void setReplayPath(const QString &value);
     void setSimulationBackendId(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
+    void setCudaCalibrationEnabled(bool value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
 
@@ -136,6 +141,7 @@ signals:
     void replayPathChanged();
     void simulationBackendIdChanged();
     void cudaParallelSampleCountChanged();
+    void cudaCalibrationEnabledChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
     void searchAlgorithmSettingsChanged();
@@ -183,6 +189,7 @@ private:
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);
+    bool cudaCalibrationEnabled_ = false;
     SearchConfigurationModel configuration_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");

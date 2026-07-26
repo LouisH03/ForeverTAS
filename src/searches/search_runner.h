@@ -20,6 +20,7 @@ struct SearchRequest {
     std::string replayPath;
     PhysicsBackend backend = PhysicsBackend::Reference;
     std::uint32_t parallelSampleCount = 1u;
+    bool calibrateCudaParallelSampleCount = false;
     OptionConfiguration searchAlgorithm =
             DefaultSearchAlgorithmConfiguration();
     std::vector<OptionConfiguration> modifiers =

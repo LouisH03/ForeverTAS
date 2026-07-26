@@ -1281,6 +1281,18 @@ ApplicationWindow {
                             onEdited: value =>
                                 window.controller.cudaParallelSampleCount = value
                         }
+
+                        CheckBox {
+                            objectName: "cudaCalibrationCheckBox"
+                            visible: window.controller.simulationBackendId
+                                     === "cuda"
+                            text: qsTr("Calibrate for maximum throughput")
+                            checked: window.controller.cudaCalibrationEnabled
+                            enabled: !window.controller.running
+                            onToggled:
+                                window.controller.cudaCalibrationEnabled =
+                                    checked
+                        }
                     }
 
                     Rectangle {

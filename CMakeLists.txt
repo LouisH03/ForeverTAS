@@ -96,6 +96,8 @@ add_library(forevertas_core STATIC
     src/searches/option_settings_utils.h
     src/searches/basic_brute_force_search.cpp
     src/searches/basic_brute_force_search.h
+    src/searches/cuda_batch_calibrator.cpp
+    src/searches/cuda_batch_calibrator.h
     src/searches/cuda_search_configuration.cpp
     src/searches/cuda_search_configuration.h
     src/searches/search_runner.cpp
@@ -427,6 +429,14 @@ if(BUILD_TESTING)
             set_tests_properties(forevertas-cuda-search-parity PROPERTIES
                 LABELS "cuda;parity;performance;stadium"
                 TIMEOUT 240)
+            add_test(NAME forevertas-cuda-calibration
+                     COMMAND forevertas-cuda-search-parity
+                         --calibration-only
+                         "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                         "${FOREVERTAS_TEST_REPLAY}")
+            set_tests_properties(forevertas-cuda-calibration PROPERTIES
+                LABELS "cuda;calibration;parity;stadium"
+                TIMEOUT 120)
         endif()
         add_test(NAME forevertas-controller-lifecycle
                  COMMAND forevertas-controller-tests

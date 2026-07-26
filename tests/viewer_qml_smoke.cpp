@@ -350,6 +350,10 @@ int main(int argc, char **argv) {
                     QObject *const cudaParallelSampleCountField =
                             root->findChild<QObject *>(QStringLiteral(
                                     "cudaParallelSampleCountField"));
+                    auto *const cudaCalibrationCheckBox =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "cudaCalibrationCheckBox")));
                     QObject *const settingsScroll = root->findChild<QObject *>(
                             QStringLiteral("settingsScroll"));
                     QObject *const settingsWheelRedirector =
@@ -611,6 +615,15 @@ int main(int argc, char **argv) {
                                                     ->property("text")
                                                     .toString() ==
                                             QStringLiteral("256") &&
+                                    cudaCalibrationCheckBox != nullptr &&
+                                    cudaCalibrationCheckBox->isVisible() &&
+                                    cudaCalibrationCheckBox->y() >=
+                                            cudaParallelSampleSettings->y() +
+                                                    cudaParallelSampleSettings
+                                                            ->height() &&
+                                    !cudaCalibrationCheckBox
+                                             ->property("checked")
+                                             .toBool() &&
                                     ContainsText(
                                             root,
                                             QStringLiteral(
@@ -619,6 +632,18 @@ int main(int argc, char **argv) {
                                                     "modern NVIDIA GPU and may "
                                                     "break compatibility in "
                                                     "other environments"));
+                            controller.setCudaCalibrationEnabled(true);
+                            controller.setCudaParallelSampleCount(
+                                    QStringLiteral("512"));
+                            QCoreApplication::processEvents();
+                            backendSelectorValid &=
+                                    cudaCalibrationCheckBox
+                                            ->property("checked")
+                                            .toBool() &&
+                                    cudaParallelSampleCountField
+                                                    ->property("text")
+                                                    .toString() ==
+                                            QStringLiteral("512");
                         }
 #endif
                         controller.setSimulationBackendId(

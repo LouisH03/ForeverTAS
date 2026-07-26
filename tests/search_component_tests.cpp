@@ -6,6 +6,7 @@
 #include "mutations/input_event_utils.h"
 #include "searches/algorithm_registry.h"
 #include "searches/basic_brute_force_search.h"
+#include "searches/cuda_batch_calibrator.h"
 #include "searches/cuda_search_configuration.h"
 #include "searches/option_settings_utils.h"
 #include "searches/search_runner.h"
@@ -741,6 +742,109 @@ bool TestRollingThroughput() {
     return okay;
 }
 
+bool TestCudaBatchCalibrationStrategy() {
+    const auto observe = [](
+                                 forevertas::CudaBatchCalibrator *calibrator,
+                                 double throughput) {
+        const std::uint32_t batchSize =
+                calibrator->CurrentBatchSize();
+        const auto elapsed =
+                std::chrono::duration_cast<
+                        std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double>(
+                                static_cast<double>(batchSize) /
+                                throughput));
+        for (int sample = 0; sample < 5; ++sample) {
+            calibrator->Observe(batchSize, elapsed);
+        }
+    };
+
+    const auto realisticThroughput = [](std::uint32_t batchSize) {
+        if (batchSize <= 7500u) {
+            constexpr double saturationScale = 1000.0;
+            constexpr double peakSize = 7500.0;
+            const double size = static_cast<double>(batchSize);
+            return 9100.0 *
+                    (size / (size + saturationScale)) /
+                    (peakSize / (peakSize + saturationScale));
+        }
+        const double distance = std::abs(
+                static_cast<double>(batchSize) - 7500.0);
+        return 9100.0 - distance * (950.0 / 5300.0);
+    };
+
+    const auto calibrate = [&observe](
+                                   const auto &throughputForSize,
+                                   std::uint32_t capacity) {
+        forevertas::CudaBatchCalibrator calibrator;
+        for (int measurement = 0;
+             measurement < 128 && !calibrator.Complete();
+             ++measurement) {
+            const std::uint32_t batchSize =
+                    calibrator.CurrentBatchSize();
+            if (batchSize > capacity) {
+                calibrator.CapacityUnavailable();
+            } else {
+                observe(
+                        &calibrator,
+                        throughputForSize(batchSize));
+            }
+        }
+        return calibrator;
+    };
+
+    auto calibrator = calibrate(
+            realisticThroughput,
+            102400u);
+    const std::uint32_t calibratedSize =
+            calibrator.BestBatchSize();
+    bool okay = Check(
+            calibrator.Complete(),
+            "CUDA calibration did not converge");
+    okay &= Check(
+            calibratedSize >= 7000u &&
+                    calibratedSize <= 8000u,
+            "CUDA calibration missed the measured peak");
+    okay &= Check(
+            realisticThroughput(calibratedSize) >
+                    realisticThroughput(12800u),
+            "CUDA calibration retained the slower coarse batch");
+    okay &= Check(
+            calibrator.CurrentBatchSize() == calibratedSize,
+            "CUDA calibration did not restore its measured winner");
+
+    forevertas::CudaBatchCalibrator capacityLimited;
+    for (std::uint32_t batchSize = 1u;
+         batchSize <= 4096u;
+         batchSize *= 2u) {
+        observe(
+                &capacityLimited,
+                static_cast<double>(batchSize));
+    }
+    okay &= Check(
+            capacityLimited.CurrentBatchSize() == 8192u,
+            "CUDA calibration did not grow from the universal minimum");
+    capacityLimited.CapacityUnavailable();
+    okay &= Check(
+            capacityLimited.CurrentBatchSize() > 4096u &&
+                    capacityLimited.CurrentBatchSize() < 8192u,
+            "CUDA calibration discarded the allocation boundary");
+    for (int measurement = 0;
+         measurement < 64 && !capacityLimited.Complete();
+         ++measurement) {
+        observe(
+                &capacityLimited,
+                static_cast<double>(
+                        capacityLimited.CurrentBatchSize()));
+    }
+    okay &= Check(
+            capacityLimited.Complete() &&
+                    capacityLimited.BestBatchSize() > 4096u &&
+                    capacityLimited.BestBatchSize() < 8192u,
+            "CUDA calibration did not approach its measured capacity");
+    return okay;
+}
+
 bool TestCudaConfigurationCoverage() {
     bool okay = true;
     for (const auto &registration :
@@ -807,6 +911,7 @@ int main() {
             TestLocaleIndependentFloatingPointSettings() &&
             TestSearchControl() &&
             TestRollingThroughput() &&
+            TestCudaBatchCalibrationStrategy() &&
             TestCudaConfigurationCoverage();
     return okay ? 0 : 1;
 }

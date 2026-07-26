@@ -24,6 +24,7 @@ enum class SearchWinnerSource : std::uint8_t {
 
 enum class SearchProgressStage : std::uint8_t {
     Baseline,
+    Calibration,
     Mutations,
     FinalSampling,
 };
@@ -57,6 +58,7 @@ struct SearchRunControl {
     std::function<bool()> cancellationRequested;
     std::function<void(const SearchProgress &)> progressChanged;
     std::function<void(const SearchLiveUpdate &)> liveChanged;
+    std::function<void(std::uint32_t)> cudaBatchSizeChanged;
     std::optional<std::uint64_t> iterationLimit;
 };
 
@@ -74,6 +76,7 @@ struct SearchExecutionContext {
     const IterationEvaluator &evaluator;
     const SearchRunControl *control = nullptr;
     std::uint32_t cudaBatchSize = 1u;
+    bool calibrateCudaBatchSize = false;
     const std::vector<forevervalidator::experimental::
                               PhysicsSandboxCudaModifier>
             *cudaModifiers = nullptr;

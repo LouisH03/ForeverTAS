@@ -260,6 +260,8 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           QString::number(
                                   forevertas::kDefaultCudaParallelSampleCount),
                   "unexpected default CUDA parallel sample count");
+    okay &= Check(!controller.cudaCalibrationEnabled(),
+                  "CUDA calibration was unexpectedly enabled by default");
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
     okay &= Check(controller.modifierOptions().size() == 5,
@@ -321,6 +323,13 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     controller.setCudaParallelSampleCount(QStringLiteral("4294967296"));
     okay &= Check(!controller.canStart(),
                   "unrepresentable CUDA parallel sample count enabled Start");
+    controller.setCudaCalibrationEnabled(true);
+    okay &= Check(controller.cudaCalibrationEnabled() &&
+                          controller.canStart(),
+                  "CUDA calibration depended on the manual sample count");
+    controller.setCudaCalibrationEnabled(false);
+    okay &= Check(!controller.canStart(),
+                  "manual CUDA mode ignored its invalid sample count");
     controller.setCudaParallelSampleCount(QStringLiteral("512"));
     controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
 #endif
@@ -420,6 +429,7 @@ bool TestPersistence(const QString &packsDirectory,
         controller.moveModifierPass(1, 0);
         controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
         controller.setCudaParallelSampleCount(QStringLiteral("384"));
+        controller.setCudaCalibrationEnabled(true);
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
@@ -435,6 +445,8 @@ bool TestPersistence(const QString &packsDirectory,
     okay &= Check(restored.cudaParallelSampleCount() ==
                           QStringLiteral("384"),
                   "CUDA parallel sample count was not persisted");
+    okay &= Check(restored.cudaCalibrationEnabled(),
+                  "CUDA calibration mode was not persisted");
     okay &= Check(restored.modifierPasses().size() == 2,
                   "modifier pass count was not persisted");
     okay &= Check(PassId(restored, 0) == QStringLiteral("input-deletion") &&
@@ -467,6 +479,10 @@ bool TestPersistence(const QString &packsDirectory,
                                   "backends/cuda/parallelSampleCount"))
                                   .toString() == QStringLiteral("384"),
                   "CUDA parallel sample count was not stored canonically");
+    okay &= Check(QSettings().value(QStringLiteral(
+                                  "backends/cuda/calibrationEnabled"))
+                                  .toBool(),
+                  "CUDA calibration mode was not stored canonically");
     return okay;
 }
 

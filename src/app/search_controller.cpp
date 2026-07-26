@@ -20,6 +20,8 @@ constexpr char kReplayPathKey[] = "paths/replayPath";
 constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
 constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
+constexpr char kCudaCalibrationEnabledKey[] =
+        "backends/cuda/calibrationEnabled";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
 QString StoredValue(const char *key, const QString &fallback) {
@@ -51,6 +53,9 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     cudaParallelSampleCount_ = StoredValue(
             kCudaParallelSampleCountKey,
             QString::number(kDefaultCudaParallelSampleCount));
+    cudaCalibrationEnabled_ = QSettings()
+            .value(QLatin1String(kCudaCalibrationEnabledKey), false)
+            .toBool();
     const QString storedBackend = StoredValue(
             kSimulationBackendKey,
             BackendId(PhysicsBackend::Reference));
@@ -120,6 +125,10 @@ QString SearchController::simulationBackendId() const {
 
 QString SearchController::cudaParallelSampleCount() const {
     return cudaParallelSampleCount_;
+}
+
+bool SearchController::cudaCalibrationEnabled() const {
+    return cudaCalibrationEnabled_;
 }
 
 QVariantList SearchController::searchAlgorithmOptions() const {
@@ -248,6 +257,17 @@ void SearchController::setCudaParallelSampleCount(const QString &value) {
     cudaParallelSampleCount_ = value;
     persist(kCudaParallelSampleCountKey, value);
     emit cudaParallelSampleCountChanged();
+    refreshValidation();
+}
+
+void SearchController::setCudaCalibrationEnabled(bool value) {
+    if (cudaCalibrationEnabled_ == value) {
+        return;
+    }
+    cudaCalibrationEnabled_ = value;
+    QSettings().setValue(
+            QLatin1String(kCudaCalibrationEnabledKey), value);
+    emit cudaCalibrationEnabledChanged();
     refreshValidation();
 }
 
@@ -414,6 +434,13 @@ void SearchController::startSearch() {
                                true);
             });
     connect(worker,
+            &SearchWorker::cudaBatchSizeChanged,
+            this,
+            [this](std::uint32_t batchSize) {
+                setCudaParallelSampleCount(
+                        QString::number(batchSize));
+            });
+    connect(worker,
             &SearchWorker::bestChanged,
             this,
             [this](const QString &summary, const QString &inputsText) {
@@ -498,20 +525,27 @@ SearchController::ValidationResult SearchController::validate() const {
             *configurationValidation.configuration;
 
     std::uint32_t parallelSampleCount = 1u;
+    bool calibrateCudaParallelSampleCount = false;
 #if FOREVERVALIDATOR_HAS_CUDA
     if (simulationBackend_ == PhysicsBackend::Cuda) {
-        bool parsed = false;
-        const QString trimmed = cudaParallelSampleCount_.trimmed();
-        const uint value = trimmed.toUInt(&parsed);
-        if (!parsed || trimmed != cudaParallelSampleCount_ ||
-            value == 0u) {
-            return {
-                    {},
-                    QStringLiteral(
-                            "CUDA parallel samples must be a positive "
-                            "whole number.")};
+        calibrateCudaParallelSampleCount =
+                cudaCalibrationEnabled_;
+        if (!calibrateCudaParallelSampleCount) {
+            bool parsed = false;
+            const QString trimmed =
+                    cudaParallelSampleCount_.trimmed();
+            const uint value = trimmed.toUInt(&parsed);
+            if (!parsed ||
+                trimmed != cudaParallelSampleCount_ ||
+                value == 0u) {
+                return {
+                        {},
+                        QStringLiteral(
+                                "CUDA parallel samples must be a positive "
+                                "whole number.")};
+            }
+            parallelSampleCount = value;
         }
-        parallelSampleCount = value;
     }
 #endif
 
@@ -521,6 +555,7 @@ SearchController::ValidationResult SearchController::validate() const {
                     replayInfo.absoluteFilePath().toStdString(),
                     simulationBackend_,
                     parallelSampleCount,
+                    calibrateCudaParallelSampleCount,
                     configuration.searchAlgorithm,
                     configuration.modifiers,
                     configuration.evaluationTarget},
