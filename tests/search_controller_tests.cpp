@@ -88,11 +88,14 @@ bool HasOption(const QVariantList &options,
 
 bool HasBackendOption(const QVariantList &options,
                       const QString &id,
-                      const QString &label) {
+                      const QString &label,
+                      const QString &description) {
     for (const QVariant &value : options) {
         const QVariantMap option = value.toMap();
         if (option.value(QStringLiteral("id")).toString() == id &&
-            option.value(QStringLiteral("label")).toString() == label) {
+            option.value(QStringLiteral("label")).toString() == label &&
+            option.value(QStringLiteral("description")).toString() ==
+                    description) {
             return true;
         }
     }
@@ -217,7 +220,7 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
 
     bool okay = Check(controller.canStart(),
                       "valid defaults and paths did not enable Start");
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+#if FOREVERVALIDATOR_HAS_CUDA
     constexpr qsizetype expectedBackendCount = 3;
 #else
     constexpr qsizetype expectedBackendCount = 2;
@@ -231,19 +234,32 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     okay &= Check(HasBackendOption(
                           controller.simulationBackendOptions(),
                           QStringLiteral("reference"),
-                          QStringLiteral("Reference")) &&
+                          QStringLiteral("Reference"),
+                          QStringLiteral("Broadest compatibility")) &&
                           HasBackendOption(
                                   controller.simulationBackendOptions(),
                                   QStringLiteral("optimized-cpu"),
-                                  QStringLiteral("CPU Optimized")),
+                                  QStringLiteral("CPU Optimized"),
+                                  QStringLiteral(
+                                          "Faster runtime optimized for "
+                                          "Stadium, may break compatibility "
+                                          "in other environments")),
                   "physics backend metadata was not exposed");
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+#if FOREVERVALIDATOR_HAS_CUDA
     okay &= Check(HasBackendOption(
                           controller.simulationBackendOptions(),
-                          QStringLiteral("speculative-ticking"),
-                          QStringLiteral("Speculative Ticking")),
-                  "SpeculativeTicking metadata was not exposed");
+                          QStringLiteral("cuda"),
+                          QStringLiteral("CUDA"),
+                          QStringLiteral(
+                                  "Fastest runtime optimized for Stadium, "
+                                  "needs a modern NVIDIA GPU and may break "
+                                  "compatibility in other environments")),
+                  "CUDA metadata was not exposed");
 #endif
+    okay &= Check(controller.cudaParallelSampleCount() ==
+                          QString::number(
+                                  forevertas::kDefaultCudaParallelSampleCount),
+                  "unexpected default CUDA parallel sample count");
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
     okay &= Check(controller.modifierOptions().size() == 5,
@@ -290,13 +306,22 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           QStringLiteral("optimized-cpu") &&
                           controller.canStart(),
                   "CPU Optimized backend was not selectable");
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
-    controller.setSimulationBackendId(
-            QStringLiteral("speculative-ticking"));
+#if FOREVERVALIDATOR_HAS_CUDA
+    controller.setSimulationBackendId(QStringLiteral("cuda"));
     okay &= Check(controller.simulationBackendId() ==
-                          QStringLiteral("speculative-ticking") &&
+                          QStringLiteral("cuda") &&
                           controller.canStart(),
-                  "SpeculativeTicking backend was not selectable");
+                  "CUDA backend was not selectable");
+    controller.setCudaParallelSampleCount(QStringLiteral("0"));
+    okay &= Check(!controller.canStart(),
+                  "zero CUDA parallel samples enabled Start");
+    controller.setCudaParallelSampleCount(QStringLiteral("8192"));
+    okay &= Check(controller.canStart(),
+                  "CUDA batch size above 4096 did not enable Start");
+    controller.setCudaParallelSampleCount(QStringLiteral("4294967296"));
+    okay &= Check(!controller.canStart(),
+                  "unrepresentable CUDA parallel sample count enabled Start");
+    controller.setCudaParallelSampleCount(QStringLiteral("512"));
     controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
 #endif
     controller.setSimulationBackendId(QStringLiteral("missing-backend"));
@@ -394,6 +419,7 @@ bool TestPersistence(const QString &packsDirectory,
                 1, QStringLiteral("steerMaxCount"), QStringLiteral("4"));
         controller.moveModifierPass(1, 0);
         controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
+        controller.setCudaParallelSampleCount(QStringLiteral("384"));
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
@@ -406,6 +432,9 @@ bool TestPersistence(const QString &packsDirectory,
     okay &= Check(restored.simulationBackendId() ==
                           QStringLiteral("optimized-cpu"),
                   "physics backend selection was not persisted");
+    okay &= Check(restored.cudaParallelSampleCount() ==
+                          QStringLiteral("384"),
+                  "CUDA parallel sample count was not persisted");
     okay &= Check(restored.modifierPasses().size() == 2,
                   "modifier pass count was not persisted");
     okay &= Check(PassId(restored, 0) == QStringLiteral("input-deletion") &&
@@ -434,6 +463,10 @@ bool TestPersistence(const QString &packsDirectory,
                                   .toString() ==
                           QStringLiteral("optimized-cpu"),
                   "physics backend setting was not stored canonically");
+    okay &= Check(QSettings().value(QStringLiteral(
+                                  "backends/cuda/parallelSampleCount"))
+                                  .toString() == QStringLiteral("384"),
+                  "CUDA parallel sample count was not stored canonically");
     return okay;
 }
 

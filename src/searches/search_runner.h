@@ -13,11 +13,13 @@ namespace forevertas {
 
 inline constexpr std::uint32_t kSearchTickDurationMs =
         kInputTimelineTickDurationMs;
+inline constexpr std::uint32_t kDefaultCudaParallelSampleCount = 256u;
 
 struct SearchRequest {
     std::string packDirectory;
     std::string replayPath;
     PhysicsBackend backend = PhysicsBackend::Reference;
+    std::uint32_t parallelSampleCount = 1u;
     OptionConfiguration searchAlgorithm =
             DefaultSearchAlgorithmConfiguration();
     std::vector<OptionConfiguration> modifiers =

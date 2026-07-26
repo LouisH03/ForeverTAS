@@ -32,6 +32,9 @@ class SearchController final : public QObject {
                        simulationBackendOptions CONSTANT)
     Q_PROPERTY(QString simulationBackendId READ simulationBackendId WRITE
                        setSimulationBackendId NOTIFY simulationBackendIdChanged)
+    Q_PROPERTY(QString cudaParallelSampleCount READ cudaParallelSampleCount WRITE
+                       setCudaParallelSampleCount NOTIFY
+                       cudaParallelSampleCountChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
                        CONSTANT)
     Q_PROPERTY(QVariantList modifierOptions READ modifierOptions CONSTANT)
@@ -78,6 +81,7 @@ public:
     QString replayPath() const;
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
+    QString cudaParallelSampleCount() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
     QVariantList evaluationTargetOptions() const;
@@ -105,6 +109,7 @@ public slots:
     void setPacksDirectory(const QString &value);
     void setReplayPath(const QString &value);
     void setSimulationBackendId(const QString &value);
+    void setCudaParallelSampleCount(const QString &value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
 
@@ -130,6 +135,7 @@ signals:
     void autoDetectedPacksDirectoryChanged();
     void replayPathChanged();
     void simulationBackendIdChanged();
+    void cudaParallelSampleCountChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
     void searchAlgorithmSettingsChanged();
@@ -175,6 +181,8 @@ private:
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
+    QString cudaParallelSampleCount_ = QString::number(
+            kDefaultCudaParallelSampleCount);
     SearchConfigurationModel configuration_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");

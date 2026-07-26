@@ -1,3 +1,4 @@
+#include "app/rolling_throughput.h"
 #include "evaluators/iteration_evaluator.h"
 #include "input_timeline_time.h"
 #include "mutations/composite_input_mutator.h"
@@ -5,6 +6,7 @@
 #include "mutations/input_event_utils.h"
 #include "searches/algorithm_registry.h"
 #include "searches/basic_brute_force_search.h"
+#include "searches/cuda_search_configuration.h"
 #include "searches/option_settings_utils.h"
 #include "searches/search_runner.h"
 #include "time_format.h"
@@ -707,6 +709,88 @@ bool TestSearchControl() {
     return okay;
 }
 
+bool TestRollingThroughput() {
+    using namespace std::chrono_literals;
+
+    forevertas::app::RollingThroughput throughput;
+    bool okay = Check(
+            throughput.Observe(0u, 0s) == 0.0,
+            "zero-duration throughput was not zero");
+    okay &= Check(
+            std::abs(throughput.Observe(50u, 5s) - 10.0) < 1e-9,
+            "startup throughput average was incorrect");
+    okay &= Check(
+            std::abs(throughput.Observe(100u, 10s) - 10.0) < 1e-9,
+            "ten-second throughput average was incorrect");
+    okay &= Check(
+            std::abs(throughput.Observe(250u, 15s) - 20.0) < 1e-9,
+            "throughput included samples older than ten seconds");
+
+    throughput.Reset();
+    static_cast<void>(throughput.Observe(70u, 7s));
+    static_cast<void>(throughput.Observe(190u, 13s));
+    okay &= Check(
+            std::abs(throughput.Observe(290u, 18s) - 20.0) < 1e-9,
+            "throughput did not interpolate the ten-second boundary");
+
+    throughput.Reset();
+    static_cast<void>(throughput.Observe(100u, 5s));
+    okay &= Check(
+            throughput.Observe(100u, 15s) == 0.0,
+            "idle throughput did not decay over the rolling window");
+    return okay;
+}
+
+bool TestCudaConfigurationCoverage() {
+    bool okay = true;
+    for (const auto &registration :
+         forevertas::ModifierRegistry()) {
+        try {
+            const auto modifiers = forevertas::BuildCudaModifiers(
+                    {{registration.id,
+                      registration.defaultSettings}},
+                    10u);
+            okay &= Check(
+                    modifiers.size() == 1u,
+                    "a registered modifier was not translated for CUDA");
+        } catch (...) {
+            okay &= Check(
+                    false,
+                    "a registered modifier was rejected by CUDA");
+        }
+    }
+    for (const auto &registration :
+         forevertas::EvaluationTargetRegistry()) {
+        try {
+            static_cast<void>(forevertas::BuildCudaEvaluator(
+                    {registration.id,
+                     registration.defaultSettings},
+                    10u));
+        } catch (...) {
+            okay &= Check(
+                    false,
+                    "a registered evaluator was rejected by CUDA");
+        }
+    }
+    try {
+        static_cast<void>(forevertas::BuildCudaModifiers(
+                {{"unsupported-cuda-modifier", {}}}, 10u));
+        okay &= Check(
+                false,
+                "unsupported CUDA modifier did not produce an error");
+    } catch (const std::invalid_argument &) {
+    }
+    try {
+        static_cast<void>(forevertas::BuildCudaEvaluator(
+                {"unsupported-cuda-evaluator", {}}, 10u));
+        okay &= Check(
+                false,
+                "unsupported CUDA evaluator did not produce an error");
+    } catch (const std::invalid_argument &) {
+    }
+    return okay;
+}
+
 }  // namespace
 
 int main() {
@@ -721,6 +805,8 @@ int main() {
             TestAllModifierAnalogInvariants() &&
             TestRegistries() &&
             TestLocaleIndependentFloatingPointSettings() &&
-            TestSearchControl();
+            TestSearchControl() &&
+            TestRollingThroughput() &&
+            TestCudaConfigurationCoverage();
     return okay ? 0 : 1;
 }

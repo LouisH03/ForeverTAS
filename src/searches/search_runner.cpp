@@ -2,6 +2,7 @@
 
 #include "mutations/composite_input_mutator.h"
 #include "searches/algorithm_registry.h"
+#include "searches/cuda_search_configuration.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
@@ -199,12 +200,30 @@ SearchResult RunSearch(const SearchRequest &request,
             evaluationRegistration->create(
                     request.evaluationTarget.settings,
                     kSearchTickDurationMs);
+    std::vector<PhysicsSandboxCudaModifier> cudaModifiers;
+    std::optional<PhysicsSandboxCudaEvaluator> cudaEvaluator;
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (request.backend == PhysicsBackend::Cuda) {
+        if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
+            throw std::invalid_argument(
+                    "CUDA does not support search algorithm: " +
+                    request.searchAlgorithm.id);
+        }
+        cudaModifiers = BuildCudaModifiers(
+                request.modifiers, kSearchTickDurationMs);
+        cudaEvaluator = BuildCudaEvaluator(
+                request.evaluationTarget, kSearchTickDurationMs);
+    }
+#endif
     SearchResult result = search->Run({
             sandbox,
             options.tickDurationMs,
             mutator,
             *evaluator,
-            control});
+            control,
+            request.parallelSampleCount,
+            cudaModifiers.empty() ? nullptr : &cudaModifiers,
+            cudaEvaluator ? &*cudaEvaluator : nullptr});
     CheckCancellation(control);
     result.bestTimeline = SampleBestTimeline(
             request, replay, identity, result.bestInputs, control);

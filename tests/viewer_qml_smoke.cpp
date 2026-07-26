@@ -343,6 +343,13 @@ int main(int argc, char **argv) {
                     QObject *const simulationBackendCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationBackendCombo"));
+                    auto *const cudaParallelSampleSettings =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "cudaParallelSampleSettings")));
+                    QObject *const cudaParallelSampleCountField =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "cudaParallelSampleCountField"));
                     QObject *const settingsScroll = root->findChild<QObject *>(
                             QStringLiteral("settingsScroll"));
                     QObject *const settingsWheelRedirector =
@@ -552,7 +559,7 @@ int main(int argc, char **argv) {
                     bool backendSelectorValid =
                             simulationBackendCombo != nullptr &&
                             simulationBackendCombo->property("count").toInt() ==
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+#if FOREVERVALIDATOR_HAS_CUDA
                                     3 &&
 #else
                                     2 &&
@@ -575,23 +582,43 @@ int main(int argc, char **argv) {
                                 simulationBackendCombo
                                                 ->property("displayText")
                                                 .toString() ==
-                                        QStringLiteral("CPU Optimized");
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+                                        QStringLiteral("CPU Optimized") &&
+                                ContainsText(
+                                        root,
+                                        QStringLiteral(
+                                                "Faster runtime optimized for "
+                                                "Stadium, may break "
+                                                "compatibility in other "
+                                                "environments"));
+#if FOREVERVALIDATOR_HAS_CUDA
                         if (backendSelectorValid) {
                             controller.setSimulationBackendId(
-                                    QStringLiteral("speculative-ticking"));
+                                    QStringLiteral("cuda"));
                             QCoreApplication::processEvents();
                             backendSelectorValid =
                                     simulationBackendCombo
                                                     ->property("currentValue")
                                                     .toString() ==
-                                            QStringLiteral(
-                                                    "speculative-ticking") &&
+                                            QStringLiteral("cuda") &&
                                     simulationBackendCombo
                                                     ->property("displayText")
                                                     .toString() ==
+                                            QStringLiteral("CUDA") &&
+                                    cudaParallelSampleSettings != nullptr &&
+                                    cudaParallelSampleSettings->isVisible() &&
+                                    cudaParallelSampleCountField != nullptr &&
+                                    cudaParallelSampleCountField
+                                                    ->property("text")
+                                                    .toString() ==
+                                            QStringLiteral("256") &&
+                                    ContainsText(
+                                            root,
                                             QStringLiteral(
-                                                    "Speculative Ticking");
+                                                    "Fastest runtime optimized "
+                                                    "for Stadium, needs a "
+                                                    "modern NVIDIA GPU and may "
+                                                    "break compatibility in "
+                                                    "other environments"));
                         }
 #endif
                         controller.setSimulationBackendId(

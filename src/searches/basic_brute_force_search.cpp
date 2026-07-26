@@ -1,11 +1,14 @@
 #include "searches/basic_brute_force_search.h"
 
+#include "evaluators/evaluator_utils.h"
 #include "searches/option_settings_utils.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -77,6 +80,12 @@ void CheckCancellation(const SearchRunControl *control) {
 bool StopRequested(const SearchRunControl *control) {
     return control != nullptr && control->stopRequested &&
             control->stopRequested();
+}
+
+bool IterationLimitReached(const SearchRunControl *control,
+                           std::uint64_t iterations) {
+    return control != nullptr && control->iterationLimit &&
+            iterations >= *control->iterationLimit;
 }
 
 void ReportProgress(const SearchRunControl *control,
@@ -166,6 +175,244 @@ void ReportLive(
             lastImprovementElapsed});
 }
 
+std::string CudaEvaluationDescription(
+        const forevervalidator::experimental::
+                PhysicsSandboxCudaEvaluator &evaluator,
+        const forevervalidator::experimental::
+                PhysicsSandboxCudaSearchBatch &batch) {
+    using namespace forevervalidator::experimental;
+    return std::visit(
+            [&](const auto &configured) {
+                using T = std::decay_t<decltype(configured)>;
+                if constexpr (std::is_same_v<
+                                      T,
+                                      PhysicsSandboxCudaVelocityEvaluator>) {
+                    return MetricDescription(
+                            configured.projected
+                                    ? "Projected velocity"
+                                    : "Velocity",
+                            batch.bestScore,
+                            "m/s",
+                            batch.bestTimeMs);
+                } else if constexpr (std::is_same_v<
+                                             T,
+                                             PhysicsSandboxCudaPointEvaluator>) {
+                    return MetricDescription(
+                            "Point distance",
+                            batch.bestScore,
+                            "m",
+                            batch.bestTimeMs);
+                } else if constexpr (std::is_same_v<
+                                             T,
+                                             PhysicsSandboxCudaPoseEvaluator>) {
+                    constexpr double radiansToDegrees =
+                            180.0 / 3.14159265358979323846;
+                    std::ostringstream description;
+                    description.precision(8);
+                    description
+                            << "Pose error: " << batch.bestScore
+                            << " (position " << batch.bestDetail0
+                            << " m, rotation "
+                            << batch.bestDetail1 * radiansToDegrees
+                            << " deg) at "
+                            << FormatHumanDurationMilliseconds(
+                                       batch.bestTimeMs);
+                    return description.str();
+                } else if constexpr (std::is_same_v<
+                                             T,
+                                             PhysicsSandboxCudaVolumeEntryEvaluator>) {
+                    return TimeMetricDescription(
+                            "Volume entry time", batch.bestTimeMs);
+                } else {
+                    return TimeMetricDescription(
+                            "Finish time", batch.bestTimeMs);
+                }
+            },
+            evaluator);
+}
+
+SearchResult RunCudaBasicBruteForce(
+        const SearchExecutionContext &context,
+        const EvaluationPlan &evaluationPlan,
+        std::int64_t earliestMutationTimeMs,
+        std::chrono::steady_clock::time_point started) {
+    using namespace forevervalidator::experimental;
+    if (context.cudaModifiers == nullptr ||
+        context.cudaEvaluator == nullptr ||
+        context.cudaBatchSize == 0u) {
+        throw std::invalid_argument(
+                "CUDA search configuration is unavailable");
+    }
+
+    PhysicsSandboxCudaSearchConfiguration configuration;
+    configuration.maximumBatchSize = context.cudaBatchSize;
+    configuration.earliestMutationTimeMs = earliestMutationTimeMs;
+    configuration.evaluationStartTimeMs = evaluationPlan.startTimeMs;
+    configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
+    configuration.modifiers = *context.cudaModifiers;
+    configuration.evaluator = *context.cudaEvaluator;
+    PhysicsSandboxCudaSearchSession session = Require(
+            CreatePhysicsSandboxCudaSearchSession(
+                    context.sandbox, configuration),
+            "creating resident CUDA search session");
+
+    BestIteration best;
+    std::uint64_t iterations = 0u;
+    std::uint64_t evaluatorCalls = 0u;
+    std::uint64_t mutationImprovementCount = 0u;
+    std::uint64_t totalMutationCount = 0u;
+    std::optional<std::chrono::steady_clock::duration>
+            lastImprovementElapsed;
+    auto lastLiveReport = started - std::chrono::milliseconds(100);
+    const auto reportLive = [&](bool force) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!force &&
+            now - lastLiveReport < std::chrono::milliseconds(100)) {
+            return;
+        }
+        ReportLive(context.control,
+                   best,
+                   iterations,
+                   evaluatorCalls,
+                   mutationImprovementCount,
+                   totalMutationCount,
+                   now - started,
+                   lastImprovementElapsed);
+        lastLiveReport = now;
+    };
+    const auto adoptBest =
+            [&](PhysicsSandboxCudaSearchBatch &batch) {
+                if (!batch.bestSnapshot) {
+                    return;
+                }
+                best.source = batch.bestIsMutation
+                        ? SearchWinnerSource::Mutation
+                        : SearchWinnerSource::Baseline;
+                best.iterationIndex = batch.bestCandidateId;
+                best.mutationCount = batch.bestMutationCount;
+                best.evaluation = EvaluationSample{
+                        batch.bestScore,
+                        batch.bestTimeMs,
+                        CudaEvaluationDescription(
+                                *context.cudaEvaluator, batch)};
+                best.view = batch.bestState;
+                best.snapshot = std::move(*batch.bestSnapshot);
+                best.inputs = std::move(batch.bestInputs);
+            };
+
+    CheckCancellation(context.control);
+    ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
+    PhysicsSandboxCudaSearchBatch baseline = Require(
+            session.EvaluateBaseline(
+                    [control = context.control]() {
+                        return control != nullptr &&
+                                control->cancellationRequested &&
+                                control->cancellationRequested();
+                    }),
+            "evaluating CUDA baseline");
+    if (baseline.cancelled) {
+        throw SearchCancelled();
+    }
+    evaluatorCalls += baseline.evaluatorCalls;
+    adoptBest(baseline);
+    reportLive(true);
+    ReportProgress(context.control, SearchProgressStage::Mutations, 0u);
+
+    std::uint64_t iterationIndex = 0u;
+    while (!StopRequested(context.control) &&
+           !IterationLimitReached(context.control, iterations)) {
+        CheckCancellation(context.control);
+        std::uint32_t batchSize = context.cudaBatchSize;
+        if (context.control != nullptr &&
+            context.control->iterationLimit) {
+            batchSize = static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(
+                            batchSize,
+                            *context.control->iterationLimit -
+                                    iterations));
+        }
+        const bool exhaustsSequence =
+                batchSize != 0u &&
+                iterationIndex >
+                        std::numeric_limits<std::uint64_t>::max() -
+                                (batchSize - 1u);
+        if (exhaustsSequence) {
+            batchSize = static_cast<std::uint32_t>(
+                    std::numeric_limits<std::uint64_t>::max() -
+                    iterationIndex + 1u);
+        }
+        PhysicsSandboxCudaSearchBatch batch = Require(
+                session.RunBatch(
+                        iterationIndex,
+                        batchSize,
+                        [control = context.control]() {
+                            return control != nullptr &&
+                                    control->cancellationRequested &&
+                                    control->cancellationRequested();
+                        }),
+                "executing CUDA search batch");
+        if (batch.cancelled) {
+            throw SearchCancelled();
+        }
+        iterations += batch.candidateCount;
+        evaluatorCalls += batch.evaluatorCalls;
+        totalMutationCount += batch.totalMutationCount;
+        mutationImprovementCount +=
+                batch.mutationImprovementCount;
+        if (batch.bestSnapshot) {
+            adoptBest(batch);
+        }
+        if (batch.mutationImprovementCount != 0u) {
+            lastImprovementElapsed =
+                    std::chrono::steady_clock::now() - started;
+            reportLive(true);
+        } else {
+            reportLive(false);
+        }
+        if (exhaustsSequence) {
+            throw std::overflow_error("iteration sequence exhausted");
+        }
+        iterationIndex += batchSize;
+    }
+
+    CheckCancellation(context.control);
+    reportLive(true);
+    if (!best.evaluation || !best.snapshot) {
+        throw std::runtime_error(
+                "no iteration satisfied the selected evaluation target");
+    }
+    const PhysicsSandboxStateView restored = Require(
+            context.sandbox.RestoreState(*best.snapshot),
+            "restoring global CUDA best state");
+    if (!SameState(restored, best.view)) {
+        throw std::runtime_error(
+                "restored CUDA global best does not match its captured state");
+    }
+    const bool mutationWon =
+            best.source == SearchWinnerSource::Mutation;
+    if (mutationWon != (mutationImprovementCount > 0u)) {
+        throw std::runtime_error(
+                "CUDA mutation winner and improvement count are inconsistent");
+    }
+    return SearchResult{
+            best.source,
+            best.iterationIndex,
+            best.mutationCount,
+            best.evaluation->score,
+            best.evaluation->timeMs,
+            best.evaluation->description,
+            best.view,
+            std::move(best.inputs),
+            {},
+            iterations,
+            evaluatorCalls,
+            mutationImprovementCount,
+            totalMutationCount,
+            std::chrono::steady_clock::now() - started,
+            lastImprovementElapsed,
+            *best.snapshot};
+}
+
 }  // namespace
 
 OptionSettings DefaultBasicBruteForceOptionSettings() {
@@ -243,6 +490,17 @@ SearchResult BasicBruteForceSearch::Run(
             context.sandbox.ReadInputs(), "reading baseline inputs");
     const PhysicsSandboxState branch = Require(
             context.sandbox.CaptureState(), "capturing branch state");
+
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (context.sandbox.Backend() ==
+        forevervalidator::SimulationBackend::Cuda) {
+        return RunCudaBasicBruteForce(
+                context,
+                evaluationPlan,
+                earliestMutationTimeMs,
+                started);
+    }
+#endif
 
     const std::uint64_t preEvaluationTimeMs =
             static_cast<std::uint64_t>(evaluationPlan.startTimeMs) -
@@ -336,7 +594,8 @@ SearchResult BasicBruteForceSearch::Run(
     ReportProgress(context.control, SearchProgressStage::Mutations, 0u);
 
     std::uint64_t iterationIndex = 0u;
-    while (!StopRequested(context.control)) {
+    while (!StopRequested(context.control) &&
+           !IterationLimitReached(context.control, iterations)) {
         CheckCancellation(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");

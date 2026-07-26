@@ -1258,15 +1258,28 @@ ApplicationWindow {
                         Label {
                             Layout.fillWidth: true
                             text: window.controller.simulationBackendId
-                                  === "speculative-ticking"
-                                  ? qsTr("Uses the speculative ticking backend with exact optimized CPU fallback.")
+                                  === "cuda"
+                                  ? qsTr("Fastest runtime optimized for Stadium, needs a modern NVIDIA GPU and may break compatibility in other environments")
                                   : window.controller.simulationBackendId
                                     === "optimized-cpu"
-                                    ? qsTr("Uses the deterministic optimized CPU physics path.")
-                                    : qsTr("Uses the authoritative reference physics path.")
+                                    ? qsTr("Faster runtime optimized for Stadium, may break compatibility in other environments")
+                                    : qsTr("Broadest compatibility")
                             color: "#667064"
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11
+                        }
+
+                        SettingTextField {
+                            objectName: "cudaParallelSampleSettings"
+                            visible: window.controller.simulationBackendId
+                                     === "cuda"
+                            fieldObjectName: "cudaParallelSampleCountField"
+                            label: qsTr("Parallel samples at a time")
+                            value: window.controller.cudaParallelSampleCount
+                            running: window.controller.running
+                            minimum: 1
+                            onEdited: value =>
+                                window.controller.cudaParallelSampleCount = value
                         }
                     }
 

@@ -7,7 +7,8 @@
       "inherits": "pinned",
       "binaryDir": "${sourceDir}/build/local",
       "cacheVariables": {
-        "FETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR": "/path/to/ForeverValidator"
+        "FETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR": "/path/to/ForeverValidator",
+        "FOREVERTAS_ENABLE_CUDA": "ON"
       }
     }
   ],

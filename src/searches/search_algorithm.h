@@ -57,6 +57,7 @@ struct SearchRunControl {
     std::function<bool()> cancellationRequested;
     std::function<void(const SearchProgress &)> progressChanged;
     std::function<void(const SearchLiveUpdate &)> liveChanged;
+    std::optional<std::uint64_t> iterationLimit;
 };
 
 class SearchCancelled final : public std::exception {
@@ -72,6 +73,12 @@ struct SearchExecutionContext {
     const InputMutator &mutator;
     const IterationEvaluator &evaluator;
     const SearchRunControl *control = nullptr;
+    std::uint32_t cudaBatchSize = 1u;
+    const std::vector<forevervalidator::experimental::
+                              PhysicsSandboxCudaModifier>
+            *cudaModifiers = nullptr;
+    const forevervalidator::experimental::PhysicsSandboxCudaEvaluator
+            *cudaEvaluator = nullptr;
 };
 
 struct SearchTimelineFrame {

@@ -43,6 +43,10 @@ bool RunBackend(const char *packsDirectory,
         };
         forevertas::SearchRequest request{packsDirectory, replayPath};
         request.backend = backend;
+        if (backend == forevertas::PhysicsBackend::Cuda) {
+            request.parallelSampleCount =
+                    forevertas::kDefaultCudaParallelSampleCount;
+        }
         const forevertas::SearchResult result =
                 forevertas::RunSearch(request, &control);
         const bool mutationWon =
@@ -140,10 +144,10 @@ int main(int argc, char **argv) {
             !RunBackend(argv[1],
                         argv[2],
                         forevertas::PhysicsBackend::OptimizedCpu)
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+#if FOREVERVALIDATOR_HAS_CUDA
             || !RunBackend(argv[1],
                            argv[2],
-                           forevertas::PhysicsBackend::SpeculativeTicking)
+                           forevertas::PhysicsBackend::Cuda)
 #endif
         ) {
             return 1;

@@ -6,6 +6,9 @@ project(ForeverTAS
     HOMEPAGE_URL "https://github.com/Skycrafter-dev/ForeverTAS"
     LANGUAGES CXX)
 
+option(FOREVERTAS_ENABLE_CUDA
+    "Build ForeverTAS with the optional ForeverValidator CUDA backend" OFF)
+
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
@@ -44,6 +47,8 @@ set(FOREVERVALIDATOR_BUILD_CLI OFF CACHE BOOL
     "Do not build the embedded ForeverValidator CLI" FORCE)
 set(FOREVERVALIDATOR_BUILD_TESTS OFF CACHE BOOL
     "Do not build embedded ForeverValidator tests" FORCE)
+set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
+    "Enable the embedded ForeverValidator CUDA backend" FORCE)
 
 FetchContent_Declare(
     ForeverValidator
@@ -91,6 +96,8 @@ add_library(forevertas_core STATIC
     src/searches/option_settings_utils.h
     src/searches/basic_brute_force_search.cpp
     src/searches/basic_brute_force_search.h
+    src/searches/cuda_search_configuration.cpp
+    src/searches/cuda_search_configuration.h
     src/searches/search_runner.cpp
     src/time_format.h
     src/searches/search_runner.h)
@@ -124,6 +131,7 @@ add_library(forevertas_gui STATIC
     src/app/packs_directory_finder.h
     src/app/panel_wheel_redirector.cpp
     src/app/panel_wheel_redirector.h
+    src/app/rolling_throughput.h
     src/app/search_worker.cpp
     src/app/search_worker.h)
 target_include_directories(forevertas_gui PUBLIC
@@ -403,6 +411,23 @@ if(BUILD_TESTING)
                  COMMAND forevertas-search-smoke
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
+        if(FOREVERTAS_ENABLE_CUDA)
+            add_executable(forevertas-cuda-search-parity
+                tests/cuda_search_parity_tests.cpp)
+            target_link_libraries(forevertas-cuda-search-parity PRIVATE
+                forevertas_core)
+            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(forevertas-cuda-search-parity PRIVATE
+                    -Wall -Wextra -Werror)
+            endif()
+            add_test(NAME forevertas-cuda-search-parity
+                     COMMAND forevertas-cuda-search-parity
+                         "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                         "${FOREVERTAS_TEST_REPLAY}")
+            set_tests_properties(forevertas-cuda-search-parity PROPERTIES
+                LABELS "cuda;parity;performance;stadium"
+                TIMEOUT 240)
+        endif()
         add_test(NAME forevertas-controller-lifecycle
                  COMMAND forevertas-controller-tests
                      --lifecycle

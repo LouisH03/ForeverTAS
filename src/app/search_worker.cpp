@@ -1,5 +1,6 @@
 #include "app/search_worker.h"
 
+#include "app/rolling_throughput.h"
 #include "mutations/input_event_formatter.h"
 #include "time_format.h"
 
@@ -23,12 +24,7 @@ QString IterationLabel(
             : QStringLiteral("Mutation");
 }
 
-QString IterationsPerSecond(const SearchLiveUpdate &live) {
-    const double seconds =
-            std::chrono::duration<double>(live.elapsed).count();
-    const double rate = seconds <= 0.0
-            ? 0.0
-            : static_cast<double>(live.iterations) / seconds;
+QString IterationsPerSecond(double rate) {
     return QString::number(static_cast<qlonglong>(std::llround(rate)));
 }
 
@@ -136,7 +132,8 @@ void SearchWorker::run() {
                            latestInputsText = QString(),
                            latestSource = SearchWinnerSource::Baseline,
                            latestIteration =
-                                   std::optional<std::uint64_t>{}](
+                                   std::optional<std::uint64_t>{},
+                           throughput = RollingThroughput()](
                                   const SearchLiveUpdate &live) mutable {
         if (latestInputsText.isEmpty() ||
             latestSource != live.winnerSource ||
@@ -148,7 +145,8 @@ void SearchWorker::run() {
         }
         emit metricsChanged(
                 QString::number(static_cast<qulonglong>(live.iterations)),
-                IterationsPerSecond(live),
+                IterationsPerSecond(
+                        throughput.Observe(live.iterations, live.elapsed)),
                 RoundedDuration(live.elapsed));
         emit bestChanged(
                 FormatLive(live, QStringLiteral("Current best")),

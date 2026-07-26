@@ -12,8 +12,8 @@ namespace forevertas {
 enum class PhysicsBackend : std::uint8_t {
     Reference,
     OptimizedCpu,
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
-    SpeculativeTicking,
+#if FOREVERVALIDATOR_HAS_CUDA
+    Cuda,
 #endif
 };
 
@@ -23,9 +23,9 @@ constexpr std::string_view PhysicsBackendId(PhysicsBackend backend) noexcept {
         return "reference";
     case PhysicsBackend::OptimizedCpu:
         return "optimized-cpu";
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
-    case PhysicsBackend::SpeculativeTicking:
-        return "speculative-ticking";
+#if FOREVERVALIDATOR_HAS_CUDA
+    case PhysicsBackend::Cuda:
+        return "cuda";
 #endif
     }
     return "reference";
@@ -39,9 +39,9 @@ inline std::optional<PhysicsBackend> ParsePhysicsBackend(
     if (id == PhysicsBackendId(PhysicsBackend::OptimizedCpu)) {
         return PhysicsBackend::OptimizedCpu;
     }
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
-    if (id == PhysicsBackendId(PhysicsBackend::SpeculativeTicking)) {
-        return PhysicsBackend::SpeculativeTicking;
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (id == PhysicsBackendId(PhysicsBackend::Cuda)) {
+        return PhysicsBackend::Cuda;
     }
 #endif
     return std::nullopt;
@@ -54,9 +54,9 @@ constexpr forevervalidator::SimulationBackend ToForeverValidatorBackend(
         return forevervalidator::SimulationBackend::Reference;
     case PhysicsBackend::OptimizedCpu:
         return forevervalidator::SimulationBackend::OptimizedCpu;
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
-    case PhysicsBackend::SpeculativeTicking:
-        return forevervalidator::SimulationBackend::SpeculativeTicking;
+#if FOREVERVALIDATOR_HAS_CUDA
+    case PhysicsBackend::Cuda:
+        return forevervalidator::SimulationBackend::Cuda;
 #endif
     }
     return forevervalidator::SimulationBackend::Reference;

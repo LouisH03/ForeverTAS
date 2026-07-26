@@ -18,6 +18,8 @@ namespace {
 constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
 constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
+constexpr char kCudaParallelSampleCountKey[] =
+        "backends/cuda/parallelSampleCount";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
 QString StoredValue(const char *key, const QString &fallback) {
@@ -46,6 +48,9 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     qRegisterMetaType<SearchCompletionPtr>();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
+    cudaParallelSampleCount_ = StoredValue(
+            kCudaParallelSampleCountKey,
+            QString::number(kDefaultCudaParallelSampleCount));
     const QString storedBackend = StoredValue(
             kSimulationBackendKey,
             BackendId(PhysicsBackend::Reference));
@@ -82,25 +87,39 @@ QVariantList SearchController::simulationBackendOptions() const {
             QVariantMap{
                     {QStringLiteral("id"),
                      BackendId(PhysicsBackend::Reference)},
-                    {QStringLiteral("label"), QStringLiteral("Reference")}},
+                    {QStringLiteral("label"), QStringLiteral("Reference")},
+                    {QStringLiteral("description"),
+                     QStringLiteral("Broadest compatibility")}},
             QVariantMap{
                     {QStringLiteral("id"),
                      BackendId(PhysicsBackend::OptimizedCpu)},
                     {QStringLiteral("label"),
-                     QStringLiteral("CPU Optimized")}},
+                     QStringLiteral("CPU Optimized")},
+                    {QStringLiteral("description"),
+                     QStringLiteral(
+                             "Faster runtime optimized for Stadium, may "
+                             "break compatibility in other environments")}},
     };
-#if defined(FOREVERVALIDATOR_HAS_SPECULATIVE_TICKING)
+#if FOREVERVALIDATOR_HAS_CUDA
     options.push_back(QVariantMap{
             {QStringLiteral("id"),
-             BackendId(PhysicsBackend::SpeculativeTicking)},
-            {QStringLiteral("label"),
-             QStringLiteral("Speculative Ticking")}});
+             BackendId(PhysicsBackend::Cuda)},
+            {QStringLiteral("label"), QStringLiteral("CUDA")},
+            {QStringLiteral("description"),
+             QStringLiteral(
+                     "Fastest runtime optimized for Stadium, needs a modern "
+                     "NVIDIA GPU and may break compatibility in other "
+                     "environments")}});
 #endif
     return options;
 }
 
 QString SearchController::simulationBackendId() const {
     return BackendId(simulationBackend_);
+}
+
+QString SearchController::cudaParallelSampleCount() const {
+    return cudaParallelSampleCount_;
 }
 
 QVariantList SearchController::searchAlgorithmOptions() const {
@@ -219,6 +238,17 @@ void SearchController::setSimulationBackendId(const QString &value) {
     simulationBackend_ = *parsed;
     persist(kSimulationBackendKey, BackendId(simulationBackend_));
     emit simulationBackendIdChanged();
+    refreshValidation();
+}
+
+void SearchController::setCudaParallelSampleCount(const QString &value) {
+    if (cudaParallelSampleCount_ == value) {
+        return;
+    }
+    cudaParallelSampleCount_ = value;
+    persist(kCudaParallelSampleCountKey, value);
+    emit cudaParallelSampleCountChanged();
+    refreshValidation();
 }
 
 void SearchController::setEvaluationTargetId(const QString &value) {
@@ -467,11 +497,30 @@ SearchController::ValidationResult SearchController::validate() const {
     const SearchComponentConfiguration &configuration =
             *configurationValidation.configuration;
 
+    std::uint32_t parallelSampleCount = 1u;
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (simulationBackend_ == PhysicsBackend::Cuda) {
+        bool parsed = false;
+        const QString trimmed = cudaParallelSampleCount_.trimmed();
+        const uint value = trimmed.toUInt(&parsed);
+        if (!parsed || trimmed != cudaParallelSampleCount_ ||
+            value == 0u) {
+            return {
+                    {},
+                    QStringLiteral(
+                            "CUDA parallel samples must be a positive "
+                            "whole number.")};
+        }
+        parallelSampleCount = value;
+    }
+#endif
+
     return {
             SearchRequest{
                     packsInfo.absoluteFilePath().toStdString(),
                     replayInfo.absoluteFilePath().toStdString(),
                     simulationBackend_,
+                    parallelSampleCount,
                     configuration.searchAlgorithm,
                     configuration.modifiers,
                     configuration.evaluationTarget},
