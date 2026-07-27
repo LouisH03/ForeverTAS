@@ -106,7 +106,7 @@ try {
     Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:QML_IMPORT_PATH -ErrorAction SilentlyContinue
-    $env:QT_QPA_PLATFORM = "offscreen"
+    $env:QT_QPA_PLATFORM = "windows"
     $env:QSG_RHI_BACKEND = "software"
 
     $StandardOutput = Join-Path $WorkingDirectory "smoke-stdout.txt"
@@ -120,7 +120,10 @@ try {
         -PassThru
     if (-not $Process.WaitForExit(60000)) {
         $Process.Kill()
-        throw "The packaged application did not finish its smoke test within 60 seconds"
+        $Output = Get-Content $StandardOutput -Raw -ErrorAction SilentlyContinue
+        $ErrorOutput = Get-Content $StandardError -Raw -ErrorAction SilentlyContinue
+        throw "The packaged application did not finish its smoke test within 60 seconds." +
+            "`n$Output`n$ErrorOutput"
     }
     if ($Process.ExitCode -ne 0) {
         $Output = Get-Content $StandardOutput -Raw -ErrorAction SilentlyContinue
