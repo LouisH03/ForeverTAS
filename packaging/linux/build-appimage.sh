@@ -195,5 +195,8 @@ QSG_RHI_BACKEND=software \
 APPIMAGE_EXTRACT_AND_RUN=1 \
     "${output}" --qml-smoke-test
 
-sha256sum "${output}" > "${output}.sha256"
+(
+    cd "${dist_dir}"
+    sha256sum "$(basename "${output}")" > "$(basename "${output}").sha256"
+)
 echo "Created ${output}"
