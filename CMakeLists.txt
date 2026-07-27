@@ -340,10 +340,20 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
 include(CPack)
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(forevertas_core PRIVATE -Wall -Wextra -Werror)
-    target_compile_options(forevertas_gui PRIVATE -Wall -Wextra -Werror)
-    target_compile_options(forevertas PRIVATE -Wall -Wextra -Werror)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+        AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(FOREVERTAS_WARNING_OPTIONS /W4 /WX)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(FOREVERTAS_WARNING_OPTIONS -Wall -Wextra -Werror)
+endif()
+
+if(FOREVERTAS_WARNING_OPTIONS)
+    target_compile_options(forevertas_core PRIVATE
+        ${FOREVERTAS_WARNING_OPTIONS})
+    target_compile_options(forevertas_gui PRIVATE
+        ${FOREVERTAS_WARNING_OPTIONS})
+    target_compile_options(forevertas PRIVATE
+        ${FOREVERTAS_WARNING_OPTIONS})
 endif()
 
 if(BUILD_TESTING)
@@ -365,13 +375,13 @@ if(BUILD_TESTING)
         forevertas_gui
         Qt6::Gui)
 
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(FOREVERTAS_WARNING_OPTIONS)
         target_compile_options(forevertas-strategy-tests PRIVATE
-            -Wall -Wextra -Werror)
+            ${FOREVERTAS_WARNING_OPTIONS})
         target_compile_options(forevertas-controller-tests PRIVATE
-            -Wall -Wextra -Werror)
+            ${FOREVERTAS_WARNING_OPTIONS})
         target_compile_options(forevertas-renderer-tests PRIVATE
-            -Wall -Wextra -Werror)
+            ${FOREVERTAS_WARNING_OPTIONS})
     endif()
 
     add_test(NAME forevertas-strategies
@@ -405,9 +415,9 @@ if(BUILD_TESTING)
             tests/search_smoke.cpp)
         target_link_libraries(forevertas-search-smoke PRIVATE
             forevertas_core)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(FOREVERTAS_WARNING_OPTIONS)
             target_compile_options(forevertas-search-smoke PRIVATE
-                -Wall -Wextra -Werror)
+                ${FOREVERTAS_WARNING_OPTIONS})
         endif()
         add_test(NAME forevertas-search-smoke
                  COMMAND forevertas-search-smoke
@@ -418,9 +428,9 @@ if(BUILD_TESTING)
                 tests/cuda_search_parity_tests.cpp)
             target_link_libraries(forevertas-cuda-search-parity PRIVATE
                 forevertas_core)
-            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            if(FOREVERTAS_WARNING_OPTIONS)
                 target_compile_options(forevertas-cuda-search-parity PRIVATE
-                    -Wall -Wextra -Werror)
+                    ${FOREVERTAS_WARNING_OPTIONS})
             endif()
             add_test(NAME forevertas-cuda-search-parity
                      COMMAND forevertas-cuda-search-parity
@@ -451,9 +461,9 @@ if(BUILD_TESTING)
             tests/render_scene_data_smoke.cpp)
         target_link_libraries(forevertas-render-scene-data-smoke PRIVATE
             forevertas_core)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(FOREVERTAS_WARNING_OPTIONS)
             target_compile_options(forevertas-render-scene-data-smoke PRIVATE
-                -Wall -Wextra -Werror)
+                ${FOREVERTAS_WARNING_OPTIONS})
         endif()
         add_test(NAME forevertas-render-scene-data
                  COMMAND forevertas-render-scene-data-smoke
@@ -467,9 +477,9 @@ if(BUILD_TESTING)
         target_link_libraries(forevertas-viewer-reload-smoke PRIVATE
             forevertas_gui
             Qt6::Gui)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(FOREVERTAS_WARNING_OPTIONS)
             target_compile_options(forevertas-viewer-reload-smoke PRIVATE
-                -Wall -Wextra -Werror)
+                ${FOREVERTAS_WARNING_OPTIONS})
         endif()
         add_test(NAME forevertas-viewer-reload-same
                  COMMAND forevertas-viewer-reload-smoke
@@ -497,9 +507,9 @@ if(BUILD_TESTING)
         target_link_libraries(forevertas-viewer-smoke PRIVATE
             forevertas_gui
             Qt6::Gui)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(FOREVERTAS_WARNING_OPTIONS)
             target_compile_options(forevertas-viewer-smoke PRIVATE
-                -Wall -Wextra -Werror)
+                ${FOREVERTAS_WARNING_OPTIONS})
         endif()
         add_test(NAME forevertas-viewer
                  COMMAND forevertas-viewer-smoke
@@ -520,9 +530,9 @@ if(BUILD_TESTING)
                 Qt6::Quick
                 Qt6::QuickControls2
                 Qt6::Widgets)
-            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            if(FOREVERTAS_WARNING_OPTIONS)
                 target_compile_options(forevertas-viewer-reload-qml-smoke PRIVATE
-                    -Wall -Wextra -Werror)
+                    ${FOREVERTAS_WARNING_OPTIONS})
             endif()
             add_test(NAME forevertas-viewer-reload-qml
                      COMMAND forevertas-viewer-reload-qml-smoke
@@ -557,9 +567,9 @@ if(BUILD_TESTING)
             Qt6::Quick3D
             Qt6::QuickControls2
             Qt6::Widgets)
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(FOREVERTAS_WARNING_OPTIONS)
             target_compile_options(forevertas-viewer-qml-smoke PRIVATE
-                -Wall -Wextra -Werror)
+                ${FOREVERTAS_WARNING_OPTIONS})
         endif()
         add_test(NAME forevertas-viewer-qml
                  COMMAND forevertas-viewer-qml-smoke
