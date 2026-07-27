@@ -10,6 +10,8 @@ option(FOREVERTAS_ENABLE_CUDA
     "Build ForeverTAS with the optional ForeverValidator CUDA backend" OFF)
 set(FOREVERTAS_WINDOWS_RUNTIME_DIR "" CACHE PATH
     "Directory containing non-Qt runtime DLLs for Windows packaging")
+set(FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR "" CACHE PATH
+    "Directory containing redistributable MSVC runtime DLLs")
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -265,7 +267,9 @@ install(TARGETS forevertas
 
 if(WIN32 OR APPLE)
     set(forevertas_deploy_options NO_TRANSLATIONS)
-    if(APPLE)
+    if(WIN32)
+        list(APPEND forevertas_deploy_options NO_COMPILER_RUNTIME)
+    else()
         list(APPEND forevertas_deploy_options MACOS_BUNDLE_POST_BUILD)
     endif()
     qt_generate_deploy_qml_app_script(
@@ -292,6 +296,16 @@ if(WIN32)
             "FOREVERTAS_WINDOWS_RUNTIME_DIR must point to the vcpkg runtime "
             "directory containing OpenSSL and zlib DLLs")
     endif()
+    if(NOT FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR
+            AND DEFINED ENV{VCToolsRedistDir})
+        set(FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR
+            "$ENV{VCToolsRedistDir}/x64/Microsoft.VC143.CRT")
+    endif()
+    if(NOT IS_DIRECTORY "${FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR}")
+        message(FATAL_ERROR
+            "FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR must point to the "
+            "Microsoft.VC143.CRT directory")
+    endif()
 
     file(GLOB forevertas_openssl_runtime_dlls
         LIST_DIRECTORIES FALSE
@@ -301,10 +315,15 @@ if(WIN32)
         "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/z.dll"
         "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/zlib.dll"
         "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/zlib1.dll")
+    file(GLOB forevertas_msvc_runtime_dlls
+        LIST_DIRECTORIES FALSE
+        "${FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR}/*.dll")
     list(LENGTH forevertas_openssl_runtime_dlls
         forevertas_openssl_runtime_dll_count)
     list(LENGTH forevertas_zlib_runtime_dlls
         forevertas_zlib_runtime_dll_count)
+    list(LENGTH forevertas_msvc_runtime_dlls
+        forevertas_msvc_runtime_dll_count)
     if(NOT forevertas_openssl_runtime_dll_count EQUAL 1
             OR NOT forevertas_zlib_runtime_dll_count EQUAL 1)
         message(FATAL_ERROR
@@ -313,9 +332,15 @@ if(WIN32)
             "${forevertas_openssl_runtime_dll_count} OpenSSL and "
             "${forevertas_zlib_runtime_dll_count} zlib DLLs")
     endif()
+    if(forevertas_msvc_runtime_dll_count EQUAL 0)
+        message(FATAL_ERROR
+            "No redistributable MSVC runtime DLLs found in "
+            "${FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR}")
+    endif()
     install(FILES
         ${forevertas_openssl_runtime_dlls}
         ${forevertas_zlib_runtime_dlls}
+        ${forevertas_msvc_runtime_dlls}
         DESTINATION ".")
 endif()
 

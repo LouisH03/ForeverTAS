@@ -89,9 +89,13 @@ try {
             $BesideApplication = Join-Path $ApplicationDirectory $Dependency
             $BesideBinary = Join-Path $Binary.Directory.FullName $Dependency
             $InSystemDirectory = Join-Path $SystemDirectory $Dependency
-            if (-not (Test-Path $BesideApplication -PathType Leaf) -and
-                    -not (Test-Path $BesideBinary -PathType Leaf) -and
-                    -not (Test-Path $InSystemDirectory -PathType Leaf)) {
+            $IsPackaged = (Test-Path $BesideApplication -PathType Leaf) -or
+                (Test-Path $BesideBinary -PathType Leaf)
+            $MustBePackaged = $Dependency -match `
+                "^(concrt|msvcp|vcruntime)[0-9_]*\.dll$"
+            if (-not $IsPackaged -and
+                    ($MustBePackaged -or
+                        -not (Test-Path $InSystemDirectory -PathType Leaf))) {
                 [void]$MissingDependencies.Add(
                     "$Dependency (required by $($Binary.Name))")
             }

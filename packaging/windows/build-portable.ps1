@@ -20,6 +20,9 @@ if ([string]::IsNullOrWhiteSpace($RuntimeDirectory) -and
 if ([string]::IsNullOrWhiteSpace($RuntimeDirectory)) {
     throw "RuntimeDirectory or VCPKG_INSTALLATION_ROOT is required"
 }
+if ([string]::IsNullOrWhiteSpace($env:VCToolsRedistDir)) {
+    throw "Run this script from an MSVC developer environment"
+}
 
 New-Item -ItemType Directory -Force -Path $DistDirectory | Out-Null
 Get-ChildItem $DistDirectory -Filter "ForeverTAS-*-windows-*.zip*" |
@@ -28,6 +31,7 @@ Get-ChildItem $DistDirectory -Filter "ForeverTAS-*-windows-*.zip*" |
 cmake -S $RepoRoot -B $BuildDirectory -G Ninja `
     -DCMAKE_BUILD_TYPE=Release `
     "-DFOREVERTAS_WINDOWS_RUNTIME_DIR=$RuntimeDirectory" `
+    "-DFOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR=$env:VCToolsRedistDir/x64/Microsoft.VC143.CRT" `
     -DBUILD_TESTING=OFF
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
