@@ -52,7 +52,8 @@ try {
         "Qt6Gui.dll",
         "Qt6Qml.dll",
         "Qt6Quick.dll",
-        "platforms\qwindows.dll",
+        "qt.conf",
+        "plugins\platforms\qwindows.dll",
         "qml\QtQuick\qtquick2plugin.dll"
     )) {
         $FullPath = Join-Path $ApplicationDirectory $RequiredPath
