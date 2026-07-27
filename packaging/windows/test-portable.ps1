@@ -1,0 +1,136 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Archive,
+    [string]$WorkingDirectory = ""
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$Archive = (Resolve-Path $Archive).Path
+$RemoveWorkingDirectory = [string]::IsNullOrWhiteSpace($WorkingDirectory)
+if ($RemoveWorkingDirectory) {
+    $WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) `
+        "ForeverTAS-portable-$([guid]::NewGuid().ToString('N'))"
+}
+
+$OriginalEnvironment = @{
+    PATH = $env:PATH
+    QT_PLUGIN_PATH = $env:QT_PLUGIN_PATH
+    QML2_IMPORT_PATH = $env:QML2_IMPORT_PATH
+    QML_IMPORT_PATH = $env:QML_IMPORT_PATH
+    QT_QPA_PLATFORM = $env:QT_QPA_PLATFORM
+    QSG_RHI_BACKEND = $env:QSG_RHI_BACKEND
+}
+
+function Restore-Environment {
+    foreach ($Entry in $OriginalEnvironment.GetEnumerator()) {
+        if ($null -eq $Entry.Value) {
+            Remove-Item "Env:$($Entry.Key)" -ErrorAction SilentlyContinue
+        } else {
+            Set-Item "Env:$($Entry.Key)" $Entry.Value
+        }
+    }
+}
+
+try {
+    Remove-Item $WorkingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $WorkingDirectory | Out-Null
+    Expand-Archive -Path $Archive -DestinationPath $WorkingDirectory
+
+    $Executables = @(
+        Get-ChildItem $WorkingDirectory -Recurse -File -Filter "ForeverTAS.exe"
+    )
+    if ($Executables.Count -ne 1) {
+        throw "Expected one ForeverTAS.exe in the archive, found $($Executables.Count)"
+    }
+
+    $Executable = $Executables[0]
+    $ApplicationDirectory = $Executable.Directory.FullName
+    foreach ($RequiredPath in @(
+        "Qt6Core.dll",
+        "Qt6Gui.dll",
+        "Qt6Qml.dll",
+        "Qt6Quick.dll",
+        "platforms\qwindows.dll",
+        "qml\QtQuick\qtquick2plugin.dll"
+    )) {
+        $FullPath = Join-Path $ApplicationDirectory $RequiredPath
+        if (-not (Test-Path $FullPath -PathType Leaf)) {
+            throw "Missing deployed runtime file: $RequiredPath"
+        }
+    }
+
+    $Dumpbin = (Get-Command "dumpbin.exe" -ErrorAction Stop).Source
+    $SystemDirectory = Join-Path $env:SystemRoot "System32"
+    $MissingDependencies = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::OrdinalIgnoreCase)
+    $Binaries = @(
+        Get-ChildItem $ApplicationDirectory -Recurse -File |
+            Where-Object { $_.Extension -in @(".exe", ".dll") }
+    )
+    foreach ($Binary in $Binaries) {
+        $DumpOutput = & $Dumpbin /nologo /dependents $Binary.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin failed for $($Binary.FullName):`n$DumpOutput"
+        }
+
+        foreach ($Line in $DumpOutput) {
+            if ($Line -notmatch "^\s+([A-Za-z0-9_.+-]+\.dll)\s*$") {
+                continue
+            }
+
+            $Dependency = $Matches[1]
+            if ($Dependency -match "^(api-ms-win-|ext-ms-win-)") {
+                continue
+            }
+
+            $BesideApplication = Join-Path $ApplicationDirectory $Dependency
+            $BesideBinary = Join-Path $Binary.Directory.FullName $Dependency
+            $InSystemDirectory = Join-Path $SystemDirectory $Dependency
+            if (-not (Test-Path $BesideApplication -PathType Leaf) -and
+                    -not (Test-Path $BesideBinary -PathType Leaf) -and
+                    -not (Test-Path $InSystemDirectory -PathType Leaf)) {
+                [void]$MissingDependencies.Add(
+                    "$Dependency (required by $($Binary.Name))")
+            }
+        }
+    }
+    if ($MissingDependencies.Count -ne 0) {
+        $Details = ($MissingDependencies | Sort-Object) -join "`n  "
+        throw "The portable tree has unresolved DLL dependencies:`n  $Details"
+    }
+
+    $env:PATH = "$SystemDirectory;$env:SystemRoot"
+    Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:QML_IMPORT_PATH -ErrorAction SilentlyContinue
+    $env:QT_QPA_PLATFORM = "offscreen"
+    $env:QSG_RHI_BACKEND = "software"
+
+    $StandardOutput = Join-Path $WorkingDirectory "smoke-stdout.txt"
+    $StandardError = Join-Path $WorkingDirectory "smoke-stderr.txt"
+    $Process = Start-Process `
+        -FilePath $Executable.FullName `
+        -ArgumentList "--qml-smoke-test" `
+        -WorkingDirectory $ApplicationDirectory `
+        -RedirectStandardOutput $StandardOutput `
+        -RedirectStandardError $StandardError `
+        -PassThru
+    if (-not $Process.WaitForExit(60000)) {
+        $Process.Kill()
+        throw "The packaged application did not finish its smoke test within 60 seconds"
+    }
+    if ($Process.ExitCode -ne 0) {
+        $Output = Get-Content $StandardOutput -Raw -ErrorAction SilentlyContinue
+        $ErrorOutput = Get-Content $StandardError -Raw -ErrorAction SilentlyContinue
+        throw "Packaged application exited with $($Process.ExitCode).`n$Output`n$ErrorOutput"
+    }
+
+    Write-Host "Portable ZIP dependency closure and QML startup test passed."
+} finally {
+    Restore-Environment
+    if ($RemoveWorkingDirectory) {
+        Remove-Item $WorkingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

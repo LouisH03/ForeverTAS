@@ -8,6 +8,8 @@ project(ForeverTAS
 
 option(FOREVERTAS_ENABLE_CUDA
     "Build ForeverTAS with the optional ForeverValidator CUDA backend" OFF)
+set(FOREVERTAS_WINDOWS_RUNTIME_DIR "" CACHE PATH
+    "Directory containing non-Qt runtime DLLs for Windows packaging")
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -270,7 +272,51 @@ if(WIN32 OR APPLE)
         TARGET forevertas
         OUTPUT_SCRIPT forevertas_deploy_script
         ${forevertas_deploy_options})
-    install(SCRIPT "${forevertas_deploy_script}")
+    if(WIN32)
+        install(CODE
+            "set(QT_DEPLOY_BIN_DIR \".\")\ninclude(\"${forevertas_deploy_script}\")")
+    else()
+        install(SCRIPT "${forevertas_deploy_script}")
+    endif()
+endif()
+
+if(WIN32)
+    if(NOT FOREVERTAS_WINDOWS_RUNTIME_DIR
+            AND DEFINED VCPKG_INSTALLED_DIR
+            AND DEFINED VCPKG_TARGET_TRIPLET)
+        set(FOREVERTAS_WINDOWS_RUNTIME_DIR
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    endif()
+    if(NOT IS_DIRECTORY "${FOREVERTAS_WINDOWS_RUNTIME_DIR}")
+        message(FATAL_ERROR
+            "FOREVERTAS_WINDOWS_RUNTIME_DIR must point to the vcpkg runtime "
+            "directory containing OpenSSL and zlib DLLs")
+    endif()
+
+    file(GLOB forevertas_openssl_runtime_dlls
+        LIST_DIRECTORIES FALSE
+        "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/libcrypto-*.dll")
+    file(GLOB forevertas_zlib_runtime_dlls
+        LIST_DIRECTORIES FALSE
+        "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/z.dll"
+        "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/zlib.dll"
+        "${FOREVERTAS_WINDOWS_RUNTIME_DIR}/zlib1.dll")
+    list(LENGTH forevertas_openssl_runtime_dlls
+        forevertas_openssl_runtime_dll_count)
+    list(LENGTH forevertas_zlib_runtime_dlls
+        forevertas_zlib_runtime_dll_count)
+    if(NOT forevertas_openssl_runtime_dll_count EQUAL 1
+            OR NOT forevertas_zlib_runtime_dll_count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one OpenSSL crypto DLL and one zlib DLL in "
+            "${FOREVERTAS_WINDOWS_RUNTIME_DIR}; found "
+            "${forevertas_openssl_runtime_dll_count} OpenSSL and "
+            "${forevertas_zlib_runtime_dll_count} zlib DLLs")
+    endif()
+    install(FILES
+        ${forevertas_openssl_runtime_dlls}
+        ${forevertas_zlib_runtime_dlls}
+        DESTINATION ".")
 endif()
 
 if(APPLE)

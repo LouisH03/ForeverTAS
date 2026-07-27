@@ -1,6 +1,7 @@
 param(
     [string]$BuildDirectory = "",
-    [string]$DistDirectory = ""
+    [string]$DistDirectory = "",
+    [string]$RuntimeDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,14 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
 if ([string]::IsNullOrWhiteSpace($DistDirectory)) {
     $DistDirectory = Join-Path $RepoRoot "dist"
 }
+if ([string]::IsNullOrWhiteSpace($RuntimeDirectory) -and
+        -not [string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
+    $RuntimeDirectory = Join-Path $env:VCPKG_INSTALLATION_ROOT `
+        "installed/x64-windows/bin"
+}
+if ([string]::IsNullOrWhiteSpace($RuntimeDirectory)) {
+    throw "RuntimeDirectory or VCPKG_INSTALLATION_ROOT is required"
+}
 
 New-Item -ItemType Directory -Force -Path $DistDirectory | Out-Null
 Get-ChildItem $DistDirectory -Filter "ForeverTAS-*-windows-*.zip*" |
@@ -18,6 +27,7 @@ Get-ChildItem $DistDirectory -Filter "ForeverTAS-*-windows-*.zip*" |
 
 cmake -S $RepoRoot -B $BuildDirectory -G Ninja `
     -DCMAKE_BUILD_TYPE=Release `
+    "-DFOREVERTAS_WINDOWS_RUNTIME_DIR=$RuntimeDirectory" `
     -DBUILD_TESTING=OFF
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
@@ -37,4 +47,5 @@ $Artifact = $Artifacts[0]
 $Hash = Get-FileHash -Algorithm SHA256 $Artifact.FullName
 "$($Hash.Hash.ToLower())  $($Artifact.Name)" |
     Set-Content -NoNewline "$($Artifact.FullName).sha256"
+& (Join-Path $PSScriptRoot "test-portable.ps1") -Archive $Artifact.FullName
 Write-Host "Created $($Artifact.FullName)"
