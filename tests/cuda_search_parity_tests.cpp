@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <future>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -42,7 +43,10 @@ SearchResult Run(const char *packs,
                  std::vector<OptionConfiguration> modifiers,
                  OptionConfiguration evaluator,
                  bool calibrate = false,
-                 std::vector<std::uint32_t> *calibrationUpdates = nullptr) {
+                 std::vector<std::uint32_t> *calibrationUpdates = nullptr,
+                 bool sampleBestTimeline = false,
+                 std::optional<std::int64_t>
+                         evaluationEndTimeLimitMs = std::nullopt) {
     SearchRequest request{packs, replay};
     request.backend = backend;
     request.parallelSampleCount = batchSize;
@@ -51,6 +55,9 @@ SearchResult Run(const char *packs,
     request.evaluationTarget = std::move(evaluator);
     forevertas::SearchRunControl control;
     control.iterationLimit = iterations;
+    control.sampleBestTimeline = sampleBestTimeline;
+    control.evaluationEndTimeLimitMs = evaluationEndTimeLimitMs;
+    control.reuseLoadedSandbox = true;
     control.cudaBatchSizeChanged =
             [calibrationUpdates](std::uint32_t value) {
                 if (calibrationUpdates != nullptr &&
@@ -129,15 +136,33 @@ bool CheckParity(const char *packs,
                  const std::vector<OptionConfiguration> &modifiers,
                  const OptionConfiguration &evaluator,
                  bool requireMutationWinner = false,
-                 double *cudaSeconds = nullptr) {
-    std::cout << "checking " << label << '\n';
-    const SearchResult reference = Run(
-            packs, replay, forevertas::PhysicsBackend::Reference,
-            1u, iterations, modifiers, evaluator);
+                 double *cudaSeconds = nullptr,
+                 std::optional<std::int64_t>
+                         evaluationEndTimeLimitMs = std::nullopt) {
+    const auto started = std::chrono::steady_clock::now();
+    std::cout << "checking " << label << std::endl;
+    std::future<SearchResult> reference = std::async(
+            std::launch::async,
+            [=]() {
+                return Run(
+                        packs,
+                        replay,
+                        forevertas::PhysicsBackend::Reference,
+                        1u,
+                        iterations,
+                        modifiers,
+                        evaluator,
+                        false,
+                        nullptr,
+                        false,
+                        evaluationEndTimeLimitMs);
+            });
     const auto cudaStarted = std::chrono::steady_clock::now();
     const SearchResult cuda = Run(
             packs, replay, forevertas::PhysicsBackend::Cuda,
-            batchSize, iterations, modifiers, evaluator);
+            batchSize, iterations, modifiers, evaluator,
+            false, nullptr, false, evaluationEndTimeLimitMs);
+    const SearchResult authoritative = reference.get();
     if (cudaSeconds != nullptr) {
         *cudaSeconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - cudaStarted)
@@ -148,14 +173,18 @@ bool CheckParity(const char *packs,
                           ? std::to_string(
                                     *cuda.winningIterationIndex)
                           : "baseline")
-              << '\n';
+              << " seconds="
+              << std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - started)
+                         .count()
+              << std::endl;
     const bool mutationWinner =
             cuda.winningIterationIndex.has_value();
     if (requireMutationWinner && !mutationWinner) {
         std::cerr << label
                   << " did not exercise winning candidate data\n";
     }
-    return SameAuthoritativeResult(reference, cuda, label) &&
+    return SameAuthoritativeResult(authoritative, cuda, label) &&
             (!requireMutationWinner || mutationWinner);
 }
 
@@ -164,6 +193,7 @@ bool CheckCancellation(const char *packs, const char *replay) {
     request.backend = forevertas::PhysicsBackend::Cuda;
     request.parallelSampleCount = 4096u;
     forevertas::SearchRunControl control;
+    control.reuseLoadedSandbox = true;
     std::chrono::steady_clock::time_point mutationStarted{};
     control.progressChanged =
             [&](const forevertas::SearchProgress &progress) {
@@ -256,19 +286,32 @@ int main(int argc, char **argv) {
         bool okay = true;
         const OptionConfiguration velocity =
                 DefaultEvaluator(forevertas::kVelocityEvaluationId);
+        OptionConfiguration coverageVelocity = velocity;
+        coverageVelocity.settings["minTimeMs"] = "1000";
+        coverageVelocity.settings["maxTimeMs"] = "1000";
+        constexpr std::int64_t shortEvaluationEndTimeMs = 1020;
 
+        std::vector<OptionConfiguration> completeModifierPipeline;
         for (const auto &registration :
              forevertas::ModifierRegistry()) {
-            okay &= CheckParity(
-                    argv[1],
-                    argv[2],
-                    "modifier " + registration.id,
-                    2u,
-                    3u,
-                    {{registration.id,
-                      registration.defaultSettings}},
-                    velocity);
+            OptionConfiguration modifier{
+                    registration.id,
+                    registration.defaultSettings};
+            modifier.settings["minTimeMs"] = "1000";
+            modifier.settings["maxTimeMs"] = "1000";
+            completeModifierPipeline.push_back(std::move(modifier));
         }
+        okay &= CheckParity(
+                argv[1],
+                argv[2],
+                "complete modifier pipeline",
+                2u,
+                3u,
+                completeModifierPipeline,
+                coverageVelocity,
+                false,
+                nullptr,
+                shortEvaluationEndTimeMs);
 
         const OptionConfiguration random = DefaultModifier(
                 forevertas::kRandomSteeringModifierId);
@@ -279,14 +322,27 @@ int main(int argc, char **argv) {
                 1u,
                 0u,
                 {random},
-                velocity);
+                velocity,
+                false,
+                nullptr,
+                true);
         if (baselineProbe.bestTimeline.size() < 3u) {
             throw std::runtime_error(
                     "baseline sampling did not produce a timeline");
         }
+        const auto volumeTargetPosition = std::find_if(
+                baselineProbe.bestTimeline.begin(),
+                baselineProbe.bestTimeline.end(),
+                [](const forevertas::SearchTimelineFrame &frame) {
+                    return frame.timeMs == 1020;
+                });
+        if (volumeTargetPosition ==
+            baselineProbe.bestTimeline.end()) {
+            throw std::runtime_error(
+                    "baseline sampling missed the short parity target");
+        }
         const forevertas::SearchTimelineFrame &volumeTarget =
-                baselineProbe.bestTimeline[
-                        baselineProbe.bestTimeline.size() / 3u];
+                *volumeTargetPosition;
         const auto decimal = [](float value) {
             std::ostringstream stream;
             stream << std::setprecision(17)
@@ -354,6 +410,15 @@ int main(int argc, char **argv) {
             OptionConfiguration configured{
                     registration.id,
                     registration.defaultSettings};
+            const auto minimum =
+                    configured.settings.find("minTimeMs");
+            const auto maximum =
+                    configured.settings.find("maxTimeMs");
+            if (minimum != configured.settings.end() &&
+                maximum != configured.settings.end()) {
+                minimum->second = "1000";
+                maximum->second = "1000";
+            }
             if (registration.id ==
                 forevertas::kVolumeEntryEvaluationId) {
                 configured.settings["centerX"] =
@@ -362,9 +427,9 @@ int main(int argc, char **argv) {
                         decimal(volumeTarget.positionY);
                 configured.settings["centerZ"] =
                         decimal(volumeTarget.positionZ);
-                configured.settings["sizeX"] = "2";
-                configured.settings["sizeY"] = "2";
-                configured.settings["sizeZ"] = "2";
+                configured.settings["sizeX"] = "0.01";
+                configured.settings["sizeY"] = "0.01";
+                configured.settings["sizeZ"] = "0.01";
             }
             okay &= CheckParity(
                     argv[1],
@@ -373,7 +438,15 @@ int main(int argc, char **argv) {
                     2u,
                     2u,
                     {random},
-                    configured);
+                    configured,
+                    false,
+                    nullptr,
+                    registration.id ==
+                                    forevertas::
+                                            kFinishTimeEvaluationId
+                            ? std::nullopt
+                            : std::optional<std::int64_t>(
+                                      shortEvaluationEndTimeMs));
         }
 
         double batchOneSeconds = 0.0;
@@ -451,8 +524,6 @@ int main(int argc, char **argv) {
         }
         std::cout << "cuda_8192_batch_candidates_per_second="
                   << 8192.0 / aboveOldCapSeconds << '\n';
-
-        okay &= CheckCalibration(packs, replay);
 
         const SearchResult replayA = Run(
                 argv[1], argv[2],

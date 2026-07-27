@@ -428,6 +428,8 @@ if(BUILD_TESTING)
                          "${FOREVERTAS_TEST_REPLAY}")
             set_tests_properties(forevertas-cuda-search-parity PROPERTIES
                 LABELS "cuda;parity;performance;stadium"
+                RESOURCE_LOCK cuda
+                RUN_SERIAL TRUE
                 TIMEOUT 240)
             add_test(NAME forevertas-cuda-calibration
                      COMMAND forevertas-cuda-search-parity
@@ -436,6 +438,7 @@ if(BUILD_TESTING)
                          "${FOREVERTAS_TEST_REPLAY}")
             set_tests_properties(forevertas-cuda-calibration PROPERTIES
                 LABELS "cuda;calibration;parity;stadium"
+                RESOURCE_LOCK cuda
                 TIMEOUT 120)
         endif()
         add_test(NAME forevertas-controller-lifecycle

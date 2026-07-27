@@ -7,7 +7,11 @@
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
+#include <map>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace forevertas {
@@ -118,6 +122,97 @@ std::vector<SearchTimelineFrame> SampleBestTimeline(
     return frames;
 }
 
+struct CachedSearchSandbox {
+    std::mutex lock;
+    forevervalidator::AssetBytes replay;
+    std::optional<
+            forevervalidator::experimental::PhysicsSandbox>
+            sandbox;
+    std::optional<
+            forevervalidator::experimental::PhysicsSandboxState>
+            initialState;
+    std::vector<
+            forevervalidator::experimental::PhysicsSandboxInputEvent>
+            initialInputs;
+};
+
+std::shared_ptr<CachedSearchSandbox> CachedSandboxFor(
+        const SearchRequest &request) {
+    using Key = std::tuple<std::string, std::string, PhysicsBackend>;
+    static std::mutex cacheLock;
+    static std::map<Key, std::shared_ptr<CachedSearchSandbox>> cache;
+    const Key key{
+            request.packDirectory,
+            request.replayPath,
+            request.backend};
+    std::lock_guard<std::mutex> guard(cacheLock);
+    auto &entry = cache[key];
+    if (!entry) {
+        entry = std::make_shared<CachedSearchSandbox>();
+    }
+    return entry;
+}
+
+SearchResult RunLoadedSearch(
+        const SearchRequest &request,
+        const forevervalidator::AssetBytes &replay,
+        const forevervalidator::ReplayIdentity &identity,
+        forevervalidator::experimental::PhysicsSandbox &sandbox,
+        const SearchAlgorithmRegistration &searchRegistration,
+        const EvaluationTargetRegistration &evaluationRegistration,
+        const SearchRunControl *control) {
+    using namespace forevervalidator::experimental;
+
+    std::unique_ptr<SearchAlgorithm> search =
+            searchRegistration.create(
+                    request.searchAlgorithm.settings,
+                    kSearchTickDurationMs);
+    std::vector<std::unique_ptr<InputMutator>> modifierPasses;
+    modifierPasses.reserve(request.modifiers.size());
+    for (const OptionConfiguration &modifier : request.modifiers) {
+        const ModifierRegistration *const registration =
+                FindModifier(modifier.id);
+        modifierPasses.push_back(registration->create(
+                modifier.settings, kSearchTickDurationMs));
+    }
+    const CompositeInputMutator mutator(std::move(modifierPasses));
+    std::unique_ptr<IterationEvaluator> evaluator =
+            evaluationRegistration.create(
+                    request.evaluationTarget.settings,
+                    kSearchTickDurationMs);
+    std::vector<PhysicsSandboxCudaModifier> cudaModifiers;
+    std::optional<PhysicsSandboxCudaEvaluator> cudaEvaluator;
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (request.backend == PhysicsBackend::Cuda) {
+        if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
+            throw std::invalid_argument(
+                    "CUDA does not support search algorithm: " +
+                    request.searchAlgorithm.id);
+        }
+        cudaModifiers = BuildCudaModifiers(
+                request.modifiers, kSearchTickDurationMs);
+        cudaEvaluator = BuildCudaEvaluator(
+                request.evaluationTarget, kSearchTickDurationMs);
+    }
+#endif
+    SearchResult result = search->Run({
+            sandbox,
+            kSearchTickDurationMs,
+            mutator,
+            *evaluator,
+            control,
+            request.parallelSampleCount,
+            request.calibrateCudaParallelSampleCount,
+            cudaModifiers.empty() ? nullptr : &cudaModifiers,
+            cudaEvaluator ? &*cudaEvaluator : nullptr});
+    CheckCancellation(control);
+    if (control == nullptr || control->sampleBestTimeline) {
+        result.bestTimeline = SampleBestTimeline(
+                request, replay, identity, result.bestInputs, control);
+    }
+    return result;
+}
+
 }  // namespace
 
 SearchResult RunSearch(const SearchRequest &request,
@@ -163,6 +258,57 @@ SearchResult RunSearch(const SearchRequest &request,
 
     CheckCancellation(control);
     const ReplayIdentity identity{request.replayPath};
+    PhysicsSandboxOptions options;
+    options.backend = ToForeverValidatorBackend(request.backend);
+    options.tickDurationMs = kSearchTickDurationMs;
+    if (control != nullptr && control->reuseLoadedSandbox) {
+        const std::shared_ptr<CachedSearchSandbox> cached =
+                CachedSandboxFor(request);
+        std::lock_guard<std::mutex> guard(cached->lock);
+        CheckCancellation(control);
+        if (!cached->sandbox) {
+            AssetSource source = Require(
+                    OpenInstalledPackDirectory(request.packDirectory),
+                    "opening cached pack directory");
+            cached->replay = Require(
+                    ReadNativeReplayFile(request.replayPath, identity),
+                    "reading cached replay");
+            cached->sandbox.emplace(Require(
+                    CreatePhysicsSandbox(std::move(source), options),
+                    "creating cached sandbox"));
+            Require(
+                    cached->sandbox->LoadReplay(
+                            {cached->replay.data(),
+                             cached->replay.size()},
+                            identity),
+                    "loading replay into cached sandbox");
+            cached->initialState = Require(
+                    cached->sandbox->CaptureState(),
+                    "capturing cached initial state");
+            cached->initialInputs = Require(
+                    cached->sandbox->ReadInputs(),
+                    "reading cached initial inputs");
+        } else {
+            Require(
+                    cached->sandbox->RestoreState(
+                            *cached->initialState),
+                    "restoring cached initial state");
+            Require(
+                    cached->sandbox->ReplaceInputs(
+                            cached->initialInputs),
+                    "restoring cached initial inputs");
+        }
+        CheckCancellation(control);
+        return RunLoadedSearch(
+                request,
+                cached->replay,
+                identity,
+                *cached->sandbox,
+                *searchRegistration,
+                *evaluationRegistration,
+                control);
+    }
+
     AssetSource source = Require(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory");
@@ -171,10 +317,6 @@ SearchResult RunSearch(const SearchRequest &request,
             ReadNativeReplayFile(request.replayPath, identity),
             "reading replay");
     CheckCancellation(control);
-
-    PhysicsSandboxOptions options;
-    options.backend = ToForeverValidatorBackend(request.backend);
-    options.tickDurationMs = kSearchTickDurationMs;
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating sandbox");
@@ -182,53 +324,14 @@ SearchResult RunSearch(const SearchRequest &request,
     Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay");
     CheckCancellation(control);
-
-    std::unique_ptr<SearchAlgorithm> search =
-            searchRegistration->create(
-                    request.searchAlgorithm.settings,
-                    kSearchTickDurationMs);
-    std::vector<std::unique_ptr<InputMutator>> modifierPasses;
-    modifierPasses.reserve(request.modifiers.size());
-    for (const OptionConfiguration &modifier : request.modifiers) {
-        const ModifierRegistration *const registration =
-                FindModifier(modifier.id);
-        modifierPasses.push_back(registration->create(
-                modifier.settings, kSearchTickDurationMs));
-    }
-    const CompositeInputMutator mutator(std::move(modifierPasses));
-    std::unique_ptr<IterationEvaluator> evaluator =
-            evaluationRegistration->create(
-                    request.evaluationTarget.settings,
-                    kSearchTickDurationMs);
-    std::vector<PhysicsSandboxCudaModifier> cudaModifiers;
-    std::optional<PhysicsSandboxCudaEvaluator> cudaEvaluator;
-#if FOREVERVALIDATOR_HAS_CUDA
-    if (request.backend == PhysicsBackend::Cuda) {
-        if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
-            throw std::invalid_argument(
-                    "CUDA does not support search algorithm: " +
-                    request.searchAlgorithm.id);
-        }
-        cudaModifiers = BuildCudaModifiers(
-                request.modifiers, kSearchTickDurationMs);
-        cudaEvaluator = BuildCudaEvaluator(
-                request.evaluationTarget, kSearchTickDurationMs);
-    }
-#endif
-    SearchResult result = search->Run({
+    return RunLoadedSearch(
+            request,
+            replay,
+            identity,
             sandbox,
-            options.tickDurationMs,
-            mutator,
-            *evaluator,
-            control,
-            request.parallelSampleCount,
-            request.calibrateCudaParallelSampleCount,
-            cudaModifiers.empty() ? nullptr : &cudaModifiers,
-            cudaEvaluator ? &*cudaEvaluator : nullptr});
-    CheckCancellation(control);
-    result.bestTimeline = SampleBestTimeline(
-            request, replay, identity, result.bestInputs, control);
-    return result;
+            *searchRegistration,
+            *evaluationRegistration,
+            control);
 }
 
 }  // namespace forevertas

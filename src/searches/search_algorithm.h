@@ -60,6 +60,9 @@ struct SearchRunControl {
     std::function<void(const SearchLiveUpdate &)> liveChanged;
     std::function<void(std::uint32_t)> cudaBatchSizeChanged;
     std::optional<std::uint64_t> iterationLimit;
+    std::optional<std::int64_t> evaluationEndTimeLimitMs;
+    bool sampleBestTimeline = true;
+    bool reuseLoadedSandbox = false;
 };
 
 class SearchCancelled final : public std::exception {

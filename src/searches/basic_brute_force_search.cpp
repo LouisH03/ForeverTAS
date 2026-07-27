@@ -538,10 +538,16 @@ SearchResult BasicBruteForceSearch::Run(
     CheckCancellation(context.control);
     PhysicsSandboxStateView current = Require(
             context.sandbox.ReadState(), "reading initial sandbox state");
-    const EvaluationPlan evaluationPlan = context.evaluator.Plan(
+    EvaluationPlan evaluationPlan = context.evaluator.Plan(
             static_cast<std::int64_t>(current.durationMs),
             earliestMutationTimeMs,
             context.tickDurationMs);
+    if (context.control != nullptr &&
+        context.control->evaluationEndTimeLimitMs) {
+        evaluationPlan.endTimeMs = std::min(
+                evaluationPlan.endTimeMs,
+                *context.control->evaluationEndTimeLimitMs);
+    }
     if (evaluationPlan.startTimeMs < earliestMutationTimeMs ||
         evaluationPlan.endTimeMs < evaluationPlan.startTimeMs ||
         evaluationPlan.endTimeMs >
@@ -549,7 +555,15 @@ SearchResult BasicBruteForceSearch::Run(
         evaluationPlan.startTimeMs % context.tickDurationMs != 0 ||
         evaluationPlan.endTimeMs % context.tickDurationMs != 0) {
         throw std::invalid_argument(
-                "evaluation target returned an invalid observation plan");
+                "evaluation target returned an invalid observation plan: "
+                "mutation=" +
+                std::to_string(earliestMutationTimeMs) +
+                " start=" +
+                std::to_string(evaluationPlan.startTimeMs) +
+                " end=" +
+                std::to_string(evaluationPlan.endTimeMs) +
+                " duration=" +
+                std::to_string(current.durationMs));
     }
 
     const std::uint64_t branchTimeMs =

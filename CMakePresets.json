@@ -8,14 +8,17 @@
       "binaryDir": "${sourceDir}/build/pinned",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "BUILD_TESTING": "ON"
+        "BUILD_TESTING": "ON",
+        "FOREVERVALIDATOR_ENABLE_RELEASE_IPO": "OFF",
+        "FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS": "4"
       }
     }
   ],
   "buildPresets": [
     {
       "name": "pinned",
-      "configurePreset": "pinned"
+      "configurePreset": "pinned",
+      "jobs": 4
     }
   ],
   "testPresets": [
@@ -24,8 +27,10 @@
       "configurePreset": "pinned",
       "output": {
         "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 4
       }
     }
   ]
 }
-
