@@ -44,6 +44,21 @@ cmake_args=(
     -DCMAKE_INSTALL_PREFIX=/usr
     -DBUILD_TESTING=OFF
 )
+if [[ -n "${FOREVERTAS_ENABLE_CUDA:-}" ]]; then
+    cmake_args+=(
+        "-DFOREVERTAS_ENABLE_CUDA=${FOREVERTAS_ENABLE_CUDA}"
+    )
+fi
+if [[ -n "${FOREVERTAS_CUDA_ARCHITECTURES:-}" ]]; then
+    cmake_args+=(
+        "-DCMAKE_CUDA_ARCHITECTURES=${FOREVERTAS_CUDA_ARCHITECTURES}"
+    )
+fi
+if [[ -n "${FOREVERTAS_VALIDATOR_SOURCE:-}" ]]; then
+    cmake_args+=(
+        "-DFETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR=${FOREVERTAS_VALIDATOR_SOURCE}"
+    )
+fi
 cmake "${cmake_args[@]}"
 cmake --build "${build_dir}" --parallel
 
