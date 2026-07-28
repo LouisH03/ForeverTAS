@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(ForeverTAS
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Native TrackMania Nations Forever tool-assisted search tool"
     HOMEPAGE_URL "https://github.com/Skycrafter-dev/ForeverTAS"
     LANGUAGES CXX)
@@ -57,7 +57,7 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG bbbf87e3611bfecae1599de7381fd9cea4839487
+    GIT_TAG 696d8355795b40f1adf6b56772e8da21c86f3fab
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
