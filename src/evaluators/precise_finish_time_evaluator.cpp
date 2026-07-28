@@ -1,14 +1,15 @@
-#include "evaluators/finish_time_evaluator.h"
+#include "evaluators/precise_finish_time_evaluator.h"
 
 #include "evaluators/evaluator_utils.h"
 #include "searches/option_settings_utils.h"
+#include "time_format.h"
 
 #include <stdexcept>
 
 namespace forevertas {
 namespace {
 
-class FinishTimeSession final : public IterationEvaluationSession {
+class PreciseFinishTimeSession final : public IterationEvaluationSession {
 public:
     std::optional<EvaluationSample> Observe(
             const std::optional<
@@ -17,17 +18,22 @@ public:
             const forevervalidator::experimental::PhysicsSandboxStateView
                     &current) override {
         static_cast<void>(previous);
-        if (reported_ || !current.raceCompleted) {
+        if (reported_ || !current.raceCompleted ||
+            !current.finishTime.has_value() ||
+            !current.finishTime->IsValid()) {
             return std::nullopt;
         }
         reported_ = true;
-        const double timeMs = current.finishTimeMs
-                ? static_cast<double>(*current.finishTimeMs)
-                : static_cast<double>(current.timeMs);
+        const std::uint64_t upperBoundNs =
+                current.finishTime->upperBoundNs;
+        const double timeMs =
+                static_cast<double>(upperBoundNs) / 1000000.0;
         return EvaluationSample{
+                static_cast<double>(upperBoundNs),
                 timeMs,
-                timeMs,
-                TimeMetricDescription("Finish time", timeMs)};
+                "Precise finish time: " +
+                        FormatHumanDurationNanoseconds(
+                                upperBoundNs)};
     }
 
 private:
@@ -36,28 +42,30 @@ private:
 
 }  // namespace
 
-OptionSettings DefaultFinishTimeOptionSettings() {
+OptionSettings DefaultPreciseFinishTimeOptionSettings() {
     return {};
 }
 
-std::optional<std::string> ValidateFinishTimeOptionSettings(
+std::optional<std::string> ValidatePreciseFinishTimeOptionSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     static_cast<void>(tickDurationMs);
-    return ValidateOptionSettingKeys(settings, DefaultFinishTimeOptionSettings());
+    return ValidateOptionSettingKeys(
+            settings, DefaultPreciseFinishTimeOptionSettings());
 }
 
-std::unique_ptr<IterationEvaluator> CreateFinishTimeEvaluator(
+std::unique_ptr<IterationEvaluator> CreatePreciseFinishTimeEvaluator(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) {
     if (const auto error =
-                ValidateFinishTimeOptionSettings(settings, tickDurationMs)) {
+                ValidatePreciseFinishTimeOptionSettings(
+                        settings, tickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    return std::make_unique<FinishTimeEvaluator>();
+    return std::make_unique<PreciseFinishTimeEvaluator>();
 }
 
-EvaluationPlan FinishTimeEvaluator::Plan(
+EvaluationPlan PreciseFinishTimeEvaluator::Plan(
         std::int64_t replayDurationMs,
         std::int64_t earliestMutationTimeMs,
         std::uint32_t tickDurationMs) const {
@@ -69,12 +77,13 @@ EvaluationPlan FinishTimeEvaluator::Plan(
 }
 
 std::unique_ptr<IterationEvaluationSession>
-FinishTimeEvaluator::CreateSession() const {
-    return std::make_unique<FinishTimeSession>();
+PreciseFinishTimeEvaluator::CreateSession() const {
+    return std::make_unique<PreciseFinishTimeSession>();
 }
 
-bool FinishTimeEvaluator::IsBetter(const EvaluationSample &iteration,
-                                   const EvaluationSample &incumbent) const {
+bool PreciseFinishTimeEvaluator::IsBetter(
+        const EvaluationSample &iteration,
+        const EvaluationSample &incumbent) const {
     return iteration.score < incumbent.score;
 }
 

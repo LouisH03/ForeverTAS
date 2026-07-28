@@ -251,6 +251,20 @@ bool TestHumanDurationFormatting() {
             forevertas::FormatHumanDurationMilliseconds(3723004.0) ==
                     "01:02:03.004",
             "hour duration formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatHumanDurationNanoseconds(1234567890u) ==
+                    "1.234567890",
+            "sub-minute nanosecond formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatHumanDurationNanoseconds(
+                    62000000003u) ==
+                    "1:02.000000003",
+            "minute nanosecond formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatHumanDurationNanoseconds(
+                    3723000000004u) ==
+                    "1:02:03.000000004",
+            "hour nanosecond formatting was incorrect");
     return okay;
 }
 
@@ -376,7 +390,8 @@ bool TestEvaluationTargets() {
     }
 
     {
-        auto evaluator = Evaluator(forevertas::kFinishTimeEvaluationId);
+        auto evaluator = Evaluator(
+                forevertas::kPreciseFinishTimeEvaluationId);
         auto session = evaluator->CreateSession();
         PhysicsSandboxStateView previous;
         previous.timeMs = 1230u;
@@ -384,13 +399,37 @@ bool TestEvaluationTargets() {
         current.timeMs = 1240u;
         current.raceCompleted = true;
         current.finishTimeMs = 1234u;
+        current.finishTime =
+                forevervalidator::FinishTimeEstimate{
+                        1234567889u,
+                        1234567890u,
+                        1234567890u};
         const auto sample = session->Observe(previous, current);
-        okay &= Check(sample && sample->timeMs == 1234.0,
-                      "finish target ignored the recorded finish time");
+        okay &= Check(
+                sample && sample->score == 1234567890.0 &&
+                        std::abs(sample->timeMs - 1234.56789) < 1e-9,
+                "precise finish target ignored the inclusive upper bound");
         okay &= Check(sample &&
                               sample->description ==
-                                      "Finish time: 00:00:01.234",
-                      "finish target did not use human-readable time");
+                                      "Precise finish time: 1.234567890",
+                      "precise finish target did not show nanoseconds");
+        auto laterSession = evaluator->CreateSession();
+        current.finishTime =
+                forevervalidator::FinishTimeEstimate{
+                        1234567890u,
+                        1234567891u,
+                        1234567891u};
+        const auto laterSample =
+                laterSession->Observe(previous, current);
+        okay &= Check(
+                sample && laterSample &&
+                        evaluator->IsBetter(*sample, *laterSample),
+                "precise finish target did not rank within-tick nanoseconds");
+        auto tickOnlySession = evaluator->CreateSession();
+        current.finishTime.reset();
+        okay &= Check(
+                !tickOnlySession->Observe(previous, current),
+                "precise finish target fell back to tick time");
     }
 
     return okay;

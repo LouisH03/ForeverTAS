@@ -21,7 +21,8 @@ inline constexpr char kSmoothSteeringModifierId[] = "smooth-steering";
 inline constexpr char kInputInsertionModifierId[] = "input-insertion";
 inline constexpr char kInputDeletionModifierId[] = "input-deletion";
 inline constexpr char kVelocityEvaluationId[] = "velocity";
-inline constexpr char kFinishTimeEvaluationId[] = "finish-time";
+inline constexpr char kPreciseFinishTimeEvaluationId[] =
+        "precise-finish-time";
 inline constexpr char kVolumeEntryEvaluationId[] = "volume-entry-time";
 inline constexpr char kPointTargetEvaluationId[] = "point-target";
 inline constexpr char kPoseTargetEvaluationId[] = "pose-target";

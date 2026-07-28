@@ -57,7 +57,7 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG fd89d30c1336fdef949c3fbd260f0fe1adb85886
+    GIT_TAG 84c6e49615cf545b69c1b94a7f49e089dc862991
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
@@ -66,8 +66,8 @@ add_library(forevertas_core STATIC
     src/physics_backend.h
     src/evaluators/iteration_evaluator.h
     src/evaluators/evaluator_utils.h
-    src/evaluators/finish_time_evaluator.cpp
-    src/evaluators/finish_time_evaluator.h
+    src/evaluators/precise_finish_time_evaluator.cpp
+    src/evaluators/precise_finish_time_evaluator.h
     src/evaluators/point_target_evaluator.cpp
     src/evaluators/point_target_evaluator.h
     src/evaluators/pose_target_evaluator.cpp
@@ -204,7 +204,7 @@ qt_add_qml_module(forevertas
         qml/settings/BasicBruteForceSearchSettings.qml
         qml/settings/ConfigurationSection.qml
         qml/settings/ExistingEventPerturbationSettings.qml
-        qml/settings/FinishTimeEvaluationSettings.qml
+        qml/settings/PreciseFinishTimeEvaluationSettings.qml
         qml/settings/InputDeletionSettings.qml
         qml/settings/InputInsertionSettings.qml
         qml/settings/ModifierComposition.qml
@@ -512,6 +512,16 @@ if(BUILD_TESTING)
                 RESOURCE_LOCK cuda
                 RUN_SERIAL TRUE
                 TIMEOUT 240)
+            add_test(NAME forevertas-cuda-precise-finish-parity
+                     COMMAND forevertas-cuda-search-parity
+                         --precise-finish-only
+                         "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                         "${FOREVERTAS_TEST_REPLAY}")
+            set_tests_properties(
+                forevertas-cuda-precise-finish-parity PROPERTIES
+                LABELS "cuda;parity;precise-finish;stadium"
+                RESOURCE_LOCK cuda
+                TIMEOUT 120)
             add_test(NAME forevertas-cuda-calibration
                      COMMAND forevertas-cuda-search-parity
                          --calibration-only

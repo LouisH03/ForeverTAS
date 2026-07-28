@@ -290,9 +290,10 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
             "input deletion metadata was not exposed");
     okay &= Check(
             HasOption(controller.evaluationTargetOptions(),
-                      QStringLiteral("finish-time"),
-                      QStringLiteral("FinishTimeEvaluationSettings.qml")),
-            "finish target metadata was not exposed");
+                      QStringLiteral("precise-finish-time"),
+                      QStringLiteral(
+                              "PreciseFinishTimeEvaluationSettings.qml")),
+            "precise finish target metadata was not exposed");
     okay &= Check(
             HasOption(controller.evaluationTargetOptions(),
                       QStringLiteral("volume-entry-time"),
@@ -362,8 +363,14 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
             QStringLiteral("minTimeMs"), QStringLiteral("1000"));
 
     controller.setEvaluationTargetId(QStringLiteral("finish-time"));
+    okay &= Check(
+            controller.evaluationTargetId() ==
+                    QStringLiteral("precise-finish-time"),
+            "legacy finish target ID did not migrate to precise finish");
+    controller.setEvaluationTargetId(
+            QStringLiteral("precise-finish-time"));
     okay &= Check(controller.canStart(),
-                  "finish target defaults did not validate");
+                  "precise finish target defaults did not validate");
     controller.setEvaluationTargetId(QStringLiteral("missing-target"));
     okay &= Check(!controller.canStart(),
                   "unknown evaluation target enabled Start");

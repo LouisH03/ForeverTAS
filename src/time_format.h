@@ -10,6 +10,35 @@
 
 namespace forevertas {
 
+inline std::string FormatHumanDurationNanoseconds(
+        std::uint64_t nanoseconds) {
+    constexpr std::uint64_t NanosecondsPerSecond = 1000000000u;
+    constexpr std::uint64_t SecondsPerMinute = 60u;
+    constexpr std::uint64_t SecondsPerHour = 3600u;
+
+    const std::uint64_t totalSeconds =
+            nanoseconds / NanosecondsPerSecond;
+    const std::uint64_t hours = totalSeconds / SecondsPerHour;
+    const std::uint64_t minutes =
+            (totalSeconds / SecondsPerMinute) % SecondsPerMinute;
+    const std::uint64_t seconds = totalSeconds % SecondsPerMinute;
+    const std::uint64_t fraction =
+            nanoseconds % NanosecondsPerSecond;
+
+    std::ostringstream stream;
+    stream << std::setfill('0');
+    if (hours != 0u) {
+        stream << hours << ':' << std::setw(2) << minutes << ':'
+               << std::setw(2) << seconds;
+    } else if (minutes != 0u) {
+        stream << minutes << ':' << std::setw(2) << seconds;
+    } else {
+        stream << seconds;
+    }
+    stream << '.' << std::setw(9) << fraction;
+    return stream.str();
+}
+
 inline std::string FormatHumanDurationMilliseconds(double milliseconds) {
     if (!std::isfinite(milliseconds) || milliseconds < 0.0) {
         milliseconds = 0.0;

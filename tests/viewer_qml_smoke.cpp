@@ -912,8 +912,8 @@ int main(int argc, char **argv) {
                             evaluationPanels{{
                                     {"velocity",
                                      "velocityEvaluationSettings"},
-                                    {"finish-time",
-                                     "finishTimeEvaluationSettings"},
+                                    {"precise-finish-time",
+                                     "preciseFinishTimeEvaluationSettings"},
                                     {"volume-entry-time",
                                      "volumeEntryEvaluationSettings"},
                                     {"point-target",

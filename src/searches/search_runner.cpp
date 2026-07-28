@@ -192,7 +192,9 @@ SearchResult RunLoadedSearch(
         cudaModifiers = BuildCudaModifiers(
                 request.modifiers, kSearchTickDurationMs);
         cudaEvaluator = BuildCudaEvaluator(
-                request.evaluationTarget, kSearchTickDurationMs);
+                {evaluationRegistration.id,
+                 request.evaluationTarget.settings},
+                kSearchTickDurationMs);
     }
 #endif
     SearchResult result = search->Run({

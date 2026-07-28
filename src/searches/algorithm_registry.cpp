@@ -1,7 +1,7 @@
 #include "searches/algorithm_registry.h"
 
 #include "input_timeline_time.h"
-#include "evaluators/finish_time_evaluator.h"
+#include "evaluators/precise_finish_time_evaluator.h"
 #include "evaluators/point_target_evaluator.h"
 #include "evaluators/pose_target_evaluator.h"
 #include "evaluators/velocity_evaluator.h"
@@ -205,14 +205,14 @@ const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
              {},
              &ValidateVelocityOptionSettings,
              &CreateVelocityEvaluator},
-            {kFinishTimeEvaluationId,
+            {kPreciseFinishTimeEvaluationId,
+             {"finish-time"},
+             "Precise finish time",
+             "PreciseFinishTimeEvaluationSettings.qml",
+             DefaultPreciseFinishTimeOptionSettings(),
              {},
-             "Finish time",
-             "FinishTimeEvaluationSettings.qml",
-             DefaultFinishTimeOptionSettings(),
-             {},
-             &ValidateFinishTimeOptionSettings,
-             &CreateFinishTimeEvaluator},
+             &ValidatePreciseFinishTimeOptionSettings,
+             &CreatePreciseFinishTimeEvaluator},
             {kVolumeEntryEvaluationId,
              {},
              "Volume entry time",

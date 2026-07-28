@@ -1,7 +1,7 @@
 import QtQuick
 
 Item {
-    objectName: "finishTimeEvaluationSettings"
+    objectName: "preciseFinishTimeEvaluationSettings"
     property var controller
     implicitHeight: 0
 }

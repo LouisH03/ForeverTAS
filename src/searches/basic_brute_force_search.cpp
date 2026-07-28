@@ -67,6 +67,7 @@ bool SameState(const PhysicsSandboxStateView &left,
            left.totalLaps == right.totalLaps &&
            left.raceCompleted == right.raceCompleted &&
            left.finishTimeMs == right.finishTimeMs &&
+           left.finishTime == right.finishTime &&
            left.respawnCount == right.respawnCount &&
            left.stuntsScore == right.stuntsScore;
 }
@@ -193,7 +194,7 @@ std::string CudaEvaluationDescription(
                 PhysicsSandboxCudaSearchBatch &batch) {
     using namespace forevervalidator::experimental;
     return std::visit(
-            [&](const auto &configured) {
+            [&](const auto &configured) -> std::string {
                 using T = std::decay_t<decltype(configured)>;
                 if constexpr (std::is_same_v<
                                       T,
@@ -235,8 +236,8 @@ std::string CudaEvaluationDescription(
                     return TimeMetricDescription(
                             "Volume entry time", batch.bestTimeMs);
                 } else {
-                    return TimeMetricDescription(
-                            "Finish time", batch.bestTimeMs);
+                    throw std::logic_error(
+                            "tick-based CUDA finish evaluation is disabled");
                 }
             },
             evaluator);
@@ -582,7 +583,8 @@ SearchResult BasicBruteForceSearch::Run(
 
 #if FOREVERVALIDATOR_HAS_CUDA
     if (context.sandbox.Backend() ==
-        forevervalidator::SimulationBackend::Cuda) {
+                forevervalidator::SimulationBackend::Cuda &&
+        context.cudaEvaluator != nullptr) {
         return RunCudaBasicBruteForce(
                 context,
                 evaluationPlan,
