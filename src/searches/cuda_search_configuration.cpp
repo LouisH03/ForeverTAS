@@ -233,10 +233,7 @@ std::optional<PhysicsSandboxCudaEvaluator> BuildCudaEvaluator(
     }
     if (configuration.id == kPreciseFinishTimeEvaluationId ||
         configuration.id == "finish-time") {
-        // The resident CUDA search evaluator exposes only tick time.
-        // Falling back to the ordinary CUDA timeline keeps nanosecond
-        // refinement authoritative for this target.
-        return std::nullopt;
+        return PhysicsSandboxCudaFinishTimeEvaluator{};
     }
     throw std::invalid_argument(
             "CUDA does not support evaluator: " + configuration.id);
