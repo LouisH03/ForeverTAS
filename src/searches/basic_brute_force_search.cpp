@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -105,6 +107,71 @@ void ReportCudaBatchSize(const SearchRunControl *control,
     if (control != nullptr && control->cudaBatchSizeChanged) {
         control->cudaBatchSizeChanged(batchSize);
     }
+}
+
+bool CudaBatchProfilingEnabled() {
+    static const bool enabled = []() {
+        const char *value = std::getenv("FOREVERTAS_CUDA_PROFILE");
+        return value != nullptr && value[0] != '\0' &&
+                !(value[0] == '0' && value[1] == '\0');
+    }();
+    return enabled;
+}
+
+void ReportCudaBatchProfile(
+        const char *phase,
+        const forevervalidator::experimental::
+                PhysicsSandboxCudaSearchBatch &batch,
+        std::uint64_t timelineTickCount,
+        std::chrono::steady_clock::duration wallElapsed) {
+    if (!CudaBatchProfilingEnabled()) {
+        return;
+    }
+    const double wallMilliseconds =
+            std::chrono::duration<double, std::milli>(
+                    wallElapsed)
+                    .count();
+    const double attemptsPerSecond =
+            wallMilliseconds > 0.0
+            ? static_cast<double>(batch.candidateCount) *
+                      1000.0 / wallMilliseconds
+            : 0.0;
+    const double simulatedTicks =
+            static_cast<double>(batch.evaluatedCandidateCount) *
+            static_cast<double>(timelineTickCount);
+    const double physicsTicksPerSecond =
+            batch.metrics.simulationKernelMilliseconds > 0.0
+            ? simulatedTicks * 1000.0 /
+                      batch.metrics.simulationKernelMilliseconds
+            : 0.0;
+    std::clog << "forevertas_cuda_batch"
+              << " phase=" << phase
+              << " first_candidate=" << batch.firstCandidateId
+              << " candidates=" << batch.candidateCount
+              << " active=" << batch.evaluatedCandidateCount
+              << " timeline_ticks=" << timelineTickCount
+              << " attempts_per_second=" << attemptsPerSecond
+              << " physics_ticks_per_second="
+              << physicsTicksPerSecond
+              << " wall_ms=" << wallMilliseconds
+              << " kernel_ms=" << batch.metrics.kernelMilliseconds
+              << " mutation_ms="
+              << batch.metrics.mutationKernelMilliseconds
+              << " simulation_ms="
+              << batch.metrics.simulationKernelMilliseconds
+              << " finish_refinement_ms="
+              << batch.metrics.finishRefinementKernelMilliseconds
+              << " winner_capture_ms="
+              << batch.metrics.winnerStateCaptureKernelMilliseconds
+              << " finalization_ms="
+              << batch.metrics.finalizationKernelMilliseconds
+              << " best_changed=" << batch.bestChanged
+              << " resident_mib="
+              << static_cast<double>(
+                         batch.metrics.residentDeviceBytes) /
+                         (1024.0 * 1024.0)
+              << '\n'
+              << std::flush;
 }
 #endif
 
@@ -280,6 +347,12 @@ SearchResult RunCudaBasicBruteForce(
         calibrator.emplace();
     }
     std::uint32_t sessionCapacity = initialBatchSize;
+    const std::uint64_t timelineTickCount =
+            static_cast<std::uint64_t>(
+                    (evaluationPlan.endTimeMs -
+                     earliestMutationTimeMs) /
+                    context.tickDurationMs) +
+            1u;
 
     BestIteration best;
     std::uint64_t iterations = 0u;
@@ -327,6 +400,7 @@ SearchResult RunCudaBasicBruteForce(
 
     CheckCancellation(context.control);
     ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
+    const auto baselineStarted = std::chrono::steady_clock::now();
     PhysicsSandboxCudaSearchBatch baseline = Require(
             session.EvaluateBaseline(
                     [control = context.control]() {
@@ -335,6 +409,11 @@ SearchResult RunCudaBasicBruteForce(
                                 control->cancellationRequested();
                     }),
             "evaluating CUDA baseline");
+    ReportCudaBatchProfile(
+            "baseline",
+            baseline,
+            timelineTickCount,
+            std::chrono::steady_clock::now() - baselineStarted);
     if (baseline.cancelled) {
         throw SearchCancelled();
     }
@@ -417,6 +496,8 @@ SearchResult RunCudaBasicBruteForce(
                 "executing CUDA search batch");
         const auto batchElapsed =
                 std::chrono::steady_clock::now() - batchStarted;
+        ReportCudaBatchProfile(
+                "mutations", batch, timelineTickCount, batchElapsed);
         if (batch.cancelled) {
             throw SearchCancelled();
         }
