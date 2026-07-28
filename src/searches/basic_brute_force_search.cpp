@@ -236,8 +236,10 @@ std::string CudaEvaluationDescription(
                     return TimeMetricDescription(
                             "Volume entry time", batch.bestTimeMs);
                 } else {
-                    throw std::logic_error(
-                            "tick-based CUDA finish evaluation is disabled");
+                    return "Precise finish time: " +
+                            FormatHumanDurationNanoseconds(
+                                    static_cast<std::uint64_t>(
+                                            batch.bestScore));
                 }
             },
             evaluator);

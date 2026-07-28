@@ -57,7 +57,7 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG 2c0f9b3685ee7200f5f8e8d691b2424bc5478632
+    GIT_TAG bbbf87e3611bfecae1599de7381fd9cea4839487
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
@@ -521,7 +521,8 @@ if(BUILD_TESTING)
                 forevertas-cuda-precise-finish-parity PROPERTIES
                 LABELS "cuda;parity;precise-finish;stadium"
                 RESOURCE_LOCK cuda
-                TIMEOUT 120)
+                RUN_SERIAL TRUE
+                TIMEOUT 300)
             add_test(NAME forevertas-cuda-calibration
                      COMMAND forevertas-cuda-search-parity
                          --calibration-only

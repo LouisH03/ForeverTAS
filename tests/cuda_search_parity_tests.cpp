@@ -267,36 +267,74 @@ bool CheckCalibration(const char *packs, const char *replay) {
 }
 
 bool CheckPreciseFinishParity(const char *packs, const char *replay) {
+    constexpr std::uint64_t iterations = 2u;
     const std::vector<OptionConfiguration> modifiers{
             DefaultModifier(
                     forevertas::kRandomSteeringModifierId)};
     const OptionConfiguration evaluator = DefaultEvaluator(
             forevertas::kPreciseFinishTimeEvaluationId);
-    const SearchResult reference = Run(
-            packs,
-            replay,
-            forevertas::PhysicsBackend::Reference,
-            1u,
-            2u,
-            modifiers,
-            evaluator);
-    const SearchResult optimized = Run(
-            packs,
-            replay,
-            forevertas::PhysicsBackend::OptimizedCpu,
-            1u,
-            2u,
-            modifiers,
-            evaluator);
+    std::future<SearchResult> referenceFuture = std::async(
+            std::launch::async,
+            [=]() {
+                return Run(
+                        packs,
+                        replay,
+                        forevertas::PhysicsBackend::Reference,
+                        1u,
+                        iterations,
+                        modifiers,
+                        evaluator);
+            });
+    std::future<SearchResult> optimizedFuture = std::async(
+            std::launch::async,
+            [=]() {
+                return Run(
+                        packs,
+                        replay,
+                        forevertas::PhysicsBackend::OptimizedCpu,
+                        1u,
+                        iterations,
+                        modifiers,
+                        evaluator);
+            });
     const SearchResult cuda = Run(
             packs,
             replay,
             forevertas::PhysicsBackend::Cuda,
-            2u,
-            2u,
+            static_cast<std::uint32_t>(iterations),
+            iterations,
             modifiers,
             evaluator);
-    return SameAuthoritativeResult(
+    const SearchResult reference = referenceFuture.get();
+    const SearchResult optimized = optimizedFuture.get();
+    const auto exactFinishResult =
+            [](const SearchResult &result, const char *label) {
+                if (!result.bestState.raceCompleted ||
+                    !result.bestState.finishTime.has_value() ||
+                    !result.bestState.finishTime->IsValid()) {
+                    std::cerr << label
+                              << " did not expose an exact finish interval\n";
+                    return false;
+                }
+                const std::uint64_t upperBoundNs =
+                        result.bestState.finishTime->upperBoundNs;
+                const bool exactScore =
+                        result.bestScore ==
+                                static_cast<double>(upperBoundNs) &&
+                        result.bestEvaluationTimeMs ==
+                                static_cast<double>(upperBoundNs) /
+                                        1000000.0;
+                if (!exactScore) {
+                    std::cerr << label
+                              << " score does not match its finish interval\n";
+                }
+                return exactScore;
+            };
+    return exactFinishResult(reference, "precise finish reference") &&
+            exactFinishResult(
+                    optimized, "precise finish optimized CPU") &&
+            exactFinishResult(cuda, "precise finish CUDA") &&
+            SameAuthoritativeResult(
                    reference, optimized, "precise finish optimized CPU") &&
             SameAuthoritativeResult(
                     reference, cuda, "precise finish CUDA");
