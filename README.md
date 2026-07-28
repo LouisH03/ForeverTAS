@@ -12,7 +12,7 @@ ForeverTAS -> PhysicsSandbox -> ForeverValidator physics
 ## Dependency
 
 CMake `FetchContent` pins ForeverValidator to the exact commit
-`fd89d30c1336fdef949c3fbd260f0fe1adb85886`. The embedded build disables the
+`84c6e49615cf545b69c1b94a7f49e089dc862991`. The embedded build disables the
 ForeverValidator CLI and tests and links its native asset adapter and core
 simulation library.
 
@@ -82,8 +82,10 @@ first actionable input, which is simulation time `10 ms` at 100 Hz. Absolute
 setting keys ending in `TimeMs` are translated by one physics tick exactly once
 when a registry creates a simulation component; stored values and relative
 durations remain user-facing.
-Built-in targets cover finish
-time, cuboid entry time, velocity, point distance, and weighted pose error.
+Built-in targets cover precise finish time, cuboid entry time, velocity,
+point distance, and weighted pose error. Precise finish search ranks the
+inclusive upper bound of ForeverValidator's one-nanosecond transition bracket
+and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering
 deformation, input insertion, input deletion, and random steering.
 

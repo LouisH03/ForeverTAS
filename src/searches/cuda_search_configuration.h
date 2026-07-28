@@ -4,6 +4,7 @@
 #include "searches/option_configuration.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include <forevervalidator/experimental/physics_sandbox.h>
@@ -16,7 +17,8 @@ BuildCudaModifiers(
         const std::vector<OptionConfiguration> &modifiers,
         std::uint32_t tickDurationMs);
 
-forevervalidator::experimental::PhysicsSandboxCudaEvaluator
+std::optional<
+        forevervalidator::experimental::PhysicsSandboxCudaEvaluator>
 BuildCudaEvaluator(
         const OptionConfiguration &evaluator,
         std::uint32_t tickDurationMs);

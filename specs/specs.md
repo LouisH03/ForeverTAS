@@ -2,14 +2,18 @@ Thanks. Here are my adapted specs. Save them in a temporary markdown file.
 
 ## Evaluation targets
 
-### 1. Finish time
+### 1. Precise finish time
 
 * Require the iteration to finish the race.
-* Lower finish time wins.
-* Support precise sub-tick finish timing when available, through linear interpolation and collision tests.
+* Lower inclusive nanosecond upper bound wins.
+* Require ForeverValidator's one-nanosecond finish-transition bracket; never
+  fall back to a tick-rounded time.
+* Display the upper bound with all nine fractional digits and omit unused
+  hour and minute components.
 * When the baseline does not finish, the first valid finish becomes the winner.
 
-Note: checkpoint and finish time bruteforce should function exactly the same: a finish behaves like the last checkpoint of the race
+Note: checkpoint and precise finish-time brute force should function exactly
+the same: a finish behaves like the last checkpoint of the race.
 
 ### 2. Volume entry time
 

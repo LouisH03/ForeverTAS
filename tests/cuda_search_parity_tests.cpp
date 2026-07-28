@@ -266,22 +266,65 @@ bool CheckCalibration(const char *packs, const char *replay) {
             reference, calibrated, "calibrated CUDA winner");
 }
 
+bool CheckPreciseFinishParity(const char *packs, const char *replay) {
+    const std::vector<OptionConfiguration> modifiers{
+            DefaultModifier(
+                    forevertas::kRandomSteeringModifierId)};
+    const OptionConfiguration evaluator = DefaultEvaluator(
+            forevertas::kPreciseFinishTimeEvaluationId);
+    const SearchResult reference = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Reference,
+            1u,
+            2u,
+            modifiers,
+            evaluator);
+    const SearchResult optimized = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::OptimizedCpu,
+            1u,
+            2u,
+            modifiers,
+            evaluator);
+    const SearchResult cuda = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Cuda,
+            2u,
+            2u,
+            modifiers,
+            evaluator);
+    return SameAuthoritativeResult(
+                   reference, optimized, "precise finish optimized CPU") &&
+            SameAuthoritativeResult(
+                    reference, cuda, "precise finish CUDA");
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
     const bool calibrationOnly =
             argc == 4 &&
             std::string(argv[1]) == "--calibration-only";
-    if ((!calibrationOnly && argc != 3) ||
-        (calibrationOnly && argc != 4)) {
+    const bool preciseFinishOnly =
+            argc == 4 &&
+            std::string(argv[1]) == "--precise-finish-only";
+    if ((!calibrationOnly && !preciseFinishOnly && argc != 3) ||
+        ((calibrationOnly || preciseFinishOnly) && argc != 4)) {
         std::cerr << "expected Packs directory and replay path\n";
         return 2;
     }
-    const char *const packs = argv[calibrationOnly ? 2 : 1];
-    const char *const replay = argv[calibrationOnly ? 3 : 2];
+    const bool focusedMode = calibrationOnly || preciseFinishOnly;
+    const char *const packs = argv[focusedMode ? 2 : 1];
+    const char *const replay = argv[focusedMode ? 3 : 2];
     try {
         if (calibrationOnly) {
             return CheckCalibration(packs, replay) ? 0 : 1;
+        }
+        if (preciseFinishOnly) {
+            return CheckPreciseFinishParity(packs, replay) ? 0 : 1;
         }
         bool okay = true;
         const OptionConfiguration velocity =
@@ -443,7 +486,7 @@ int main(int argc, char **argv) {
                     nullptr,
                     registration.id ==
                                     forevertas::
-                                            kFinishTimeEvaluationId
+                                            kPreciseFinishTimeEvaluationId
                             ? std::nullopt
                             : std::optional<std::int64_t>(
                                       shortEvaluationEndTimeMs));

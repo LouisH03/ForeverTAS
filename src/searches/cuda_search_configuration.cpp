@@ -171,7 +171,7 @@ std::vector<PhysicsSandboxCudaModifier> BuildCudaModifiers(
     return result;
 }
 
-PhysicsSandboxCudaEvaluator BuildCudaEvaluator(
+std::optional<PhysicsSandboxCudaEvaluator> BuildCudaEvaluator(
         const OptionConfiguration &configuration,
         std::uint32_t tickDurationMs) {
     OptionSettings storage;
@@ -231,8 +231,12 @@ PhysicsSandboxCudaEvaluator BuildCudaEvaluator(
                 {centerX - halfX, centerY - halfY, centerZ - halfZ},
                 {centerX + halfX, centerY + halfY, centerZ + halfZ}};
     }
-    if (configuration.id == kFinishTimeEvaluationId) {
-        return PhysicsSandboxCudaFinishTimeEvaluator{};
+    if (configuration.id == kPreciseFinishTimeEvaluationId ||
+        configuration.id == "finish-time") {
+        // The resident CUDA search evaluator exposes only tick time.
+        // Falling back to the ordinary CUDA timeline keeps nanosecond
+        // refinement authoritative for this target.
+        return std::nullopt;
     }
     throw std::invalid_argument(
             "CUDA does not support evaluator: " + configuration.id);

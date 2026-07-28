@@ -57,7 +57,7 @@ ForeverTAS/
 │   ├── evaluators/
 │   │   ├── iteration_evaluator.h
 │   │   ├── evaluator_utils.h
-│   │   ├── finish_time_evaluator.h/.cpp
+│   │   ├── precise_finish_time_evaluator.h/.cpp
 │   │   ├── volume_entry_evaluator.h/.cpp
 │   │   ├── velocity_evaluator.h/.cpp
 │   │   ├── point_target_evaluator.h/.cpp
@@ -502,7 +502,12 @@ No search-loop or controller branch should be added for the target.
 ### Evaluation targets
 
 - `velocity`: total or projected velocity with optional alignment threshold.
-- `finish-time`: minimizes the recorded race finish time.
+- `precise-finish-time`: minimizes the inclusive nanosecond upper bound of
+  the simulated finish transition. The legacy `finish-time` ID migrates to
+  this target. Results use the compact `h:mm:ss.nnnnnnnnn` form, omitting
+  zero-valued hour and minute components while retaining all nine fractional
+  digits. CUDA searches use the ordinary CUDA timeline for this target because
+  the resident evaluator only exposes tick-rounded finish time.
 - `volume-entry-time`: minimizes interpolated entry time into a cuboid.
 - `point-target`: minimizes distance to a target point over a window.
 - `pose-target`: minimizes weighted position and orientation error.
