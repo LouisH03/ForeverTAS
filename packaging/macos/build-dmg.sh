@@ -23,5 +23,8 @@ if (( ${#artifacts[@]} != 1 )); then
 fi
 
 artifact="${artifacts[0]}"
-shasum -a 256 "${artifact}" > "${artifact}.sha256"
+(
+    cd "${dist_dir}"
+    shasum -a 256 "$(basename "${artifact}")" > "$(basename "${artifact}").sha256"
+)
 echo "Created ${artifact}"
