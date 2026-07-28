@@ -31,6 +31,20 @@ Do not copy build-tree files manually into release artifacts.
 The CTest target `forevertas-install-smoke` creates a clean staged install and
 launches that installed application using the QML smoke mode.
 
+## Application icon
+
+`packaging/icons/dev.skycrafter.forevertas.svg` is the canonical application
+icon used by the running Qt application and Linux desktops. Regenerate the
+committed Linux PNG, Windows ICO, and macOS ICNS assets after changing it:
+
+```sh
+./packaging/icons/generate-icons.sh
+```
+
+The generator requires Inkscape, ImageMagick, Python 3, and Pillow. Run it with
+`--check` to verify that all platform assets match the canonical SVG without
+modifying them.
+
 ## Linux AppImage
 
 Run on an x86_64 or arm64 Linux build host:
