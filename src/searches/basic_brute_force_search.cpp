@@ -111,9 +111,22 @@ void ReportCudaBatchSize(const SearchRunControl *control,
 
 bool CudaBatchProfilingEnabled() {
     static const bool enabled = []() {
+#if defined(_WIN32)
+        char *value = nullptr;
+        std::size_t valueSize = 0u;
+        if (_dupenv_s(&value, &valueSize,
+                      "FOREVERTAS_CUDA_PROFILE") != 0) {
+            return false;
+        }
+        const bool result = value != nullptr && value[0] != '\0' &&
+                !(value[0] == '0' && value[1] == '\0');
+        std::free(value);
+        return result;
+#else
         const char *value = std::getenv("FOREVERTAS_CUDA_PROFILE");
         return value != nullptr && value[0] != '\0' &&
                 !(value[0] == '0' && value[1] == '\0');
+#endif
     }();
     return enabled;
 }
