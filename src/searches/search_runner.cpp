@@ -215,6 +215,24 @@ SearchResult RunLoadedSearch(
     return result;
 }
 
+std::vector<forevervalidator::experimental::PhysicsSandboxInputEvent>
+BuildBaselineOrThrow(
+        const SearchRequest &request,
+        const std::vector<
+                forevervalidator::experimental::PhysicsSandboxInputEvent>
+                &replayInputs,
+        std::int64_t replayDurationMs) {
+    InputScriptBaselineResult baseline = BuildInputScriptBaseline(
+            replayInputs,
+            request.baseInputCommands,
+            replayDurationMs,
+            kSearchTickDurationMs);
+    if (!baseline) {
+        throw std::invalid_argument(*baseline.error);
+    }
+    return std::move(baseline.events);
+}
+
 }  // namespace
 
 SearchResult RunSearch(const SearchRequest &request,
@@ -300,6 +318,16 @@ SearchResult RunSearch(const SearchRequest &request,
                             cached->initialInputs),
                     "restoring cached initial inputs");
         }
+        const PhysicsSandboxStateView initialView = Require(
+                cached->sandbox->ReadState(),
+                "reading cached initial state");
+        Require(
+                cached->sandbox->ReplaceInputs(BuildBaselineOrThrow(
+                        request,
+                        cached->initialInputs,
+                        static_cast<std::int64_t>(
+                                initialView.durationMs))),
+                "applying base input script");
         CheckCancellation(control);
         return RunLoadedSearch(
                 request,
@@ -323,8 +351,17 @@ SearchResult RunSearch(const SearchRequest &request,
             CreatePhysicsSandbox(std::move(source), options),
             "creating sandbox");
     CheckCancellation(control);
-    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+    const PhysicsSandboxStateView initialView = Require(
+            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay");
+    const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
+            sandbox.ReadInputs(), "reading replay inputs");
+    Require(
+            sandbox.ReplaceInputs(BuildBaselineOrThrow(
+                    request,
+                    replayInputs,
+                    static_cast<std::int64_t>(initialView.durationMs))),
+            "applying base input script");
     CheckCancellation(control);
     return RunLoadedSearch(
             request,

@@ -3,11 +3,17 @@
 #include "input_timeline_time.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cctype>
 #include <cstdint>
-#include <stdexcept>
 #include <iomanip>
+#include <limits>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace forevertas {
 namespace {
@@ -17,6 +23,129 @@ using forevervalidator::experimental::PhysicsSandboxSwitchState;
 
 constexpr std::int64_t kInputScriptTickMs =
         static_cast<std::int64_t>(kInputTimelineTickDurationMs);
+
+std::string_view Trim(std::string_view value) {
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+        value.remove_prefix(1u);
+    }
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+        value.remove_suffix(1u);
+    }
+    return value;
+}
+
+std::string Lower(std::string_view value) {
+    std::string result;
+    result.reserve(value.size());
+    for (const char character : value) {
+        result.push_back(static_cast<char>(
+                std::tolower(static_cast<unsigned char>(character))));
+    }
+    return result;
+}
+
+std::vector<std::string_view> Tokens(std::string_view line) {
+    std::vector<std::string_view> result;
+    while (true) {
+        line = Trim(line);
+        if (line.empty()) return result;
+        const std::size_t end = line.find_first_of(" \t\r\n");
+        result.push_back(line.substr(0u, end));
+        if (end == std::string_view::npos) return result;
+        line.remove_prefix(end);
+    }
+}
+
+std::optional<std::int64_t> ParseScriptTime(std::string_view token) {
+    if (token.empty() || token.front() == '-' || token.front() == '+') {
+        return std::nullopt;
+    }
+    const std::size_t decimal = token.find('.');
+    if (decimal != std::string_view::npos &&
+        token.find('.', decimal + 1u) != std::string_view::npos) {
+        return std::nullopt;
+    }
+    const std::string_view wholeToken = token.substr(0u, decimal);
+    const std::string_view fractionToken =
+            decimal == std::string_view::npos
+            ? std::string_view{}
+            : token.substr(decimal + 1u);
+    if (wholeToken.empty() ||
+        (decimal != std::string_view::npos && fractionToken.empty()) ||
+        fractionToken.size() > 3u) {
+        return std::nullopt;
+    }
+    const auto allDigits = [](std::string_view value) {
+        return std::all_of(value.begin(), value.end(), [](char character) {
+            return std::isdigit(static_cast<unsigned char>(character)) != 0;
+        });
+    };
+    if (!allDigits(wholeToken) || !allDigits(fractionToken)) {
+        return std::nullopt;
+    }
+
+    std::int64_t seconds = 0;
+    const auto parsed = std::from_chars(
+            wholeToken.data(), wholeToken.data() + wholeToken.size(), seconds);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != wholeToken.data() + wholeToken.size() ||
+        seconds > std::numeric_limits<std::int64_t>::max() / 1000) {
+        return std::nullopt;
+    }
+    std::int64_t milliseconds = 0;
+    if (!fractionToken.empty()) {
+        const auto fractionParsed = std::from_chars(
+                fractionToken.data(),
+                fractionToken.data() + fractionToken.size(),
+                milliseconds);
+        if (fractionParsed.ec != std::errc{} ||
+            fractionParsed.ptr != fractionToken.data() +
+                    fractionToken.size()) {
+            return std::nullopt;
+        }
+        for (std::size_t index = fractionToken.size(); index < 3u; ++index) {
+            milliseconds *= 10;
+        }
+    }
+    const std::int64_t result = seconds * 1000 + milliseconds;
+    if (result % kInputScriptTickMs != 0) return std::nullopt;
+    return result;
+}
+
+std::optional<AnalogInputState> ParseAnalog(std::string_view token) {
+    std::int64_t parsedValue = 0;
+    const auto parsed = std::from_chars(
+            token.data(), token.data() + token.size(), parsedValue);
+    if (token.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != token.data() + token.size() ||
+        parsedValue < kAnalogInputMinimum ||
+        parsedValue > kAnalogInputMaximum) {
+        return std::nullopt;
+    }
+    return static_cast<AnalogInputState>(parsedValue);
+}
+
+std::optional<SandboxInputAction> SwitchAction(std::string_view token) {
+    const std::string action = Lower(token);
+    if (action == "up") return SandboxInputAction::Accelerate;
+    if (action == "down") return SandboxInputAction::Brake;
+    if (action == "left") return SandboxInputAction::SteerLeft;
+    if (action == "right") return SandboxInputAction::SteerRight;
+    if (action == "enter") return SandboxInputAction::Respawn;
+    return std::nullopt;
+}
+
+std::string LineError(std::size_t line, std::string message) {
+    return "Line " + std::to_string(line) + ": " + std::move(message);
+}
+
+bool IsStructuralAction(SandboxInputAction action) {
+    return action == SandboxInputAction::RaceRunning ||
+            action == SandboxInputAction::FinishLine ||
+            action == SandboxInputAction::Unmapped;
+}
 
 std::string FormatTime(std::int32_t timeMs,
                        std::int32_t startTimeMs) {
@@ -60,6 +189,178 @@ std::string_view SwitchCommand(
 }
 
 }  // namespace
+
+InputScriptParseResult ParseInputScript(std::string_view script) {
+    InputScriptParseResult result;
+    std::size_t lineNumber = 1u;
+    while (true) {
+        const std::size_t newline = script.find('\n');
+        std::string_view line = script.substr(0u, newline);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1u);
+
+        const std::size_t hashComment = line.find('#');
+        const std::size_t slashComment = line.find("//");
+        const std::size_t comment = std::min(hashComment, slashComment);
+        if (comment != std::string_view::npos) line = line.substr(0u, comment);
+        const std::vector<std::string_view> tokens = Tokens(line);
+        if (!tokens.empty()) {
+            if (tokens.size() != 3u) {
+                result.error = LineError(
+                        lineNumber,
+                        "expected '<time> <command> <value>'.");
+                return result;
+            }
+            const std::optional<std::int64_t> time =
+                    ParseScriptTime(tokens[0]);
+            if (!time) {
+                result.error = LineError(
+                        lineNumber,
+                        "time must be a non-negative 10 ms-aligned decimal.");
+                return result;
+            }
+
+            ParsedInputCommand command;
+            command.userTimeMs = *time;
+            command.sourceLine = lineNumber;
+            const std::string verb = Lower(tokens[1]);
+            if (verb == "steer" || verb == "gas") {
+                const std::optional<AnalogInputState> analog =
+                        ParseAnalog(tokens[2]);
+                if (!analog) {
+                    result.error = LineError(
+                            lineNumber,
+                            "analog value must be an integer in "
+                            "[-65536, 65536].");
+                    return result;
+                }
+                command.action = verb == "steer"
+                        ? SandboxInputAction::Steer
+                        : SandboxInputAction::Gas;
+                command.value.kind = PhysicsSandboxInputValueKind::Analog;
+                command.value.analog = *analog;
+            } else if (verb == "press" || verb == "rel" ||
+                       verb == "release") {
+                const std::optional<SandboxInputAction> action =
+                        SwitchAction(tokens[2]);
+                if (!action) {
+                    result.error = LineError(
+                            lineNumber,
+                            "switch must be up, down, left, right, or enter.");
+                    return result;
+                }
+                const bool pressed = verb == "press";
+                if (*action == SandboxInputAction::Respawn && !pressed) {
+                    result.error = LineError(
+                            lineNumber,
+                            "enter only supports the press command.");
+                    return result;
+                }
+                command.action = *action;
+                command.value.kind = PhysicsSandboxInputValueKind::Switch;
+                command.value.switchState = pressed
+                        ? PhysicsSandboxSwitchState::Pressed
+                        : PhysicsSandboxSwitchState::Released;
+            } else {
+                result.error = LineError(
+                        lineNumber,
+                        "command must be press, rel, release, steer, or gas.");
+                return result;
+            }
+            result.commands.push_back(command);
+        }
+
+        if (newline == std::string_view::npos) break;
+        script.remove_prefix(newline + 1u);
+        ++lineNumber;
+    }
+    return result;
+}
+
+InputScriptBaselineResult BuildInputScriptBaseline(
+        const std::vector<SandboxInputEvent> &replayInputs,
+        const std::vector<ParsedInputCommand> &commands,
+        std::int64_t replayDurationMs,
+        std::uint32_t tickDurationMs) {
+    InputScriptBaselineResult result;
+    std::int64_t originMs = 0;
+    for (const SandboxInputEvent &event : replayInputs) {
+        if (event.action == SandboxInputAction::RaceRunning) {
+            originMs = event.timeMs;
+            break;
+        }
+    }
+
+    struct MaterializedCommand {
+        SandboxInputEvent event;
+        std::size_t sourceLine = 0u;
+    };
+    std::vector<MaterializedCommand> materialized;
+    materialized.reserve(commands.size());
+    for (const ParsedInputCommand &command : commands) {
+        const std::optional<std::int64_t> translated =
+                SimulationTimelineTimeFromUserTime(
+                        command.userTimeMs, tickDurationMs, originMs);
+        if (!translated ||
+            *translated > std::numeric_limits<std::int32_t>::max()) {
+            result.error = LineError(
+                    command.sourceLine,
+                    "timestamp is outside the supported replay timeline.");
+            return result;
+        }
+        if (*translated > replayDurationMs) {
+            result.error = LineError(
+                    command.sourceLine,
+                    "timestamp exceeds the replay duration.");
+            return result;
+        }
+        materialized.push_back({
+                {static_cast<std::int32_t>(*translated),
+                 command.action,
+                 command.value},
+                command.sourceLine});
+    }
+    std::stable_sort(
+            materialized.begin(),
+            materialized.end(),
+            [](const MaterializedCommand &left,
+               const MaterializedCommand &right) {
+                return left.event.timeMs < right.event.timeMs;
+            });
+
+    std::vector<SandboxInputEvent> controls;
+    controls.reserve(materialized.size());
+    for (const MaterializedCommand &command : materialized) {
+        auto duplicate = std::find_if(
+                controls.rbegin(),
+                controls.rend(),
+                [&command](const SandboxInputEvent &existing) {
+                    return existing.timeMs == command.event.timeMs &&
+                            existing.action == command.event.action;
+                });
+        if (duplicate != controls.rend()) {
+            *duplicate = command.event;
+        } else {
+            controls.push_back(command.event);
+        }
+    }
+
+    result.events.reserve(replayInputs.size() + controls.size());
+    for (const SandboxInputEvent &event : replayInputs) {
+        if (event.timeMs < originMs || IsStructuralAction(event.action)) {
+            result.events.push_back(event);
+        }
+    }
+    result.events.insert(
+            result.events.end(), controls.begin(), controls.end());
+    std::stable_sort(
+            result.events.begin(),
+            result.events.end(),
+            [](const SandboxInputEvent &left,
+               const SandboxInputEvent &right) {
+                return left.timeMs < right.timeMs;
+            });
+    return result;
+}
 
 std::string FormatInputScript(
         const std::vector<SandboxInputEvent> &events) {

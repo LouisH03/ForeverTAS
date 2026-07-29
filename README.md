@@ -57,25 +57,28 @@ Build and launch the Qt 6 Quick application:
 ./build/local/bin/ForeverTAS
 ```
 
-Select an installed TMUF `Packs` directory and a replay, choose an evaluation
-target, assemble an ordered list of input modifier passes, then start the basic
-search. The application persists paths, selections, pass order, and every
-option-owned configuration with the platform-native Qt settings store. Search,
-replay loading, validation, and physics stay in C++; QML presents the controls
-and Race Viewer.
+Select an installed TMUF `Packs` directory and a replay, enter a base input
+script, choose an evaluation target, assemble an ordered list of input modifier
+passes, then start the basic search. The replay supplies the map and scenario;
+only the editable script supplies the player-control baseline. **Extract inputs
+to script** imports the replay controls when that is the desired starting
+point. The application persists paths, the script draft, selections, pass
+order, and every option-owned configuration with the platform-native Qt
+settings store. Search, replay loading, validation, and physics stay in C++;
+QML presents the controls and Race Viewer.
 
 The search runs indefinitely on a worker thread after Start is pressed. Each
-iteration applies the configured modifier passes in order, preserves the replay
-input prefix before the mutation branch exactly, normalizes only the mutable
-suffix, and evaluates it with the selected target. Whenever a new global best
-is found, its copy-ready input script is shown immediately.
+iteration applies the configured modifier passes in order, preserves the
+script-derived input prefix before the mutation branch exactly, normalizes only
+the mutable suffix, and evaluates it with the selected target. Whenever a new
+global best is found, its copy-ready input script is shown immediately.
 Iteration count, iterations per second, elapsed time, and time since the last
 improvement continue refreshing while the search runs. Pressing Stop
 finishes the current
 iteration, restores the global best, then performs one fresh full-replay
 simulation and records one viewer sample per physics tick. The completed Best
 run is added to the Race Viewer only after that Stop-triggered sampling pass.
-Analog replay and iteration inputs use the exact signed integer state range
+Analog script and iteration inputs use the exact signed integer state range
 `[-65536, 65536]`; normalized decimal UI settings are quantized once when
 parsed. User-facing input timeline settings are zero-based: `0 ms` selects the
 first actionable input, which is simulation time `10 ms` at 100 Hz. Absolute
@@ -93,17 +96,16 @@ The complete visible settings pane owns vertical wheel scrolling, including
 areas occupied by sliders, dropdowns, and the best-input preview. Nested
 controls do not capture wheel input from the pane.
 
-Replay loads are serialized and transactional. The currently rendered scene
-stays attached while a replacement replay is sampled, then track, run, and car
-shape data are swapped only after the new scene is complete. This avoids
-tearing down nested Qt Quick 3D repeaters between loads and keeps the car visible
-across repeated replay and vehicle-family changes in one application instance.
+Map loads are serialized and transactional. The currently rendered scene stays
+attached while a replacement replay's geometry and car shape are read, then the
+scene is swapped only after the new map is complete. Loading a map does not
+advance or publish the replay timeline. Timeline controls remain disabled until
+a completed search adds the `Best` run.
 
-The Race Viewer stores named runs. A header selector switches the active
-timeline and camera focus between `Baseline`, `Best`, and future run types,
-while every run remains visible as a separate car in the 3D preview. Car colors
-are baked into separate flat-shaded vertex-color meshes: Baseline preserves the
-original orange palette exactly and Best uses the equivalent blue palette.
+The Race Viewer stores named search-result runs. A header selector switches the
+active timeline and camera focus between `Best` and future run types, while
+every run remains visible as a separate car in the 3D preview. Car colors are
+baked into separate flat-shaded vertex-color meshes.
 
 The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
 with ShaderTools, the `Textured (RT)` render mode enables the real-time QRhi

@@ -2,6 +2,7 @@
 #define FOREVERTAS_SEARCHES_SEARCH_RUNNER_H
 
 #include "input_timeline_time.h"
+#include "mutations/input_event_formatter.h"
 #include "physics_backend.h"
 #include "searches/algorithm_registry.h"
 #include "searches/search_algorithm.h"
@@ -27,6 +28,7 @@ struct SearchRequest {
             DefaultModifierConfigurations();
     OptionConfiguration evaluationTarget =
             DefaultEvaluationTargetConfiguration();
+    std::vector<ParsedInputCommand> baseInputCommands = {};
 };
 
 SearchResult RunSearch(

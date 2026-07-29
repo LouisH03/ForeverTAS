@@ -252,16 +252,15 @@ std::vector<ViewerTriangle> UnitEllipsoidTriangles() {
     return triangles;
 }
 
-RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
-                                    const QString &replayPath,
-                                    PhysicsBackend backend) {
+RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
+                                 const QString &replayPath,
+                                 PhysicsBackend backend) {
     using namespace forevervalidator;
     using namespace forevervalidator::experimental;
 
     RaceViewerLoadResult result;
     result.packsDirectory = packsDirectory;
     result.replayPath = replayPath;
-    result.backend = backend;
     try {
         const ReplayIdentity identity{replayPath.toStdString()};
         AssetSource source = Require(
@@ -276,9 +275,9 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
         PhysicsSandbox sandbox = Require(
                 CreatePhysicsSandbox(std::move(source), options),
                 "creating replay sandbox failed");
-        PhysicsSandboxStateView state = Require(
+        static_cast<void>(Require(
                 sandbox.LoadReplay({bytes.data(), bytes.size()}, identity),
-                "loading replay failed");
+                "loading replay failed"));
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
         PhysicsSandboxRenderSceneHandle renderScene = Require(
@@ -383,27 +382,6 @@ RaceViewerLoadResult LoadReplayData(const QString &packsDirectory,
             result.carEllipsoids.push_back(std::move(item));
         }
 
-        const std::uint64_t frameCount =
-                state.durationMs / kViewerTickDurationMs + 1u;
-        result.frames.reserve(static_cast<std::size_t>(frameCount));
-        const auto appendFrame = [&result](const PhysicsSandboxStateView &view) {
-            result.frames.push_back({
-                    static_cast<std::int64_t>(view.timeMs),
-                    ToQt(view.car.position),
-                    QQuaternion(view.car.rotationW,
-                                view.car.rotationX,
-                                view.car.rotationY,
-                                view.car.rotationZ).normalized(),
-                    view.accelerate,
-                    view.brake,
-                    view.steering});
-        };
-        appendFrame(state);
-        for (std::uint64_t index = 1u; index < frameCount; ++index) {
-            state = Require(sandbox.AdvanceTicks(1u),
-                            "sampling replay timeline failed");
-            appendFrame(state);
-        }
     } catch (const std::exception &exception) {
         result.error = QString::fromUtf8(exception.what());
     } catch (...) {
@@ -754,7 +732,7 @@ void RaceViewerController::addSearchRun(
             *backend,
             ToViewerFrames(frames)};
     if (loaded_ && loadedPacksDirectory_ == packsDirectory &&
-        loadedReplayPath_ == replayPath && loadedBackend_ == *backend) {
+        loadedReplayPath_ == replayPath) {
         upsertRun(QStringLiteral("best"),
                   QStringLiteral("Best"),
                   std::move(pending.frames),
@@ -764,7 +742,7 @@ void RaceViewerController::addSearchRun(
     }
     pendingRun_ = std::move(pending);
     if (workerThread_ == nullptr) {
-        beginReplayLoad(packsDirectory, replayPath, *backend);
+        beginMapLoad(packsDirectory, replayPath, *backend);
     }
 }
 
@@ -845,16 +823,16 @@ void RaceViewerController::jumpToEnd() {
     setTimeMs(durationMs_);
 }
 
-void RaceViewerController::loadReplay(const QString &packsDirectory,
-                                      const QString &replayPath) {
-    loadReplay(packsDirectory,
-               replayPath,
-               QStringLiteral("optimized-cpu"));
+void RaceViewerController::loadMap(const QString &packsDirectory,
+                                   const QString &replayPath) {
+    loadMap(packsDirectory,
+            replayPath,
+            QStringLiteral("optimized-cpu"));
 }
 
-void RaceViewerController::loadReplay(const QString &packsDirectory,
-                                      const QString &replayPath,
-                                      const QString &backendId) {
+void RaceViewerController::loadMap(const QString &packsDirectory,
+                                   const QString &replayPath,
+                                   const QString &backendId) {
     const std::optional<PhysicsBackend> backend =
             ParsePhysicsBackend(backendId.toStdString());
     if (!backend) {
@@ -863,26 +841,26 @@ void RaceViewerController::loadReplay(const QString &packsDirectory,
     }
     pendingRun_.reset();
     if (workerThread_ != nullptr) {
-        queuedReplayLoad_ =
-                ReplayLoadRequest{packsDirectory, replayPath, *backend};
+        queuedMapLoad_ =
+                MapLoadRequest{packsDirectory, replayPath, *backend};
         setLoading(true);
-        setStatusText(QStringLiteral("Waiting to load selected replay..."));
+        setStatusText(QStringLiteral("Waiting to load selected map..."));
         return;
     }
-    beginReplayLoad(packsDirectory, replayPath, *backend);
+    beginMapLoad(packsDirectory, replayPath, *backend);
 }
 
-void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
-                                           const QString &replayPath,
-                                           PhysicsBackend backend) {
+void RaceViewerController::beginMapLoad(const QString &packsDirectory,
+                                        const QString &replayPath,
+                                        PhysicsBackend backend) {
     if (workerThread_ != nullptr) {
-        queuedReplayLoad_ =
-                ReplayLoadRequest{packsDirectory, replayPath, backend};
+        queuedMapLoad_ =
+                MapLoadRequest{packsDirectory, replayPath, backend};
         setLoading(true);
-        setStatusText(QStringLiteral("Waiting to load selected replay..."));
+        setStatusText(QStringLiteral("Waiting to load selected map..."));
         return;
     }
-    queuedReplayLoad_.reset();
+    queuedMapLoad_.reset();
     const QFileInfo packsInfo(packsDirectory);
     const QFileInfo replayInfo(replayPath);
     if (!packsInfo.isDir() || !packsInfo.isReadable()) {
@@ -904,13 +882,13 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
     // nodes on some Qt Quick 3D backends.
     setLoading(true);
     setStatusText(QStringLiteral(
-            "Loading visual geometry, materials, and replay..."));
+            "Loading map geometry and materials..."));
 
     const std::uint64_t loadSerial = ++loadSerial_;
     QThread *const thread = QThread::create(
             [this, packsDirectory, replayPath, backend, loadSerial]() {
                 RaceViewerLoadResult result =
-                        LoadReplayData(packsDirectory, replayPath, backend);
+                        LoadMapData(packsDirectory, replayPath, backend);
                 QMetaObject::invokeMethod(
                         this,
                         [this, loadSerial,
@@ -924,22 +902,21 @@ void RaceViewerController::beginReplayLoad(const QString &packsDirectory,
         if (workerThread_ == thread) {
             workerThread_ = nullptr;
         }
-        if (queuedReplayLoad_) {
-            const ReplayLoadRequest request = *queuedReplayLoad_;
-            queuedReplayLoad_.reset();
-            beginReplayLoad(request.packsDirectory,
-                            request.replayPath,
-                            request.backend);
+        if (queuedMapLoad_) {
+            const MapLoadRequest request = *queuedMapLoad_;
+            queuedMapLoad_.reset();
+            beginMapLoad(request.packsDirectory,
+                         request.replayPath,
+                         request.backend);
             return;
         }
         if (pendingRun_ &&
             (!loaded_ ||
              loadedPacksDirectory_ != pendingRun_->packsDirectory ||
-             loadedReplayPath_ != pendingRun_->replayPath ||
-             loadedBackend_ != pendingRun_->backend)) {
-            beginReplayLoad(pendingRun_->packsDirectory,
-                            pendingRun_->replayPath,
-                            pendingRun_->backend);
+             loadedReplayPath_ != pendingRun_->replayPath)) {
+            beginMapLoad(pendingRun_->packsDirectory,
+                         pendingRun_->replayPath,
+                         pendingRun_->backend);
         }
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
@@ -954,13 +931,7 @@ void RaceViewerController::applyLoadResult(
     if (!result.error.isEmpty()) {
         pendingRun_.reset();
         setStatusText(result.error);
-        if (!queuedReplayLoad_) setLoading(false);
-        return;
-    }
-    if (result.frames.empty()) {
-        pendingRun_.reset();
-        setStatusText(QStringLiteral("Replay produced no viewable frames."));
-        if (!queuedReplayLoad_) setLoading(false);
+        if (!queuedMapLoad_) setLoading(false);
         return;
     }
 
@@ -1030,17 +1001,24 @@ void RaceViewerController::applyLoadResult(
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
-    loadedBackend_ = result.backend;
     loaded_ = true;
     runs_.clear();
     selectedRunId_.clear();
-    upsertRun(QStringLiteral("baseline"),
-              QStringLiteral("Baseline"),
-              std::move(result.frames),
-              true);
+    durationMs_ = 0;
+    updatePose();
+    emit runsChanged();
+    emit selectedRunChanged();
+    emit timelineChanged();
+    emit timeChanged();
+    const bool addingPendingRun =
+            pendingRun_ &&
+            pendingRun_->packsDirectory == loadedPacksDirectory_ &&
+            pendingRun_->replayPath == loadedReplayPath_;
     applyPendingRunIfReady();
-    setStatusText(QStringLiteral("Replay and visual map loaded"));
-    if (!queuedReplayLoad_) setLoading(false);
+    setStatusText(addingPendingRun
+                          ? QStringLiteral("Best run added")
+                          : QStringLiteral("Map loaded"));
+    if (!queuedMapLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();
 }

@@ -220,6 +220,22 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
 
     bool okay = Check(controller.canStart(),
                       "valid defaults and paths did not enable Start");
+    okay &= Check(controller.baseInputScript().isEmpty() &&
+                          controller.baseInputScriptError().isEmpty(),
+                  "empty base input script was not valid by default");
+    controller.setBaseInputScript(
+            QStringLiteral("0.00 press up\n0.20 steer 32768"));
+    okay &= Check(controller.canStart() &&
+                          controller.baseInputScriptError().isEmpty(),
+                  "valid base input script disabled Start");
+    controller.setBaseInputScript(QStringLiteral("0.001 press up"));
+    okay &= Check(!controller.canStart() &&
+                          controller.baseInputScriptError().contains(
+                                  QStringLiteral("Line 1")),
+                  "invalid base input script did not disable Start");
+    controller.setBaseInputScript({});
+    okay &= Check(controller.canStart(),
+                  "empty base input script did not restore Start");
 #if FOREVERVALIDATOR_HAS_CUDA
     constexpr qsizetype expectedBackendCount = 3;
 #else
@@ -440,12 +456,19 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
+        controller.setBaseInputScript(
+                QStringLiteral("0.00 press up\n0.50 steer -16384"));
         QSettings().sync();
     }
 
     SearchController restored;
     bool okay = Check(restored.searchAlgorithmSettings().isEmpty(),
                       "parameterless search exposed persisted settings");
+    okay &= Check(
+            restored.baseInputScript() ==
+                    QStringLiteral("0.00 press up\n0.50 steer -16384") &&
+                    restored.baseInputScriptError().isEmpty(),
+            "base input script was not persisted");
     okay &= Check(restored.simulationBackendId() ==
                           QStringLiteral("optimized-cpu"),
                   "physics backend selection was not persisted");
@@ -491,6 +514,41 @@ bool TestPersistence(const QString &packsDirectory,
                                   .toBool(),
                   "CUDA calibration mode was not stored canonically");
     return okay;
+}
+
+bool TestExtractionFailurePreservesDraft(const QString &packsDirectory,
+                                         const QString &replayPath) {
+    QSettings().clear();
+    SearchController controller;
+    SetValidPaths(controller, packsDirectory, replayPath);
+    const QString draft =
+            QStringLiteral("0.00 press up\n0.50 steer -16384");
+    controller.setBaseInputScript(draft);
+    controller.extractReplayInputs();
+    const bool finished = WaitUntil(
+            [&controller]() {
+                return !controller.extractingReplayInputs();
+            },
+            5000);
+    return Check(
+            finished &&
+                    controller.baseInputScript() == draft &&
+                    controller.replayInputStatusText().startsWith(
+                            QStringLiteral("Input extraction failed:")),
+            "failed extraction replaced the existing base script");
+}
+
+bool TestExtractionWorkerShutdown(const QString &packsDirectory,
+                                  const QString &replayPath) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    {
+        SearchController controller;
+        SetValidPaths(controller, packsDirectory, replayPath);
+        controller.extractReplayInputs();
+    }
+    return Check(elapsed.elapsed() < 5000,
+                 "input extraction worker did not stop during shutdown");
 }
 
 bool TestLocaleIndependentPersistedDecimals(const QString &packsDirectory,
@@ -649,6 +707,20 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
     }
     if (!Check(controller.canStart(),
                "real replay configuration did not enable Start")) {
+        return false;
+    }
+    controller.extractReplayInputs();
+    if (!Check(
+                WaitUntil(
+                        [&controller]() {
+                            return !controller.extractingReplayInputs();
+                        },
+                        30000) &&
+                        controller.replayInputStatusText() ==
+                                QStringLiteral("Replay inputs extracted") &&
+                        !controller.baseInputScript().isEmpty() &&
+                        controller.baseInputScriptError().isEmpty(),
+                "real replay inputs were not extracted into the base script")) {
         return false;
     }
 
@@ -818,6 +890,10 @@ int main(int argc, char **argv) {
             TestRegistryAndValidation(packsDirectory.path(), replayPath) &&
             TestCompositionEditing(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath) &&
+            TestExtractionFailurePreservesDraft(
+                    packsDirectory.path(), replayPath) &&
+            TestExtractionWorkerShutdown(
+                    packsDirectory.path(), replayPath) &&
             TestLocaleIndependentPersistedDecimals(
                     packsDirectory.path(), replayPath) &&
             TestLegacyMigration();

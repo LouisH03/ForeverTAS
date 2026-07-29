@@ -15,6 +15,7 @@
 #include <optional>
 
 class QThread;
+class QTimer;
 
 namespace forevertas::app {
 
@@ -28,6 +29,16 @@ class SearchController final : public QObject {
                        autoDetectedPacksDirectoryChanged)
     Q_PROPERTY(QString replayPath READ replayPath WRITE setReplayPath NOTIFY
                        replayPathChanged)
+    Q_PROPERTY(QString baseInputScript READ baseInputScript WRITE
+                       setBaseInputScript NOTIFY baseInputScriptChanged)
+    Q_PROPERTY(QString baseInputScriptError READ baseInputScriptError NOTIFY
+                       baseInputScriptChanged)
+    Q_PROPERTY(bool extractingReplayInputs READ extractingReplayInputs NOTIFY
+                       replayInputStateChanged)
+    Q_PROPERTY(bool canExtractReplayInputs READ canExtractReplayInputs NOTIFY
+                       replayInputStateChanged)
+    Q_PROPERTY(QString replayInputStatusText READ replayInputStatusText NOTIFY
+                       replayInputStateChanged)
     Q_PROPERTY(QVariantList simulationBackendOptions READ
                        simulationBackendOptions CONSTANT)
     Q_PROPERTY(QString simulationBackendId READ simulationBackendId WRITE
@@ -82,6 +93,11 @@ public:
     QString packsDirectory() const;
     QString autoDetectedPacksDirectory() const;
     QString replayPath() const;
+    QString baseInputScript() const;
+    QString baseInputScriptError() const;
+    bool extractingReplayInputs() const;
+    bool canExtractReplayInputs() const;
+    QString replayInputStatusText() const;
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
     QString cudaParallelSampleCount() const;
@@ -112,6 +128,7 @@ public:
 public slots:
     void setPacksDirectory(const QString &value);
     void setReplayPath(const QString &value);
+    void setBaseInputScript(const QString &value);
     void setSimulationBackendId(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
@@ -121,6 +138,7 @@ public slots:
     Q_INVOKABLE void browseForPacksDirectory();
     Q_INVOKABLE void applyAutoDetectedPacksDirectory();
     Q_INVOKABLE void browseForReplay();
+    Q_INVOKABLE void extractReplayInputs();
     Q_INVOKABLE void setSearchAlgorithmSetting(const QString &key,
                                                const QString &value);
     Q_INVOKABLE void addModifierPass(const QString &id);
@@ -139,6 +157,8 @@ signals:
     void packsDirectoryChanged();
     void autoDetectedPacksDirectoryChanged();
     void replayPathChanged();
+    void baseInputScriptChanged();
+    void replayInputStateChanged();
     void simulationBackendIdChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
@@ -174,6 +194,8 @@ private:
                         bool visible);
     void setResultText(const QString &value);
     void setBestInputsText(const QString &value);
+    void setExtractingReplayInputs(bool value);
+    void setReplayInputStatusText(const QString &value);
     void setProgress(bool indeterminate, double value);
     void initialize(const QStringList *packsSearchPatterns);
     void scheduleAutoDetectPacksDirectory(
@@ -186,6 +208,10 @@ private:
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
+    QString baseInputScript_;
+    QString baseInputScriptError_;
+    QString replayInputStatusText_;
+    std::vector<ParsedInputCommand> parsedBaseInputCommands_;
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);
@@ -206,7 +232,10 @@ private:
     bool autoDetectionScheduled_ = false;
     double progressValue_ = 0.0;
     QThread *autoDetectionThread_ = nullptr;
+    QThread *inputExtractionThread_ = nullptr;
     QThread *workerThread_ = nullptr;
+    QTimer *inputScriptPersistTimer_ = nullptr;
+    bool extractingReplayInputs_ = false;
     std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
     SearchCompletionPtr lastCompletion_;

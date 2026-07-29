@@ -7,12 +7,13 @@ QML file to individual implementations.
 
 ## Feature Model
 
-A search request contains four parts:
+A search request contains five parts:
 
 1. The Packs directory and replay path.
-2. One selected search algorithm.
-3. An ordered list of configured modifier passes.
-4. One selected evaluation target.
+2. Parsed base-input commands.
+3. One selected search algorithm.
+4. An ordered list of configured modifier passes.
+5. One selected evaluation target.
 
 The application currently requires at least one modifier pass before a search
 can start.
@@ -115,6 +116,7 @@ construction.
 SearchRequest
 ├── packDirectory
 ├── replayPath
+├── baseInputCommands: vector<ParsedInputCommand>
 ├── searchAlgorithm: OptionConfiguration
 ├── modifiers: vector<OptionConfiguration>
 └── evaluationTarget: OptionConfiguration
@@ -200,9 +202,18 @@ hard-abort callback exists only for application shutdown and skips completion
 sampling.
 
 `input_event_formatter.*` converts the retained timeline into invariant,
-copy-ready input script syntax. Timestamps always use `.` decimals and do
-not depend on `LC_NUMERIC`; analog states are already canonical integers and are
-serialized verbatim.
+copy-ready input script syntax and parses that same input-only command subset.
+Timestamps always use `.` decimals and do not depend on `LC_NUMERIC`; analog
+states are already canonical integers and are serialized verbatim.
+
+Parsed commands retain user-relative milliseconds and their source line.
+Loading the replay establishes the `RaceRunning` origin, after which the runner
+applies the existing one-tick user-timeline offset. The runner preserves
+immutable pre-race history and structural `RaceRunning`, `FinishLine`, and
+unmapped events, replaces editable controls with the script commands, validates
+the translated times against the replay duration, and calls `ReplaceInputs`
+before capturing or evaluating the baseline. Cached sandboxes always restore
+the original replay snapshot before applying the current request's script.
 
 ### Canonical analog input representation
 
@@ -320,7 +331,8 @@ between ticks without adding target-specific logic to the search algorithm.
 
 `SearchController` owns application coordination:
 
-- Worker-thread lifecycle, paths, status, and progress.
+- Worker-thread lifecycle, paths, base-script validation and persistence,
+  replay-input extraction, status, and progress.
 - Completed-search transport: summary text, copy-ready winning inputs, replay
   identity, and the fully sampled winning timeline.
 - QML properties and change notifications that delegate to the configuration
@@ -347,9 +359,11 @@ setModifierPassSetting(index, key, value)
 than one global frame vector. Each run owns its sampled frames and current
 interpolated pose.
 
-The initially loaded replay creates the `Baseline` run. A completed search
-upserts `Best`. The same run container supports additional result types later
-without adding more controller fields.
+`loadMap` reads the replay scene, render geometry, and vehicle shape without
+advancing the replay or creating a run. A loaded map therefore has zero runs
+and disabled timeline controls. A completed search upserts `Best`; the same run
+container supports additional result types later without adding more controller
+fields.
 
 Replay loading is serialized and transactional. If another replay is requested
 while the active worker is still finishing, the latest request is queued and
@@ -360,8 +374,8 @@ an intermediate empty run or ellipsoid model would detach nested Qt Quick 3D
 render nodes. QML mirrors ellipsoid transforms into a stable `ListModel`, updates
 roles in place, and retains inactive delegates when vehicle shape counts shrink.
 The controller and QML regressions perform three real first-second-first loads;
-the QML test invokes the actual Load Race Viewer button for every load and checks
-current shape transforms plus rendered car pixels on a capable graphics backend.
+the QML test invokes the actual **Load map** button for every load and checks
+current shape transforms and map rendering on a capable graphics backend.
 
 The settings pane uses one window-level wheel redirector over its entire visible
 rectangle. Mouse-wheel and touchpad vertical deltas update only the outer
@@ -375,11 +389,10 @@ to QML through `runPoses`, so the preview renders one car hierarchy per run.
 `runOptions` and `selectedRunId` drive the centered run selector.
 
 QML mirrors `runPoses` into a stable `ListModel` and updates roles in place.
-Each run pose also carries its prebuilt car geometry. The Baseline geometry uses
-the original orange per-face vertex colors exactly; Best and future runs use
-separate baked palettes with the same flat-shading formula. Filled materials stay
-white with vertex colors enabled, avoiding color multiplication that would darken
-or distort the baked shading. Binding `Repeater3D` directly to a rebuilt
+Each run pose also carries its prebuilt car geometry. Best and future runs use
+separate baked palettes with the same flat-shading formula. Filled materials
+stay white with vertex colors enabled, avoiding color multiplication that would
+darken or distort the baked shading. Binding `Repeater3D` directly to a rebuilt
 `QVariantList` would destroy and
 recreate every car model whenever the time changes.
 

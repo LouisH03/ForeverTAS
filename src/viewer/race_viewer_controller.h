@@ -59,7 +59,6 @@ struct RaceViewerLoadResult {
     QString error;
     QString packsDirectory;
     QString replayPath;
-    PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
     RaceViewerMeshBuffers track;
     std::vector<StaticVisualBatch> visualBatches;
     std::shared_ptr<const RayTracingSceneData> rayTracingScene;
@@ -67,7 +66,6 @@ struct RaceViewerLoadResult {
     QVariantList visualBatchItems;
     QVector3D visualBoundsMin{};
     QVector3D visualBoundsMax{};
-    std::vector<RaceViewerFrame> frames;
     QVariantList carEllipsoids;
     std::int64_t triangleCount = 0;
     std::int64_t visualTriangleCount = 0;
@@ -194,11 +192,11 @@ public slots:
     Q_INVOKABLE void togglePlayback();
     Q_INVOKABLE void jumpToStart();
     Q_INVOKABLE void jumpToEnd();
-    Q_INVOKABLE void loadReplay(const QString &packsDirectory,
-                                const QString &replayPath);
-    Q_INVOKABLE void loadReplay(const QString &packsDirectory,
-                                const QString &replayPath,
-                                const QString &backendId);
+    Q_INVOKABLE void loadMap(const QString &packsDirectory,
+                            const QString &replayPath);
+    Q_INVOKABLE void loadMap(const QString &packsDirectory,
+                            const QString &replayPath,
+                            const QString &backendId);
     Q_INVOKABLE QVector2D cameraClipPlanes(const QVector3D &cameraPosition,
                                            double cameraDistance) const;
 
@@ -215,9 +213,9 @@ signals:
 private:
     void applyLoadResult(std::uint64_t loadSerial,
                          RaceViewerLoadResult result);
-    void beginReplayLoad(const QString &packsDirectory,
-                         const QString &replayPath,
-                         PhysicsBackend backend);
+    void beginMapLoad(const QString &packsDirectory,
+                      const QString &replayPath,
+                      PhysicsBackend backend);
     void applyPendingRunIfReady();
     void upsertRun(QString id,
                    QString name,
@@ -240,7 +238,7 @@ private:
     std::vector<std::unique_ptr<RaceGeometry>>
             ellipsoidFilledGeometries_;
     RaceGeometry ellipsoidWireGeometry_;
-    struct ReplayLoadRequest {
+    struct MapLoadRequest {
         QString packsDirectory;
         QString replayPath;
         PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
@@ -253,18 +251,17 @@ private:
     };
 
     std::vector<RaceViewerRun> runs_;
-    std::optional<ReplayLoadRequest> queuedReplayLoad_;
+    std::optional<MapLoadRequest> queuedMapLoad_;
     std::optional<PendingRun> pendingRun_;
     QVariantList carEllipsoids_;
     QVariantList visualBatches_;
     QVariantList visualMaterials_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
-    QString statusText_ = QStringLiteral("No replay loaded");
+    QString statusText_ = QStringLiteral("No map loaded");
     QString selectedRunId_;
     QString loadedPacksDirectory_;
     QString loadedReplayPath_;
-    PhysicsBackend loadedBackend_ = PhysicsBackend::OptimizedCpu;
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;

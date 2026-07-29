@@ -556,6 +556,109 @@ bool TestInputScriptFormatting() {
             "input script formatting was incorrect or locale-sensitive");
 }
 
+bool TestInputScriptParsingAndBaseline() {
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    "# Base controls\n"
+                    "1.00 PRESS up\n"
+                    "0.00 steer 32768\n"
+                    "0.00 STEER -16384 // last command wins\n"
+                    "0.20 release down\n"
+                    "0.30 gas -65536\n");
+    bool okay = Check(
+            parsed && parsed.commands.size() == 5u,
+            "valid input script was not parsed");
+    if (!parsed) return false;
+
+    const std::vector<SandboxInputEvent> replayInputs{
+            Switch(-10, SandboxInputAction::Accelerate, true),
+            Switch(90, SandboxInputAction::Brake, true),
+            Switch(100, SandboxInputAction::RaceRunning, true),
+            Steering(110, 1234),
+            Switch(250, SandboxInputAction::Unmapped, true),
+            Switch(500, SandboxInputAction::FinishLine, true)};
+    const forevertas::InputScriptBaselineResult baseline =
+            forevertas::BuildInputScriptBaseline(
+                    replayInputs, parsed.commands, 1200, 10u);
+    okay &= Check(
+            baseline && baseline.events.size() == 9u,
+            "input script baseline was not materialized");
+    if (baseline) {
+        okay &= Check(
+                baseline.events[0].timeMs == -10 &&
+                        baseline.events[0].action ==
+                                SandboxInputAction::Accelerate &&
+                        baseline.events[1].timeMs == 90 &&
+                        baseline.events[1].action ==
+                                SandboxInputAction::Brake &&
+                        baseline.events[2].timeMs == 100 &&
+                        baseline.events[2].action ==
+                                SandboxInputAction::RaceRunning &&
+                        baseline.events[3].timeMs == 110 &&
+                        baseline.events[3].action ==
+                                SandboxInputAction::Steer &&
+                        baseline.events[3].value.analog == -16384 &&
+                        baseline.events[4].timeMs == 250 &&
+                        baseline.events[4].action ==
+                                SandboxInputAction::Unmapped &&
+                        baseline.events[5].timeMs == 310 &&
+                        baseline.events[6].timeMs == 410 &&
+                        baseline.events[7].timeMs == 500 &&
+                        baseline.events[7].action ==
+                                SandboxInputAction::FinishLine &&
+                        baseline.events[8].timeMs == 1110,
+                "script controls did not replace replay controls correctly");
+    }
+
+    const forevertas::InputScriptParseResult empty =
+            forevertas::ParseInputScript(" \n# no controls\n// still empty");
+    okay &= Check(empty && empty.commands.empty(),
+                  "empty input script was not accepted");
+
+    const auto expectError = [&okay](std::string_view script,
+                                     std::string_view fragment) {
+        const forevertas::InputScriptParseResult result =
+                forevertas::ParseInputScript(script);
+        okay &= Check(
+                !result && result.error &&
+                        result.error->find(fragment) != std::string::npos,
+                "invalid input script did not report the expected error");
+    };
+    expectError("0.001 press up", "10 ms-aligned");
+    expectError("-0.10 press up", "non-negative");
+    expectError("0,10 press up", "10 ms-aligned");
+    expectError("0.10.0 press up", "10 ms-aligned");
+    expectError("0.00 steer 65537", "[-65536, 65536]");
+    expectError("0.00 gas -65537", "[-65536, 65536]");
+    expectError("0.00 gas 999999999999999999999", "[-65536, 65536]");
+    expectError("0.00 launch up", "command must be");
+    expectError("0.00 press space", "switch must be");
+    expectError("0.00 press up trailing", "expected");
+    expectError("\n0.00 rel enter", "Line 2");
+    expectError("9223372036854776.00 press up", "10 ms-aligned");
+
+    const forevertas::InputScriptParseResult tooLate =
+            forevertas::ParseInputScript("2.00 press up");
+    const forevertas::InputScriptBaselineResult rejected =
+            forevertas::BuildInputScriptBaseline(
+                    replayInputs, tooLate.commands, 1200, 10u);
+    okay &= Check(!rejected && rejected.error &&
+                          rejected.error->find("Line 1") != std::string::npos,
+                  "script timestamp beyond the replay was accepted");
+
+    const std::string formatted = forevertas::FormatInputScript(replayInputs);
+    const forevertas::InputScriptParseResult roundTrip =
+            forevertas::ParseInputScript(formatted);
+    const forevertas::InputScriptBaselineResult rebuilt =
+            forevertas::BuildInputScriptBaseline(
+                    replayInputs, roundTrip.commands, 500, 10u);
+    okay &= Check(
+            roundTrip && rebuilt &&
+                    forevertas::FormatInputScript(rebuilt.events) == formatted,
+            "formatted input script did not round-trip");
+    return okay;
+}
+
 bool TestAnalogInputRepresentation() {
     const auto half = forevertas::ParseNormalizedAnalogInput("0.5");
     const auto quarterLeft =
@@ -653,6 +756,12 @@ bool TestLocaleIndependentFloatingPointSettings() {
     const auto parsed = forevertas::ParseFiniteDouble("-12.5e-1");
     bool okay = Check(parsed && std::abs(*parsed + 1.25) < 1e-12,
                       "dot decimal parsing followed LC_NUMERIC");
+    const forevertas::InputScriptParseResult parsedScript =
+            forevertas::ParseInputScript("12.50 steer -32768");
+    okay &= Check(
+            parsedScript && parsedScript.commands.size() == 1u &&
+                    parsedScript.commands.front().userTimeMs == 12500,
+            "input script parsing followed LC_NUMERIC");
     okay &= Check(!forevertas::ParseFiniteDouble("12,5"),
                   "comma decimal input was accepted");
     okay &= Check(!forevertas::ParseFiniteDouble("12.5x"),
@@ -944,6 +1053,7 @@ int main() {
             TestModifierComposition() &&
             TestModifierDeterminism() &&
             TestInputScriptFormatting() &&
+            TestInputScriptParsingAndBaseline() &&
             TestAnalogInputRepresentation() &&
             TestAllModifierAnalogInvariants() &&
             TestRegistries() &&
