@@ -84,6 +84,8 @@ add_library(forevertas_core STATIC
     src/mutations/input_deletion_mutator.h
     src/mutations/input_event_formatter.cpp
     src/mutations/input_event_formatter.h
+    src/mutations/replay_input_script.cpp
+    src/mutations/replay_input_script.h
     src/mutations/input_event_utils.cpp
     src/mutations/input_event_utils.h
     src/mutations/input_insertion_mutator.cpp

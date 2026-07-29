@@ -149,7 +149,7 @@ bool FilledModelsHaveBakedRunPalettes(
             return false;
         }
     }
-    return geometries.size() >= 2;
+    return !geometries.isEmpty();
 }
 
 bool ContainsStandardSlider(QObject *root) {
@@ -405,6 +405,28 @@ int main(int argc, char **argv) {
                     QObject *const copyBestInputsButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "copyBestInputsButton"));
+                    auto *const baseInputScriptSection =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "baseInputScriptSection")));
+                    QObject *const baseInputScriptScrollView =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "baseInputScriptScrollView"));
+                    QObject *const baseInputScriptTextArea =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "baseInputScriptTextArea"));
+                    QObject *const baseInputScriptErrorLabel =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "baseInputScriptErrorLabel"));
+                    QObject *const loadMapButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("loadMapButton"));
+                    QObject *const extractReplayInputsButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "extractReplayInputsButton"));
+                    QObject *const replaceBaseInputScriptDialog =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "replaceBaseInputScriptDialog"));
                     QObject *const startSearchButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "startSearchButton"));
@@ -434,34 +456,11 @@ int main(int argc, char **argv) {
                     QObject *const elapsedMetricValue =
                             root->findChild<QObject *>(QStringLiteral(
                                     "elapsedMetricValue"));
-                    const qint64 keyboardStartTick =
-                            std::clamp<qint64>(
-                                    viewer.tickCount() / 2,
-                                    1,
-                                    viewer.tickCount() - 2);
-                    viewer.setCurrentTick(keyboardStartTick);
-                    const bool backwardInvoked =
-                            stepBackward != nullptr &&
-                            QMetaObject::invokeMethod(
-                                    stepBackward,
-                                    "activated",
-                                    Qt::DirectConnection);
-                    const bool steppedBackward = backwardInvoked &&
-                            !viewer.playing() &&
-                            viewer.currentTick() == keyboardStartTick - 1;
-                    const bool forwardInvoked =
-                            stepForward != nullptr &&
-                            QMetaObject::invokeMethod(
-                                    stepForward,
-                                    "activated",
-                                    Qt::DirectConnection);
-                    const bool steppedForward = forwardInvoked &&
-                            !viewer.playing() &&
-                            viewer.currentTick() == keyboardStartTick;
                     const bool keyboardStepping =
-                            steppedBackward && steppedForward &&
-                            stepBackward->property("enabled").toBool() &&
-                            stepForward->property("enabled").toBool() &&
+                            stepBackward != nullptr &&
+                            stepForward != nullptr &&
+                            !stepBackward->property("enabled").toBool() &&
+                            !stepForward->property("enabled").toBool() &&
                             stepBackward->property("sequence").toString() ==
                                     QStringLiteral("Left") &&
                             stepForward->property("sequence").toString() ==
@@ -496,11 +495,34 @@ int main(int argc, char **argv) {
                             std::abs(rowCenter(renderModeSelector) -
                                      rowCenter(resetViewButton)) < 0.6 &&
                             renderModeSelector->width() >= 179.0 &&
-                            runSelector->property("count").toInt() == 1 &&
-                            runSelector->property("currentValue").toString() ==
-                                    QStringLiteral("baseline") &&
-                            runSelector->property("displayText").toString() ==
-                                    QStringLiteral("Baseline");
+                            runSelector->property("count").toInt() == 0 &&
+                            !runSelector->property("enabled").toBool();
+                    const bool baseInputScriptUiValid =
+                            baseInputScriptSection != nullptr &&
+                            searchSection != nullptr &&
+                            baseInputScriptSection->y() < searchSection->y() &&
+                            baseInputScriptScrollView != nullptr &&
+                            baseInputScriptTextArea != nullptr &&
+                            baseInputScriptErrorLabel != nullptr &&
+                            loadMapButton != nullptr &&
+                            extractReplayInputsButton != nullptr &&
+                            replaceBaseInputScriptDialog != nullptr &&
+                            !baseInputScriptTextArea
+                                     ->property("readOnly")
+                                     .toBool() &&
+                            baseInputScriptTextArea
+                                    ->property("enabled")
+                                    .toBool() &&
+                            baseInputScriptErrorLabel
+                                    ->property("text")
+                                    .toString()
+                                    .isEmpty() &&
+                            loadMapButton->property("text").toString() ==
+                                    QStringLiteral("Load map") &&
+                            extractReplayInputsButton
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Extract inputs to script");
                     const bool bestInputsUiValid =
                             bestInputsScrollView != nullptr &&
                             bestInputsTextArea != nullptr &&
@@ -1216,9 +1238,11 @@ int main(int argc, char **argv) {
                     }
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
+                            !timeline->isEnabled() &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
-                            runSelectorValid && bestInputsUiValid &&
+                            runSelectorValid && baseInputScriptUiValid &&
+                            bestInputsUiValid &&
                             searchControlsValid && searchMetricsUiValid &&
                             removedSectionDescriptions &&
                             automaticPacksUi && backendSelectorValid &&
@@ -1232,7 +1256,7 @@ int main(int argc, char **argv) {
                             modifierFocusStable && unboundedFieldsScrubbable &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
-                            playPause->property("enabled").toBool() &&
+                            !playPause->property("enabled").toBool() &&
                             std::abs(playPause->property("width").toReal() -
                                      42.0) < 0.1 &&
                             std::abs(playPause->property("height").toReal() -
@@ -1258,6 +1282,8 @@ int main(int argc, char **argv) {
                     if (!editorStructure) {
                         std::cerr
                                 << "editor checks: runSelector=" << runSelectorValid
+                                << ", baseInputScript="
+                                << baseInputScriptUiValid
                                 << ", bestInputs=" << bestInputsUiValid
                                 << ", searchControls=" << searchControlsValid
                                 << ", autoPacks=" << automaticPacksUi
@@ -1292,10 +1318,9 @@ int main(int argc, char **argv) {
                         return;
                     }
 
-                    const qint64 baselineTickCount = viewer.tickCount();
                     const QVector3D baselinePosition = viewer.carPosition();
                     const QVector3D bestPosition =
-                            baselinePosition + QVector3D(7.0f, 0.0f, 0.0f);
+                            baselinePosition + QVector3D(5.0f, 0.0f, 0.0f);
                     std::vector<forevertas::SearchTimelineFrame> bestFrames;
                     bestFrames.reserve(3u);
                     for (std::int64_t timeMs : {0, 10, 20}) {
@@ -1322,7 +1347,7 @@ int main(int argc, char **argv) {
                              renderModeSelector, gpuRayTracingView,
                              rasterMapView, viewCamera,
                              mapEnvironment, daySkyTexture, mainMapLight,
-                             fillMapLight, baselineTickCount, bestPosition]() {
+                             fillMapLight, bestPosition]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1358,7 +1383,7 @@ int main(int argc, char **argv) {
                                         static_cast<int>(
                                                 viewer.ellipsoidCount() *
                                                 viewer.runCount());
-                                bool rootsVisible = carRoots.size() == 2;
+                                bool rootsVisible = carRoots.size() == 1;
                                 for (const QObject *rootNode : carRoots) {
                                     rootsVisible &= rootNode
                                                             ->property("visible")
@@ -1590,9 +1615,9 @@ int main(int argc, char **argv) {
                                                 0.0;
 
                                 const bool bestSelectedInitially =
-                                        viewer.runCount() == 2 &&
-                                        viewer.runOptions().size() == 2 &&
-                                        viewer.runPoses().size() == 2 &&
+                                        viewer.runCount() == 1 &&
+                                        viewer.runOptions().size() == 1 &&
+                                        viewer.runPoses().size() == 1 &&
                                         viewer.selectedRunId() ==
                                                 QStringLiteral("best") &&
                                         viewer.tickCount() == 3 &&
@@ -1600,7 +1625,7 @@ int main(int argc, char **argv) {
                                                         .length() < 0.001f &&
                                         runSelector != nullptr &&
                                         runSelector->property("count").toInt() ==
-                                                2 &&
+                                                1 &&
                                         runSelector
                                                         ->property("currentValue")
                                                         .toString() ==
@@ -1619,21 +1644,10 @@ int main(int argc, char **argv) {
                                                             Qt::DirectConnection,
                                                             Q_ARG(int, index));
                                         };
-                                const bool baselineActivated = activateRun(0);
+                                const bool bestActivated = activateRun(0);
                                 QCoreApplication::processEvents();
                                 QCoreApplication::processEvents();
-                                const bool baselineSelected =
-                                        baselineActivated &&
-                                        viewer.selectedRunId() ==
-                                                QStringLiteral("baseline") &&
-                                        viewer.tickCount() == baselineTickCount &&
-                                        (viewer.carPosition() - bestPosition)
-                                                        .length() > 0.1f;
-
-                                const bool bestActivated = activateRun(1);
-                                QCoreApplication::processEvents();
-                                QCoreApplication::processEvents();
-                                const bool bestReselected =
+                                const bool onlyBestSelected =
                                         bestActivated &&
                                         viewer.selectedRunId() ==
                                                 QStringLiteral("best") &&
@@ -1723,8 +1737,7 @@ int main(int argc, char **argv) {
                                         geometryAttached && rootsVisible &&
                                                         initialModelState &&
                                                         bestSelectedInitially &&
-                                                        baselineSelected &&
-                                                        bestReselected &&
+                                                        onlyBestSelected &&
                                                         neutralModeState &&
                                                         collisionModeState &&
                                                         materialDebugState &&
@@ -1763,10 +1776,8 @@ int main(int argc, char **argv) {
                                             << ", initial=" << initialModelState
                                             << ", bestInitial="
                                             << bestSelectedInitially
-                                            << ", baselineSelected="
-                                            << baselineSelected
-                                            << ", bestReselected="
-                                            << bestReselected
+                                            << ", onlyBestSelected="
+                                            << onlyBestSelected
                                             << ", collisionMode="
                                             << collisionModeState
                                             << ", neutralMode="
@@ -1820,8 +1831,8 @@ int main(int argc, char **argv) {
         application.quit();
     });
 
-    viewer.loadReplay(QString::fromLocal8Bit(argv[1]),
-                      QString::fromLocal8Bit(argv[2]));
+    viewer.loadMap(QString::fromLocal8Bit(argv[1]),
+                   QString::fromLocal8Bit(argv[2]));
     application.exec();
     return exitCode;
 }

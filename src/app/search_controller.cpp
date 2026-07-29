@@ -2,6 +2,8 @@
 
 #include "app/packs_directory_finder.h"
 #include "app/search_worker.h"
+#include "mutations/input_event_formatter.h"
+#include "mutations/replay_input_script.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -11,18 +13,43 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <utility>
 
 namespace forevertas::app {
 namespace {
 
 constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
+constexpr char kBaseInputScriptKey[] = "inputs/baseScript";
 constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
 constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
 constexpr char kCudaCalibrationEnabledKey[] =
         "backends/cuda/calibrationEnabled";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
+
+struct ReplayInputExtractionResult {
+    QString script;
+    QString error;
+};
+
+ReplayInputExtractionResult ExtractReplayInputScript(
+        const QString &packsDirectory,
+        const QString &replayPath) {
+    ReplayInputExtractionResult result;
+    try {
+        result.script = QString::fromStdString(
+                forevertas::ExtractReplayInputScript(
+                        packsDirectory.toStdString(),
+                        replayPath.toStdString()));
+    } catch (const std::exception &exception) {
+        result.error = QString::fromUtf8(exception.what());
+    } catch (...) {
+        result.error =
+                QStringLiteral("Unexpected replay input extraction failure");
+    }
+    return result;
+}
 
 QString StoredValue(const char *key, const QString &fallback) {
     return QSettings().value(QLatin1String(key), fallback).toString();
@@ -50,6 +77,19 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     qRegisterMetaType<SearchCompletionPtr>();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
+    baseInputScript_ = StoredValue(kBaseInputScriptKey, {});
+    InputScriptParseResult parsed =
+            ParseInputScript(baseInputScript_.toStdString());
+    parsedBaseInputCommands_ = std::move(parsed.commands);
+    if (parsed.error) {
+        baseInputScriptError_ = QString::fromStdString(*parsed.error);
+    }
+    inputScriptPersistTimer_ = new QTimer(this);
+    inputScriptPersistTimer_->setSingleShot(true);
+    inputScriptPersistTimer_->setInterval(350);
+    connect(inputScriptPersistTimer_, &QTimer::timeout, this, [this]() {
+        persist(kBaseInputScriptKey, baseInputScript_);
+    });
     cudaParallelSampleCount_ = StoredValue(
             kCudaParallelSampleCountKey,
             QString::number(kDefaultCudaParallelSampleCount));
@@ -72,6 +112,11 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
 }
 
 SearchController::~SearchController() {
+    if (inputScriptPersistTimer_ != nullptr) {
+        inputScriptPersistTimer_->stop();
+    }
+    persist(kBaseInputScriptKey, baseInputScript_);
+    QSettings().sync();
     waitForWorker();
 }
 
@@ -85,6 +130,30 @@ QString SearchController::autoDetectedPacksDirectory() const {
 
 QString SearchController::replayPath() const {
     return replayPath_;
+}
+
+QString SearchController::baseInputScript() const {
+    return baseInputScript_;
+}
+
+QString SearchController::baseInputScriptError() const {
+    return baseInputScriptError_;
+}
+
+bool SearchController::extractingReplayInputs() const {
+    return extractingReplayInputs_;
+}
+
+bool SearchController::canExtractReplayInputs() const {
+    const QFileInfo packsInfo(packsDirectory_);
+    const QFileInfo replayInfo(replayPath_);
+    return !running_ && !extractingReplayInputs_ &&
+            packsInfo.isDir() && packsInfo.isReadable() &&
+            replayInfo.isFile() && replayInfo.isReadable();
+}
+
+QString SearchController::replayInputStatusText() const {
+    return replayInputStatusText_;
 }
 
 QVariantList SearchController::simulationBackendOptions() const {
@@ -164,7 +233,7 @@ QVariantMap SearchController::evaluationTargetSettings() const {
 }
 
 bool SearchController::canStart() const {
-    return valid_ && !running_;
+    return valid_ && !running_ && !extractingReplayInputs_;
 }
 
 bool SearchController::running() const {
@@ -215,21 +284,33 @@ QString SearchController::bestInputsText() const {
     return bestInputsText_;
 }
 
-#define FOREVERTAS_DEFINE_STRING_SETTER(Method, Member, Signal, Key)          \
-    void SearchController::Method(const QString &value) {                    \
-        if (Member == value) {                                               \
-            return;                                                          \
-        }                                                                    \
-        Member = value;                                                      \
-        persist(Key, value);                                                 \
-        emit Signal();                                                       \
-        refreshValidation();                                                 \
+void SearchController::setReplayPath(const QString &value) {
+    if (replayPath_ == value) {
+        return;
     }
+    replayPath_ = value;
+    persist(kReplayPathKey, value);
+    emit replayPathChanged();
+    emit replayInputStateChanged();
+    refreshValidation();
+}
 
-FOREVERTAS_DEFINE_STRING_SETTER(
-        setReplayPath, replayPath_, replayPathChanged, kReplayPathKey)
-
-#undef FOREVERTAS_DEFINE_STRING_SETTER
+void SearchController::setBaseInputScript(const QString &value) {
+    if (baseInputScript_ == value) {
+        return;
+    }
+    baseInputScript_ = value;
+    InputScriptParseResult parsed = ParseInputScript(value.toStdString());
+    parsedBaseInputCommands_ = std::move(parsed.commands);
+    baseInputScriptError_ = parsed.error
+            ? QString::fromStdString(*parsed.error)
+            : QString{};
+    if (inputScriptPersistTimer_ != nullptr) {
+        inputScriptPersistTimer_->start();
+    }
+    emit baseInputScriptChanged();
+    refreshValidation();
+}
 
 void SearchController::setSearchAlgorithmId(const QString &value) {
     if (!configuration_.setSearchAlgorithmId(value)) return;
@@ -332,6 +413,7 @@ void SearchController::setPacksDirectory(const QString &value) {
     packsDirectory_ = value;
     persist(kPacksDirectoryKey, value);
     emit packsDirectoryChanged();
+    emit replayInputStateChanged();
     refreshValidation();
 }
 
@@ -377,8 +459,62 @@ void SearchController::browseForReplay() {
     }
 }
 
+void SearchController::extractReplayInputs() {
+    if (!canExtractReplayInputs() || inputExtractionThread_ != nullptr) {
+        return;
+    }
+    const QString packsDirectory = QFileInfo(packsDirectory_)
+            .absoluteFilePath();
+    const QString replayPath = QFileInfo(replayPath_).absoluteFilePath();
+    setExtractingReplayInputs(true);
+    setReplayInputStatusText(QStringLiteral("Extracting replay inputs..."));
+
+    QThread *const thread = QThread::create(
+            [this, packsDirectory, replayPath]() {
+                ReplayInputExtractionResult result =
+                        ExtractReplayInputScript(packsDirectory, replayPath);
+                QMetaObject::invokeMethod(
+                        this,
+                        [this,
+                         packsDirectory,
+                         replayPath,
+                         result = std::move(result)]() mutable {
+                            if (packsDirectory !=
+                                        QFileInfo(packsDirectory_)
+                                                .absoluteFilePath() ||
+                                replayPath !=
+                                        QFileInfo(replayPath_)
+                                                .absoluteFilePath()) {
+                                setReplayInputStatusText(QStringLiteral(
+                                        "Replay selection changed; extracted "
+                                        "inputs were discarded."));
+                            } else if (!result.error.isEmpty()) {
+                                setReplayInputStatusText(
+                                        QStringLiteral(
+                                                "Input extraction failed: %1")
+                                                .arg(result.error));
+                            } else {
+                                setBaseInputScript(result.script);
+                                setReplayInputStatusText(
+                                        QStringLiteral(
+                                                "Replay inputs extracted"));
+                            }
+                            setExtractingReplayInputs(false);
+                        },
+                        Qt::QueuedConnection);
+            });
+    inputExtractionThread_ = thread;
+    connect(thread, &QThread::finished, this, [this, thread]() {
+        if (inputExtractionThread_ == thread) {
+            inputExtractionThread_ = nullptr;
+        }
+        thread->deleteLater();
+    });
+    thread->start();
+}
+
 void SearchController::startSearch() {
-    if (running_) {
+    if (running_ || extractingReplayInputs_) {
         return;
     }
 
@@ -523,6 +659,9 @@ SearchController::ValidationResult SearchController::validate() const {
     }
     const SearchComponentConfiguration &configuration =
             *configurationValidation.configuration;
+    if (!baseInputScriptError_.isEmpty()) {
+        return {{}, baseInputScriptError_};
+    }
 
     std::uint32_t parallelSampleCount = 1u;
     bool calibrateCudaParallelSampleCount = false;
@@ -558,7 +697,8 @@ SearchController::ValidationResult SearchController::validate() const {
                     calibrateCudaParallelSampleCount,
                     configuration.searchAlgorithm,
                     configuration.modifiers,
-                    configuration.evaluationTarget},
+                    configuration.evaluationTarget,
+                    parsedBaseInputCommands_},
             {}};
 }
 
@@ -584,9 +724,30 @@ void SearchController::setRunning(bool value) {
     const bool oldCanStart = canStart();
     running_ = value;
     emit runningChanged();
+    emit replayInputStateChanged();
     if (oldCanStart != canStart()) {
         emit canStartChanged();
     }
+}
+
+void SearchController::setExtractingReplayInputs(bool value) {
+    if (extractingReplayInputs_ == value) {
+        return;
+    }
+    const bool oldCanStart = canStart();
+    extractingReplayInputs_ = value;
+    emit replayInputStateChanged();
+    if (oldCanStart != canStart()) {
+        emit canStartChanged();
+    }
+}
+
+void SearchController::setReplayInputStatusText(const QString &value) {
+    if (replayInputStatusText_ == value) {
+        return;
+    }
+    replayInputStatusText_ = value;
+    emit replayInputStateChanged();
 }
 
 void SearchController::setStopping(bool value) {
@@ -724,6 +885,12 @@ void SearchController::waitForWorker() {
         autoDetectionThread_->wait();
         delete autoDetectionThread_;
         autoDetectionThread_ = nullptr;
+    }
+    if (inputExtractionThread_ != nullptr) {
+        disconnect(inputExtractionThread_, nullptr, this, nullptr);
+        inputExtractionThread_->wait();
+        delete inputExtractionThread_;
+        inputExtractionThread_ = nullptr;
     }
     if (stopRequested_) {
         stopRequested_->store(true, std::memory_order_relaxed);

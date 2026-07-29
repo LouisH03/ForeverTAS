@@ -5,56 +5,18 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QFileInfo>
-#include <QImage>
 #include <QQmlApplicationEngine>
-#include <QQuickItem>
 #include <QQuickStyle>
-#include <QQuickWindow>
-#include <QSGRendererInterface>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
 
-#include <cmath>
 #include <iostream>
 
 namespace {
 
-bool Finite(const QVector3D &value) {
-    return std::isfinite(value.x()) && std::isfinite(value.y()) &&
-            std::isfinite(value.z());
-}
-
-bool Close(const QVector3D &left,
-           const QVector3D &right,
-           float tolerance = 0.001f) {
-    return (left - right).length() <= tolerance;
-}
-
-int CountOrangeCarPixels(const QImage &image, const QRect &area) {
-    const QRect clipped = area.intersected(image.rect());
-    int count = 0;
-    for (int y = clipped.top(); y <= clipped.bottom(); ++y) {
-        for (int x = clipped.left(); x <= clipped.right(); ++x) {
-            const QColor color = image.pixelColor(x, y);
-            if (color.red() >= 170 && color.green() >= 35 &&
-                color.green() <= 145 && color.blue() <= 100 &&
-                color.red() > color.green() + 70) {
-                ++count;
-            }
-        }
-    }
-    return count;
-}
-
-bool CanRenderQuick3D(const QQuickWindow &window) {
-    const QSGRendererInterface *const renderer = window.rendererInterface();
-    return renderer != nullptr && QSGRendererInterface::isApiRhiBased(
-            renderer->graphicsApi());
-}
-
-bool CarModelsAreVisible(
+bool MapOnlySceneIsVisible(
         QObject *root,
         const forevertas::viewer::RaceViewerController &viewer,
         int loadNumber) {
@@ -64,90 +26,22 @@ bool CarModelsAreVisible(
             QStringLiteral("runCarEllipsoidNode"));
     const QList<QObject *> models = root->findChildren<QObject *>(
             QStringLiteral("runCarFilledModel"));
-    const QVariantList expectedEllipsoids = viewer.carEllipsoids();
-    const int expected = static_cast<int>(
-            viewer.ellipsoidCount() * viewer.runCount());
-    int activeNodeCount = 0;
-    int activeModelCount = 0;
-    bool okay = expected > 0 && roots.size() == viewer.runCount();
-
-    for (const QObject *carRoot : roots) {
-        const QVector3D position =
-                carRoot->property("position").value<QVector3D>();
-        okay &= carRoot->property("visible").toBool() && Finite(position) &&
-                Close(position, viewer.carPosition(), 0.01f);
-    }
-    for (const QObject *node : nodes) {
-        if (!node->property("ellipsoidActive").toBool()) continue;
-        ++activeNodeCount;
-        const int index = node->property("ellipsoidIndex").toInt();
-        const QVector3D position =
-                node->property("position").value<QVector3D>();
-        const QVector3D scale = node->property("scale").value<QVector3D>();
-        okay &= index >= 0 && index < expectedEllipsoids.size() &&
-                node->property("visible").toBool() && Finite(position) &&
-                Finite(scale) && scale.x() > 0.0f && scale.y() > 0.0f &&
-                scale.z() > 0.0f;
-        if (index >= 0 && index < expectedEllipsoids.size()) {
-            const QVariantMap expectedItem =
-                    expectedEllipsoids[index].toMap();
-            okay &= Close(position,
-                          expectedItem.value(QStringLiteral("position"))
-                                  .value<QVector3D>()) &&
-                    Close(scale,
-                          expectedItem.value(QStringLiteral("radii"))
-                                  .value<QVector3D>());
-        }
-    }
-    for (const QObject *model : models) {
-        const QObject *const parent = model->parent();
-        if (parent == nullptr ||
-            !parent->property("ellipsoidActive").toBool()) {
-            continue;
-        }
-        ++activeModelCount;
-        const QVariant geometry = model->property("geometry");
-        okay &= model->property("visible").toBool() &&
-                model->property("opacity").toReal() > 0.0 &&
-                geometry.isValid() && !geometry.isNull();
-    }
-    okay &= activeNodeCount == expected && activeModelCount == expected;
-
-    auto *const window = qobject_cast<QQuickWindow *>(root);
-    auto *const viewport = qobject_cast<QQuickItem *>(
-            root->findChild<QObject *>(QStringLiteral("raceViewport")));
-    int orangePixels = -1;
-    if (window == nullptr || viewport == nullptr) {
-        okay = false;
-    } else if (CanRenderQuick3D(*window)) {
-        const QImage frame = window->grabWindow();
-        const QPointF center = viewport->mapToScene(
-                QPointF(viewport->width() * 0.5, viewport->height() * 0.5));
-        const QRect carArea(static_cast<int>(center.x()) - 120,
-                            static_cast<int>(center.y()) - 120,
-                            240,
-                            240);
-        orangePixels = CountOrangeCarPixels(frame, carArea);
-        if (orangePixels <= 10) {
-            frame.save(QStringLiteral("/tmp/forevertas-reload-failure-%1.png")
-                               .arg(loadNumber));
-            okay = false;
-        }
-    }
+    const QList<QObject *> visualModels = root->findChildren<QObject *>(
+            QStringLiteral("trackVisualModel"));
+    const bool okay = viewer.loaded() && viewer.runCount() == 0 &&
+            viewer.tickCount() == 0 && viewer.durationMs() == 0 &&
+            viewer.ellipsoidCount() > 0 &&
+            viewer.visualBatchCount() > 0 &&
+            roots.isEmpty() && nodes.isEmpty() && models.isEmpty() &&
+            visualModels.size() == viewer.visualBatchCount();
 
     if (!okay) {
-        std::cerr << "car visibility failed after button load " << loadNumber
-                  << ": expected=" << expected
+        std::cerr << "map-only scene failed after button load " << loadNumber
                   << " roots=" << roots.size()
-                  << " activeNodes=" << activeNodeCount
-                  << "/" << nodes.size()
-                  << " activeModels=" << activeModelCount
-                  << "/" << models.size()
-                  << " orangePixels=" << orangePixels
-                  << " controllerPosition="
-                  << viewer.carPosition().x() << ','
-                  << viewer.carPosition().y() << ','
-                  << viewer.carPosition().z() << '\n';
+                  << " nodes=" << nodes.size()
+                  << " models=" << models.size()
+                  << " visualModels=" << visualModels.size()
+                  << " visualBatches=" << viewer.visualBatchCount() << '\n';
     }
     return okay;
 }
@@ -186,6 +80,8 @@ int main(int argc, char **argv) {
     forevertas::app::SearchController controller;
     controller.setPacksDirectory(packs);
     controller.setReplayPath(replays[0]);
+    const QString protectedDraft = QStringLiteral("0.00 press up");
+    controller.setBaseInputScript(protectedDraft);
     forevertas::viewer::RaceViewerController viewer;
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
@@ -202,7 +98,29 @@ int main(int argc, char **argv) {
     }
     QObject *const root = engine.rootObjects().front();
     QObject *const loadButton = root->findChild<QObject *>(
-            QStringLiteral("loadRaceViewerButton"));
+            QStringLiteral("loadMapButton"));
+    QObject *const extractButton = root->findChild<QObject *>(
+            QStringLiteral("extractReplayInputsButton"));
+    QObject *const replaceDialog = root->findChild<QObject *>(
+            QStringLiteral("replaceBaseInputScriptDialog"));
+    if (!ClickLoadButton(extractButton)) {
+        std::cerr << "Extract inputs button click failed\n";
+        return 1;
+    }
+    QCoreApplication::processEvents();
+    const bool confirmationProtectedDraft =
+            replaceDialog != nullptr &&
+            replaceDialog->property("visible").toBool() &&
+            !controller.extractingReplayInputs() &&
+            controller.baseInputScript() == protectedDraft &&
+            QMetaObject::invokeMethod(
+                    replaceDialog, "reject", Qt::DirectConnection);
+    QCoreApplication::processEvents();
+    if (!confirmationProtectedDraft ||
+        controller.baseInputScript() != protectedDraft) {
+        std::cerr << "non-empty input script was not protected by confirmation\n";
+        return 1;
+    }
 
     int completedLoads = 0;
     bool loadInProgress = false;
@@ -220,7 +138,7 @@ int main(int argc, char **argv) {
                     if (completedLoads > 0) {
                         preservedSceneDuringReload &= viewer.loaded() &&
                                 viewer.ellipsoidCount() > 0 &&
-                                viewer.runCount() > 0;
+                                viewer.runCount() == 0;
                     }
                     return;
                 }
@@ -230,7 +148,7 @@ int main(int argc, char **argv) {
                 const int currentLoad = completedLoads;
                 QTimer::singleShot(500, &application, [&, currentLoad]() {
                     if (finished || currentLoad != completedLoads) return;
-                    if (!CarModelsAreVisible(root, viewer, currentLoad)) {
+                    if (!MapOnlySceneIsVisible(root, viewer, currentLoad)) {
                         finished = true;
                         application.quit();
                         return;
@@ -240,7 +158,7 @@ int main(int argc, char **argv) {
                         QCoreApplication::processEvents();
                         if (!ClickLoadButton(loadButton)) {
                             finished = true;
-                            std::cerr << "Load Race Viewer button click "
+                            std::cerr << "Load map button click "
                                       << currentLoad + 1 << " failed\n";
                             application.quit();
                         }
@@ -256,7 +174,7 @@ int main(int argc, char **argv) {
                 });
             });
     if (!ClickLoadButton(loadButton)) {
-        std::cerr << "first Load Race Viewer button click failed\n";
+        std::cerr << "first Load map button click failed\n";
         return 1;
     }
 

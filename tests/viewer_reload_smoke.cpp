@@ -3,17 +3,7 @@
 #include <QGuiApplication>
 #include <QTimer>
 
-#include <cmath>
 #include <iostream>
-
-namespace {
-
-bool Finite(const QVector3D &value) {
-    return std::isfinite(value.x()) && std::isfinite(value.y()) &&
-            std::isfinite(value.z());
-}
-
-}  // namespace
 
 int main(int argc, char **argv) {
     if (argc != 4) {
@@ -45,7 +35,7 @@ int main(int argc, char **argv) {
                     if (completedLoads > 0) {
                         preservedSceneDuringReload &= viewer.loaded() &&
                                 viewer.ellipsoidCount() > 0 &&
-                                viewer.runCount() > 0;
+                                viewer.runCount() == 0;
                     }
                     return;
                 }
@@ -53,8 +43,10 @@ int main(int argc, char **argv) {
                 loadInProgress = false;
 
                 const bool sceneValid =
-                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 1 &&
-                        viewer.tickCount() > 0 &&
+                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 0 &&
+                        viewer.tickCount() == 0 &&
+                        viewer.durationMs() == 0 &&
+                        viewer.selectedRunId().isEmpty() &&
                         viewer.visualTriangleCount() > 0 &&
                         viewer.visualMeshCount() > 0 &&
                         !viewer.visualMaterials().isEmpty() &&
@@ -62,9 +54,7 @@ int main(int argc, char **argv) {
                         viewer.visualBatchCount() ==
                                 viewer.visualBatches().size() &&
                         viewer.visualBatchCount() <
-                                viewer.sourceVisualObjectCount() &&
-                        Finite(viewer.carPosition()) &&
-                        !viewer.carRotation().isNull();
+                        viewer.sourceVisualObjectCount();
                 if (!sceneValid) {
                     finished = true;
                     std::cerr << "viewer scene is incomplete after load "
@@ -81,7 +71,7 @@ int main(int argc, char **argv) {
 
                 ++completedLoads;
                 if (completedLoads < 3) {
-                    viewer.loadReplay(packs, replays[completedLoads]);
+                    viewer.loadMap(packs, replays[completedLoads]);
                     const QObject *const publishedAfterRequest =
                             viewer.visualBatches()
                                     .front()
@@ -107,7 +97,7 @@ int main(int argc, char **argv) {
         std::cerr << "replay reload timed out\n";
         application.quit();
     });
-    viewer.loadReplay(packs, replays[0]);
+    viewer.loadMap(packs, replays[0]);
     application.exec();
     return exitCode;
 }

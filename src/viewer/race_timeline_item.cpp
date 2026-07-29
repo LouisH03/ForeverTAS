@@ -168,7 +168,7 @@ void RaceTimelineItem::paint(QPainter *painter) {
         painter->drawText(
                 area.adjusted(18.0, 18.0, -18.0, -18.0),
                 Qt::AlignCenter | Qt::TextWordWrap,
-                QStringLiteral("Replay inputs appear here"));
+                QStringLiteral("Search run inputs appear here"));
         return;
     }
 
@@ -354,7 +354,8 @@ void RaceTimelineItem::paint(QPainter *painter) {
 }
 
 void RaceTimelineItem::mousePressEvent(QMouseEvent *event) {
-    if (viewer_ == nullptr || !viewer_->loaded()) {
+    if (viewer_ == nullptr || !viewer_->loaded() ||
+        viewer_->runCount() == 0) {
         event->ignore();
         return;
     }
@@ -394,7 +395,8 @@ void RaceTimelineItem::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void RaceTimelineItem::wheelEvent(QWheelEvent *event) {
-    if (viewer_ == nullptr || !viewer_->loaded()) {
+    if (viewer_ == nullptr || !viewer_->loaded() ||
+        viewer_->runCount() == 0) {
         event->ignore();
         return;
     }

@@ -152,6 +152,23 @@ ApplicationWindow {
     title: qsTr("ForeverTAS")
     color: "#eceeeb"
 
+    Dialog {
+        id: replaceBaseInputScriptDialog
+
+        objectName: "replaceBaseInputScriptDialog"
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Replace base input script?")
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        onAccepted: window.controller.extractReplayInputs()
+
+        Label {
+            width: 360
+            text: qsTr("Extracting replay inputs will replace the current script.")
+            wrapMode: Text.WordWrap
+        }
+    }
+
     palette {
         window: "#eceeeb"
         windowText: "#202421"
@@ -169,7 +186,7 @@ ApplicationWindow {
         sequence: "Left"
         context: Qt.ApplicationShortcut
         autoRepeat: true
-        enabled: window.viewer.loaded
+        enabled: window.viewer.runCount > 0
         onActivated: window.stepViewerTick(-1)
     }
 
@@ -178,7 +195,7 @@ ApplicationWindow {
         sequence: "Right"
         context: Qt.ApplicationShortcut
         autoRepeat: true
-        enabled: window.viewer.loaded
+        enabled: window.viewer.runCount > 0
         onActivated: window.stepViewerTick(1)
     }
 
@@ -231,12 +248,14 @@ ApplicationWindow {
                                 }
 
                                 Label {
-                                    text: window.viewer.loaded
+                                    text: window.viewer.runCount > 0
                                           ? qsTr("Tick %1 / %2 · 100 Hz")
                                                 .arg(window.viewer.currentTick)
                                                 .arg(Math.max(0,
                                                               window.viewer.tickCount - 1))
-                                          : qsTr("100 physics ticks / second")
+                                          : window.viewer.loaded
+                                            ? qsTr("Map loaded · no search run")
+                                            : qsTr("100 physics ticks / second")
                                     color: "#747f77"
                                     font.pixelSize: 10
                                 }
@@ -249,6 +268,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             viewer: window.viewer
+                            enabled: window.viewer.runCount > 0
                             pixelsPerTick: 3
                         }
 
@@ -819,7 +839,7 @@ ApplicationWindow {
                                 implicitWidth: 42
                                 implicitHeight: 42
                                 text: ""
-                                enabled: window.viewer.loaded
+                                enabled: window.viewer.runCount > 0
                                 palette.buttonText: "#e6ebe7"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to start")
@@ -874,7 +894,7 @@ ApplicationWindow {
                                 implicitWidth: 42
                                 implicitHeight: 42
                                 text: ""
-                                enabled: window.viewer.loaded
+                                enabled: window.viewer.runCount > 0
                                 palette.buttonText: "#ffffff"
                                 ToolTip.visible: hovered
                                 ToolTip.text: window.viewer.playing
@@ -945,7 +965,7 @@ ApplicationWindow {
                                 implicitWidth: 42
                                 implicitHeight: 42
                                 text: ""
-                                enabled: window.viewer.loaded
+                                enabled: window.viewer.runCount > 0
                                 palette.buttonText: "#e6ebe7"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to end")
@@ -1012,7 +1032,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             text: window.viewer.loading
                                   ? window.viewer.statusText
-                                  : qsTr("Select a replay and load it from the settings panel.")
+                                  : qsTr("Select a replay and load its map from the settings panel.")
                             color: "#d9ded9"
                             wrapMode: Text.WordWrap
                             font.pixelSize: 16
@@ -1022,7 +1042,7 @@ ApplicationWindow {
                             width: parent.width
                             visible: !window.viewer.loading
                                      && window.viewer.statusText
-                                        !== qsTr("No replay loaded")
+                                        !== qsTr("No map loaded")
                             horizontalAlignment: Text.AlignHCenter
                             text: window.viewer.statusText
                             color: "#e19b9b"
@@ -1132,6 +1152,7 @@ ApplicationWindow {
                                     objectName: "applyAutoPacksButton"
                                     text: qsTr("Apply")
                                     enabled: !window.controller.running
+                                             && !window.controller.extractingReplayInputs
                                     onClicked:
                                         window.controller.applyAutoDetectedPacksDirectory()
                                 }
@@ -1146,6 +1167,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: window.controller.packsDirectory
                                 enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
                                 placeholderText: qsTr("Select installed Packs directory")
                                 selectByMouse: true
                                 onTextEdited:
@@ -1155,27 +1177,12 @@ ApplicationWindow {
                             Button {
                                 text: qsTr("Browse")
                                 enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
                                 onClicked:
                                     window.controller.browseForPacksDirectory()
                             }
                         }
 
-                        Button {
-                            objectName: "loadRaceViewerButton"
-                            Layout.fillWidth: true
-                            text: window.viewer.loading
-                                  ? qsTr("Loading viewer...")
-                                  : qsTr("Load Race Viewer")
-                            enabled: !window.viewer.loading
-                                     && !window.controller.running
-                                     && window.controller.packsDirectory.length > 0
-                                     && window.controller.replayPath.length > 0
-                            highlighted: true
-                            onClicked: window.viewer.loadReplay(
-                                window.controller.packsDirectory,
-                                window.controller.replayPath,
-                                window.controller.simulationBackendId)
-                        }
                     }
 
                     ColumnLayout {
@@ -1197,6 +1204,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: window.controller.replayPath
                                 enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
                                 placeholderText: qsTr("Select replay file")
                                 selectByMouse: true
                                 onTextEdited: window.controller.replayPath = text
@@ -1205,9 +1213,62 @@ ApplicationWindow {
                             Button {
                                 text: qsTr("Browse")
                                 enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
                                 onClicked:
                                     window.controller.browseForReplay()
                             }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                objectName: "loadMapButton"
+                                Layout.fillWidth: true
+                                text: window.viewer.loading
+                                      ? qsTr("Loading map...")
+                                      : qsTr("Load map")
+                                enabled: !window.viewer.loading
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                         && window.controller.packsDirectory.length > 0
+                                         && window.controller.replayPath.length > 0
+                                highlighted: true
+                                onClicked: window.viewer.loadMap(
+                                    window.controller.packsDirectory,
+                                    window.controller.replayPath,
+                                    window.controller.simulationBackendId)
+                            }
+
+                            Button {
+                                objectName: "extractReplayInputsButton"
+                                Layout.fillWidth: true
+                                text: window.controller.extractingReplayInputs
+                                      ? qsTr("Extracting...")
+                                      : qsTr("Extract inputs to script")
+                                enabled: window.controller.canExtractReplayInputs
+                                         && !window.viewer.loading
+                                onClicked: {
+                                    if (window.controller.baseInputScript.trim().length > 0)
+                                        replaceBaseInputScriptDialog.open()
+                                    else
+                                        window.controller.extractReplayInputs()
+                                }
+                            }
+                        }
+
+                        Label {
+                            objectName: "replayInputStatusLabel"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: window.controller.replayInputStatusText
+                            color: text.indexOf(qsTr("failed")) >= 0
+                                   || text.indexOf(qsTr("discarded")) >= 0
+                                   ? "#a23434"
+                                   : "#42654c"
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
                         }
                     }
 
@@ -1335,6 +1396,71 @@ ApplicationWindow {
                             controller: window.controller
                             options: window.controller.modifierOptions
                             passes: window.controller.modifierPasses
+                        }
+                    }
+
+                    ConfigurationSection {
+                        objectName: "baseInputScriptSection"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        title: qsTr("Base input script")
+
+                        ScrollView {
+                            id: baseInputScriptScroll
+
+                            objectName: "baseInputScriptScrollView"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 220
+                            clip: true
+                            ScrollBar.horizontal.policy:
+                                ScrollBar.AsNeeded
+                            ScrollBar.vertical.policy:
+                                ScrollBar.AsNeeded
+
+                            TextArea {
+                                id: baseInputScriptArea
+
+                                objectName: "baseInputScriptTextArea"
+                                width: Math.max(
+                                    baseInputScriptScroll.availableWidth,
+                                    contentWidth + leftPadding + rightPadding)
+                                text: window.controller.baseInputScript
+                                enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                selectByMouse: true
+                                wrapMode: TextEdit.NoWrap
+                                textFormat: TextEdit.PlainText
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                color: "#202421"
+                                placeholderText: qsTr("0.00 press up")
+                                onTextChanged: {
+                                    if (activeFocus
+                                        && window.controller.baseInputScript
+                                           !== text) {
+                                        window.controller.baseInputScript = text
+                                    }
+                                }
+                                background: Rectangle {
+                                    color: "#ffffff"
+                                    border.width: 1
+                                    border.color:
+                                        window.controller.baseInputScriptError.length
+                                        > 0 ? "#a23434" : "#c5ccc1"
+                                    radius: 6
+                                }
+                            }
+                        }
+
+                        Label {
+                            objectName: "baseInputScriptErrorLabel"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: window.controller.baseInputScriptError
+                            color: "#a23434"
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
                         }
                     }
 

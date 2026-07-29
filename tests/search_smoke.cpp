@@ -1,9 +1,11 @@
 #include "mutations/input_event_formatter.h"
+#include "mutations/replay_input_script.h"
 #include "searches/search_runner.h"
 
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <stdexcept>
 
 namespace {
 
@@ -41,7 +43,16 @@ bool RunBackend(const char *packsDirectory,
             sawFinalSampling |= progress.stage ==
                     forevertas::SearchProgressStage::FinalSampling;
         };
+        control.reuseLoadedSandbox = true;
         forevertas::SearchRequest request{packsDirectory, replayPath};
+        const forevertas::InputScriptParseResult parsed =
+                forevertas::ParseInputScript(
+                        forevertas::ExtractReplayInputScript(
+                                packsDirectory, replayPath));
+        if (!parsed) {
+            throw std::runtime_error(*parsed.error);
+        }
+        request.baseInputCommands = parsed.commands;
         request.backend = backend;
         if (backend == forevertas::PhysicsBackend::Cuda) {
             request.parallelSampleCount =
@@ -129,6 +140,47 @@ bool RunBackend(const char *packsDirectory,
         return true;
 }
 
+bool CheckCachedScriptIsolation(const char *packsDirectory,
+                                const char *replayPath) {
+    const std::string replayScript =
+            forevertas::ExtractReplayInputScript(
+                    packsDirectory, replayPath);
+    forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(replayScript);
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 0u;
+    control.reuseLoadedSandbox = true;
+    control.sampleBestTimeline = false;
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    request.baseInputCommands = parsed.commands;
+    const forevertas::SearchResult first =
+            forevertas::RunSearch(request, &control);
+
+    request.baseInputCommands.clear();
+    const forevertas::SearchResult empty =
+            forevertas::RunSearch(request, &control);
+
+    request.baseInputCommands = parsed.commands;
+    const forevertas::SearchResult restored =
+            forevertas::RunSearch(request, &control);
+    const std::string firstScript =
+            forevertas::FormatInputScript(first.bestInputs);
+    const std::string emptyScript =
+            forevertas::FormatInputScript(empty.bestInputs);
+    const std::string restoredScript =
+            forevertas::FormatInputScript(restored.bestInputs);
+    if (firstScript.empty() || !emptyScript.empty() ||
+        firstScript != restoredScript) {
+        std::cerr << "cached searches leaked base scripts between requests\n";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -138,7 +190,8 @@ int main(int argc, char **argv) {
     }
 
     try {
-        if (!RunBackend(argv[1],
+        if (!CheckCachedScriptIsolation(argv[1], argv[2]) ||
+            !RunBackend(argv[1],
                         argv[2],
                         forevertas::PhysicsBackend::Reference) ||
             !RunBackend(argv[1],

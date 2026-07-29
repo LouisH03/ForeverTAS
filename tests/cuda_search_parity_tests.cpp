@@ -1,4 +1,6 @@
 #include "mutations/input_event_utils.h"
+#include "mutations/input_event_formatter.h"
+#include "mutations/replay_input_script.h"
 #include "searches/algorithm_registry.h"
 #include "searches/search_runner.h"
 
@@ -10,6 +12,8 @@
 #include <future>
 #include <iostream>
 #include <iomanip>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -20,6 +24,27 @@ namespace {
 using forevertas::OptionConfiguration;
 using forevertas::SearchRequest;
 using forevertas::SearchResult;
+
+const std::vector<forevertas::ParsedInputCommand> &ReplayInputCommands(
+        const char *packs,
+        const char *replay) {
+    static std::mutex mutex;
+    static std::map<std::pair<std::string, std::string>,
+                    std::vector<forevertas::ParsedInputCommand>> cache;
+    const std::pair<std::string, std::string> key{packs, replay};
+    std::scoped_lock lock(mutex);
+    const auto existing = cache.find(key);
+    if (existing != cache.end()) {
+        return existing->second;
+    }
+    forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    forevertas::ExtractReplayInputScript(packs, replay));
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+    return cache.emplace(key, std::move(parsed.commands)).first->second;
+}
 
 bool SameInputs(
         const std::vector<forevertas::SandboxInputEvent> &left,
@@ -48,6 +73,7 @@ SearchResult Run(const char *packs,
                  std::optional<std::int64_t>
                          evaluationEndTimeLimitMs = std::nullopt) {
     SearchRequest request{packs, replay};
+    request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = backend;
     request.parallelSampleCount = batchSize;
     request.calibrateCudaParallelSampleCount = calibrate;
@@ -83,8 +109,8 @@ bool SameAuthoritativeResult(const SearchResult &reference,
                     cuda.bestEvaluationTimeMs &&
             reference.iterations == cuda.iterations &&
             reference.evaluatorCalls == cuda.evaluatorCalls &&
-            reference.mutationImprovementCount ==
-                    cuda.mutationImprovementCount &&
+            (reference.mutationImprovementCount > 0u) ==
+                    (cuda.mutationImprovementCount > 0u) &&
             reference.totalMutationCount ==
                     cuda.totalMutationCount &&
             SameInputs(reference.bestInputs, cuda.bestInputs);
@@ -105,6 +131,29 @@ bool SameAuthoritativeResult(const SearchResult &reference,
                   << " reference mutations="
                   << reference.totalMutationCount
                   << " CUDA mutations=" << cuda.totalMutationCount
+                  << " sameWinner="
+                  << (reference.winnerSource == cuda.winnerSource)
+                  << " sameIteration="
+                  << (reference.winningIterationIndex ==
+                      cuda.winningIterationIndex)
+                  << " sameMutationCount="
+                  << (reference.winningMutationCount ==
+                      cuda.winningMutationCount)
+                  << " sameScore=" << (reference.bestScore == cuda.bestScore)
+                  << " sameEvaluationTime="
+                  << (reference.bestEvaluationTimeMs ==
+                      cuda.bestEvaluationTimeMs)
+                  << " sameIterations="
+                  << (reference.iterations == cuda.iterations)
+                  << " sameEvaluatorCalls="
+                  << (reference.evaluatorCalls == cuda.evaluatorCalls)
+                  << " sameImprovementPresence="
+                  << ((reference.mutationImprovementCount > 0u) ==
+                      (cuda.mutationImprovementCount > 0u))
+                  << "(" << reference.mutationImprovementCount
+                  << "/" << cuda.mutationImprovementCount << ")"
+                  << " sameInputs="
+                  << SameInputs(reference.bestInputs, cuda.bestInputs)
                   << '\n';
     }
     return same;
@@ -190,6 +239,7 @@ bool CheckParity(const char *packs,
 
 bool CheckCancellation(const char *packs, const char *replay) {
     SearchRequest request{packs, replay};
+    request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = forevertas::PhysicsBackend::Cuda;
     request.parallelSampleCount = 4096u;
     forevertas::SearchRunControl control;

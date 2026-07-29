@@ -17,6 +17,28 @@ namespace {
 using forevertas::viewer::RaceTimelineItem;
 using forevertas::viewer::RaceViewerController;
 
+std::vector<forevertas::SearchTimelineFrame> SyntheticSearchTimeline() {
+    std::vector<forevertas::SearchTimelineFrame> frames;
+    frames.reserve(1001u);
+    for (std::int64_t tick = 0; tick <= 1000; ++tick) {
+        frames.push_back({
+                tick * 10,
+                static_cast<float>(tick) * 0.01f,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f,
+                tick >= 10 && tick < 700 ? 1.0f : 0.0f,
+                tick >= 700 && tick < 800 ? 1.0f : 0.0f,
+                tick >= 100 && tick < 300
+                        ? -0.5f
+                        : tick >= 300 && tick < 500 ? 0.5f : 0.0f});
+    }
+    return frames;
+}
+
 qint64 FindActivityTick(const RaceViewerController &viewer, char channel) {
     for (qint64 tick = 0; tick < viewer.tickCount(); ++tick) {
         const auto sample = viewer.inputSample(tick);
@@ -136,9 +158,14 @@ int main(int argc, char **argv) {
 
     QGuiApplication application(argc, argv);
     RaceViewerController viewer;
+    const QString packsDirectory = QString::fromLocal8Bit(argv[1]);
+    const QString replayPath = QString::fromLocal8Bit(argv[2]);
+    const std::vector<forevertas::SearchTimelineFrame> searchTimeline =
+            SyntheticSearchTimeline();
     int exitCode = 1;
     bool completed = false;
     bool verificationStarted = false;
+    bool mapOnlyStateObserved = false;
     QObject::connect(
             &viewer,
             &forevertas::viewer::RaceViewerController::stateChanged,
@@ -151,6 +178,25 @@ int main(int argc, char **argv) {
                     return;
                 }
                 if (viewer.loaded()) {
+                    if (viewer.runCount() == 0) {
+                        mapOnlyStateObserved = viewer.durationMs() == 0 &&
+                                viewer.tickCount() == 0 &&
+                                viewer.selectedRunId().isEmpty() &&
+                                viewer.statusText() ==
+                                        QStringLiteral("Map loaded");
+                        if (!mapOnlyStateObserved) {
+                            completed = true;
+                            std::cerr << "map load published a replay run\n";
+                            application.quit();
+                            return;
+                        }
+                        viewer.addSearchRun(
+                                packsDirectory,
+                                replayPath,
+                                searchTimeline,
+                                QStringLiteral("optimized-cpu"));
+                        return;
+                    }
                     verificationStarted = true;
                     const QVector2D clipPlanes = viewer.cameraClipPlanes(
                             viewer.carPosition() + QVector3D(0.0f, 0.0f, 38.0f),
@@ -337,7 +383,7 @@ int main(int argc, char **argv) {
                             }
                         }
                     }
-                    const bool sceneValid =
+                    const bool sceneValid = mapOnlyStateObserved &&
                             viewer.triangleCount() > 0 &&
                             viewer.visualTriangleCount() > 0 &&
                             viewer.visualMeshCount() > 0 &&
@@ -456,7 +502,7 @@ int main(int argc, char **argv) {
                     });
                     return;
                 }
-                if (viewer.statusText() != QStringLiteral("No replay loaded")) {
+                if (viewer.statusText() != QStringLiteral("No map loaded")) {
                     completed = true;
                     std::cerr << viewer.statusText().toStdString() << '\n';
                     application.quit();
@@ -470,8 +516,7 @@ int main(int argc, char **argv) {
         std::cerr << "viewer loading timed out\n";
         application.quit();
     });
-    viewer.loadReplay(QString::fromLocal8Bit(argv[1]),
-                      QString::fromLocal8Bit(argv[2]));
+    viewer.loadMap(packsDirectory, replayPath, QStringLiteral("reference"));
     application.exec();
     return exitCode;
 }
