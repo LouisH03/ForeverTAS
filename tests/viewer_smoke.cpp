@@ -215,6 +215,7 @@ int main(int argc, char **argv) {
     bool manualVerificationStarted = false;
     bool manualDriveValid = false;
     bool manualInitialNeutral = false;
+    bool trajectorySaveValid = false;
     QVector3D manualInitialPosition;
     QObject::connect(
             &viewer,
@@ -244,8 +245,72 @@ int main(int argc, char **argv) {
                             return;
                         }
                         manualVerificationStarted = true;
+                        const QString trajectoryScript =
+                                QStringLiteral(
+                                        "0.00 press up\n"
+                                        "0.10 rel up");
+                        const bool trajectorySaved =
+                                viewer.saveInputTrajectory(trajectoryScript);
+                        const QVariantList trajectoryPaths =
+                                viewer.trajectoryPaths();
+                        const bool trajectoryGeometryValid =
+                                trajectoryPaths.size() == 1 &&
+                                trajectoryPaths.front()
+                                        .toMap()
+                                        .value(QStringLiteral("geometry"))
+                                        .value<QObject *>() != nullptr &&
+                                trajectoryPaths.front()
+                                        .toMap()
+                                        .value(QStringLiteral("name"))
+                                        .toString() ==
+                                        QStringLiteral("Baseline 1") &&
+                                trajectoryPaths.front()
+                                        .toMap()
+                                        .value(QStringLiteral("color"))
+                                        .toString() ==
+                                        QStringLiteral("#41c979");
+                        const bool duplicateAccepted =
+                                viewer.saveInputTrajectory(
+                                        QStringLiteral(
+                                                "0.000 press up\n"
+                                                "0.100 release up"));
+                        const bool invalidRejected =
+                                !viewer.saveInputTrajectory(
+                                        QStringLiteral("not a command"));
+                        trajectorySaveValid =
+                                trajectorySaved &&
+                                trajectoryGeometryValid &&
+                                duplicateAccepted &&
+                                invalidRejected &&
+                                viewer.trajectoryCount() == 1 &&
+                                viewer.runCount() == 1 &&
+                                viewer.tickCount() > 1 &&
+                                viewer.durationMs() > 0 &&
+                                viewer.selectedRunId() ==
+                                        QStringLiteral("baseline-1");
+                        if (!trajectorySaveValid) {
+                            completed = true;
+                            std::cerr
+                                    << "input trajectory save checks failed: "
+                                    << "saved=" << trajectorySaved
+                                    << ", geometry="
+                                    << trajectoryGeometryValid
+                                    << ", duplicate="
+                                    << duplicateAccepted
+                                    << ", invalid="
+                                    << invalidRejected
+                                    << ", count="
+                                    << viewer.trajectoryCount()
+                                    << ", runs=" << viewer.runCount()
+                                    << '\n';
+                            application.quit();
+                            return;
+                        }
                         viewer.startManualDrive();
-                        if (!viewer.manualDriving() ||
+                        const bool trajectoryRejectedWhileDriving =
+                                !viewer.saveInputTrajectory(trajectoryScript);
+                        if (!trajectoryRejectedWhileDriving ||
+                            !viewer.manualDriving() ||
                             viewer.selectedRunId() !=
                                     QStringLiteral("manual") ||
                             viewer.tickCount() != 1) {
@@ -612,7 +677,8 @@ int main(int argc, char **argv) {
                             leftPressDoesNotSnap && dynamicRulerScale &&
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
                             timeLabelUnambiguous &&
-                            searchCopyStopsAtCurrentTime;
+                            searchCopyStopsAtCurrentTime &&
+                            trajectorySaveValid;
                     if (!sceneValid) {
                         std::cerr
                                 << "viewer scene checks failed: "

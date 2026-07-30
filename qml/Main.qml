@@ -122,6 +122,19 @@ ApplicationWindow {
         window.viewer.currentTick = window.viewer.currentTick + delta
     }
 
+    function saveBaseInputTrajectory() {
+        if (!window.viewer.loaded
+            || window.viewer.loading
+            || window.viewer.manualDriving
+            || window.controller.running
+            || window.controller.extractingReplayInputs
+            || window.controller.baseInputScriptError.length > 0) {
+            return
+        }
+        window.viewer.saveInputTrajectory(
+                    window.controller.baseInputScript)
+    }
+
     function manualControlForKey(key) {
         if (key === Qt.Key_Left || key === Qt.Key_A || key === Qt.Key_Q)
             return "left"
@@ -227,6 +240,19 @@ ApplicationWindow {
         enabled: window.viewer.runCount > 0
                  && !window.viewer.manualDriving
         onActivated: window.stepViewerTick(1)
+    }
+
+    Shortcut {
+        objectName: "saveInputTrajectoryShortcut"
+        sequence: StandardKey.Save
+        context: Qt.ApplicationShortcut
+        enabled: window.viewer.loaded
+                 && !window.viewer.loading
+                 && !window.viewer.manualDriving
+                 && !window.controller.running
+                 && !window.controller.extractingReplayInputs
+                 && window.controller.baseInputScriptError.length === 0
+        onActivated: window.saveBaseInputTrajectory()
     }
 
     SplitView {
@@ -572,6 +598,26 @@ ApplicationWindow {
                         }
 
                         Repeater3D {
+                            model: window.viewer.trajectoryPaths
+
+                            delegate: Model {
+                                required property var modelData
+
+                                objectName: "trajectoryPathModel"
+                                visible: window.viewer.loaded
+                                geometry: modelData.geometry
+                                castsShadows: false
+                                receivesShadows: false
+                                materials: DefaultMaterial {
+                                    lighting: DefaultMaterial.NoLighting
+                                    diffuseColor: modelData.color
+                                    opacity: modelData.opacity
+                                    cullMode: Material.NoCulling
+                                }
+                            }
+                        }
+
+                        Repeater3D {
                             model: runPoseModel
 
                             delegate: Node {
@@ -654,6 +700,60 @@ ApplicationWindow {
                         cameraTarget: window.viewer.carPosition
                         cameraUp: viewCamera.up
                         fieldOfView: viewCamera.fieldOfView
+                    }
+
+                    View3D {
+                        id: rayTracingTrajectoryOverlay
+                        objectName: "rayTracingTrajectoryOverlay"
+                        anchors.fill: parent
+                        z: 1.5
+                        visible: window.rayTracingEnabled
+                                 && window.viewer.loaded
+                                 && window.viewer.trajectoryCount > 0
+
+                        environment: SceneEnvironment {
+                            backgroundMode: SceneEnvironment.Transparent
+                            antialiasingMode: SceneEnvironment.MSAA
+                            antialiasingQuality: SceneEnvironment.Medium
+                        }
+
+                        Node {
+                            position: window.viewer.carPosition
+                            eulerRotation.x: viewport.orbitPitch
+                            eulerRotation.y: viewport.orbitYaw
+
+                            PerspectiveCamera {
+                                readonly property var dynamicClipPlanes:
+                                    window.viewer.cameraClipPlanes(
+                                        scenePosition,
+                                        viewport.orbitDistance)
+
+                                z: viewport.orbitDistance
+                                clipNear: dynamicClipPlanes.x
+                                clipFar: dynamicClipPlanes.y
+                                fieldOfView: viewCamera.fieldOfView
+                            }
+                        }
+
+                        Repeater3D {
+                            model: window.viewer.trajectoryPaths
+
+                            delegate: Model {
+                                required property var modelData
+
+                                objectName:
+                                    "rayTracingTrajectoryPathModel"
+                                geometry: modelData.geometry
+                                castsShadows: false
+                                receivesShadows: false
+                                materials: DefaultMaterial {
+                                    lighting: DefaultMaterial.NoLighting
+                                    diffuseColor: modelData.color
+                                    opacity: modelData.opacity
+                                    cullMode: Material.NoCulling
+                                }
+                            }
+                        }
                     }
 
                     FocusScope {
@@ -1559,22 +1659,48 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         title: qsTr("Base input script")
 
-                        Button {
-                            id: copyCurrentRaceInputsButton
-                            objectName: "copyCurrentRaceInputsButton"
-                            Layout.alignment: Qt.AlignRight
-                            text: qsTr("Copy current race")
-                            enabled: window.viewer.canCopyCurrentInputs
-                                     && !window.controller.running
-                                     && !window.controller.extractingReplayInputs
-                            onClicked: {
-                                window.controller.baseInputScript =
-                                    window.viewer.currentInputScript()
-                                baseInputScriptArea.forceActiveFocus()
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Item {
+                                Layout.fillWidth: true
                             }
-                            ToolTip.visible: hovered
-                            ToolTip.text: qsTr(
-                                "Replace the base input with the selected race through its current time")
+
+                            Button {
+                                id: saveInputTrajectoryButton
+                                objectName: "saveInputTrajectoryButton"
+                                text: qsTr("Save trajectory")
+                                enabled: window.viewer.loaded
+                                         && !window.viewer.loading
+                                         && !window.viewer.manualDriving
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                         && window.controller.baseInputScriptError.length
+                                            === 0
+                                onClicked:
+                                    window.saveBaseInputTrajectory()
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr(
+                                    "Add this script's exact path to the viewer (Ctrl+S)")
+                            }
+
+                            Button {
+                                id: copyCurrentRaceInputsButton
+                                objectName: "copyCurrentRaceInputsButton"
+                                text: qsTr("Copy current race")
+                                enabled: window.viewer.canCopyCurrentInputs
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                onClicked: {
+                                    window.controller.baseInputScript =
+                                        window.viewer.currentInputScript()
+                                    baseInputScriptArea.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr(
+                                    "Replace the base input with the selected race through its current time")
+                            }
                         }
 
                         ScrollView {

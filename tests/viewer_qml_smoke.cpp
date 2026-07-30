@@ -361,6 +361,9 @@ int main(int argc, char **argv) {
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
                             QStringLiteral("stepForwardShortcut"));
+                    QObject *const saveInputTrajectoryShortcut =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "saveInputTrajectoryShortcut"));
                     QObject *const autoPacksSuggestion =
                             root->findChild<QObject *>(
                                     QStringLiteral("autoPacksSuggestion"));
@@ -455,6 +458,9 @@ int main(int argc, char **argv) {
                     QObject *const copyCurrentRaceInputsButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "copyCurrentRaceInputsButton"));
+                    QObject *const saveInputTrajectoryButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "saveInputTrajectoryButton"));
                     QObject *const loadMapButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("loadMapButton"));
@@ -622,6 +628,12 @@ int main(int argc, char **argv) {
                             baseInputScriptErrorLabel != nullptr &&
                             copyCurrentRaceInputsButton != nullptr &&
                             !copyCurrentRaceInputsButton
+                                     ->property("enabled").toBool() &&
+                            saveInputTrajectoryButton != nullptr &&
+                            saveInputTrajectoryButton
+                                     ->property("enabled").toBool() &&
+                            saveInputTrajectoryShortcut != nullptr &&
+                            saveInputTrajectoryShortcut
                                      ->property("enabled").toBool() &&
                             loadMapButton != nullptr &&
                             extractReplayInputsButton != nullptr &&
@@ -1483,6 +1495,58 @@ int main(int argc, char **argv) {
                         return;
                     }
 
+                    controller.setBaseInputScript(
+                            QStringLiteral(
+                                    "0.00 press up\n"
+                                    "0.10 rel up"));
+                    QCoreApplication::processEvents();
+                    const bool saveButtonInvoked =
+                            saveInputTrajectoryButton != nullptr &&
+                            saveInputTrajectoryButton
+                                    ->property("enabled").toBool() &&
+                            QMetaObject::invokeMethod(
+                                    saveInputTrajectoryButton,
+                                    "clicked",
+                                    Qt::DirectConnection);
+                    QCoreApplication::processEvents();
+                    const bool saveShortcutInvoked =
+                            saveInputTrajectoryShortcut != nullptr &&
+                            saveInputTrajectoryShortcut
+                                    ->property("enabled").toBool() &&
+                            QMetaObject::invokeMethod(
+                                    saveInputTrajectoryShortcut,
+                                    "activated",
+                                    Qt::DirectConnection);
+                    QCoreApplication::processEvents();
+                    const QList<QObject *> trajectoryModels =
+                            root->findChildren<QObject *>(
+                                    QStringLiteral("trajectoryPathModel"));
+                    const QList<QObject *> rayTracingTrajectoryModels =
+                            root->findChildren<QObject *>(
+                                    QStringLiteral(
+                                            "rayTracingTrajectoryPathModel"));
+                    QObject *const rayTracingTrajectoryOverlay =
+                            root->findChild<QObject *>(
+                                    QStringLiteral(
+                                            "rayTracingTrajectoryOverlay"));
+                    const bool trajectorySaveUiValid =
+                            saveButtonInvoked &&
+                            saveShortcutInvoked &&
+                            viewer.trajectoryCount() == 1 &&
+                            trajectoryModels.size() == 1 &&
+                            rayTracingTrajectoryModels.size() == 1 &&
+                            rayTracingTrajectoryOverlay != nullptr &&
+                            !rayTracingTrajectoryOverlay
+                                     ->property("visible").toBool() &&
+                            trajectoryModels.front()
+                                    ->property("geometry")
+                                    .value<QObject *>() != nullptr &&
+                            trajectoryModels.front()
+                                    ->property("visible").toBool() &&
+                            saveInputTrajectoryButton
+                                    ->property("text").toString() ==
+                                    QStringLiteral("Save trajectory");
+
                     const QVector3D baselinePosition = viewer.carPosition();
                     const QVector3D bestPosition =
                             baselinePosition + QVector3D(5.0f, 0.0f, 0.0f);
@@ -1532,7 +1596,9 @@ int main(int argc, char **argv) {
                              mapEnvironment, daySkyTexture, mainMapLight,
                              fillMapLight, bestPosition,
                              baseInputScriptTextArea,
-                             copyCurrentRaceInputsButton]() {
+                             copyCurrentRaceInputsButton,
+                             rayTracingTrajectoryOverlay,
+                             trajectorySaveUiValid]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1568,7 +1634,9 @@ int main(int argc, char **argv) {
                                         static_cast<int>(
                                                 viewer.ellipsoidCount() *
                                                 viewer.runCount());
-                                bool rootsVisible = carRoots.size() == 1;
+                                bool rootsVisible =
+                                        carRoots.size() ==
+                                        viewer.runCount();
                                 for (const QObject *rootNode : carRoots) {
                                     rootsVisible &= rootNode
                                                             ->property("visible")
@@ -1688,6 +1756,7 @@ int main(int argc, char **argv) {
                                 bool rayTracingModeValid =
                                         gpuRayTracingView != nullptr &&
                                         rasterMapView != nullptr &&
+                                        rayTracingTrajectoryOverlay != nullptr &&
                                         !gpuRayTracingView
                                                  ->property("visible")
                                                  .toBool() &&
@@ -1713,6 +1782,9 @@ int main(int argc, char **argv) {
                                             gpuRayTracingView
                                                     ->property("active")
                                                     .toBool() &&
+                                            rayTracingTrajectoryOverlay
+                                                    ->property("visible")
+                                                    .toBool() &&
                                             !rasterMapView
                                                      ->property("visible")
                                                      .toBool();
@@ -1729,6 +1801,9 @@ int main(int argc, char **argv) {
                                                      .toBool() &&
                                             !gpuRayTracingView
                                                      ->property("active")
+                                                     .toBool() &&
+                                            !rayTracingTrajectoryOverlay
+                                                     ->property("visible")
                                                      .toBool() &&
                                             rasterMapView
                                                     ->property("visible")
@@ -1800,9 +1875,9 @@ int main(int argc, char **argv) {
                                                 0.0;
 
                                 const bool bestSelectedInitially =
-                                        viewer.runCount() == 1 &&
-                                        viewer.runOptions().size() == 1 &&
-                                        viewer.runPoses().size() == 1 &&
+                                        viewer.runCount() == 2 &&
+                                        viewer.runOptions().size() == 2 &&
+                                        viewer.runPoses().size() == 2 &&
                                         viewer.selectedRunId() ==
                                                 QStringLiteral("best") &&
                                         viewer.tickCount() == 3 &&
@@ -1810,7 +1885,7 @@ int main(int argc, char **argv) {
                                                         .length() < 0.001f &&
                                         runSelector != nullptr &&
                                         runSelector->property("count").toInt() ==
-                                                1 &&
+                                                2 &&
                                         runSelector
                                                         ->property("currentValue")
                                                         .toString() ==
@@ -1856,7 +1931,7 @@ int main(int argc, char **argv) {
                                                             Qt::DirectConnection,
                                                             Q_ARG(int, index));
                                         };
-                                const bool bestActivated = activateRun(0);
+                                const bool bestActivated = activateRun(1);
                                 QCoreApplication::processEvents();
                                 QCoreApplication::processEvents();
                                 const bool onlyBestSelected =
@@ -1958,6 +2033,7 @@ int main(int argc, char **argv) {
                                                         rayTracingModeValid &&
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
+                                                        trajectorySaveUiValid &&
                                                         copyCurrentRaceInputsValid &&
                                                         editorStructure
                                                 ? 0
@@ -1993,6 +2069,10 @@ int main(int argc, char **argv) {
                                             << onlyBestSelected
                                             << ", copyCurrentRaceInputs="
                                             << copyCurrentRaceInputsValid
+                                            << ", trajectorySave="
+                                            << trajectorySaveUiValid
+                                            << "/"
+                                            << viewer.trajectoryCount()
                                             << "/"
                                             << (copyCurrentRaceInputsButton !=
                                                                 nullptr

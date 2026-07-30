@@ -242,6 +242,94 @@ RaceViewerMeshBuffers BuildMeshBuffers(
     return result;
 }
 
+RaceViewerMeshBuffers BuildTrajectoryMesh(
+        const std::vector<RaceViewerFrame> &frames,
+        float radius) {
+    std::vector<ViewerTriangle> triangles;
+    if (frames.empty()) {
+        return {};
+    }
+    if (frames.size() - 1u > triangles.max_size() / 12u) {
+        throw std::length_error("trajectory geometry is too large");
+    }
+    triangles.reserve(std::max<std::size_t>(1u, frames.size() - 1u) * 12u);
+    const auto addQuad = [&triangles](const QVector3D &a,
+                                     const QVector3D &b,
+                                     const QVector3D &c,
+                                     const QVector3D &d) {
+        triangles.push_back({a, b, c});
+        triangles.push_back({a, c, d});
+    };
+    for (std::size_t index = 1u; index < frames.size(); ++index) {
+        const QVector3D start = frames[index - 1u].position;
+        const QVector3D end = frames[index].position;
+        QVector3D direction = end - start;
+        if (direction.lengthSquared() < 0.000001f) {
+            continue;
+        }
+        direction.normalize();
+        const QVector3D reference =
+                std::fabs(QVector3D::dotProduct(
+                                  direction, QVector3D(0.0f, 1.0f, 0.0f))) <
+                        0.9f
+                ? QVector3D(0.0f, 1.0f, 0.0f)
+                : QVector3D(1.0f, 0.0f, 0.0f);
+        const QVector3D side =
+                QVector3D::crossProduct(direction, reference).normalized() *
+                radius;
+        const QVector3D normal =
+                QVector3D::crossProduct(side, direction).normalized() *
+                radius;
+        const std::array<QVector3D, 4u> startCorners{
+                start + side + normal,
+                start - side + normal,
+                start - side - normal,
+                start + side - normal};
+        const std::array<QVector3D, 4u> endCorners{
+                end + side + normal,
+                end - side + normal,
+                end - side - normal,
+                end + side - normal};
+        addQuad(startCorners[0],
+                startCorners[1],
+                startCorners[2],
+                startCorners[3]);
+        addQuad(endCorners[3],
+                endCorners[2],
+                endCorners[1],
+                endCorners[0]);
+        for (std::size_t sideIndex = 0u; sideIndex < 4u; ++sideIndex) {
+            const std::size_t next = (sideIndex + 1u) % 4u;
+            addQuad(startCorners[sideIndex],
+                    endCorners[sideIndex],
+                    endCorners[next],
+                    startCorners[next]);
+        }
+    }
+    if (triangles.empty()) {
+        const QVector3D center = frames.front().position;
+        const QVector3D x(radius, 0.0f, 0.0f);
+        const QVector3D y(0.0f, radius, 0.0f);
+        const QVector3D z(0.0f, 0.0f, radius);
+        const std::array<QVector3D, 8u> corners{
+                center - x - y - z,
+                center + x - y - z,
+                center + x + y - z,
+                center - x + y - z,
+                center - x - y + z,
+                center + x - y + z,
+                center + x + y + z,
+                center - x + y + z};
+        addQuad(corners[0], corners[1], corners[2], corners[3]);
+        addQuad(corners[7], corners[6], corners[5], corners[4]);
+        addQuad(corners[0], corners[4], corners[5], corners[1]);
+        addQuad(corners[1], corners[5], corners[6], corners[2]);
+        addQuad(corners[2], corners[6], corners[7], corners[3]);
+        addQuad(corners[3], corners[7], corners[4], corners[0]);
+    }
+    return BuildMeshBuffers(triangles, 2);
+}
+
 QVariantMap MaterialMap(ReplacementMaterialClass materialClass) {
     const ReplacementMaterial replacement = ReplacementFor(materialClass);
     QVariantMap map;
@@ -632,6 +720,14 @@ QVariantList RaceViewerController::visualBatches() const {
 
 QVariantList RaceViewerController::visualMaterials() const {
     return visualMaterials_;
+}
+
+QVariantList RaceViewerController::trajectoryPaths() const {
+    return trajectoryPaths_;
+}
+
+qint64 RaceViewerController::trajectoryCount() const {
+    return static_cast<qint64>(trajectoryPaths_.size());
 }
 
 QVariantList RaceViewerController::runOptions() const {
@@ -1143,6 +1239,211 @@ QString RaceViewerController::currentInputScript() const {
     return QString::fromStdString(FormatInputScript(inputs));
 }
 
+bool RaceViewerController::saveInputTrajectory(const QString &script) {
+    if (!loaded_ || loading_ || manualRuntime_ == nullptr) {
+        setStatusText(QStringLiteral(
+                "Load a replay map before saving an input trajectory."));
+        return false;
+    }
+    if (manualDriving_) {
+        setStatusText(QStringLiteral(
+                "Stop manual driving before saving an input trajectory."));
+        return false;
+    }
+
+    const InputScriptParseResult parsed =
+            ParseInputScript(script.toStdString());
+    if (!parsed) {
+        setStatusText(QString::fromStdString(*parsed.error));
+        return false;
+    }
+    InputScriptBaselineResult baseline = BuildInputScriptBaseline(
+            manualRuntime_->fixedInputs,
+            parsed.commands,
+            static_cast<std::int64_t>(manualRuntime_->state.durationMs),
+            kViewerTickDurationMs);
+    if (!baseline) {
+        setStatusText(QString::fromStdString(*baseline.error));
+        return false;
+    }
+    ConvertKeyboardSteeringToAnalog(baseline.events);
+    const QString key =
+            QString::fromStdString(FormatInputScript(baseline.events));
+    if (std::find(trajectoryKeys_.begin(), trajectoryKeys_.end(), key) !=
+        trajectoryKeys_.end()) {
+        setStatusText(QStringLiteral(
+                "This input trajectory is already saved."));
+        return true;
+    }
+    std::vector<PhysicsSandboxInputEvent> savedInputs = baseline.events;
+
+    auto captured = manualRuntime_->sandbox.CaptureState();
+    if (!captured) {
+        setStatusText(
+                QStringLiteral("Saving input trajectory failed: %1")
+                        .arg(SandboxErrorText(captured.Error())));
+        return false;
+    }
+    PhysicsSandboxState previousState = std::move(captured).Value();
+    std::vector<PhysicsSandboxInputEvent> previousInputs =
+            manualRuntime_->fixedInputs;
+    previousInputs.insert(
+            previousInputs.end(),
+            manualRuntime_->driverInputs.begin(),
+            manualRuntime_->driverInputs.end());
+    const auto restoreManualRuntime = [&]() {
+        auto restored = manualRuntime_->sandbox.RestoreState(previousState);
+        if (!restored) {
+            setStatusText(
+                    QStringLiteral(
+                            "Restoring the viewer after trajectory saving "
+                            "failed: %1")
+                            .arg(SandboxErrorText(restored.Error())));
+            return false;
+        }
+        auto replaced = manualRuntime_->sandbox.ReplaceInputs(
+                std::move(previousInputs));
+        if (!replaced) {
+            setStatusText(
+                    QStringLiteral(
+                            "Restoring viewer inputs after trajectory saving "
+                            "failed: %1")
+                            .arg(SandboxErrorText(replaced.Error())));
+            return false;
+        }
+        manualRuntime_->state = restored.Value();
+        return true;
+    };
+
+    auto initial = manualRuntime_->sandbox.RestoreState(
+            manualRuntime_->initialState);
+    if (!initial) {
+        setStatusText(
+                QStringLiteral("Saving input trajectory failed: %1")
+                        .arg(SandboxErrorText(initial.Error())));
+        restoreManualRuntime();
+        return false;
+    }
+    auto replaced = manualRuntime_->sandbox.ReplaceInputs(
+            std::move(baseline.events));
+    if (!replaced) {
+        setStatusText(
+                QStringLiteral("Saving input trajectory failed: %1")
+                        .arg(SandboxErrorText(replaced.Error())));
+        restoreManualRuntime();
+        return false;
+    }
+
+    PhysicsSandboxStateView state = initial.Value();
+    const std::uint64_t remainingDuration =
+            state.durationMs > state.timeMs
+            ? state.durationMs - state.timeMs
+            : 0u;
+    const std::uint64_t maximumTicks =
+            remainingDuration / kViewerTickDurationMs +
+            (remainingDuration % kViewerTickDurationMs == 0u ? 0u : 1u);
+    std::vector<RaceViewerFrame> frames;
+    try {
+        if (maximumTicks >= frames.max_size()) {
+            throw std::length_error("trajectory contains too many ticks");
+        }
+        frames.reserve(static_cast<std::size_t>(maximumTicks) + 1u);
+        frames.push_back(ToViewerFrame(state));
+        for (std::uint64_t tick = 0u;
+             tick < maximumTicks && state.timeMs < state.durationMs &&
+             !state.raceCompleted;
+             ++tick) {
+            auto advanced = manualRuntime_->sandbox.AdvanceTicks(1u);
+            if (!advanced) {
+                setStatusText(
+                        QStringLiteral("Saving input trajectory failed: %1")
+                                .arg(SandboxErrorText(advanced.Error())));
+                restoreManualRuntime();
+                return false;
+            }
+            state = advanced.Value();
+            frames.push_back(ToViewerFrame(state));
+        }
+    } catch (const std::exception &exception) {
+        if (restoreManualRuntime()) {
+            setStatusText(
+                    QStringLiteral(
+                            "Saving input trajectory failed: %1")
+                            .arg(QString::fromUtf8(exception.what())));
+        }
+        return false;
+    } catch (...) {
+        if (restoreManualRuntime()) {
+            setStatusText(QStringLiteral(
+                    "Saving input trajectory failed unexpectedly."));
+        }
+        return false;
+    }
+    if (!restoreManualRuntime()) {
+        return false;
+    }
+
+    try {
+        const float radius = static_cast<float>(
+                std::clamp(sceneRadius_ * 0.0008, 0.03, 0.3));
+        RaceViewerMeshBuffers mesh = BuildTrajectoryMesh(frames, radius);
+        if (mesh.filled.isEmpty()) {
+            setStatusText(QStringLiteral(
+                    "Saving input trajectory produced no viewable path."));
+            return false;
+        }
+        auto geometry = std::make_unique<RaceGeometry>();
+        geometry->setMesh(
+                std::move(mesh.filled),
+                static_cast<int>(sizeof(FilledVertex)),
+                QQuick3DGeometry::PrimitiveType::Triangles,
+                true,
+                mesh.boundsMin,
+                mesh.boundsMax);
+
+        const qsizetype trajectoryNumber = trajectoryPaths_.size() + 1;
+        const QString trajectoryName =
+                QStringLiteral("Baseline %1").arg(trajectoryNumber);
+        const QString trajectoryId =
+                QStringLiteral("baseline-%1").arg(trajectoryNumber);
+        QVariantMap path;
+        path.insert(QStringLiteral("name"), trajectoryName);
+        path.insert(QStringLiteral("color"), QStringLiteral("#41c979"));
+        path.insert(QStringLiteral("opacity"), 0.94);
+        path.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(
+                        static_cast<QObject *>(geometry.get())));
+
+        trajectoryGeometries_.reserve(
+                trajectoryGeometries_.size() + 1u);
+        trajectoryKeys_.reserve(trajectoryKeys_.size() + 1u);
+        trajectoryPaths_.reserve(trajectoryPaths_.size() + 1);
+        runs_.reserve(runs_.size() + 1u);
+        trajectoryGeometries_.push_back(std::move(geometry));
+        trajectoryKeys_.push_back(key);
+        trajectoryPaths_.push_back(std::move(path));
+        emit trajectoriesChanged();
+        upsertRun(
+                trajectoryId,
+                trajectoryName,
+                std::move(frames),
+                std::move(savedInputs),
+                true);
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral("Saving input trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+        return false;
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Saving input trajectory failed unexpectedly."));
+        return false;
+    }
+    setStatusText(QStringLiteral("Baseline trajectory saved"));
+    return true;
+}
+
 void RaceViewerController::loadMap(const QString &packsDirectory,
                                    const QString &replayPath) {
     loadMap(packsDirectory,
@@ -1327,10 +1628,14 @@ void RaceViewerController::applyLoadResult(
     loaded_ = true;
     runs_.clear();
     selectedRunId_.clear();
+    trajectoryPaths_.clear();
+    trajectoryGeometries_.clear();
+    trajectoryKeys_.clear();
     durationMs_ = 0;
     updatePose();
     emit runsChanged();
     emit selectedRunChanged();
+    emit trajectoriesChanged();
     emit timelineChanged();
     emit timeChanged();
     const bool addingPendingRun =

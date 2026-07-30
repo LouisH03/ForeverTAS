@@ -99,6 +99,10 @@ class RaceViewerController final : public QObject {
             QVariantList visualBatches READ visualBatches NOTIFY sceneChanged)
     Q_PROPERTY(QVariantList visualMaterials READ visualMaterials NOTIFY
                        sceneChanged)
+    Q_PROPERTY(QVariantList trajectoryPaths READ trajectoryPaths NOTIFY
+                       trajectoriesChanged)
+    Q_PROPERTY(qint64 trajectoryCount READ trajectoryCount NOTIFY
+                       trajectoriesChanged)
     Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
     Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
     Q_PROPERTY(qint64 runCount READ runCount NOTIFY runsChanged)
@@ -156,6 +160,8 @@ public:
     QVariantList visualInstances() const;
     QVariantList visualBatches() const;
     QVariantList visualMaterials() const;
+    QVariantList trajectoryPaths() const;
+    qint64 trajectoryCount() const;
     QVariantList runOptions() const;
     QVariantList runPoses() const;
     qint64 runCount() const;
@@ -227,6 +233,7 @@ public slots:
     Q_INVOKABLE void setManualInput(const QString &input, bool active);
     Q_INVOKABLE void releaseManualInputs();
     Q_INVOKABLE QString currentInputScript() const;
+    Q_INVOKABLE bool saveInputTrajectory(const QString &script);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
                             const QString &replayPath);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
@@ -246,6 +253,7 @@ signals:
     void stateChanged();
     void runsChanged();
     void selectedRunChanged();
+    void trajectoriesChanged();
 
 private:
     void applyLoadResult(std::uint64_t loadSerial,
@@ -299,6 +307,9 @@ private:
     QVariantList carEllipsoids_;
     QVariantList visualBatches_;
     QVariantList visualMaterials_;
+    QVariantList trajectoryPaths_;
+    std::vector<std::unique_ptr<RaceGeometry>> trajectoryGeometries_;
+    std::vector<QString> trajectoryKeys_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
     QString statusText_ = QStringLiteral("No map loaded");
