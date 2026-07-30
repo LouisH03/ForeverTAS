@@ -80,7 +80,7 @@ TextField {
         width: 16
         horizontalAlignment: Text.AlignHCenter
         text: control.scrubLabel
-        color: control.enabled ? "#6b7568" : "#a2a89f"
+        color: control.enabled ? AppTheme.textMuted : AppTheme.disabledText
         font.pixelSize: 12
     }
 

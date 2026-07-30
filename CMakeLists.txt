@@ -317,10 +317,13 @@ set_target_properties(forevertas PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "${FOREVERTAS_APP_ID}"
     MACOSX_BUNDLE_ICON_FILE "ForeverTAS.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+set_source_files_properties(qml/AppTheme.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(forevertas
     URI ForeverTAS
     VERSION 1.0
     QML_FILES
+        qml/AppTheme.qml
         qml/Main.qml
         qml/SimulationDebuggerPanel.qml
         qml/WhiteboardOverlay.qml

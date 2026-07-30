@@ -1009,6 +1009,10 @@ bool TestPersistence(const QString &packsDirectory,
     QSettings().clear();
     {
         SearchController controller;
+        if (!Check(!controller.darkMode(),
+                   "light appearance was not the default theme")) {
+            return false;
+        }
         SetValidPaths(controller, packsDirectory, replayPath);
         controller.setModifierPassSetting(
                 0, QStringLiteral("seed"), QStringLiteral("321"));
@@ -1020,6 +1024,7 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setCpuWorkerCount(QStringLiteral("6"));
         controller.setCudaParallelSampleCount(QStringLiteral("384"));
         controller.setCudaCalibrationEnabled(true);
+        controller.setDarkMode(true);
         controller.setSearchAlgorithmSetting(
                 QStringLiteral("autoPromoteBest"),
                 QStringLiteral("true"));
@@ -1055,6 +1060,17 @@ bool TestPersistence(const QString &packsDirectory,
                   "CPU worker count was not persisted");
     okay &= Check(restored.cudaCalibrationEnabled(),
                   "CUDA calibration mode was not persisted");
+    okay &= Check(restored.darkMode(),
+                  "dark appearance mode was not persisted");
+    QSignalSpy darkModeSpy(&restored, &SearchController::darkModeChanged);
+    restored.setDarkMode(false);
+    restored.setDarkMode(false);
+    okay &= Check(!restored.darkMode() && darkModeSpy.count() == 1 &&
+                          !QSettings()
+                                   .value(QStringLiteral(
+                                           "appearance/darkMode"))
+                                   .toBool(),
+                  "dark appearance mode did not update atomically");
     okay &= Check(restored.modifierPasses().size() == 2,
                   "modifier pass count was not persisted");
     okay &= Check(PassId(restored, 0) == QStringLiteral("input-deletion") &&

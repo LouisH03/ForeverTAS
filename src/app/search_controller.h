@@ -54,6 +54,8 @@ class SearchController final : public QObject {
     Q_PROPERTY(bool cudaCalibrationEnabled READ cudaCalibrationEnabled WRITE
                        setCudaCalibrationEnabled NOTIFY
                        cudaCalibrationEnabledChanged)
+    Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
+                       darkModeChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
                        CONSTANT)
     Q_PROPERTY(QVariantList modifierOptions READ modifierOptions CONSTANT)
@@ -116,6 +118,7 @@ public:
     QString cpuWorkerCount() const;
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
+    bool darkMode() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
     QVariantList evaluationTargetOptions() const;
@@ -151,6 +154,7 @@ public slots:
     void setCpuWorkerCount(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
+    void setDarkMode(bool value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
 
@@ -188,6 +192,7 @@ signals:
     void cpuWorkerCountChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
+    void darkModeChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
     void searchAlgorithmSettingsChanged();
@@ -261,6 +266,7 @@ private:
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);
     bool cudaCalibrationEnabled_ = false;
+    bool darkMode_ = false;
     SearchConfigurationModel configuration_;
     CuboidTargetModel cuboidTargets_;
     CustomVolumeTargetModel customVolumeTargets_;

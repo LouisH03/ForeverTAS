@@ -14,6 +14,12 @@ Item {
 
     implicitHeight: 760
 
+    Binding {
+        target: root.debuggerModel
+        property: "darkMode"
+        value: AppTheme.dark
+    }
+
     function commitActiveEdit() {
         if (root.editingLine)
             root.editingLine.commitEdit()
@@ -60,7 +66,7 @@ Item {
                     text: qsTr("Reference source")
                     font.pixelSize: 15
                     font.weight: Font.DemiBold
-                    color: "#20251f"
+                    color: AppTheme.text
                 }
 
                 Label {
@@ -72,7 +78,7 @@ Item {
                              : qsTr("native execution paused"))
                     font.family: "monospace"
                     font.pixelSize: 10
-                    color: "#657066"
+                    color: AppTheme.textMuted
                     elide: Text.ElideRight
                 }
             }
@@ -107,7 +113,7 @@ Item {
             Layout.fillWidth: true
             text: root.debuggerModel.statusText
             color: root.debuggerModel.editError.length > 0
-                   ? "#a23434" : "#4f5a51"
+                   ? AppTheme.error : AppTheme.textMuted
             wrapMode: Text.WordWrap
             font.pixelSize: 11
         }
@@ -115,9 +121,9 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 118
-            color: "#ffffff"
+            color: AppTheme.surface
             border.width: 1
-            border.color: "#cbd1c8"
+            border.color: AppTheme.border
             radius: 6
             clip: true
 
@@ -159,7 +165,7 @@ Item {
                                   ? (sourceRow.modelData.expanded ? "v" : ">")
                                   : "{}"
                             color: sourceRow.modelData.modified
-                                   ? "#247443" : "#657066"
+                                   ? AppTheme.success : AppTheme.textMuted
                             font.family: "monospace"
                             font.pixelSize: 10
                         }
@@ -168,7 +174,7 @@ Item {
                             Layout.fillWidth: true
                             text: String(sourceRow.modelData.name || "")
                             color: sourceRow.modelData.modified
-                                   ? "#247443" : "#283029"
+                                   ? AppTheme.success : AppTheme.text
                             font.weight: sourceRow.modelData.modified
                                          ? Font.DemiBold : Font.Normal
                             font.family: sourceRow.modelData.directory
@@ -180,7 +186,7 @@ Item {
 
                     background: Rectangle {
                         color: sourceRow.modelData.selected
-                               ? "#e1e9e3" : "transparent"
+                               ? AppTheme.selection : "transparent"
                         radius: 3
                     }
                 }
@@ -194,7 +200,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 text: root.debuggerModel.selectedFilePath
-                color: "#39413a"
+                color: AppTheme.textMuted
                 font.family: "monospace"
                 font.pixelSize: 10
                 elide: Text.ElideMiddle
@@ -204,7 +210,7 @@ Item {
                 visible: root.debuggerModel.active
                 text: qsTr("tick %1").arg(
                           root.debuggerModel.executionTick)
-                color: "#315f8f"
+                color: AppTheme.info
                 font.family: "monospace"
                 font.pixelSize: 10
             }
@@ -214,9 +220,9 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 250
-            color: "#fbfcfa"
+            color: AppTheme.codeSurface
             border.width: 1
-            border.color: "#cbd1c8"
+            border.color: AppTheme.border
             radius: 6
             clip: true
 
@@ -265,14 +271,16 @@ Item {
                     width: Math.max(codeList.width, codeRow.implicitWidth + 12)
                     height: 28
                     color: codeLine.modelData.active
-                           ? "#e4edf6"
-                           : (index % 2 === 0 ? "#fbfcfa" : "#f7f9f6")
+                           ? AppTheme.codeActive
+                           : (index % 2 === 0
+                              ? AppTheme.codeSurface
+                              : AppTheme.codeAlternate)
 
                     Rectangle {
                         anchors.left: parent.left
                         width: codeLine.draftModified ? 3 : 0
                         height: parent.height
-                        color: "#2f9254"
+                        color: AppTheme.success
                     }
 
                     RowLayout {
@@ -292,7 +300,7 @@ Item {
                                 height: 9
                                 radius: 5
                                 visible: codeLine.modelData.breakpoint
-                                color: "#b84141"
+                                color: AppTheme.codeBreakpoint
                             }
 
                             TapHandler {
@@ -308,7 +316,7 @@ Item {
                             text: codeLine.modelData.number
                             horizontalAlignment: Text.AlignRight
                             color: codeLine.modelData.active
-                                   ? "#315f8f" : "#8a9189"
+                                   ? AppTheme.info : AppTheme.codeLineNumber
                             font.family: "monospace"
                             font.pixelSize: 10
                         }
@@ -327,16 +335,16 @@ Item {
                             font.family: "monospace"
                             font.pixelSize: 11
                             color: codeLine.draftModified
-                                   ? "#247443" : "#202421"
+                                   ? AppTheme.success : AppTheme.text
                             leftPadding: 5
                             rightPadding: 5
                             topPadding: 2
                             bottomPadding: 2
                             background: Rectangle {
                                 color: parent.activeFocus
-                                       ? "#ffffff" : "transparent"
+                                       ? AppTheme.surface : "transparent"
                                 border.width: parent.activeFocus ? 1 : 0
-                                border.color: "#7f9d88"
+                                border.color: AppTheme.focus
                                 radius: 3
                             }
                             onTextChanged: {
@@ -357,7 +365,7 @@ Item {
                                                        implicitWidth)
                             text: codeLine.modelData.highlighted
                             textFormat: Text.RichText
-                            color: "#202421"
+                            color: AppTheme.text
                             font.family: "monospace"
                             font.pixelSize: 11
                             elide: Text.ElideNone
@@ -386,7 +394,7 @@ Item {
                         Label {
                             visible: codeLine.modelData.inlineValue.length > 0
                             text: codeLine.modelData.inlineValue
-                            color: "#738178"
+                            color: AppTheme.codeLineNumber
                             font.family: "monospace"
                             font.pixelSize: 9
                             leftPadding: 8
@@ -400,7 +408,7 @@ Item {
             visible: root.debuggerModel.editError.length > 0
             Layout.fillWidth: true
             text: root.debuggerModel.editError
-            color: "#a23434"
+            color: AppTheme.error
             font.pixelSize: 10
             wrapMode: Text.WordWrap
         }
@@ -410,7 +418,7 @@ Item {
             text: qsTr("Pinned variables")
             font.weight: Font.DemiBold
             font.pixelSize: 11
-            color: "#39413a"
+            color: AppTheme.textMuted
         }
 
         Flow {
@@ -449,7 +457,7 @@ Item {
             Label {
                 visible: root.debuggerModel.pinnedVariables.length === 0
                 text: qsTr("Select a variable below to pin it.")
-                color: "#7b847c"
+                color: AppTheme.textFaint
                 font.pixelSize: 10
             }
         }
@@ -459,15 +467,15 @@ Item {
             text: qsTr("Variables")
             font.weight: Font.DemiBold
             font.pixelSize: 11
-            color: "#39413a"
+            color: AppTheme.textMuted
         }
 
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 86
-            color: "#ffffff"
+            color: AppTheme.surface
             border.width: 1
-            border.color: "#cbd1c8"
+            border.color: AppTheme.border
             radius: 6
             clip: true
 
@@ -503,7 +511,7 @@ Item {
                             Layout.fillWidth: true
                             text: variableButton.modelData.name
                             color: variableButton.modelData.pinned
-                                   ? "#247443" : "#4d574f"
+                                   ? AppTheme.success : AppTheme.textMuted
                             font.family: "monospace"
                             font.pixelSize: 9
                             elide: Text.ElideRight
@@ -513,7 +521,7 @@ Item {
                             Layout.preferredWidth:
                                 Math.max(54, variableGrid.cellWidth * 0.42)
                             text: variableButton.modelData.value
-                            color: "#20251f"
+                            color: AppTheme.text
                             font.family: "monospace"
                             font.pixelSize: 9
                             elide: Text.ElideRight
@@ -527,7 +535,7 @@ Item {
                     text: root.debuggerModel.active
                           ? qsTr("Pause on a source line to inspect variables.")
                           : qsTr("Variables appear during a debug session.")
-                    color: "#7b847c"
+                    color: AppTheme.textFaint
                     font.pixelSize: 10
                 }
             }

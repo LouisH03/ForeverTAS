@@ -10,12 +10,45 @@ ComboBox {
     leftPadding: 12
     rightPadding: 38
 
+    delegate: ItemDelegate {
+        id: optionDelegate
+
+        required property int index
+
+        width: control.popup.width - 2
+        height: 36
+        leftPadding: 11
+        rightPadding: 11
+        text: control.textAt(index)
+        highlighted: control.highlightedIndex === index
+        hoverEnabled: true
+        onClicked: {
+            control.currentIndex = index
+            control.activated(index)
+            control.popup.close()
+        }
+
+        contentItem: Text {
+            text: optionDelegate.text
+            color: optionDelegate.highlighted
+                   ? AppTheme.textOnAccent : AppTheme.text
+            font: optionDelegate.font
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            color: optionDelegate.highlighted
+                   ? AppTheme.accent : AppTheme.surface
+        }
+    }
+
     contentItem: Text {
         objectName: control.objectName.length > 0
                     ? control.objectName + "Content"
                     : "styledComboContent"
         text: control.displayText
-        color: control.enabled ? "#20251f" : "#7b8278"
+        color: control.enabled ? AppTheme.text : AppTheme.disabledText
         font: control.font
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
@@ -34,7 +67,7 @@ ComboBox {
             y: 8
             radius: 1
             rotation: 42
-            color: control.enabled ? "#4f594d" : "#92988f"
+            color: control.enabled ? AppTheme.textMuted : AppTheme.disabledText
         }
 
         Rectangle {
@@ -44,18 +77,43 @@ ComboBox {
             y: 8
             radius: 1
             rotation: -42
-            color: control.enabled ? "#4f594d" : "#92988f"
+            color: control.enabled ? AppTheme.textMuted : AppTheme.disabledText
         }
     }
 
     background: Rectangle {
         radius: 7
-        color: control.enabled ? "#ffffff" : "#ecefe9"
+        color: control.enabled ? AppTheme.surface : AppTheme.disabledSurface
         border.width: control.popup.visible || control.activeFocus ? 2 : 1
         border.color: control.popup.visible
-                      ? "#6d7b69"
+                      ? AppTheme.accent
                       : control.activeFocus
-                        ? "#899686"
-                        : "#c5ccc1"
+                        ? AppTheme.focus
+                        : AppTheme.border
+    }
+
+    popup: Popup {
+        y: control.height - 1
+        width: control.width
+        implicitHeight: Math.min(contentItem.implicitHeight + 2,
+                                 control.Window.height
+                                 - topMargin - bottomMargin)
+        padding: 1
+
+        contentItem: ListView {
+            clip: true
+            implicitHeight: contentHeight
+            model: control.popup.visible ? control.delegateModel : null
+            currentIndex: control.highlightedIndex
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollIndicator.vertical: ScrollIndicator {}
+        }
+
+        background: Rectangle {
+            color: AppTheme.surface
+            border.width: 1
+            border.color: AppTheme.borderStrong
+            radius: 6
+        }
     }
 }

@@ -17,6 +17,8 @@ Item {
     property bool imageExportInProgress: false
     property int pendingImageBoardIndex: -1
     property string pendingImageMode: ""
+    readonly property color toolbarControlText:
+        AppTheme.dark ? AppTheme.viewerOverlayText : AppTheme.text
     property var captureViewpoint: function() { return ({}) }
     property var restoreViewpoint: function(board) {}
     property var exportBackgroundImage: function(index, fileUrl) {
@@ -306,7 +308,7 @@ Item {
             height: 42
             visible: false
             placeholderText: qsTr("Annotation text")
-            color: "#f4f7f4"
+            color: AppTheme.viewerOverlayText
             selectByMouse: true
             maximumLength: 500
             onAccepted: root.commitTextEntry()
@@ -318,10 +320,10 @@ Item {
 
             background: Rectangle {
                 radius: 4
-                color: "#f0111513"
+                color: AppTheme.viewerOverlayStrong
                 border.width: 1
                 border.color: textEditor.activeFocus
-                              ? "#dce75c" : "#667169"
+                              ? "#dce75c" : AppTheme.viewerOverlayBorder
             }
         }
     }
@@ -337,9 +339,11 @@ Item {
                : 198
         height: root.model.active ? 84 : 46
         radius: 6
-        color: "#ee111513"
+        color: AppTheme.viewerOverlayStrong
         border.width: 1
-        border.color: root.model.active ? "#758176" : "#465049"
+        border.color: root.model.active
+                      ? (AppTheme.dark ? "#8b978d" : "#758176")
+                      : AppTheme.viewerOverlayBorder
         clip: true
 
         Column {
@@ -363,13 +367,24 @@ Item {
                     text: qsTr("Whiteboard")
                     onToggled: root.model.active = checked
 
+                    contentItem: Label {
+                        objectName: "whiteboardModeToggleLabel"
+                        text: modeToggle.text
+                        color: modeToggle.checked
+                               ? "#111513"
+                               : root.toolbarControlText
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
                     background: Rectangle {
                         radius: 4
                         color: modeToggle.checked
-                               ? "#dce75c" : "#e8ebe8"
+                               ? "#dce75c"
+                               : (AppTheme.dark ? AppTheme.control : "#e8ebe8")
                         border.width: 1
                         border.color: modeToggle.checked
-                                      ? "#f4f7a0" : "#88938b"
+                                      ? "#f4f7a0" : AppTheme.borderStrong
                         opacity: modeToggle.enabled ? 1 : 0.55
                     }
 
@@ -384,7 +399,7 @@ Item {
                     visible: root.model.active
                     width: 1
                     height: 24
-                    color: "#465049"
+                    color: AppTheme.viewerOverlayBorder
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
@@ -419,13 +434,23 @@ Item {
                         text: modelData.label
                         onClicked: root.model.tool = modelData.id
 
+                        contentItem: Label {
+                            text: toolButton.text
+                            color: toolButton.checked
+                                   ? "#111513"
+                                   : root.toolbarControlText
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+
                         background: Rectangle {
                             radius: 3
                             color: toolButton.checked
-                                   ? "#dce75c" : "#e8ebe8"
+                                   ? "#dce75c"
+                                   : (AppTheme.dark ? AppTheme.control : "#e8ebe8")
                             border.width: 1
                             border.color: toolButton.checked
-                                          ? "#f4f7a0" : "#88938b"
+                                          ? "#f4f7a0" : AppTheme.borderStrong
                         }
                     }
                 }
@@ -462,7 +487,7 @@ Item {
                         anchors.centerIn: parent
                         color: root.model.color
                         border.width: 1
-                        border.color: "#aeb8b0"
+                        border.color: AppTheme.viewerOverlayMuted
                     }
 
                     ToolTip.visible: hovered
@@ -473,7 +498,7 @@ Item {
                 Label {
                     visible: root.model.active
                     text: qsTr("Size")
-                    color: "#aeb8b0"
+                    color: AppTheme.viewerOverlayMuted
                     font.pixelSize: 11
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -559,9 +584,9 @@ Item {
         x: root.width - width - 14
         y: root.boardTop + 10
         radius: 6
-        color: "#f4111513"
+        color: AppTheme.viewerOverlayStrong
         border.width: 1
-        border.color: "#667169"
+        border.color: AppTheme.viewerOverlayBorder
         clip: true
 
         ColumnLayout {
@@ -575,7 +600,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     text: qsTr("Drawings")
-                    color: "#f4f7f4"
+                    color: AppTheme.viewerOverlayText
                     font.pixelSize: 16
                     font.bold: true
                 }
@@ -598,7 +623,7 @@ Item {
                     width: parent.width - 24
                     visible: root.model.boardCount === 0
                     text: qsTr("No placed drawings")
-                    color: "#9fa9a2"
+                    color: AppTheme.viewerOverlayMuted
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }
@@ -623,7 +648,8 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             color: boardRow.modelData.selected
-                                   ? "#303a34" : "transparent"
+                                   ? (AppTheme.dark ? "#3a443e" : "#303a34")
+                                   : "transparent"
                         }
 
                         Button {
@@ -643,7 +669,8 @@ Item {
                                     width: parent.width
                                     text: boardRow.modelData.name
                                     color: boardRow.modelData.isCurrentMap
-                                           ? "#f4f7f4" : "#8b958e"
+                                           ? AppTheme.viewerOverlayText
+                                           : AppTheme.viewerOverlayMuted
                                     elide: Text.ElideRight
                                 }
 
@@ -652,7 +679,7 @@ Item {
                                     text: boardRow.modelData.isCurrentMap
                                           ? qsTr("Current map")
                                           : qsTr("Other map")
-                                    color: "#9fa9a2"
+                                    color: AppTheme.viewerOverlayMuted
                                     font.pixelSize: 10
                                 }
                             }
@@ -721,7 +748,7 @@ Item {
                             anchors.right: parent.right
                             anchors.bottom: parent.bottom
                             height: 1
-                            color: "#303833"
+                            color: AppTheme.viewerOverlayBorder
                         }
                     }
                 }
@@ -731,7 +758,7 @@ Item {
                 Layout.fillWidth: true
                 visible: root.model.operationMessage.length > 0
                 text: root.model.operationMessage
-                color: "#aeb8b0"
+                color: AppTheme.viewerOverlayMuted
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
             }
@@ -797,9 +824,9 @@ Item {
 
         background: Rectangle {
             radius: 6
-            color: "#f0111513"
+            color: AppTheme.viewerOverlayStrong
             border.width: 1
-            border.color: "#667169"
+            border.color: AppTheme.viewerOverlayBorder
         }
 
         ColumnLayout {
@@ -857,6 +884,7 @@ Item {
         objectName: "whiteboardImportDialog"
         title: qsTr("Import whiteboard set")
         fileMode: FileDialog.OpenFile
+        options: FileDialog.DontUseNativeDialog
         nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
         onAccepted: root.model.importBoardSet(selectedFile)
     }
@@ -866,6 +894,7 @@ Item {
         objectName: "whiteboardExportDialog"
         title: qsTr("Export named whiteboard set")
         fileMode: FileDialog.SaveFile
+        options: FileDialog.DontUseNativeDialog
         defaultSuffix: "json"
         nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
         onAccepted: root.model.exportBoardSet(selectedFile)
@@ -878,6 +907,7 @@ Item {
                ? qsTr("Export drawing with full background")
                : qsTr("Export transparent drawing")
         fileMode: FileDialog.SaveFile
+        options: FileDialog.DontUseNativeDialog
         defaultSuffix: "png"
         nameFilters: [qsTr("PNG images (*.png)")]
         onAccepted: {

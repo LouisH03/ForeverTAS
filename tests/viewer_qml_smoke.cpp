@@ -6,9 +6,11 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QImage>
 #include <QInputDevice>
+#include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -256,6 +258,116 @@ int main(int argc, char **argv) {
         return 1;
     }
     QObject *const root = engine.rootObjects().front();
+    QObject *const settingsPanel =
+            root->findChild<QObject *>(QStringLiteral("settingsPanel"));
+    QObject *const darkModeToggle =
+            root->findChild<QObject *>(QStringLiteral("darkModeToggle"));
+    QObject *const whiteboardImportDialog =
+            root->findChild<QObject *>(
+                    QStringLiteral("whiteboardImportDialog"));
+    QObject *const whiteboardExportDialog =
+            root->findChild<QObject *>(
+                    QStringLiteral("whiteboardExportDialog"));
+    QObject *const whiteboardImageExportDialog =
+            root->findChild<QObject *>(
+                    QStringLiteral("whiteboardImageExportDialog"));
+    const auto usesApplicationFileDialog =
+            [](const QObject *dialog) {
+                return dialog != nullptr &&
+                       (dialog->property("options").toInt() &
+                        static_cast<int>(
+                                QFileDialog::DontUseNativeDialog)) != 0;
+            };
+    QObject *const initialMainMapLight =
+            root->findChild<QObject *>(QStringLiteral("mainMapLight"));
+    QObject *const initialFillMapLight =
+            root->findChild<QObject *>(QStringLiteral("fillMapLight"));
+    QObject *const initialMapEnvironment =
+            root->findChild<QObject *>(QStringLiteral("mapEnvironment"));
+    const QColor lightWindowColor = root->property("color").value<QColor>();
+    const QColor lightPanelColor =
+            settingsPanel != nullptr
+            ? settingsPanel->property("color").value<QColor>()
+            : QColor();
+    const QColor mainLightColor =
+            initialMainMapLight != nullptr
+            ? initialMainMapLight->property("color").value<QColor>()
+            : QColor();
+    const QColor fillLightColor =
+            initialFillMapLight != nullptr
+            ? initialFillMapLight->property("color").value<QColor>()
+            : QColor();
+    const QColor environmentColor =
+            initialMapEnvironment != nullptr
+            ? initialMapEnvironment->property("clearColor").value<QColor>()
+            : QColor();
+    const QColor lightWidgetWindowColor =
+            application.palette().color(QPalette::Window);
+    controller.setDarkMode(true);
+    QCoreApplication::processEvents();
+    const bool darkThemeValid =
+            controller.darkMode() && darkModeToggle != nullptr &&
+            darkModeToggle->property("checked").toBool() &&
+            usesApplicationFileDialog(whiteboardImportDialog) &&
+            usesApplicationFileDialog(whiteboardExportDialog) &&
+            usesApplicationFileDialog(whiteboardImageExportDialog) &&
+            root->property("color").value<QColor>() != lightWindowColor &&
+            settingsPanel != nullptr &&
+            settingsPanel->property("color").value<QColor>() !=
+                    lightPanelColor &&
+            application.palette().color(QPalette::Window) !=
+                    lightWidgetWindowColor &&
+            application.palette().color(QPalette::Text) ==
+                    QColor(QStringLiteral("#f0f3ef")) &&
+            application.palette().color(
+                    QPalette::Disabled, QPalette::Text) ==
+                    QColor(QStringLiteral("#737b74")) &&
+            initialMainMapLight != nullptr &&
+            initialMainMapLight->property("color").value<QColor>() ==
+                    mainLightColor &&
+            initialFillMapLight != nullptr &&
+            initialFillMapLight->property("color").value<QColor>() ==
+                    fillLightColor &&
+            initialMapEnvironment != nullptr &&
+            initialMapEnvironment->property("clearColor").value<QColor>() ==
+                    environmentColor;
+    controller.setDarkMode(false);
+    QCoreApplication::processEvents();
+    const bool lightThemeRestored =
+            darkModeToggle != nullptr &&
+            !darkModeToggle->property("checked").toBool() &&
+            settingsPanel != nullptr &&
+            root->property("color").value<QColor>() == lightWindowColor &&
+            settingsPanel->property("color").value<QColor>() ==
+                    lightPanelColor &&
+            application.palette().color(QPalette::Window) ==
+                    lightWidgetWindowColor;
+    if (!darkThemeValid || !lightThemeRestored) {
+        std::cerr << "light/dark theme switching changed scene rendering or "
+                     "failed to update the complete UI shell"
+                  << " (toggle=" << (darkModeToggle != nullptr)
+                  << ", settings=" << (settingsPanel != nullptr)
+                  << ", light-window="
+                  << lightWindowColor.name().toStdString()
+                  << ", restored-window="
+                  << root->property("color")
+                             .value<QColor>()
+                             .name()
+                             .toStdString()
+                  << ", light-panel="
+                  << lightPanelColor.name().toStdString()
+                  << ", restored-panel="
+                  << (settingsPanel != nullptr
+                              ? settingsPanel->property("color")
+                                        .value<QColor>()
+                                        .name()
+                                        .toStdString()
+                              : std::string("<missing>"))
+                  << ", scene=" << (initialMainMapLight != nullptr)
+                  << "/" << (initialFillMapLight != nullptr)
+                  << "/" << (initialMapEnvironment != nullptr) << ")\n";
+        return 1;
+    }
 
     QObject::connect(
             &viewer,
@@ -2216,6 +2328,94 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "trackVisualNormalTexture"));
+                                const auto materialState =
+                                        [](const QObject *material) {
+                                            return QVariantList{
+                                                    material->property(
+                                                            "baseColor"),
+                                                    material->property(
+                                                            "baseColorMap"),
+                                                    material->property(
+                                                            "normalMap"),
+                                                    material->property(
+                                                            "roughness"),
+                                                    material->property(
+                                                            "metalness"),
+                                                    material->property(
+                                                            "opacity"),
+                                                    material->property(
+                                                            "cullMode")};
+                                        };
+                                std::vector<QVariantList>
+                                        materialStatesBeforeThemeChange;
+                                materialStatesBeforeThemeChange.reserve(
+                                        static_cast<std::size_t>(
+                                                visualMaterials.size()));
+                                for (const QObject *material :
+                                     visualMaterials) {
+                                    materialStatesBeforeThemeChange.push_back(
+                                            materialState(material));
+                                }
+                                const QVariantList sceneStateBeforeThemeChange{
+                                        filled->property("geometry"),
+                                        wire->property("geometry"),
+                                        mapEnvironment->property(
+                                                "clearColor"),
+                                        mapEnvironment->property(
+                                                "lightProbe"),
+                                        mapEnvironment->property(
+                                                "backgroundMode"),
+                                        mainMapLight->property("color"),
+                                        mainMapLight->property("brightness"),
+                                        fillMapLight->property("color"),
+                                        fillMapLight->property("brightness"),
+                                        viewCamera->property("fieldOfView"),
+                                        viewCamera->property("clipNear"),
+                                        viewCamera->property("clipFar")};
+                                controller.setDarkMode(true);
+                                QCoreApplication::processEvents();
+                                bool loadedSceneThemeInvariant =
+                                        sceneStateBeforeThemeChange ==
+                                                QVariantList{
+                                                        filled->property(
+                                                                "geometry"),
+                                                        wire->property(
+                                                                "geometry"),
+                                                        mapEnvironment
+                                                                ->property(
+                                                                        "clearColor"),
+                                                        mapEnvironment
+                                                                ->property(
+                                                                        "lightProbe"),
+                                                        mapEnvironment
+                                                                ->property(
+                                                                        "backgroundMode"),
+                                                        mainMapLight->property(
+                                                                "color"),
+                                                        mainMapLight->property(
+                                                                "brightness"),
+                                                        fillMapLight->property(
+                                                                "color"),
+                                                        fillMapLight->property(
+                                                                "brightness"),
+                                                        viewCamera->property(
+                                                                "fieldOfView"),
+                                                        viewCamera->property(
+                                                                "clipNear"),
+                                                        viewCamera->property(
+                                                                "clipFar")};
+                                for (qsizetype index = 0;
+                                     index < visualMaterials.size();
+                                     ++index) {
+                                    loadedSceneThemeInvariant &=
+                                            materialStatesBeforeThemeChange
+                                                    .at(static_cast<
+                                                        std::size_t>(index)) ==
+                                            materialState(
+                                                    visualMaterials.at(index));
+                                }
+                                controller.setDarkMode(false);
+                                QCoreApplication::processEvents();
                                 const int expectedCarModels =
                                         static_cast<int>(
                                                 viewer.ellipsoidCount() *
@@ -2624,6 +2824,10 @@ int main(int argc, char **argv) {
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
                                                         "whiteboardModeToggle"));
+                                QObject *const whiteboardModeToggleLabel =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardModeToggleLabel"));
                                 QObject *const whiteboardDrawingInput =
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
@@ -2663,6 +2867,37 @@ int main(int argc, char **argv) {
                                                 QStringLiteral(
                                                         "Apex note")) == 1;
                                 QCoreApplication::processEvents();
+                                const QColor lightWhiteboardToolText =
+                                        whiteboardOverlay != nullptr
+                                        ? whiteboardOverlay
+                                                  ->property(
+                                                          "toolbarControlText")
+                                                  .value<QColor>()
+                                        : QColor();
+                                controller.setDarkMode(true);
+                                QCoreApplication::processEvents();
+                                const QColor darkWhiteboardToolText =
+                                        whiteboardOverlay != nullptr
+                                        ? whiteboardOverlay
+                                                  ->property(
+                                                          "toolbarControlText")
+                                                  .value<QColor>()
+                                        : QColor();
+                                controller.setDarkMode(false);
+                                QCoreApplication::processEvents();
+                                const bool whiteboardToolThemeContrast =
+                                        whiteboardOverlay != nullptr &&
+                                        lightWhiteboardToolText ==
+                                                QColor(QStringLiteral(
+                                                        "#202421")) &&
+                                        darkWhiteboardToolText ==
+                                                QColor(QStringLiteral(
+                                                        "#f0f3ef")) &&
+                                        whiteboardOverlay
+                                                        ->property(
+                                                                "toolbarControlText")
+                                                        .value<QColor>() ==
+                                                lightWhiteboardToolText;
                                 const bool whiteboardActiveState =
                                         whiteboardOverlay != nullptr &&
                                         whiteboardToolbar != nullptr &&
@@ -2807,8 +3042,38 @@ int main(int argc, char **argv) {
                                 QCoreApplication::processEvents();
                                 whiteboard->setActive(false);
                                 QCoreApplication::processEvents();
+                                const QColor lightWhiteboardModeText =
+                                        whiteboardModeToggleLabel != nullptr
+                                        ? whiteboardModeToggleLabel
+                                                  ->property("color")
+                                                  .value<QColor>()
+                                        : QColor();
+                                controller.setDarkMode(true);
+                                QCoreApplication::processEvents();
+                                const QColor darkWhiteboardModeText =
+                                        whiteboardModeToggleLabel != nullptr
+                                        ? whiteboardModeToggleLabel
+                                                  ->property("color")
+                                                  .value<QColor>()
+                                        : QColor();
+                                controller.setDarkMode(false);
+                                QCoreApplication::processEvents();
+                                const bool whiteboardModeThemeContrast =
+                                        whiteboardModeToggleLabel != nullptr &&
+                                        lightWhiteboardModeText ==
+                                                QColor(QStringLiteral(
+                                                        "#202421")) &&
+                                        darkWhiteboardModeText ==
+                                                QColor(QStringLiteral(
+                                                        "#f0f3ef")) &&
+                                        whiteboardModeToggleLabel
+                                                        ->property("color")
+                                                        .value<QColor>() ==
+                                                lightWhiteboardModeText;
                                 const bool whiteboardIntegrated =
                                         whiteboardActiveState &&
+                                        whiteboardToolThemeContrast &&
+                                        whiteboardModeThemeContrast &&
                                         whiteboardHiddenState &&
                                         whiteboardShownAgain &&
                                         whiteboardPlaneRepeater
@@ -2965,6 +3230,7 @@ int main(int argc, char **argv) {
                                                         rayTracingModeValid &&
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
+                                                        loadedSceneThemeInvariant &&
                                                         trajectorySaveUiValid &&
                                                         improvementTrajectoryUiValid &&
                                                         allTrajectoryModelsRendered &&
@@ -3042,6 +3308,16 @@ int main(int argc, char **argv) {
                                             << ", whiteboard="
                                             << whiteboardActiveState << "/"
                                             << whiteboardIntegrated << "/"
+                                            << whiteboardToolThemeContrast << "/"
+                                            << whiteboardModeThemeContrast << "/"
+                                            << lightWhiteboardToolText
+                                                       .name()
+                                                       .toStdString()
+                                            << "/"
+                                            << darkWhiteboardToolText
+                                                       .name()
+                                                       .toStdString()
+                                            << "/"
                                             << whiteboard->count()
                                             << "/placed="
                                             << whiteboardPlaced
@@ -3115,6 +3391,8 @@ int main(int argc, char **argv) {
                                             << optimizedRenderState
                                             << ", daylightEnvironment="
                                             << daylightEnvironment
+                                            << ", themeSceneInvariant="
+                                            << loadedSceneThemeInvariant
                                             << ", clipNear="
                                             << (viewCamera
                                                         ? viewCamera

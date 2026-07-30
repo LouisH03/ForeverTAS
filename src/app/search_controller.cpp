@@ -6,9 +6,13 @@
 #include "mutations/replay_input_script.h"
 #include "searches/algorithm_registry.h"
 
+#include <QApplication>
+#include <QColor>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileDialog>
+#include <QPalette>
 #include <QSettings>
 #include <QThread>
 #include <QTimer>
@@ -28,7 +32,72 @@ constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
 constexpr char kCudaCalibrationEnabledKey[] =
         "backends/cuda/calibrationEnabled";
+constexpr char kDarkModeKey[] = "appearance/darkMode";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
+
+void ApplyApplicationPalette(bool dark) {
+    auto *const application =
+            qobject_cast<QApplication *>(QCoreApplication::instance());
+    if (application == nullptr) {
+        return;
+    }
+
+    QPalette palette;
+    const QColor window =
+            dark ? QColor(QStringLiteral("#171a18"))
+                 : QColor(QStringLiteral("#eceeeb"));
+    const QColor surface =
+            dark ? QColor(QStringLiteral("#292e2a")) : Qt::white;
+    const QColor alternate =
+            dark ? QColor(QStringLiteral("#242925"))
+                 : QColor(QStringLiteral("#f3f5f1"));
+    const QColor control =
+            dark ? QColor(QStringLiteral("#343a35"))
+                 : QColor(QStringLiteral("#e1e5df"));
+    const QColor text =
+            dark ? QColor(QStringLiteral("#f0f3ef"))
+                 : QColor(QStringLiteral("#202421"));
+    const QColor muted =
+            dark ? QColor(QStringLiteral("#aeb8b0"))
+                 : QColor(QStringLiteral("#667064"));
+    const QColor accent =
+            dark ? QColor(QStringLiteral("#45b778"))
+                 : QColor(QStringLiteral("#26734d"));
+    const QColor accentText =
+            dark ? QColor(QStringLiteral("#101411")) : Qt::white;
+    const QColor disabledSurface =
+            dark ? QColor(QStringLiteral("#252925"))
+                 : QColor(QStringLiteral("#ecefe9"));
+    const QColor disabledText =
+            dark ? QColor(QStringLiteral("#737b74"))
+                 : QColor(QStringLiteral("#92988f"));
+    const QColor tooltip =
+            dark ? QColor(QStringLiteral("#f0f3ef"))
+                 : QColor(QStringLiteral("#202421"));
+    const QColor tooltipText =
+            dark ? QColor(QStringLiteral("#202421")) : Qt::white;
+
+    palette.setColor(QPalette::Window, window);
+    palette.setColor(QPalette::WindowText, text);
+    palette.setColor(QPalette::Base, surface);
+    palette.setColor(QPalette::AlternateBase, alternate);
+    palette.setColor(QPalette::Text, text);
+    palette.setColor(QPalette::Button, control);
+    palette.setColor(QPalette::ButtonText, text);
+    palette.setColor(QPalette::BrightText, text);
+    palette.setColor(QPalette::Highlight, accent);
+    palette.setColor(QPalette::HighlightedText, accentText);
+    palette.setColor(QPalette::ToolTipBase, tooltip);
+    palette.setColor(QPalette::ToolTipText, tooltipText);
+    palette.setColor(QPalette::PlaceholderText, muted);
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
+    palette.setColor(QPalette::Disabled, QPalette::Text, disabledText);
+    palette.setColor(QPalette::Disabled, QPalette::Button, disabledSurface);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
+    palette.setColor(
+            QPalette::Disabled, QPalette::HighlightedText, disabledText);
+    application->setPalette(palette);
+}
 
 struct ReplayInputExtractionResult {
     QString script;
@@ -130,6 +199,9 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     cudaCalibrationEnabled_ = QSettings()
             .value(QLatin1String(kCudaCalibrationEnabledKey), false)
             .toBool();
+    darkMode_ =
+            QSettings().value(QLatin1String(kDarkModeKey), false).toBool();
+    ApplyApplicationPalette(darkMode_);
     const QString storedBackend = StoredValue(
             kSimulationBackendKey,
             BackendId(PhysicsBackend::Reference));
@@ -248,6 +320,10 @@ QString SearchController::cudaParallelSampleCount() const {
 
 bool SearchController::cudaCalibrationEnabled() const {
     return cudaCalibrationEnabled_;
+}
+
+bool SearchController::darkMode() const {
+    return darkMode_;
 }
 
 QVariantList SearchController::searchAlgorithmOptions() const {
@@ -426,6 +502,16 @@ void SearchController::setCudaCalibrationEnabled(bool value) {
             QLatin1String(kCudaCalibrationEnabledKey), value);
     emit cudaCalibrationEnabledChanged();
     refreshValidation();
+}
+
+void SearchController::setDarkMode(bool value) {
+    if (darkMode_ == value) {
+        return;
+    }
+    darkMode_ = value;
+    QSettings().setValue(QLatin1String(kDarkModeKey), value);
+    ApplyApplicationPalette(value);
+    emit darkModeChanged();
 }
 
 void SearchController::setEvaluationTargetId(const QString &value) {
@@ -677,7 +763,7 @@ void SearchController::browseForPacksDirectory() {
             nullptr,
             QStringLiteral("Select Packs directory"),
             initialDirectory,
-            QFileDialog::ShowDirsOnly);
+            QFileDialog::ShowDirsOnly | QFileDialog::DontUseNativeDialog);
     if (!selected.isEmpty()) {
         setPacksDirectory(selected);
     }
@@ -702,7 +788,9 @@ void SearchController::browseForReplay() {
             initialPath,
             QStringLiteral(
                     "TrackMania replays (*.Replay.Gbx *.Gbx);;"
-                    "All files (*)"));
+                    "All files (*)"),
+            nullptr,
+            QFileDialog::DontUseNativeDialog);
     if (!selected.isEmpty()) {
         setReplayPath(selected);
     }

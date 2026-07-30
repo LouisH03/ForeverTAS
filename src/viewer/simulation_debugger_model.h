@@ -37,6 +37,8 @@ class SimulationDebuggerModel final : public QObject {
     Q_PROPERTY(QString editError READ editError NOTIFY linesChanged)
     Q_PROPERTY(bool hasEdits READ hasEdits NOTIFY filesChanged)
     Q_PROPERTY(qint64 executionTick READ executionTick NOTIFY executionChanged)
+    Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
+                       themeChanged)
 
   public:
     explicit SimulationDebuggerModel(QObject *parent = nullptr);
@@ -58,6 +60,7 @@ class SimulationDebuggerModel final : public QObject {
     QString editError() const;
     bool hasEdits() const;
     qint64 executionTick() const;
+    bool darkMode() const;
 
     Q_INVOKABLE bool selectFile(const QString &path);
     Q_INVOKABLE void toggleFolder(const QString &path);
@@ -65,6 +68,7 @@ class SimulationDebuggerModel final : public QObject {
     Q_INVOKABLE bool toggleBreakpoint(const QString &path, int lineNumber);
     Q_INVOKABLE bool togglePinned(const QString &name);
     Q_INVOKABLE void resetEdits();
+    void setDarkMode(bool value);
 
     void configure(const QString &backendName);
     bool startSession(const QString &packsDirectory, const QString &replayPath);
@@ -81,6 +85,7 @@ class SimulationDebuggerModel final : public QObject {
     void variablesChanged();
     void frameProduced(const QVariantMap &frame);
     void sessionFinished();
+    void themeChanged();
 
   private:
     struct SourceEdit {
@@ -124,7 +129,7 @@ class SimulationDebuggerModel final : public QObject {
         int line = 0;
     };
 
-    static QString syntaxHighlighted(const QString &text);
+    QString syntaxHighlighted(const QString &text) const;
     static QString fileName(const QString &path);
     static int depth(const QString &path);
     static QString lldbExecutablePath();
@@ -207,6 +212,7 @@ class SimulationDebuggerModel final : public QObject {
     bool atTickBoundary_ = false;
     bool workerReady_ = false;
     bool stopping_ = false;
+    bool darkMode_ = false;
 };
 
 } // namespace forevertas::viewer

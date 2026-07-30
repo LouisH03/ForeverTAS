@@ -116,9 +116,9 @@ ColumnLayout {
             Layout.fillWidth: true
             implicitHeight: passLayout.implicitHeight + 16
             radius: 8
-            color: "#f3f5f1"
+            color: AppTheme.surfaceAlternate
             border.width: 1
-            border.color: "#cbd1c8"
+            border.color: AppTheme.border
 
             ColumnLayout {
                 id: passLayout

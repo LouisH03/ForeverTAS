@@ -312,12 +312,28 @@ int main(int argc, char **argv) {
                         "multi-line input escaped the source-line edit "
                         "boundary");
                 const QVariantMap functionLine = model->lines().at(28).toMap();
+                const QString lightHighlight =
+                        functionLine
+                                .value(QStringLiteral("highlighted"))
+                                .toString();
+                model->setDarkMode(true);
+                const QString darkHighlight =
+                        model->lines()
+                                .at(28)
+                                .toMap()
+                                .value(QStringLiteral("highlighted"))
+                                .toString();
+                okay &= Check(
+                        model->darkMode() && darkHighlight != lightHighlight &&
+                                darkHighlight.contains(
+                                        QStringLiteral("#80b9ef")),
+                        "source syntax colors did not switch to the dark "
+                        "theme");
+                model->setDarkMode(false);
                 okay &= Check(
                         !originalApplyLine.isEmpty() &&
-                                functionLine
-                                        .value(QStringLiteral("highlighted"))
-                                        .toString()
-                                        .contains(QStringLiteral("<span")) &&
+                                lightHighlight.contains(
+                                        QStringLiteral("<span")) &&
                                 model->toggleBreakpoint(
                                         QString::fromLatin1(kVehicleSource),
                                         kApplyControlsLine) &&

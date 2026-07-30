@@ -328,7 +328,7 @@ ColumnLayout {
                   ? qsTr("%1 of 3 minimum vertices")
                         .arg(root.selected.vertexCount)
                   : qsTr("%1 vertices").arg(root.selected.vertexCount)
-            color: root.selected.valid ? "#4f6f58" : "#9a5b28"
+            color: root.selected.valid ? AppTheme.success : AppTheme.warning
             font.pixelSize: 11
         }
 
@@ -349,7 +349,7 @@ ColumnLayout {
                 Label {
                     Layout.preferredWidth: 20
                     text: modelData.index + 1
-                    color: "#667064"
+                    color: AppTheme.textMuted
                     horizontalAlignment: Text.AlignHCenter
                 }
                 ScrubNumberField {
@@ -409,7 +409,7 @@ ColumnLayout {
         text: root.customActive
               ? qsTr("Active custom-volume search target")
               : qsTr("Active cuboid search target")
-        color: "#4f6f58"
+        color: AppTheme.success
         font.pixelSize: 11
         font.weight: Font.Medium
     }

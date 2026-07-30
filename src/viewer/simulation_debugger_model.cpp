@@ -139,6 +139,19 @@ qint64 SimulationDebuggerModel::executionTick() const {
     return executionTick_;
 }
 
+bool SimulationDebuggerModel::darkMode() const {
+    return darkMode_;
+}
+
+void SimulationDebuggerModel::setDarkMode(bool value) {
+    if (darkMode_ == value) {
+        return;
+    }
+    darkMode_ = value;
+    emit themeChanged();
+    emit linesChanged();
+}
+
 bool SimulationDebuggerModel::hasEdits() const {
     return std::any_of(
             sources_.begin(), sources_.end(), [](const SourceFile &source) {
@@ -484,7 +497,7 @@ void SimulationDebuggerModel::pause() {
     }
 }
 
-QString SimulationDebuggerModel::syntaxHighlighted(const QString &text) {
+QString SimulationDebuggerModel::syntaxHighlighted(const QString &text) const {
     QString escaped = HtmlEscape(text);
     static const QRegularExpression stringPattern(
             QStringLiteral("(\".*?\"|'.*?')"));
@@ -497,21 +510,33 @@ QString SimulationDebuggerModel::syntaxHighlighted(const QString &text) {
             "private|protected|public|return|sizeof|static|struct|"
             "switch|template|this|throw|true|try|typename|using|"
             "void|while)\\b"));
+    const QString stringColor =
+            darkMode_ ? QStringLiteral("#e9b86c") : QStringLiteral("#8a4f27");
+    const QString numberColor =
+            darkMode_ ? QStringLiteral("#d9a0e8") : QStringLiteral("#8b3fa3");
+    const QString keywordColor =
+            darkMode_ ? QStringLiteral("#80b9ef") : QStringLiteral("#235f9e");
+    const QString commentColor =
+            darkMode_ ? QStringLiteral("#91a092") : QStringLiteral("#6b786b");
     escaped.replace(
             stringPattern,
-            QStringLiteral("<span style=\"color:#8a4f27\">\\1</span>"));
+            QStringLiteral("<span style=\"color:%1\">\\1</span>")
+                    .arg(stringColor));
     escaped.replace(
             numberPattern,
-            QStringLiteral("<span style=\"color:#8b3fa3\">\\1</span>"));
+            QStringLiteral("<span style=\"color:%1\">\\1</span>")
+                    .arg(numberColor));
     escaped.replace(
             keywordPattern,
             QStringLiteral(
-                    "<span style=\"color:#235f9e;font-weight:600\">"
-                    "\\1</span>"));
+                    "<span style=\"color:%1;font-weight:600\">"
+                    "\\1</span>")
+                    .arg(keywordColor));
     const qsizetype comment = escaped.indexOf(QStringLiteral("//"));
     if (comment >= 0) {
         escaped = escaped.left(comment) +
-                  QStringLiteral("<span style=\"color:#6b786b\">") +
+                  QStringLiteral("<span style=\"color:%1\">")
+                          .arg(commentColor) +
                   escaped.mid(comment) + QStringLiteral("</span>");
     }
     return escaped;

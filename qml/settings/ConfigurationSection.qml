@@ -12,9 +12,9 @@ Rectangle {
     Layout.fillWidth: true
     implicitHeight: sectionLayout.implicitHeight + 28
     radius: 10
-    color: "#f7f8f5"
+    color: AppTheme.panelAlternate
     border.width: 1
-    border.color: "#d4dad1"
+    border.color: AppTheme.border
 
     ColumnLayout {
         id: sectionLayout
@@ -25,7 +25,7 @@ Rectangle {
         Label {
             Layout.fillWidth: true
             text: root.title
-            color: "#20251f"
+            color: AppTheme.text
             font.pixelSize: 16
             font.weight: Font.DemiBold
         }
@@ -34,7 +34,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: text.length > 0
             text: root.description
-            color: "#667064"
+            color: AppTheme.textMuted
             font.pixelSize: 12
             wrapMode: Text.WordWrap
         }

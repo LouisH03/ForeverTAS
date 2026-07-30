@@ -21,6 +21,12 @@ ApplicationWindow {
     readonly property var settingsWheelRedirectorObject:
         settingsWheelRedirector
 
+    Binding {
+        target: AppTheme
+        property: "dark"
+        value: window.controller.darkMode
+    }
+
     FrameAnimation {
         id: frameRateMonitor
         objectName: "frameRateMonitor"
@@ -191,7 +197,7 @@ ApplicationWindow {
     minimumHeight: 580
     visible: true
     title: qsTr("ForeverTAS")
-    color: "#eceeeb"
+    color: AppTheme.window
 
     Dialog {
         id: replaceBaseInputScriptDialog
@@ -211,15 +217,32 @@ ApplicationWindow {
     }
 
     palette {
-        window: "#eceeeb"
-        windowText: "#202421"
-        base: "#ffffff"
-        alternateBase: "#f4f5f2"
-        text: "#202421"
-        button: "#e1e5df"
-        buttonText: "#202421"
-        highlight: "#26734d"
-        highlightedText: "#ffffff"
+        window: AppTheme.window
+        windowText: AppTheme.text
+        base: AppTheme.surface
+        alternateBase: AppTheme.surfaceAlternate
+        text: AppTheme.text
+        brightText: AppTheme.text
+        button: AppTheme.control
+        buttonText: AppTheme.text
+        light: AppTheme.surfaceRaised
+        midlight: AppTheme.border
+        mid: AppTheme.borderStrong
+        dark: AppTheme.textFaint
+        shadow: AppTheme.scrim
+        highlight: AppTheme.accent
+        highlightedText: AppTheme.textOnAccent
+        placeholderText: AppTheme.textFaint
+        toolTipBase: AppTheme.tooltipBackground
+        toolTipText: AppTheme.tooltipText
+    }
+
+    Overlay.modal: Rectangle {
+        color: AppTheme.scrim
+    }
+
+    Overlay.modeless: Rectangle {
+        color: "transparent"
     }
 
     Shortcut {
@@ -262,7 +285,7 @@ ApplicationWindow {
         Rectangle {
             SplitView.fillWidth: true
             SplitView.minimumWidth: 680
-            color: "#181b19"
+            color: AppTheme.dark ? "#151815" : "#181b19"
 
             RowLayout {
                 anchors.fill: parent
@@ -275,7 +298,7 @@ ApplicationWindow {
                     Layout.minimumWidth: 220
                     Layout.maximumWidth: 300
                     Layout.fillHeight: true
-                    color: "#101412"
+                    color: AppTheme.dark ? "#0d100e" : "#101412"
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -284,7 +307,7 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 52
-                            color: "#151a17"
+                            color: AppTheme.dark ? "#121613" : "#151a17"
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -297,7 +320,7 @@ ApplicationWindow {
                                 Label {
                                     objectName: "timelineTimeLabel"
                                     text: window.viewer.timeText
-                                    color: "#f0f3ef"
+                                    color: AppTheme.viewerOverlayText
                                     font.family: "monospace"
                                     font.pixelSize: 15
                                     font.weight: Font.Medium
@@ -312,7 +335,7 @@ ApplicationWindow {
                                           : window.viewer.loaded
                                             ? qsTr("Map loaded · no search run")
                                             : qsTr("100 physics ticks / second")
-                                    color: "#747f77"
+                                    color: AppTheme.dark ? "#8a958c" : "#747f77"
                                     font.pixelSize: 10
                                 }
                             }
@@ -332,7 +355,7 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 50
-                            color: "#151a17"
+                            color: AppTheme.dark ? "#121613" : "#151a17"
 
                             RowLayout {
                                 anchors.fill: parent
@@ -348,7 +371,7 @@ ApplicationWindow {
                                 }
                                 Label {
                                     text: qsTr("Steer")
-                                    color: "#9fa9a2"
+                                    color: AppTheme.viewerOverlayMuted
                                     font.pixelSize: 10
                                 }
                                 Rectangle {
@@ -359,7 +382,7 @@ ApplicationWindow {
                                 }
                                 Label {
                                     text: qsTr("Gas")
-                                    color: "#9fa9a2"
+                                    color: AppTheme.viewerOverlayMuted
                                     font.pixelSize: 10
                                 }
                                 Rectangle {
@@ -371,7 +394,7 @@ ApplicationWindow {
                                 Label {
                                     Layout.fillWidth: true
                                     text: qsTr("Brake")
-                                    color: "#9fa9a2"
+                                    color: AppTheme.viewerOverlayMuted
                                     font.pixelSize: 10
                                 }
                             }
@@ -382,7 +405,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.preferredWidth: 1
                     Layout.fillHeight: true
-                    color: "#2b322e"
+                    color: AppTheme.viewerOverlayControl
                 }
 
                 Item {
@@ -2023,7 +2046,7 @@ ApplicationWindow {
                         z: 3
                         visible: !viewport.exportingWhiteboardImage
                         height: 52
-                        color: "#cc111412"
+                        color: AppTheme.viewerOverlay
 
                         RowLayout {
                             id: headerControlsRow
@@ -2044,7 +2067,7 @@ ApplicationWindow {
 
                                 Label {
                                     text: qsTr("Race Viewer")
-                                    color: "#eef2ee"
+                                    color: AppTheme.viewerOverlayText
                                     font.pixelSize: 17
                                     font.weight: Font.DemiBold
                                 }
@@ -2063,7 +2086,7 @@ ApplicationWindow {
                                                 .arg(Math.round(
                                                          window.measuredFps))
                                           : window.viewer.statusText
-                                    color: "#aeb8b0"
+                                    color: AppTheme.viewerOverlayMuted
                                     font.pixelSize: 11
                                     elide: Text.ElideRight
                                 }
@@ -2188,9 +2211,9 @@ ApplicationWindow {
                         width: 286
                         height: 58
                         radius: 16
-                        color: "#e6111513"
+                        color: AppTheme.viewerOverlay
                         border.width: 1
-                        border.color: "#465049"
+                        border.color: AppTheme.viewerOverlayBorder
 
                         RowLayout {
                             anchors.centerIn: parent
@@ -2205,7 +2228,7 @@ ApplicationWindow {
                                 text: ""
                                 enabled: window.viewer.runCount > 0
                                          && !window.viewer.manualDriving
-                                palette.buttonText: "#e6ebe7"
+                                palette.buttonText: AppTheme.viewerOverlayText
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to start")
                                 onClicked: window.viewer.jumpToStart()
@@ -2223,7 +2246,7 @@ ApplicationWindow {
                                             width: 3
                                             height: 14
                                             radius: 1
-                                            color: "#e6ebe7"
+                                            color: AppTheme.viewerOverlayText
                                         }
 
                                         Shape {
@@ -2231,7 +2254,8 @@ ApplicationWindow {
 
                                             ShapePath {
                                                 strokeWidth: -1
-                                                fillColor: "#e6ebe7"
+                                                fillColor:
+                                                    AppTheme.viewerOverlayText
                                                 startX: 15
                                                 startY: 2
                                                 PathLine {
@@ -2261,7 +2285,8 @@ ApplicationWindow {
                                 text: ""
                                 enabled: window.viewer.runCount > 0
                                          && !window.viewer.manualDriving
-                                palette.buttonText: "#ffffff"
+                                palette.buttonText:
+                                    AppTheme.viewerOverlayText
                                 ToolTip.visible: hovered
                                 ToolTip.text: window.viewer.playing
                                               ? qsTr("Pause")
@@ -2278,7 +2303,8 @@ ApplicationWindow {
 
                                         ShapePath {
                                             strokeWidth: -1
-                                            fillColor: "#ffffff"
+                                            fillColor:
+                                                AppTheme.viewerOverlayText
                                             startX: 4
                                             startY: 2
                                             PathLine {
@@ -2309,7 +2335,7 @@ ApplicationWindow {
                                             width: 4
                                             height: 14
                                             radius: 1
-                                            color: "#ffffff"
+                                            color: AppTheme.viewerOverlayText
                                         }
 
                                         Rectangle {
@@ -2318,7 +2344,7 @@ ApplicationWindow {
                                             width: 4
                                             height: 14
                                             radius: 1
-                                            color: "#ffffff"
+                                            color: AppTheme.viewerOverlayText
                                         }
                                     }
                                 }
@@ -2333,7 +2359,7 @@ ApplicationWindow {
                                 text: ""
                                 enabled: window.viewer.runCount > 0
                                          && !window.viewer.manualDriving
-                                palette.buttonText: "#e6ebe7"
+                                palette.buttonText: AppTheme.viewerOverlayText
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to end")
                                 onClicked: window.viewer.jumpToEnd()
@@ -2350,7 +2376,8 @@ ApplicationWindow {
 
                                             ShapePath {
                                                 strokeWidth: -1
-                                                fillColor: "#e6ebe7"
+                                                fillColor:
+                                                    AppTheme.viewerOverlayText
                                                 startX: 3
                                                 startY: 2
                                                 PathLine {
@@ -2374,7 +2401,7 @@ ApplicationWindow {
                                             width: 3
                                             height: 14
                                             radius: 1
-                                            color: "#e6ebe7"
+                                            color: AppTheme.viewerOverlayText
                                         }
                                     }
                                 }
@@ -2402,6 +2429,15 @@ ApplicationWindow {
                                             manualInputFocus.forceActiveFocus()
                                     }
                                 }
+
+                                contentItem: Label {
+                                    text: manualDriveButton.text
+                                    color: manualDriveButton.enabled
+                                           ? AppTheme.text
+                                           : AppTheme.disabledText
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
                             }
                         }
                     }
@@ -2418,9 +2454,9 @@ ApplicationWindow {
                         radius: 6
                         visible: window.viewer.manualDriving
                                  && !viewport.exportingWhiteboardImage
-                        color: "#e6111513"
+                        color: AppTheme.viewerOverlay
                         border.width: 1
-                        border.color: "#465049"
+                        border.color: AppTheme.viewerOverlayBorder
 
                         RowLayout {
                             anchors.fill: parent
@@ -2431,7 +2467,7 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: qsTr("Manual")
-                                color: "#e6ebe7"
+                                color: AppTheme.viewerOverlayText
                                 font.pixelSize: 11
                                 font.weight: Font.DemiBold
                             }
@@ -2455,15 +2491,18 @@ ApplicationWindow {
                                     Layout.preferredWidth: 26
                                     Layout.preferredHeight: 24
                                     radius: 4
-                                    color: active ? "#3dbd73" : "#2b322e"
+                                    color: active ? "#3dbd73"
+                                                  : AppTheme.viewerOverlayControl
                                     border.width: 1
                                     border.color:
-                                        active ? "#73d99a" : "#465049"
+                                        active ? "#73d99a"
+                                               : AppTheme.viewerOverlayBorder
 
                                     Label {
                                         anchors.centerIn: parent
                                         text: symbol
-                                        color: active ? "#0c2014" : "#aeb8b0"
+                                        color: active ? "#0c2014"
+                                                      : AppTheme.viewerOverlayMuted
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
                                     }
@@ -2491,7 +2530,7 @@ ApplicationWindow {
                             text: window.viewer.loading
                                   ? window.viewer.statusText
                                   : qsTr("Select a replay and load its map from the settings panel.")
-                            color: "#d9ded9"
+                            color: AppTheme.viewerOverlayText
                             wrapMode: Text.WordWrap
                             font.pixelSize: 16
                         }
@@ -2503,7 +2542,7 @@ ApplicationWindow {
                                         !== qsTr("No map loaded")
                             horizontalAlignment: Text.AlignHCenter
                             text: window.viewer.statusText
-                            color: "#e19b9b"
+                            color: AppTheme.dark ? "#f0a19e" : "#e19b9b"
                             wrapMode: Text.WordWrap
                             font.pixelSize: 12
                         }
@@ -2514,10 +2553,11 @@ ApplicationWindow {
         }
 
         Rectangle {
+            objectName: "settingsPanel"
             SplitView.preferredWidth: 390
             SplitView.minimumWidth: 340
             SplitView.maximumWidth: 480
-            color: "#f4f5f2"
+            color: AppTheme.panel
 
             ScrollView {
                 id: settingsScroll
@@ -2562,9 +2602,9 @@ ApplicationWindow {
                             implicitHeight: autoPacksSuggestionLayout.implicitHeight
                                             + 16
                             radius: 8
-                            color: "#e7f2eb"
+                            color: AppTheme.accentSoft
                             border.width: 1
-                            border.color: "#8eb49d"
+                            border.color: AppTheme.accentBorder
                             visible:
                                 window.controller.autoDetectedPacksDirectory.length
                                 > 0
@@ -2583,7 +2623,8 @@ ApplicationWindow {
                                         objectName: "autoPacksSuggestionText"
                                         Layout.fillWidth: true
                                         text: qsTr("This location was found automatically and should work. Apply?")
-                                        color: "#284d35"
+                                        color: AppTheme.dark ? AppTheme.text
+                                                          : "#284d35"
                                         wrapMode: Text.WordWrap
                                         font.pixelSize: 11
                                         font.weight: Font.Medium
@@ -2592,7 +2633,8 @@ ApplicationWindow {
                                     Label {
                                         Layout.fillWidth: true
                                         text: window.controller.autoDetectedPacksDirectory
-                                        color: "#42654c"
+                                        color: AppTheme.dark ? AppTheme.textMuted
+                                                          : "#42654c"
                                         elide: Text.ElideMiddle
                                         font.family: "monospace"
                                         font.pixelSize: 9
@@ -2653,13 +2695,96 @@ ApplicationWindow {
                         }
 
                         TabButton {
+                            id: bruteforceTabButton
                             objectName: "bruteforceTab"
                             text: qsTr("Bruteforce")
+
+                            contentItem: Label {
+                                text: bruteforceTabButton.text
+                                color: bruteforceTabButton.enabled
+                                       ? AppTheme.text
+                                       : AppTheme.disabledText
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            background: Rectangle {
+                                color: bruteforceTabButton.checked
+                                       ? AppTheme.selection
+                                       : (bruteforceTabButton.hovered
+                                          ? AppTheme.controlHover
+                                          : AppTheme.surfaceAlternate)
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 2
+                                    visible: bruteforceTabButton.checked
+                                    color: AppTheme.accent
+                                }
+                            }
                         }
 
                         TabButton {
+                            id: codeTabButton
                             objectName: "codeDebuggerTab"
                             text: qsTr("Code")
+
+                            contentItem: Label {
+                                text: codeTabButton.text
+                                color: codeTabButton.enabled
+                                       ? AppTheme.text
+                                       : AppTheme.disabledText
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            background: Rectangle {
+                                color: codeTabButton.checked
+                                       ? AppTheme.selection
+                                       : (codeTabButton.hovered
+                                          ? AppTheme.controlHover
+                                          : AppTheme.surfaceAlternate)
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 2
+                                    visible: codeTabButton.checked
+                                    color: AppTheme.accent
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        objectName: "appearanceControls"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        spacing: 8
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Appearance")
+                            color: AppTheme.textMuted
+                            font.pixelSize: 11
+                        }
+
+                        Switch {
+                            id: darkModeToggle
+                            objectName: "darkModeToggle"
+                            text: qsTr("Dark mode")
+                            checked: window.controller.darkMode
+                            onToggled:
+                                window.controller.darkMode = checked
+                            Accessible.name: qsTr("Dark mode")
+                            ToolTip.visible: hovered
+                            ToolTip.text: checked
+                                          ? qsTr("Use the default light theme")
+                                          : qsTr("Use the dark theme")
                         }
                     }
 
@@ -2753,8 +2878,8 @@ ApplicationWindow {
                             text: window.controller.replayInputStatusText
                             color: text.indexOf(qsTr("failed")) >= 0
                                    || text.indexOf(qsTr("discarded")) >= 0
-                                   ? "#a23434"
-                                   : "#42654c"
+                                   ? AppTheme.error
+                                   : AppTheme.success
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11
                         }
@@ -2816,7 +2941,7 @@ ApplicationWindow {
                                       === "multi-threaded-cpu"
                                       ? qsTr("Runs independent optimized CPU simulations across multiple worker threads")
                                     : qsTr("Broadest compatibility")
-                            color: "#667064"
+                            color: AppTheme.textMuted
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11
                         }
@@ -2866,7 +2991,7 @@ ApplicationWindow {
                         Layout.preferredHeight: 1
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        color: "#d3d8d1"
+                        color: AppTheme.border
                     }
 
                     ConfigurationSection {
@@ -2983,7 +3108,8 @@ ApplicationWindow {
                                 textFormat: TextEdit.PlainText
                                 font.family: "monospace"
                                 font.pixelSize: 12
-                                color: "#202421"
+                                color: enabled ? AppTheme.text
+                                               : AppTheme.disabledText
                                 placeholderText: qsTr("0.00 press up")
                                 onTextChanged: {
                                     if (activeFocus
@@ -2993,11 +3119,14 @@ ApplicationWindow {
                                     }
                                 }
                                 background: Rectangle {
-                                    color: "#ffffff"
+                                    color: enabled ? AppTheme.surface
+                                                   : AppTheme.disabledSurface
                                     border.width: 1
                                     border.color:
                                         window.controller.baseInputScriptError.length
-                                        > 0 ? "#a23434" : "#c5ccc1"
+                                        > 0 ? AppTheme.error
+                                            : baseInputScriptArea.activeFocus
+                                              ? AppTheme.focus : AppTheme.border
                                     radius: 6
                                 }
                             }
@@ -3008,7 +3137,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: text.length > 0
                             text: window.controller.baseInputScriptError
-                            color: "#a23434"
+                            color: AppTheme.error
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11
                         }
@@ -3040,7 +3169,7 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         visible: text.length > 0 && !window.controller.running
                         text: window.controller.validationMessage
-                        color: "#a23434"
+                        color: AppTheme.error
                         wrapMode: Text.WordWrap
                         font.pixelSize: 12
                     }
@@ -3078,7 +3207,7 @@ ApplicationWindow {
                         Layout.preferredHeight: 1
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        color: "#d3d8d1"
+                        color: AppTheme.border
                     }
 
                     ColumnLayout {
@@ -3108,9 +3237,9 @@ ApplicationWindow {
                                 Layout.preferredWidth: 1
                                 Layout.preferredHeight: 58
                                 radius: 7
-                                color: "#eef2ed"
+                                color: AppTheme.surfaceRaised
                                 border.width: 1
-                                border.color: "#d2d9cf"
+                                border.color: AppTheme.border
                                 clip: true
 
                                 ColumnLayout {
@@ -3121,7 +3250,7 @@ ApplicationWindow {
                                     Label {
                                         Layout.fillWidth: true
                                         text: qsTr("Iterations")
-                                        color: "#667064"
+                                        color: AppTheme.textMuted
                                         font.pixelSize: 10
                                         horizontalAlignment: Text.AlignHCenter
                                     }
@@ -3130,7 +3259,7 @@ ApplicationWindow {
                                         objectName: "iterationsMetricValue"
                                         Layout.fillWidth: true
                                         text: window.controller.iterationCountText
-                                        color: "#20251f"
+                                        color: AppTheme.text
                                         font.family: "monospace"
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
@@ -3146,9 +3275,9 @@ ApplicationWindow {
                                 Layout.preferredWidth: 1
                                 Layout.preferredHeight: 58
                                 radius: 7
-                                color: "#eef2ed"
+                                color: AppTheme.surfaceRaised
                                 border.width: 1
-                                border.color: "#d2d9cf"
+                                border.color: AppTheme.border
                                 clip: true
 
                                 ColumnLayout {
@@ -3159,7 +3288,7 @@ ApplicationWindow {
                                     Label {
                                         Layout.fillWidth: true
                                         text: qsTr("Throughput")
-                                        color: "#667064"
+                                        color: AppTheme.textMuted
                                         font.pixelSize: 10
                                         horizontalAlignment: Text.AlignHCenter
                                     }
@@ -3171,7 +3300,7 @@ ApplicationWindow {
                                               ? window.controller.throughputText
                                                     + qsTr(" /s")
                                               : ""
-                                        color: "#20251f"
+                                        color: AppTheme.text
                                         font.family: "monospace"
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
@@ -3187,9 +3316,9 @@ ApplicationWindow {
                                 Layout.preferredWidth: 1
                                 Layout.preferredHeight: 58
                                 radius: 7
-                                color: "#eef2ed"
+                                color: AppTheme.surfaceRaised
                                 border.width: 1
-                                border.color: "#d2d9cf"
+                                border.color: AppTheme.border
                                 clip: true
 
                                 ColumnLayout {
@@ -3200,7 +3329,7 @@ ApplicationWindow {
                                     Label {
                                         Layout.fillWidth: true
                                         text: qsTr("Elapsed")
-                                        color: "#667064"
+                                        color: AppTheme.textMuted
                                         font.pixelSize: 10
                                         horizontalAlignment: Text.AlignHCenter
                                     }
@@ -3209,7 +3338,7 @@ ApplicationWindow {
                                         objectName: "elapsedMetricValue"
                                         Layout.fillWidth: true
                                         text: window.controller.elapsedText
-                                        color: "#20251f"
+                                        color: AppTheme.text
                                         font.family: "monospace"
                                         font.pixelSize: 12
                                         font.weight: Font.DemiBold
@@ -3236,8 +3365,8 @@ ApplicationWindow {
                             wrapMode: Text.WordWrap
                             color: window.controller.statusText
                                            === qsTr("Search failed")
-                                   ? "#a23434"
-                                   : "#3c443f"
+                                   ? AppTheme.error
+                                   : AppTheme.text
                         }
 
                         ColumnLayout {
@@ -3291,11 +3420,13 @@ ApplicationWindow {
                                     textFormat: TextEdit.PlainText
                                     font.family: "monospace"
                                     font.pixelSize: 12
-                                    color: "#202421"
+                                    color: AppTheme.text
                                     background: Rectangle {
-                                        color: "#ffffff"
+                                        color: AppTheme.surface
                                         border.width: 1
-                                        border.color: "#c5ccc1"
+                                        border.color: bestInputsArea.activeFocus
+                                                      ? AppTheme.focus
+                                                      : AppTheme.border
                                         radius: 6
                                     }
                                 }
