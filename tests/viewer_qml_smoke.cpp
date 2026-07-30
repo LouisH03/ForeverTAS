@@ -370,6 +370,42 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    auto *const initialGlobalScript =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("baseInputScriptSection")));
+    auto *const initialToolTabs =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("toolTabs")));
+    auto *const initialBruteforceContent =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("bruteforceTabContent")));
+    auto *const initialDebuggerContent =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("simulationDebuggerPanel")));
+    bool globalScriptVisibleAcrossTabs =
+            initialGlobalScript != nullptr &&
+            initialToolTabs != nullptr &&
+            initialBruteforceContent != nullptr &&
+            initialDebuggerContent != nullptr;
+    if (globalScriptVisibleAcrossTabs) {
+        initialToolTabs->setProperty("currentIndex", 1);
+        QCoreApplication::processEvents();
+        globalScriptVisibleAcrossTabs &=
+                initialGlobalScript->isVisible() &&
+                !initialBruteforceContent->isVisible() &&
+                initialDebuggerContent->isVisible();
+        initialToolTabs->setProperty("currentIndex", 0);
+        QCoreApplication::processEvents();
+        globalScriptVisibleAcrossTabs &=
+                initialGlobalScript->isVisible() &&
+                initialBruteforceContent->isVisible() &&
+                !initialDebuggerContent->isVisible();
+    }
+
     QObject::connect(
             &viewer,
             &forevertas::viewer::RaceViewerController::stateChanged,
@@ -521,8 +557,9 @@ int main(int argc, char **argv) {
                     QObject *const settingsWheelRedirector =
                             root->property("settingsWheelRedirectorObject")
                                     .value<QObject *>();
-                    QObject *const toolTabs = root->findChild<QObject *>(
-                            QStringLiteral("toolTabs"));
+                    auto *const toolTabs = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("toolTabs")));
                     auto *const bruteforceTabContent =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(
@@ -601,6 +638,10 @@ int main(int argc, char **argv) {
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
                                             "baseInputScriptSection")));
+                    auto *const packsDirectorySection =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "packsDirectorySection")));
                     QObject *const baseInputScriptScrollView =
                             root->findChild<QObject *>(QStringLiteral(
                                     "baseInputScriptScrollView"));
@@ -774,10 +815,29 @@ int main(int argc, char **argv) {
                             renderModeSelector->width() >= 179.0 &&
                             runSelector->property("count").toInt() == 0 &&
                             !runSelector->property("enabled").toBool();
+                    bool globalBaseInputScriptPlacement =
+                            globalScriptVisibleAcrossTabs &&
+                            packsDirectorySection != nullptr &&
+                            baseInputScriptSection != nullptr &&
+                            toolTabs != nullptr &&
+                            bruteforceTabContent != nullptr &&
+                            simulationDebuggerPanel != nullptr &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "baseInputScriptSection"))
+                                            .size() == 1 &&
+                            packsDirectorySection->parentItem() ==
+                                    baseInputScriptSection->parentItem() &&
+                            baseInputScriptSection->parentItem() ==
+                                    toolTabs->parentItem() &&
+                            packsDirectorySection->y() +
+                                            packsDirectorySection->height() <=
+                                    baseInputScriptSection->y() &&
+                            baseInputScriptSection->y() +
+                                            baseInputScriptSection->height() <=
+                                    toolTabs->y();
                     const bool baseInputScriptUiValid =
                             baseInputScriptSection != nullptr &&
-                            searchSection != nullptr &&
-                            baseInputScriptSection->y() < searchSection->y() &&
                             baseInputScriptScrollView != nullptr &&
                             baseInputScriptTextArea != nullptr &&
                             baseInputScriptErrorLabel != nullptr &&
@@ -1157,7 +1217,32 @@ int main(int argc, char **argv) {
                             return event.isAccepted();
                         };
                         if (wheelScrollingValid) {
-                            flickable->setProperty("contentY", 0.0);
+                            const double comboContentHeight =
+                                    flickable->property("contentHeight")
+                                            .toDouble();
+                            const double comboMaximum = std::max(
+                                    0.0,
+                                    comboContentHeight -
+                                            scrollItem->height());
+                            const QPointF panelTopLeft =
+                                    redirectorItem->mapToScene(QPointF());
+                            const QPointF comboBefore =
+                                    comboItem->mapToScene(
+                                            QPointF(
+                                                    comboItem->width() * 0.5,
+                                                    comboItem->height() * 0.5));
+                            flickable->setProperty(
+                                    "contentY",
+                                    std::clamp(
+                                            comboBefore.y() -
+                                                    panelTopLeft.y() -
+                                                    redirectorItem->height() *
+                                                            0.5,
+                                            0.0,
+                                            comboMaximum));
+                            QCoreApplication::processEvents();
+                            const double beforeCombo =
+                                    flickable->property("contentY").toDouble();
                             const bool comboAccepted = sendWheel(
                                     comboItem,
                                     QPointF(comboItem->width() * 0.5,
@@ -1166,7 +1251,7 @@ int main(int argc, char **argv) {
                             const double afterCombo =
                                     flickable->property("contentY").toDouble();
                             wheelScrollingValid &= comboAccepted &&
-                                    afterCombo > 0.0;
+                                    afterCombo > beforeCombo;
 
                             controller.setModifierPassId(
                                     0,
@@ -2058,7 +2143,9 @@ int main(int argc, char **argv) {
                             !timeline->isEnabled() &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
-                            runSelectorValid && baseInputScriptUiValid &&
+                            runSelectorValid &&
+                            globalBaseInputScriptPlacement &&
+                            baseInputScriptUiValid &&
                             bestInputsUiValid &&
                             searchControlsValid && searchMetricsUiValid &&
                             removedSectionDescriptions &&
@@ -2105,6 +2192,28 @@ int main(int argc, char **argv) {
                                 << "editor checks: runSelector=" << runSelectorValid
                                 << ", baseInputScript="
                                 << baseInputScriptUiValid
+                                << ", globalBaseInput="
+                                << globalBaseInputScriptPlacement
+                                << " (packs="
+                                << (packsDirectorySection != nullptr
+                                            ? packsDirectorySection->y()
+                                            : -1.0)
+                                << "+"
+                                << (packsDirectorySection != nullptr
+                                            ? packsDirectorySection->height()
+                                            : -1.0)
+                                << ", script="
+                                << (baseInputScriptSection != nullptr
+                                            ? baseInputScriptSection->y()
+                                            : -1.0)
+                                << "+"
+                                << (baseInputScriptSection != nullptr
+                                            ? baseInputScriptSection->height()
+                                            : -1.0)
+                                << ", tabs="
+                                << (toolTabs != nullptr
+                                            ? toolTabs->y() : -1.0)
+                                << ")"
                                 << ", bestInputs=" << bestInputsUiValid
                                 << ", searchControls=" << searchControlsValid
                                 << ", autoPacks=" << automaticPacksUi

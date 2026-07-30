@@ -2586,6 +2586,7 @@ ApplicationWindow {
                     }
 
                     ColumnLayout {
+                        objectName: "packsDirectorySection"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
@@ -2676,6 +2677,119 @@ ApplicationWindow {
                             }
                         }
 
+                    }
+
+                    ConfigurationSection {
+                        objectName: "baseInputScriptSection"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        title: qsTr("Base input script")
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+
+                            Button {
+                                id: saveInputTrajectoryButton
+                                objectName: "saveInputTrajectoryButton"
+                                text: qsTr("Save trajectory")
+                                enabled: window.viewer.loaded
+                                         && !window.viewer.loading
+                                         && !window.viewer.manualDriving
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                         && window.controller.baseInputScriptError.length
+                                            === 0
+                                onClicked:
+                                    window.saveBaseInputTrajectory()
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr(
+                                    "Add this script's exact path to the viewer (Ctrl+S)")
+                            }
+
+                            Button {
+                                id: copyCurrentRaceInputsButton
+                                objectName: "copyCurrentRaceInputsButton"
+                                text: qsTr("Copy current race")
+                                enabled: window.viewer.canCopyCurrentInputs
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                onClicked: {
+                                    window.controller.baseInputScript =
+                                        window.viewer.currentInputScript()
+                                    baseInputScriptArea.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr(
+                                    "Replace the base input with the selected race through its current time")
+                            }
+                        }
+
+                        ScrollView {
+                            id: baseInputScriptScroll
+
+                            objectName: "baseInputScriptScrollView"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 220
+                            clip: true
+                            ScrollBar.horizontal.policy:
+                                ScrollBar.AsNeeded
+                            ScrollBar.vertical.policy:
+                                ScrollBar.AsNeeded
+
+                            TextArea {
+                                id: baseInputScriptArea
+
+                                objectName: "baseInputScriptTextArea"
+                                width: Math.max(
+                                    baseInputScriptScroll.availableWidth,
+                                    contentWidth + leftPadding + rightPadding)
+                                text: window.controller.baseInputScript
+                                enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                selectByMouse: true
+                                wrapMode: TextEdit.NoWrap
+                                textFormat: TextEdit.PlainText
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                color: enabled ? AppTheme.text
+                                               : AppTheme.disabledText
+                                placeholderText: qsTr("0.00 press up")
+                                onTextChanged: {
+                                    if (activeFocus
+                                        && window.controller.baseInputScript
+                                           !== text) {
+                                        window.controller.baseInputScript = text
+                                    }
+                                }
+                                background: Rectangle {
+                                    color: enabled ? AppTheme.surface
+                                                   : AppTheme.disabledSurface
+                                    border.width: 1
+                                    border.color:
+                                        window.controller.baseInputScriptError.length
+                                        > 0 ? AppTheme.error
+                                            : baseInputScriptArea.activeFocus
+                                              ? AppTheme.focus : AppTheme.border
+                                    radius: 6
+                                }
+                            }
+                        }
+
+                        Label {
+                            objectName: "baseInputScriptErrorLabel"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: window.controller.baseInputScriptError
+                            color: AppTheme.error
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
                     }
 
                     TabBar {
@@ -3027,119 +3141,6 @@ ApplicationWindow {
                             controller: window.controller
                             options: window.controller.modifierOptions
                             passes: window.controller.modifierPasses
-                        }
-                    }
-
-                    ConfigurationSection {
-                        objectName: "baseInputScriptSection"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        title: qsTr("Base input script")
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            Item {
-                                Layout.fillWidth: true
-                            }
-
-                            Button {
-                                id: saveInputTrajectoryButton
-                                objectName: "saveInputTrajectoryButton"
-                                text: qsTr("Save trajectory")
-                                enabled: window.viewer.loaded
-                                         && !window.viewer.loading
-                                         && !window.viewer.manualDriving
-                                         && !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                         && window.controller.baseInputScriptError.length
-                                            === 0
-                                onClicked:
-                                    window.saveBaseInputTrajectory()
-                                ToolTip.visible: hovered
-                                ToolTip.text: qsTr(
-                                    "Add this script's exact path to the viewer (Ctrl+S)")
-                            }
-
-                            Button {
-                                id: copyCurrentRaceInputsButton
-                                objectName: "copyCurrentRaceInputsButton"
-                                text: qsTr("Copy current race")
-                                enabled: window.viewer.canCopyCurrentInputs
-                                         && !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                onClicked: {
-                                    window.controller.baseInputScript =
-                                        window.viewer.currentInputScript()
-                                    baseInputScriptArea.forceActiveFocus()
-                                }
-                                ToolTip.visible: hovered
-                                ToolTip.text: qsTr(
-                                    "Replace the base input with the selected race through its current time")
-                            }
-                        }
-
-                        ScrollView {
-                            id: baseInputScriptScroll
-
-                            objectName: "baseInputScriptScrollView"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 220
-                            clip: true
-                            ScrollBar.horizontal.policy:
-                                ScrollBar.AsNeeded
-                            ScrollBar.vertical.policy:
-                                ScrollBar.AsNeeded
-
-                            TextArea {
-                                id: baseInputScriptArea
-
-                                objectName: "baseInputScriptTextArea"
-                                width: Math.max(
-                                    baseInputScriptScroll.availableWidth,
-                                    contentWidth + leftPadding + rightPadding)
-                                text: window.controller.baseInputScript
-                                enabled: !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                selectByMouse: true
-                                wrapMode: TextEdit.NoWrap
-                                textFormat: TextEdit.PlainText
-                                font.family: "monospace"
-                                font.pixelSize: 12
-                                color: enabled ? AppTheme.text
-                                               : AppTheme.disabledText
-                                placeholderText: qsTr("0.00 press up")
-                                onTextChanged: {
-                                    if (activeFocus
-                                        && window.controller.baseInputScript
-                                           !== text) {
-                                        window.controller.baseInputScript = text
-                                    }
-                                }
-                                background: Rectangle {
-                                    color: enabled ? AppTheme.surface
-                                                   : AppTheme.disabledSurface
-                                    border.width: 1
-                                    border.color:
-                                        window.controller.baseInputScriptError.length
-                                        > 0 ? AppTheme.error
-                                            : baseInputScriptArea.activeFocus
-                                              ? AppTheme.focus : AppTheme.border
-                                    radius: 6
-                                }
-                            }
-                        }
-
-                        Label {
-                            objectName: "baseInputScriptErrorLabel"
-                            Layout.fillWidth: true
-                            visible: text.length > 0
-                            text: window.controller.baseInputScriptError
-                            color: AppTheme.error
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: 11
                         }
                     }
 
