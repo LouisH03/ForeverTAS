@@ -91,6 +91,8 @@ struct SearchRunControl {
     std::function<void(std::uint32_t)> cudaBatchSizeChanged;
     std::optional<std::uint64_t> iterationLimit;
     std::optional<std::int64_t> evaluationEndTimeLimitMs;
+    std::uint64_t iterationIndexOffset = 0u;
+    std::uint64_t iterationIndexStride = 1u;
     bool sampleBestTimeline = true;
     bool reuseLoadedSandbox = false;
 };

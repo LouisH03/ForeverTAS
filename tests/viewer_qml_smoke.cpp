@@ -378,6 +378,13 @@ int main(int argc, char **argv) {
                     QObject *const simulationBackendCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationBackendCombo"));
+                    auto *const cpuWorkerSettings =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "cpuWorkerSettings")));
+                    QObject *const cpuWorkerCountField =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "cpuWorkerCountField"));
 #if FOREVERVALIDATOR_HAS_CUDA
                     auto *const cudaParallelSampleSettings =
                             qobject_cast<QQuickItem *>(
@@ -717,9 +724,9 @@ int main(int argc, char **argv) {
                             simulationBackendCombo != nullptr &&
                             simulationBackendCombo->property("count").toInt() ==
 #if FOREVERVALIDATOR_HAS_CUDA
-                                    3 &&
+                                    4 &&
 #else
-                                    2 &&
+                                    3 &&
 #endif
                             simulationBackendCombo->property("currentValue")
                                             .toString() ==
@@ -747,6 +754,40 @@ int main(int argc, char **argv) {
                                                 "Stadium, may break "
                                                 "compatibility in other "
                                                 "environments"));
+                        if (backendSelectorValid) {
+                            controller.setSimulationBackendId(
+                                    QStringLiteral(
+                                            "multi-threaded-cpu"));
+                            controller.setCpuWorkerCount(
+                                    QStringLiteral("2"));
+                            QCoreApplication::processEvents();
+                            backendSelectorValid =
+                                    simulationBackendCombo
+                                                    ->property("currentValue")
+                                                    .toString() ==
+                                            QStringLiteral(
+                                                    "multi-threaded-cpu") &&
+                                    simulationBackendCombo
+                                                    ->property("displayText")
+                                                    .toString() ==
+                                            QStringLiteral(
+                                                    "CPU Multi-threaded") &&
+                                    cpuWorkerSettings != nullptr &&
+                                    cpuWorkerSettings->isVisible() &&
+                                    cpuWorkerCountField != nullptr &&
+                                    cpuWorkerCountField
+                                                    ->property("text")
+                                                    .toString() ==
+                                            QStringLiteral("2") &&
+                                    ContainsText(
+                                            root,
+                                            QStringLiteral(
+                                                    "Runs independent "
+                                                    "optimized CPU "
+                                                    "simulations across "
+                                                    "multiple worker "
+                                                    "threads"));
+                        }
 #if FOREVERVALIDATOR_HAS_CUDA
                         if (backendSelectorValid) {
                             controller.setSimulationBackendId(

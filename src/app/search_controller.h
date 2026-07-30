@@ -43,6 +43,8 @@ class SearchController final : public QObject {
                        simulationBackendOptions CONSTANT)
     Q_PROPERTY(QString simulationBackendId READ simulationBackendId WRITE
                        setSimulationBackendId NOTIFY simulationBackendIdChanged)
+    Q_PROPERTY(QString cpuWorkerCount READ cpuWorkerCount WRITE
+                       setCpuWorkerCount NOTIFY cpuWorkerCountChanged)
     Q_PROPERTY(QString cudaParallelSampleCount READ cudaParallelSampleCount WRITE
                        setCudaParallelSampleCount NOTIFY
                        cudaParallelSampleCountChanged)
@@ -100,6 +102,7 @@ public:
     QString replayInputStatusText() const;
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
+    QString cpuWorkerCount() const;
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
     QVariantList searchAlgorithmOptions() const;
@@ -130,6 +133,7 @@ public slots:
     void setReplayPath(const QString &value);
     void setBaseInputScript(const QString &value);
     void setSimulationBackendId(const QString &value);
+    void setCpuWorkerCount(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
     void setSearchAlgorithmId(const QString &value);
@@ -160,6 +164,7 @@ signals:
     void baseInputScriptChanged();
     void replayInputStateChanged();
     void simulationBackendIdChanged();
+    void cpuWorkerCountChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
     void searchAlgorithmIdChanged();
@@ -215,6 +220,7 @@ private:
     QString replayInputStatusText_;
     std::vector<ParsedInputCommand> parsedBaseInputCommands_;
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
+    QString cpuWorkerCount_ = QString::number(DefaultCpuWorkerCount());
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);
     bool cudaCalibrationEnabled_ = false;

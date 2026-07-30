@@ -238,9 +238,9 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     okay &= Check(controller.canStart(),
                   "empty base input script did not restore Start");
 #if FOREVERVALIDATOR_HAS_CUDA
-    constexpr qsizetype expectedBackendCount = 3;
+    constexpr qsizetype expectedBackendCount = 4;
 #else
-    constexpr qsizetype expectedBackendCount = 2;
+    constexpr qsizetype expectedBackendCount = 3;
 #endif
     okay &= Check(controller.simulationBackendOptions().size() ==
                           expectedBackendCount,
@@ -260,8 +260,20 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                                   QStringLiteral(
                                           "Faster runtime optimized for "
                                           "Stadium, may break compatibility "
-                                          "in other environments")),
+                                          "in other environments")) &&
+                          HasBackendOption(
+                                  controller.simulationBackendOptions(),
+                                  QStringLiteral("multi-threaded-cpu"),
+                                  QStringLiteral("CPU Multi-threaded"),
+                                  QStringLiteral(
+                                          "Runs independent optimized CPU "
+                                          "simulations across multiple "
+                                          "worker threads")),
                   "physics backend metadata was not exposed");
+    okay &= Check(
+            controller.cpuWorkerCount() ==
+                    QString::number(forevertas::DefaultCpuWorkerCount()),
+            "unexpected default CPU worker count");
 #if FOREVERVALIDATOR_HAS_CUDA
     okay &= Check(HasBackendOption(
                           controller.simulationBackendOptions(),
@@ -331,6 +343,22 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           QStringLiteral("optimized-cpu") &&
                           controller.canStart(),
                   "CPU Optimized backend was not selectable");
+    controller.setSimulationBackendId(
+            QStringLiteral("multi-threaded-cpu"));
+    okay &= Check(controller.simulationBackendId() ==
+                          QStringLiteral("multi-threaded-cpu") &&
+                          controller.canStart(),
+                  "CPU Multi-threaded backend was not selectable");
+    controller.setCpuWorkerCount(QStringLiteral("0"));
+    okay &= Check(!controller.canStart(),
+                  "zero CPU workers enabled Start");
+    controller.setCpuWorkerCount(QStringLiteral("257"));
+    okay &= Check(!controller.canStart(),
+                  "excessive CPU workers enabled Start");
+    controller.setCpuWorkerCount(QStringLiteral("2"));
+    okay &= Check(controller.canStart(),
+                  "valid CPU worker count did not enable Start");
+    controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
 #if FOREVERVALIDATOR_HAS_CUDA
     controller.setSimulationBackendId(QStringLiteral("cuda"));
     okay &= Check(controller.simulationBackendId() ==
@@ -481,6 +509,7 @@ bool TestPersistence(const QString &packsDirectory,
                 1, QStringLiteral("steerMaxCount"), QStringLiteral("4"));
         controller.moveModifierPass(1, 0);
         controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
+        controller.setCpuWorkerCount(QStringLiteral("6"));
         controller.setCudaParallelSampleCount(QStringLiteral("384"));
         controller.setCudaCalibrationEnabled(true);
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
@@ -508,6 +537,8 @@ bool TestPersistence(const QString &packsDirectory,
     okay &= Check(restored.cudaParallelSampleCount() ==
                           QStringLiteral("384"),
                   "CUDA parallel sample count was not persisted");
+    okay &= Check(restored.cpuWorkerCount() == QStringLiteral("6"),
+                  "CPU worker count was not persisted");
     okay &= Check(restored.cudaCalibrationEnabled(),
                   "CUDA calibration mode was not persisted");
     okay &= Check(restored.modifierPasses().size() == 2,
@@ -542,6 +573,10 @@ bool TestPersistence(const QString &packsDirectory,
                                   "backends/cuda/parallelSampleCount"))
                                   .toString() == QStringLiteral("384"),
                   "CUDA parallel sample count was not stored canonically");
+    okay &= Check(QSettings().value(QStringLiteral(
+                                  "backends/cpu/workerCount"))
+                                  .toString() == QStringLiteral("6"),
+                  "CPU worker count was not stored canonically");
     okay &= Check(QSettings().value(QStringLiteral(
                                   "backends/cuda/calibrationEnabled"))
                                   .toBool(),
@@ -606,6 +641,18 @@ bool TestDescriptiveSearchStageStatuses() {
                     "optimized-cpu")
                     .contains(QStringLiteral("optimized CPU")),
             "optimized CPU initialization was not identified");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::PreparingSearch,
+                    "multi-threaded-cpu")
+                            .contains(QStringLiteral(
+                                    "independent optimized CPU workers")) &&
+                    SearchStageStatus(
+                            SearchProgressStage::Mutations,
+                            "multi-threaded-cpu")
+                            .contains(QStringLiteral(
+                                    "across optimized CPU workers")),
+            "multi-threaded CPU stages did not identify worker aggregation");
     const QString cudaInitialization = SearchStageStatus(
             SearchProgressStage::CreatingSimulation,
             "cuda");

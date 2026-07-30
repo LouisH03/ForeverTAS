@@ -800,7 +800,17 @@ SearchResult BasicBruteForceSearch::Run(
     reportLive(true);
     ReportProgress(context.control, SearchProgressStage::Mutations, 0u);
 
-    std::uint64_t iterationIndex = 0u;
+    if (context.control != nullptr &&
+        context.control->iterationIndexStride == 0u) {
+        throw std::invalid_argument(
+                "iteration index stride must be greater than zero");
+    }
+    std::uint64_t iterationIndex = context.control == nullptr
+            ? 0u
+            : context.control->iterationIndexOffset;
+    const std::uint64_t iterationIndexStride = context.control == nullptr
+            ? 1u
+            : context.control->iterationIndexStride;
     while (!StopRequested(context.control) &&
            !IterationLimitReached(context.control, iterations)) {
         BeginIteration(context.control);
@@ -823,10 +833,12 @@ SearchResult BasicBruteForceSearch::Run(
                              mutation.mutationCount);
         }
         reportLive(false);
-        if (iterationIndex == std::numeric_limits<std::uint64_t>::max()) {
+        if (iterationIndex >
+            std::numeric_limits<std::uint64_t>::max() -
+                    iterationIndexStride) {
             throw std::overflow_error("iteration sequence exhausted");
         }
-        ++iterationIndex;
+        iterationIndex += iterationIndexStride;
     }
 
     CheckCancellation(context.control);

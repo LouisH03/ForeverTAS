@@ -9,10 +9,15 @@
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -320,6 +325,418 @@ BuildBaselineOrThrow(
     return std::move(baseline.events);
 }
 
+struct CpuWorkerState {
+    std::optional<SearchLiveUpdate> live;
+    std::optional<SearchResult> result;
+    std::exception_ptr failure;
+    bool done = false;
+};
+
+bool BetterEvaluation(const IterationEvaluator &evaluator,
+                      double candidateScore,
+                      double candidateTimeMs,
+                      double incumbentScore,
+                      double incumbentTimeMs) {
+    return evaluator.IsBetter(
+            {candidateScore, candidateTimeMs, {}},
+            {incumbentScore, incumbentTimeMs, {}});
+}
+
+bool PreferEvaluation(
+        const IterationEvaluator &evaluator,
+        double candidateScore,
+        double candidateTimeMs,
+        SearchWinnerSource candidateSource,
+        std::optional<std::uint64_t> candidateIteration,
+        double incumbentScore,
+        double incumbentTimeMs,
+        SearchWinnerSource incumbentSource,
+        std::optional<std::uint64_t> incumbentIteration) {
+    if (BetterEvaluation(
+                evaluator,
+                candidateScore,
+                candidateTimeMs,
+                incumbentScore,
+                incumbentTimeMs)) {
+        return true;
+    }
+    if (BetterEvaluation(
+                evaluator,
+                incumbentScore,
+                incumbentTimeMs,
+                candidateScore,
+                candidateTimeMs)) {
+        return false;
+    }
+    if (candidateSource != incumbentSource) {
+        return candidateSource == SearchWinnerSource::Baseline;
+    }
+    return candidateIteration.value_or(0u) <
+            incumbentIteration.value_or(0u);
+}
+
+SearchResult RunMultiThreadedCpuSearch(
+        const SearchRequest &request,
+        const EvaluationTargetRegistration &evaluationRegistration,
+        const SearchRunControl *control) {
+    CheckCancellation(control);
+    if (request.parallelSampleCount == 0u ||
+        request.parallelSampleCount > kMaximumCpuWorkerCount) {
+        throw std::invalid_argument(
+                "CPU worker count must be between 1 and " +
+                std::to_string(kMaximumCpuWorkerCount));
+    }
+    if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
+        throw std::invalid_argument(
+                "multi-threaded CPU does not support search algorithm: " +
+                request.searchAlgorithm.id);
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const std::uint32_t workerCount = request.parallelSampleCount;
+    std::unique_ptr<IterationEvaluator> evaluator =
+            evaluationRegistration.create(
+                    request.evaluationTarget.settings,
+                    kSearchTickDurationMs);
+    std::mutex stateMutex;
+    std::mutex upstreamControlMutex;
+    std::condition_variable stateChanged;
+    std::vector<CpuWorkerState> states(workerCount);
+    std::atomic_bool internalCancellation{false};
+    std::uint64_t revision = 0u;
+    std::size_t finishedWorkerCount = 0u;
+    ReportProgress(
+            control, SearchProgressStage::PreparingSearch, 0u, workerCount);
+
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    try {
+        for (std::uint32_t workerIndex = 0u;
+             workerIndex < workerCount;
+             ++workerIndex) {
+            workers.emplace_back([&, workerIndex]() {
+                try {
+                    SearchRequest workerRequest = request;
+                    workerRequest.backend = PhysicsBackend::OptimizedCpu;
+                    workerRequest.parallelSampleCount = 1u;
+                    workerRequest.calibrateCudaParallelSampleCount = false;
+
+                    SearchRunControl workerControl;
+                    if (control != nullptr) {
+                        workerControl = *control;
+                    }
+                    const auto upstreamStop = workerControl.stopRequested;
+                    workerControl.stopRequested =
+                            [&, upstreamStop]() {
+                                if (internalCancellation.load(
+                                            std::memory_order_relaxed)) {
+                                    return true;
+                                }
+                                std::lock_guard<std::mutex> guard(
+                                        upstreamControlMutex);
+                                return upstreamStop && upstreamStop();
+                            };
+                    const auto upstreamCancellation =
+                            workerControl.cancellationRequested;
+                    workerControl.cancellationRequested =
+                            [&, upstreamCancellation]() {
+                                if (internalCancellation.load(
+                                            std::memory_order_relaxed)) {
+                                    return true;
+                                }
+                                std::lock_guard<std::mutex> guard(
+                                        upstreamControlMutex);
+                                return upstreamCancellation &&
+                                        upstreamCancellation();
+                            };
+                    const auto upstreamBegin =
+                            workerControl.beginIteration;
+                    workerControl.beginIteration =
+                            [&, upstreamBegin]() {
+                                std::lock_guard<std::mutex> guard(
+                                        upstreamControlMutex);
+                                return !upstreamBegin || upstreamBegin();
+                            };
+                    workerControl.progressChanged = {};
+                    workerControl.cudaBatchSizeChanged = {};
+                    workerControl.liveChanged =
+                            [&, workerIndex](
+                                    const SearchLiveUpdate &live) {
+                                std::lock_guard<std::mutex> guard(
+                                        stateMutex);
+                                states[workerIndex].live = live;
+                                ++revision;
+                                stateChanged.notify_one();
+                            };
+                    if (control != nullptr && control->iterationLimit) {
+                        const std::uint64_t total =
+                                *control->iterationLimit;
+                        workerControl.iterationLimit =
+                                total / workerCount +
+                                (workerIndex < total % workerCount
+                                         ? 1u
+                                         : 0u);
+                    }
+                    workerControl.iterationIndexOffset = workerIndex;
+                    workerControl.iterationIndexStride = workerCount;
+                    workerControl.sampleBestTimeline = false;
+                    workerControl.reuseLoadedSandbox = false;
+
+                    SearchResult result =
+                            RunSearch(workerRequest, &workerControl);
+                    std::lock_guard<std::mutex> guard(stateMutex);
+                    states[workerIndex].result = std::move(result);
+                    states[workerIndex].done = true;
+                    ++finishedWorkerCount;
+                    ++revision;
+                    stateChanged.notify_one();
+                } catch (...) {
+                    internalCancellation.store(
+                            true, std::memory_order_relaxed);
+                    std::lock_guard<std::mutex> guard(stateMutex);
+                    states[workerIndex].failure =
+                            std::current_exception();
+                    states[workerIndex].done = true;
+                    ++finishedWorkerCount;
+                    ++revision;
+                    stateChanged.notify_one();
+                }
+            });
+        }
+    } catch (...) {
+        internalCancellation.store(true, std::memory_order_relaxed);
+        for (std::thread &worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        throw;
+    }
+
+    std::optional<SearchLiveUpdate> aggregateBest;
+    std::uint64_t aggregateImprovementCount = 0u;
+    std::optional<std::chrono::steady_clock::duration>
+            lastImprovementElapsed;
+    std::uint64_t publishedRevision = 0u;
+    std::size_t completedWorkers = 0u;
+    bool searchingReported = false;
+    auto nextReduction =
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(100);
+    try {
+        while (completedWorkers < workerCount) {
+            std::vector<std::optional<SearchLiveUpdate>> liveUpdates;
+            {
+                std::unique_lock<std::mutex> lock(stateMutex);
+                stateChanged.wait_until(
+                        lock,
+                        nextReduction,
+                        [&]() {
+                            return finishedWorkerCount == workerCount;
+                        });
+                if (revision == publishedRevision) {
+                    nextReduction =
+                            std::chrono::steady_clock::now() +
+                            std::chrono::milliseconds(100);
+                    continue;
+                }
+                publishedRevision = revision;
+                completedWorkers = finishedWorkerCount;
+                liveUpdates.reserve(states.size());
+                for (const CpuWorkerState &state : states) {
+                    liveUpdates.push_back(state.live);
+                }
+                nextReduction =
+                        std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(100);
+            }
+
+            std::optional<SearchLiveUpdate> candidate;
+            std::uint64_t iterations = 0u;
+            std::uint64_t evaluatorCalls = 0u;
+            std::uint64_t totalMutationCount = 0u;
+            for (const auto &live : liveUpdates) {
+                if (!live) {
+                    continue;
+                }
+                iterations += live->iterations;
+                evaluatorCalls += live->evaluatorCalls;
+                totalMutationCount += live->totalMutationCount;
+                if (!candidate ||
+                    PreferEvaluation(
+                            *evaluator,
+                            live->bestScore,
+                            live->bestEvaluationTimeMs,
+                            live->winnerSource,
+                            live->winningIterationIndex,
+                            candidate->bestScore,
+                            candidate->bestEvaluationTimeMs,
+                            candidate->winnerSource,
+                            candidate->winningIterationIndex)) {
+                    candidate = live;
+                }
+            }
+            if (!candidate) {
+                continue;
+            }
+            if (!searchingReported) {
+                ReportProgress(
+                        control,
+                        SearchProgressStage::Mutations,
+                        iterations,
+                        0u);
+                searchingReported = true;
+            }
+
+            bool improved = false;
+            const bool strictlyBetter = aggregateBest &&
+                    BetterEvaluation(
+                        *evaluator,
+                        candidate->bestScore,
+                        candidate->bestEvaluationTimeMs,
+                        aggregateBest->bestScore,
+                        aggregateBest->bestEvaluationTimeMs);
+            if (!aggregateBest ||
+                PreferEvaluation(
+                        *evaluator,
+                        candidate->bestScore,
+                        candidate->bestEvaluationTimeMs,
+                        candidate->winnerSource,
+                        candidate->winningIterationIndex,
+                        aggregateBest->bestScore,
+                        aggregateBest->bestEvaluationTimeMs,
+                        aggregateBest->winnerSource,
+                        aggregateBest->winningIterationIndex)) {
+                improved = candidate->winnerSource ==
+                                SearchWinnerSource::Mutation &&
+                        (!aggregateBest || strictlyBetter);
+                aggregateBest = candidate;
+                if (improved) {
+                    ++aggregateImprovementCount;
+                    lastImprovementElapsed =
+                            std::chrono::steady_clock::now() - started;
+                }
+            }
+            if (control != nullptr && control->liveChanged &&
+                aggregateBest) {
+                SearchLiveUpdate aggregate = *aggregateBest;
+                if (!improved) {
+                    aggregate.bestTimeline.clear();
+                }
+                aggregate.iterations = iterations;
+                aggregate.evaluatorCalls = evaluatorCalls;
+                aggregate.mutationImprovementCount =
+                        aggregateImprovementCount;
+                aggregate.totalMutationCount = totalMutationCount;
+                aggregate.elapsed =
+                        std::chrono::steady_clock::now() - started;
+                aggregate.lastImprovementElapsed =
+                        lastImprovementElapsed;
+                control->liveChanged(aggregate);
+            }
+        }
+    } catch (...) {
+        internalCancellation.store(true, std::memory_order_relaxed);
+        stateChanged.notify_all();
+        for (std::thread &worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        throw;
+    }
+
+    for (std::thread &worker : workers) {
+        worker.join();
+    }
+    CheckCancellation(control);
+
+    for (const CpuWorkerState &state : states) {
+        if (!state.failure) {
+            continue;
+        }
+        try {
+            std::rethrow_exception(state.failure);
+        } catch (const SearchCancelled &) {
+            continue;
+        }
+    }
+    for (const CpuWorkerState &state : states) {
+        if (state.failure) {
+            std::rethrow_exception(state.failure);
+        }
+    }
+
+    std::optional<std::size_t> bestWorker;
+    std::uint64_t iterations = 0u;
+    std::uint64_t evaluatorCalls = 0u;
+    std::uint64_t totalMutationCount = 0u;
+    for (std::size_t index = 0u; index < states.size(); ++index) {
+        if (!states[index].result) {
+            throw std::runtime_error(
+                    "CPU worker completed without a search result");
+        }
+        const SearchResult &result = *states[index].result;
+        iterations += result.iterations;
+        evaluatorCalls += result.evaluatorCalls;
+        totalMutationCount += result.totalMutationCount;
+        if (!bestWorker ||
+            PreferEvaluation(
+                    *evaluator,
+                    result.bestScore,
+                    result.bestEvaluationTimeMs,
+                    result.winnerSource,
+                    result.winningIterationIndex,
+                    states[*bestWorker].result->bestScore,
+                    states[*bestWorker].result
+                            ->bestEvaluationTimeMs,
+                    states[*bestWorker].result->winnerSource,
+                    states[*bestWorker].result
+                            ->winningIterationIndex)) {
+            bestWorker = index;
+        }
+    }
+
+    SearchResult result =
+            std::move(*states[*bestWorker].result);
+    if (((!aggregateBest ||
+         BetterEvaluation(
+                 *evaluator,
+                 result.bestScore,
+                 result.bestEvaluationTimeMs,
+                 aggregateBest->bestScore,
+                 aggregateBest->bestEvaluationTimeMs)) ||
+         aggregateImprovementCount == 0u) &&
+        result.winnerSource == SearchWinnerSource::Mutation) {
+        ++aggregateImprovementCount;
+        lastImprovementElapsed =
+                std::chrono::steady_clock::now() - started;
+    }
+    result.iterations = iterations;
+    result.evaluatorCalls = evaluatorCalls;
+    result.mutationImprovementCount =
+            aggregateImprovementCount;
+    result.totalMutationCount = totalMutationCount;
+    result.elapsed = std::chrono::steady_clock::now() - started;
+    result.lastImprovementElapsed = lastImprovementElapsed;
+
+    CheckCancellation(control);
+    if (control == nullptr || control->sampleBestTimeline) {
+        const forevervalidator::ReplayIdentity identity{
+                request.replayPath};
+        forevervalidator::AssetBytes replay = Require(
+                ReadReplayFileUtf8(request.replayPath, identity),
+                "reading replay for multi-threaded result sampling");
+        result.bestTimeline = SampleBestTimeline(
+                request,
+                replay,
+                identity,
+                result.bestInputs,
+                control);
+    }
+    return result;
+}
+
 }  // namespace
 
 SearchResult RunSearch(const SearchRequest &request,
@@ -361,6 +778,11 @@ SearchResult RunSearch(const SearchRequest &request,
                     modifier.settings, kSearchTickDurationMs)) {
             throw std::invalid_argument(*error);
         }
+    }
+
+    if (request.backend == PhysicsBackend::MultiThreadedCpu) {
+        return RunMultiThreadedCpuSearch(
+                request, *evaluationRegistration, control);
     }
 
     CheckCancellation(control);

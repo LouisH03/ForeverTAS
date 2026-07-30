@@ -7,7 +7,9 @@
 #include "searches/algorithm_registry.h"
 #include "searches/search_algorithm.h"
 
+#include <algorithm>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace forevertas {
@@ -15,6 +17,14 @@ namespace forevertas {
 inline constexpr std::uint32_t kSearchTickDurationMs =
         kInputTimelineTickDurationMs;
 inline constexpr std::uint32_t kDefaultCudaParallelSampleCount = 256u;
+inline constexpr std::uint32_t kMaximumCpuWorkerCount = 256u;
+
+inline std::uint32_t DefaultCpuWorkerCount() noexcept {
+    const std::uint32_t detected = std::thread::hardware_concurrency();
+    return detected == 0u
+            ? 1u
+            : std::min(detected, kMaximumCpuWorkerCount);
+}
 
 struct SearchRequest {
     std::string packDirectory;

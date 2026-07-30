@@ -9,6 +9,7 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 
 namespace {
 
@@ -233,6 +234,128 @@ bool CheckStuntTargetBackend(
     return valid;
 }
 
+bool CheckMultiThreadedCpuBackend(
+        const char *packsDirectory,
+        const char *replayPath) {
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    forevertas::ExtractReplayInputScript(
+                            packsDirectory, replayPath));
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+
+    forevertas::SearchRequest serialRequest{
+            packsDirectory, replayPath};
+    serialRequest.backend =
+            forevertas::PhysicsBackend::OptimizedCpu;
+    serialRequest.baseInputCommands = parsed.commands;
+    forevertas::SearchRunControl serialControl;
+    serialControl.iterationLimit = 6u;
+    serialControl.evaluationEndTimeLimitMs = 1020;
+    serialControl.sampleBestTimeline = false;
+    const forevertas::SearchResult serial =
+            forevertas::RunSearch(serialRequest, &serialControl);
+
+    forevertas::SearchRequest parallelRequest = serialRequest;
+    parallelRequest.backend =
+            forevertas::PhysicsBackend::MultiThreadedCpu;
+    parallelRequest.parallelSampleCount = 3u;
+    forevertas::SearchRunControl parallelControl = serialControl;
+    const std::thread::id callerThread = std::this_thread::get_id();
+    std::uint64_t previousIterations = 0u;
+    std::size_t liveUpdateCount = 0u;
+    bool aggregateInvalid = false;
+    parallelControl.liveChanged =
+            [&](const forevertas::SearchLiveUpdate &live) {
+                aggregateInvalid |=
+                        std::this_thread::get_id() != callerThread ||
+                        live.iterations < previousIterations ||
+                        live.iterations > 6u;
+                previousIterations = live.iterations;
+                ++liveUpdateCount;
+            };
+    const forevertas::SearchResult parallel =
+            forevertas::RunSearch(parallelRequest, &parallelControl);
+    const bool sameWinner =
+            parallel.bestScore == serial.bestScore &&
+            parallel.bestEvaluationTimeMs ==
+                    serial.bestEvaluationTimeMs &&
+            parallel.winnerSource == serial.winnerSource &&
+            parallel.winningIterationIndex ==
+                    serial.winningIterationIndex &&
+            forevertas::FormatInputScript(parallel.bestInputs) ==
+                    forevertas::FormatInputScript(serial.bestInputs);
+    if (parallel.iterations != 6u || liveUpdateCount == 0u ||
+        previousIterations != 6u || aggregateInvalid ||
+        !sameWinner ||
+        (parallel.winnerSource ==
+                 forevertas::SearchWinnerSource::Mutation &&
+         parallel.mutationImprovementCount == 0u)) {
+        std::cerr
+                << "multi-threaded CPU did not aggregate the same six "
+                   "independent candidates as serial optimized CPU\n";
+        return false;
+    }
+
+    bool stop = true;
+    forevertas::SearchRunControl stoppedControl;
+    stoppedControl.stopRequested = [&]() { return stop; };
+    stoppedControl.sampleBestTimeline = false;
+    const forevertas::SearchResult stopped =
+            forevertas::RunSearch(parallelRequest, &stoppedControl);
+    if (stopped.iterations != 0u) {
+        std::cerr
+                << "multi-threaded CPU ignored a stop before mutations\n";
+        return false;
+    }
+
+    parallelRequest.parallelSampleCount = 0u;
+    try {
+        static_cast<void>(
+                forevertas::RunSearch(
+                        parallelRequest, &serialControl));
+        std::cerr << "multi-threaded CPU accepted zero workers\n";
+        return false;
+    } catch (const std::invalid_argument &) {
+    }
+    parallelRequest.parallelSampleCount = 2u;
+    forevertas::SearchRunControl cancelledControl;
+    cancelledControl.cancellationRequested = []() { return true; };
+    try {
+        static_cast<void>(
+                forevertas::RunSearch(
+                        parallelRequest, &cancelledControl));
+        std::cerr
+                << "multi-threaded CPU ignored startup cancellation\n";
+        return false;
+    } catch (const forevertas::SearchCancelled &) {
+    }
+
+    forevertas::SearchRunControl throwingCallbackControl =
+            serialControl;
+    throwingCallbackControl.liveChanged =
+            [](const forevertas::SearchLiveUpdate &) {
+                throw std::runtime_error(
+                        "expected aggregate callback failure");
+            };
+    try {
+        static_cast<void>(
+                forevertas::RunSearch(
+                        parallelRequest, &throwingCallbackControl));
+        std::cerr
+                << "multi-threaded CPU swallowed an aggregate callback "
+                   "failure\n";
+        return false;
+    } catch (const std::runtime_error &error) {
+        if (std::string(error.what()) !=
+            "expected aggregate callback failure") {
+            throw;
+        }
+    }
+    return true;
+}
+
 bool CheckCachedScriptIsolation(const char *packsDirectory,
                                 const char *replayPath) {
     const std::string replayScript =
@@ -426,6 +549,7 @@ int main(int argc, char **argv) {
         if (!CheckCachedScriptIsolation(argv[1], argv[2]) ||
             !CheckKeyboardSteeringBaseline(argv[1], argv[2]) ||
             !CheckKeyboardSteeringPhysicsParity(argv[1], argv[2]) ||
+            !CheckMultiThreadedCpuBackend(argv[1], argv[2]) ||
             !CheckStuntTargetBackend(
                     argv[1],
                     argv[2],

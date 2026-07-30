@@ -93,6 +93,11 @@ one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering
 deformation, input insertion, input deletion, and random steering.
 
+The multi-threaded CPU backend assigns a disjoint mutation sequence to each
+worker. Every worker owns an independent optimized-CPU simulation, while live
+metrics and best results are reduced into one deterministic aggregate. The
+worker count is configurable and persists between sessions.
+
 The complete visible settings pane owns vertical wheel scrolling, including
 areas occupied by sliders, dropdowns, and the best-input preview. Nested
 controls do not capture wheel input from the pane.

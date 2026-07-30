@@ -22,6 +22,7 @@ constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
 constexpr char kBaseInputScriptKey[] = "inputs/baseScript";
 constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
+constexpr char kCpuWorkerCountKey[] = "backends/cpu/workerCount";
 constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
 constexpr char kCudaCalibrationEnabledKey[] =
@@ -94,6 +95,9 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     cudaParallelSampleCount_ = StoredValue(
             kCudaParallelSampleCountKey,
             QString::number(kDefaultCudaParallelSampleCount));
+    cpuWorkerCount_ = StoredValue(
+            kCpuWorkerCountKey,
+            QString::number(DefaultCpuWorkerCount()));
     cudaCalibrationEnabled_ = QSettings()
             .value(QLatin1String(kCudaCalibrationEnabledKey), false)
             .toBool();
@@ -174,6 +178,15 @@ QVariantList SearchController::simulationBackendOptions() const {
                      QStringLiteral(
                              "Faster runtime optimized for Stadium, may "
                              "break compatibility in other environments")}},
+            QVariantMap{
+                    {QStringLiteral("id"),
+                     BackendId(PhysicsBackend::MultiThreadedCpu)},
+                    {QStringLiteral("label"),
+                     QStringLiteral("CPU Multi-threaded")},
+                    {QStringLiteral("description"),
+                     QStringLiteral(
+                             "Runs independent optimized CPU simulations "
+                             "across multiple worker threads")}},
     };
 #if FOREVERVALIDATOR_HAS_CUDA
     options.push_back(QVariantMap{
@@ -191,6 +204,10 @@ QVariantList SearchController::simulationBackendOptions() const {
 
 QString SearchController::simulationBackendId() const {
     return BackendId(simulationBackend_);
+}
+
+QString SearchController::cpuWorkerCount() const {
+    return cpuWorkerCount_;
 }
 
 QString SearchController::cudaParallelSampleCount() const {
@@ -329,6 +346,16 @@ void SearchController::setSimulationBackendId(const QString &value) {
     simulationBackend_ = *parsed;
     persist(kSimulationBackendKey, BackendId(simulationBackend_));
     emit simulationBackendIdChanged();
+    refreshValidation();
+}
+
+void SearchController::setCpuWorkerCount(const QString &value) {
+    if (cpuWorkerCount_ == value) {
+        return;
+    }
+    cpuWorkerCount_ = value;
+    persist(kCpuWorkerCountKey, value);
+    emit cpuWorkerCountChanged();
     refreshValidation();
 }
 
@@ -684,6 +711,21 @@ SearchController::ValidationResult SearchController::validate() const {
 
     std::uint32_t parallelSampleCount = 1u;
     bool calibrateCudaParallelSampleCount = false;
+    if (simulationBackend_ == PhysicsBackend::MultiThreadedCpu) {
+        bool parsed = false;
+        const QString trimmed = cpuWorkerCount_.trimmed();
+        const uint value = trimmed.toUInt(&parsed);
+        if (!parsed || trimmed != cpuWorkerCount_ || value == 0u ||
+            value > kMaximumCpuWorkerCount) {
+            return {
+                    {},
+                    QStringLiteral(
+                            "CPU worker threads must be a whole number "
+                            "between 1 and %1.")
+                            .arg(kMaximumCpuWorkerCount)};
+        }
+        parallelSampleCount = value;
+    }
 #if FOREVERVALIDATOR_HAS_CUDA
     if (simulationBackend_ == PhysicsBackend::Cuda) {
         calibrateCudaParallelSampleCount =

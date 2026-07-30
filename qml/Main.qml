@@ -1577,10 +1577,27 @@ ApplicationWindow {
                                   : window.controller.simulationBackendId
                                     === "optimized-cpu"
                                     ? qsTr("Faster runtime optimized for Stadium, may break compatibility in other environments")
+                                    : window.controller.simulationBackendId
+                                      === "multi-threaded-cpu"
+                                      ? qsTr("Runs independent optimized CPU simulations across multiple worker threads")
                                     : qsTr("Broadest compatibility")
                             color: "#667064"
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11
+                        }
+
+                        SettingTextField {
+                            objectName: "cpuWorkerSettings"
+                            visible: window.controller.simulationBackendId
+                                     === "multi-threaded-cpu"
+                            fieldObjectName: "cpuWorkerCountField"
+                            label: qsTr("Worker threads")
+                            value: window.controller.cpuWorkerCount
+                            running: window.controller.running
+                            minimum: 1
+                            maximum: 256
+                            onEdited: value =>
+                                window.controller.cpuWorkerCount = value
                         }
 
                         SettingTextField {

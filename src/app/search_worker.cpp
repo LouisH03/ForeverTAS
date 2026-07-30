@@ -92,6 +92,8 @@ QString FilePathFromUtf8(const std::string &path) {
 QString SearchStageStatus(SearchProgressStage stage,
                           std::string_view backendId) {
     const bool cuda = backendId == "cuda";
+    const bool multiThreadedCpu =
+            backendId == "multi-threaded-cpu";
     switch (stage) {
     case SearchProgressStage::OpeningPacksDirectory:
         return QStringLiteral("Opening Packs directory...");
@@ -134,6 +136,10 @@ QString SearchStageStatus(SearchProgressStage stage,
                     "Preparing CUDA search components; waiting for GPU "
                     "availability...");
         }
+        if (multiThreadedCpu) {
+            return QStringLiteral(
+                    "Starting independent optimized CPU workers...");
+        }
         return QStringLiteral("Preparing search components...");
     case SearchProgressStage::Baseline:
         return cuda
@@ -146,10 +152,14 @@ QString SearchStageStatus(SearchProgressStage stage,
                 "Calibrating CUDA throughput; waiting for GPU "
                 "availability...");
     case SearchProgressStage::Mutations:
-        return cuda
+        if (cuda) {
+            return QStringLiteral(
+                    "Searching on CUDA; waiting for GPU availability "
+                    "as needed...");
+        }
+        return multiThreadedCpu
                 ? QStringLiteral(
-                          "Searching on CUDA; waiting for GPU availability "
-                          "as needed...")
+                          "Searching across optimized CPU workers...")
                 : QStringLiteral("Searching...");
     case SearchProgressStage::FinalSamplingSetup:
         return cuda
