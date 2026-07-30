@@ -61,6 +61,12 @@ struct SearchTimelineFrame {
     float accelerate = 0.0f;
     float brake = 0.0f;
     float steering = 0.0f;
+    std::uint32_t checkpointsCollected = 0u;
+    std::uint32_t checkpointsTotal = 0u;
+    std::uint32_t completedLaps = 0u;
+    std::uint32_t totalLaps = 1u;
+    bool raceCompleted = false;
+    std::optional<std::uint32_t> finishTimeMs;
 };
 
 struct SearchLiveUpdate {

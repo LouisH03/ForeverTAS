@@ -273,6 +273,19 @@ bool TestHumanDurationFormatting() {
                     3723000000004u) ==
                     "1:02:03.000000004",
             "hour nanosecond formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatSignificantDurationMilliseconds(0u) == "0" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            14500u) == "14.5" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            741000u) == "12:21" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            3723450u) == "1:02:03.45" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            5u) == "0.005" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            10u) == "0.01",
+            "significant duration formatting was incorrect");
     return okay;
 }
 

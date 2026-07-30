@@ -38,7 +38,15 @@ std::vector<forevertas::SearchTimelineFrame> SyntheticSearchTimeline() {
                 tick >= 700 && tick < 800 ? 1.0f : 0.0f,
                 tick >= 100 && tick < 300
                         ? -0.5f
-                        : tick >= 300 && tick < 500 ? 0.5f : 0.0f});
+                        : tick >= 300 && tick < 500 ? 0.5f : 0.0f,
+                tick >= 741 ? 2u : tick >= 145 ? 1u : 0u,
+                2u,
+                0u,
+                1u,
+                tick >= 1000,
+                tick >= 1000
+                        ? std::optional<std::uint32_t>(9995u)
+                        : std::nullopt});
     }
     return frames;
 }
@@ -1009,6 +1017,61 @@ int main(int argc, char **argv) {
                     const bool rightDragZoomsIn =
                             timeline.pixelsPerTick() > 3.0;
 
+                    viewer.jumpToStart();
+                    const bool noPrematureSplits =
+                            viewer.checkpointSplits().isEmpty();
+                    viewer.setCurrentTick(145);
+                    const QVariantList firstSplits =
+                            viewer.checkpointSplits();
+                    viewer.setCurrentTick(741);
+                    const QVariantList checkpointSplits =
+                            viewer.checkpointSplits();
+                    viewer.jumpToEnd();
+                    const QVariantList finishedSplits =
+                            viewer.checkpointSplits();
+                    viewer.setCurrentTick(145);
+                    const QVariantList rewoundSplits =
+                            viewer.checkpointSplits();
+                    const bool checkpointSplitHistory =
+                            noPrematureSplits &&
+                            firstSplits.size() == 1 &&
+                            firstSplits.front()
+                                            .toMap()
+                                            .value(QStringLiteral("label"))
+                                            .toString() ==
+                                    QStringLiteral("CP 1") &&
+                            firstSplits.front()
+                                            .toMap()
+                                            .value(QStringLiteral("time"))
+                                            .toString() ==
+                                    QStringLiteral("1.45") &&
+                            checkpointSplits.size() == 2 &&
+                            checkpointSplits.back()
+                                            .toMap()
+                                            .value(QStringLiteral("label"))
+                                            .toString() ==
+                                    QStringLiteral("CP 2") &&
+                            checkpointSplits.back()
+                                            .toMap()
+                                            .value(QStringLiteral("time"))
+                                            .toString() ==
+                                    QStringLiteral("7.41") &&
+                            finishedSplits.size() == 3 &&
+                            finishedSplits.back()
+                                            .toMap()
+                                            .value(QStringLiteral("label"))
+                                            .toString() ==
+                                    QStringLiteral("Finish") &&
+                            finishedSplits.back()
+                                            .toMap()
+                                            .value(QStringLiteral("time"))
+                                            .toString() ==
+                                    QStringLiteral("9.995") &&
+                            finishedSplits.back()
+                                    .toMap()
+                                    .value(QStringLiteral("isFinish"))
+                                    .toBool() &&
+                            rewoundSplits.size() == 1;
                     viewer.setCurrentTick(100);
                     const bool timeLabelUnambiguous =
                             viewer.timeText().startsWith(
@@ -1078,6 +1141,7 @@ int main(int argc, char **argv) {
                             leftPressDoesNotSnap && dynamicRulerScale &&
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
                             timeLabelUnambiguous &&
+                            checkpointSplitHistory &&
                             searchCopyStopsAtCurrentTime &&
                             trajectoryPreviewValid &&
                             improvementTrajectoriesValid &&
@@ -1113,6 +1177,8 @@ int main(int argc, char **argv) {
                                 << ", rightDragZoomsIn=" << rightDragZoomsIn
                                 << ", timeLabelUnambiguous="
                                 << timeLabelUnambiguous
+                                << ", checkpointSplits="
+                                << checkpointSplitHistory
                                 << ", searchCopy="
                                 << searchCopyStopsAtCurrentTime
                                 << ", copiedScript='"

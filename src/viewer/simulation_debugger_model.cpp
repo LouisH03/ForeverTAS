@@ -1319,6 +1319,13 @@ void SimulationDebuggerModel::handleWorkerState(const QByteArray &json) {
     frame.insert(
             QStringLiteral("raceCompleted"),
             state.value(QStringLiteral("raceCompleted")).toBool());
+    if (state.value(QStringLiteral("finishTimeMs")).isDouble()) {
+        frame.insert(
+                QStringLiteral("finishTimeMs"),
+                static_cast<qint64>(
+                        state.value(QStringLiteral("finishTimeMs"))
+                                .toDouble()));
+    }
     emit frameProduced(frame);
     emit executionChanged();
 }

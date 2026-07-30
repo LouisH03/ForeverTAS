@@ -69,7 +69,13 @@ SearchTimelineFrame ToTimelineFrame(
             view.car.rotationW,
             view.accelerate,
             view.brake,
-            view.steering};
+            view.steering,
+            view.checkpointsCollected,
+            view.checkpointsTotal,
+            view.completedLaps,
+            view.totalLaps,
+            view.raceCompleted,
+            view.finishTimeMs};
 }
 
 struct TimelineSamplingRuntime {

@@ -198,6 +198,19 @@ bool ContainsText(QObject *root, const QString &needle) {
     return false;
 }
 
+void CollectVisualTexts(QQuickItem *root, QSet<QString> &texts) {
+    if (root == nullptr) {
+        return;
+    }
+    const QVariant text = root->property("text");
+    if (text.isValid()) {
+        texts.insert(text.toString());
+    }
+    for (QQuickItem *child : root->childItems()) {
+        CollectVisualTexts(child, texts);
+    }
+}
+
 bool IsCenteredIcon(QQuickItem *item, qreal expectedSize) {
     if (item == nullptr || item->parentItem() == nullptr) {
         return false;
@@ -2576,6 +2589,14 @@ int main(int argc, char **argv) {
                         frame.rotationW = 1.0f;
                         frame.accelerate = timeMs >= 10 ? 1.0f : 0.0f;
                         frame.steering = static_cast<float>(timeMs) / 20.0f;
+                        frame.checkpointsCollected =
+                                timeMs >= 20 ? 12u : timeMs >= 10 ? 1u : 0u;
+                        frame.checkpointsTotal = 12u;
+                        frame.totalLaps = 1u;
+                        frame.raceCompleted = timeMs >= 20;
+                        if (frame.raceCompleted) {
+                            frame.finishTimeMs = 20u;
+                        }
                         bestFrames.push_back(frame);
                     }
                     const std::vector<forevertas::SandboxInputEvent>
@@ -2650,6 +2671,148 @@ int main(int argc, char **argv) {
                                             .toMap()
                                             .value(QStringLiteral("opacity"))
                                             .toDouble() > 0.95;
+                    viewer.jumpToStart();
+                    QCoreApplication::processEvents();
+                    auto *const checkpointSplitOverlay =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "checkpointSplitOverlay")));
+                    auto *const checkpointSplitList =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "checkpointSplitList")));
+                    const bool splitOverlayEmptyState =
+                            checkpointSplitOverlay != nullptr &&
+                            checkpointSplitList != nullptr &&
+                            !checkpointSplitOverlay->isVisible() &&
+                            checkpointSplitList
+                                            ->property("count")
+                                            .toInt() == 0;
+                    viewer.jumpToEnd();
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QEventLoop checkpointSplitRenderLoop;
+                    QTimer::singleShot(
+                            60,
+                            &checkpointSplitRenderLoop,
+                            &QEventLoop::quit);
+                    checkpointSplitRenderLoop.exec();
+                    const int checkpointSplitEndCount =
+                            checkpointSplitList != nullptr
+                            ? checkpointSplitList
+                                      ->property("count")
+                                      .toInt()
+                            : -1;
+                    const bool checkpointSplitEndVisible =
+                            checkpointSplitOverlay != nullptr &&
+                            checkpointSplitOverlay->isVisible();
+                    const qsizetype controllerSplitEndCount =
+                            viewer.checkpointSplits().size();
+                    const qreal checkpointSplitEndHeight =
+                            checkpointSplitOverlay != nullptr
+                            ? checkpointSplitOverlay->height()
+                            : -1.0;
+                    const qreal checkpointSplitListEndHeight =
+                            checkpointSplitList != nullptr
+                            ? checkpointSplitList->height()
+                            : -1.0;
+                    const qreal checkpointSplitContentEndHeight =
+                            checkpointSplitList != nullptr
+                            ? checkpointSplitList
+                                      ->property("contentHeight")
+                                      .toReal()
+                            : -1.0;
+                    QSet<QString> renderedSplitTexts;
+                    CollectVisualTexts(
+                            checkpointSplitList,
+                            renderedSplitTexts);
+                    const qreal originalSplitReviewWidth =
+                            root->property("width").toReal();
+                    const qreal originalSplitReviewHeight =
+                            root->property("height").toReal();
+                    root->setProperty("width", 1240);
+                    root->setProperty("height", 580);
+                    QCoreApplication::processEvents();
+                    const bool compactSplitLayout =
+                            checkpointSplitOverlay != nullptr &&
+                            playbackDock != nullptr &&
+                            checkpointSplitOverlay->x() >= 13.9 &&
+                            checkpointSplitOverlay->width() >= 197.9 &&
+                            checkpointSplitOverlay->y() +
+                                            checkpointSplitOverlay->height() <=
+                                    playbackDock->y() - 7.9;
+                    root->setProperty(
+                            "width", originalSplitReviewWidth);
+                    root->setProperty(
+                            "height", originalSplitReviewHeight);
+                    viewer.jumpToStart();
+                    QCoreApplication::processEvents();
+                    const bool checkpointSplitOverlayUiValid =
+                            splitOverlayEmptyState &&
+                            checkpointSplitOverlay != nullptr &&
+                            checkpointSplitList != nullptr &&
+                            compactSplitLayout &&
+                            checkpointSplitEndVisible &&
+                            checkpointSplitEndCount == 13 &&
+                            controllerSplitEndCount == 13 &&
+                            checkpointSplitContentEndHeight >
+                                    checkpointSplitListEndHeight &&
+                            checkpointSplitList
+                                            ->property("count")
+                                            .toInt() == 0 &&
+                            renderedSplitTexts.contains(
+                                    QStringLiteral("CP 12")) &&
+                            renderedSplitTexts.contains(
+                                    QStringLiteral("Finish")) &&
+                            renderedSplitTexts.contains(
+                                    QStringLiteral("0.02"));
+                    if (!checkpointSplitOverlayUiValid) {
+                        std::cerr
+                                << "checkpoint split overlay checks failed: "
+                                << "empty=" << splitOverlayEmptyState
+                                << ", overlay="
+                                << (checkpointSplitOverlay != nullptr)
+                                << ", list="
+                                << (checkpointSplitList != nullptr)
+                                << ", compact=" << compactSplitLayout
+                                << ", end="
+                                << checkpointSplitEndVisible << "/"
+                                << checkpointSplitEndCount << "/"
+                                << controllerSplitEndCount
+                                << "/h=" << checkpointSplitEndHeight
+                                << "/" << checkpointSplitListEndHeight
+                                << "/" << checkpointSplitContentEndHeight
+                                << ", currentCount="
+                                << (checkpointSplitList != nullptr
+                                            ? checkpointSplitList
+                                                      ->property("count")
+                                                      .toInt()
+                                            : -1)
+                                << ", geometry="
+                                << (checkpointSplitOverlay != nullptr
+                                            ? checkpointSplitOverlay->y()
+                                            : -1.0)
+                                << "+"
+                                << (checkpointSplitOverlay != nullptr
+                                            ? checkpointSplitOverlay->height()
+                                            : -1.0)
+                                << "/list="
+                                << (checkpointSplitList != nullptr
+                                            ? checkpointSplitList->height()
+                                            : -1.0)
+                                << "/content="
+                                << (checkpointSplitList != nullptr
+                                            ? checkpointSplitList
+                                                      ->property(
+                                                              "contentHeight")
+                                                      .toDouble()
+                                            : -1.0)
+                                << ", renderedTexts="
+                                << renderedSplitTexts.size()
+                                << '\n';
+                    }
 
                     QTimer::singleShot(
                             250, &application,
@@ -2662,7 +2825,8 @@ int main(int argc, char **argv) {
                              copyCurrentRaceInputsButton,
                              rayTracingTrajectoryOverlay,
                              trajectoryPreviewUiValid,
-                             improvementTrajectoryUiValid]() {
+                             improvementTrajectoryUiValid,
+                             checkpointSplitOverlayUiValid]() {
                                 QCoreApplication::sendPostedEvents(
                                         nullptr, QEvent::DeferredDelete);
                                 const QList<QObject *> carRoots =
@@ -3615,6 +3779,7 @@ int main(int argc, char **argv) {
                                                         loadedSceneThemeInvariant &&
                                                         trajectoryPreviewUiValid &&
                                                         improvementTrajectoryUiValid &&
+                                                        checkpointSplitOverlayUiValid &&
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
                                                         editorStructure &&
@@ -3660,6 +3825,8 @@ int main(int argc, char **argv) {
                                             << viewer.trajectoryCount()
                                             << "/"
                                             << improvementTrajectoryUiValid
+                                            << "/splits="
+                                            << checkpointSplitOverlayUiValid
                                             << "/"
                                             << allTrajectoryModelsRendered
                                             << "/"

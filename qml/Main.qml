@@ -2487,6 +2487,139 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        id: checkpointSplitOverlay
+                        objectName: "checkpointSplitOverlay"
+                        anchors.left: parent.left
+                        anchors.leftMargin: 14
+                        anchors.top: raceViewerHeader.bottom
+                        anchors.topMargin:
+                            window.viewer.whiteboard.active ? 104 : 66
+                        z: 3
+                        width: 198
+                        height: Math.max(
+                                    0,
+                                    Math.min(
+                                        310,
+                                        playbackDock.y - y - 12,
+                                        Math.max(
+                                            74,
+                                            checkpointSplitHeader.height
+                                            + checkpointSplitList
+                                                  .contentHeight)))
+                        visible: window.viewer.checkpointSplits.length > 0
+                                 && !viewport.exportingWhiteboardImage
+                        color: AppTheme.viewerOverlay
+                        border.width: 1
+                        border.color: AppTheme.viewerOverlayBorder
+                        radius: 6
+                        clip: true
+
+                        Rectangle {
+                            id: checkpointSplitHeader
+                            objectName: "checkpointSplitHeader"
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 38
+                            color: AppTheme.viewerOverlayControl
+
+                            Label {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: qsTr("Splits")
+                                color: AppTheme.viewerOverlayText
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                        }
+
+                        ListView {
+                            id: checkpointSplitList
+                            objectName: "checkpointSplitList"
+                            anchors.top: checkpointSplitHeader.bottom
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            model: window.viewer.checkpointSplits
+                            boundsBehavior: Flickable.StopAtBounds
+                            clip: true
+
+                            onCountChanged: {
+                                if (count > 0)
+                                    positionViewAtEnd()
+                            }
+
+                            ScrollBar.vertical: ScrollBar {
+                                policy: checkpointSplitList.contentHeight
+                                        > checkpointSplitList.height
+                                        ? ScrollBar.AsNeeded
+                                        : ScrollBar.AlwaysOff
+                            }
+
+                            delegate: Rectangle {
+                                required property int index
+                                required property var modelData
+                                objectName: "checkpointSplitRow_" + index
+                                width: checkpointSplitList.width
+                                height: 36
+                                color: modelData.isFinish
+                                       ? (AppTheme.dark
+                                          ? "#244b34" : "#d8f2e1")
+                                       : "transparent"
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 1
+                                    color: AppTheme.viewerOverlayBorder
+                                    opacity: 0.5
+                                }
+
+                                RowLayout {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 8
+
+                                    Label {
+                                        objectName:
+                                            "checkpointSplitLabel_" + index
+                                        Layout.fillWidth: true
+                                        text: modelData.label
+                                        color: modelData.isFinish
+                                               ? (AppTheme.dark
+                                                  ? "#8ee1ac" : "#23683b")
+                                               : AppTheme.viewerOverlayText
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 11
+                                        font.weight: modelData.isFinish
+                                                     ? Font.DemiBold
+                                                     : Font.Normal
+                                    }
+
+                                    Label {
+                                        objectName:
+                                            "checkpointSplitTime_" + index
+                                        Layout.alignment: Qt.AlignRight
+                                        text: modelData.time
+                                        color: modelData.isFinish
+                                               ? (AppTheme.dark
+                                                  ? "#8ee1ac" : "#23683b")
+                                               : AppTheme.viewerOverlayMuted
+                                        font.family: "monospace"
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
                         id: manualDriveStatus
                         objectName: "manualDriveStatus"
                         anchors.horizontalCenter: parent.horizontalCenter

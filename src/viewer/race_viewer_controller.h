@@ -36,6 +36,18 @@ struct RaceViewerFrame {
     float accelerate = 0.0f;
     float brake = 0.0f;
     float steering = 0.0f;
+    std::uint32_t checkpointsCollected = 0u;
+    std::uint32_t checkpointsTotal = 0u;
+    std::uint32_t completedLaps = 0u;
+    std::uint32_t totalLaps = 1u;
+    bool raceCompleted = false;
+    std::optional<std::uint32_t> finishTimeMs;
+};
+
+struct RaceViewerSplit {
+    std::uint32_t index = 0u;
+    std::int64_t timeMs = 0;
+    bool isFinish = false;
 };
 
 struct RaceViewerInputSample {
@@ -51,6 +63,7 @@ struct RaceViewerRun {
     std::vector<SandboxInputEvent> inputs;
     QVector3D position{};
     QQuaternion rotation{};
+    std::vector<RaceViewerSplit> checkpointSplits;
 };
 
 struct RaceViewerMeshBuffers {
@@ -123,6 +136,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(qint64 tickCount READ tickCount NOTIFY timelineChanged)
     Q_PROPERTY(int tickDurationMs READ tickDurationMs CONSTANT)
     Q_PROPERTY(QString timeText READ timeText NOTIFY timeChanged)
+    Q_PROPERTY(QVariantList checkpointSplits READ checkpointSplits NOTIFY
+                       timeChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playbackChanged)
     Q_PROPERTY(bool takeOverOnInput READ takeOverOnInput WRITE
                        setTakeOverOnInput NOTIFY takeOverOnInputChanged)
@@ -193,6 +208,7 @@ public:
     qint64 tickCount() const;
     int tickDurationMs() const;
     QString timeText() const;
+    QVariantList checkpointSplits() const;
     bool playing() const;
     bool takeOverOnInput() const;
     bool manualDriving() const;

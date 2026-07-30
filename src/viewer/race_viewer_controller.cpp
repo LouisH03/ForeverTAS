@@ -756,7 +756,13 @@ std::vector<RaceViewerFrame> ToViewerFrames(
                             frame.rotationZ).normalized(),
                 frame.accelerate,
                 frame.brake,
-                frame.steering});
+                frame.steering,
+                frame.checkpointsCollected,
+                frame.checkpointsTotal,
+                frame.completedLaps,
+                frame.totalLaps,
+                frame.raceCompleted,
+                frame.finishTimeMs});
     }
     return result;
 }
@@ -789,7 +795,56 @@ RaceViewerFrame ToViewerFrame(const PhysicsSandboxStateView &state) {
                         state.car.rotationZ).normalized(),
             state.accelerate,
             state.brake,
-            state.steering};
+            state.steering,
+            state.checkpointsCollected,
+            state.checkpointsTotal,
+            state.completedLaps,
+            state.totalLaps,
+            state.raceCompleted,
+            state.finishTimeMs};
+}
+
+void AppendCheckpointTransitions(
+        std::vector<RaceViewerSplit> &splits,
+        std::uint32_t previousCheckpointCount,
+        const RaceViewerFrame &frame) {
+    for (std::uint64_t index =
+                 static_cast<std::uint64_t>(
+                         previousCheckpointCount) + 1u;
+         index <= static_cast<std::uint64_t>(
+                          frame.checkpointsCollected);
+         ++index) {
+        splits.push_back({
+                static_cast<std::uint32_t>(index),
+                frame.timeMs,
+                false});
+    }
+    if (frame.raceCompleted &&
+        std::none_of(
+                splits.cbegin(),
+                splits.cend(),
+                [](const RaceViewerSplit &split) {
+                    return split.isFinish;
+                })) {
+        splits.push_back({
+                0u,
+                frame.finishTimeMs.has_value()
+                        ? static_cast<std::int64_t>(*frame.finishTimeMs)
+                        : frame.timeMs,
+                true});
+    }
+}
+
+std::vector<RaceViewerSplit> BuildCheckpointSplits(
+        const std::vector<RaceViewerFrame> &frames) {
+    std::vector<RaceViewerSplit> splits;
+    std::uint32_t checkpointCount = 0u;
+    for (const RaceViewerFrame &frame : frames) {
+        AppendCheckpointTransitions(splits, checkpointCount, frame);
+        checkpointCount =
+                std::max(checkpointCount, frame.checkpointsCollected);
+    }
+    return splits;
 }
 
 void UpdateRunPose(RaceViewerRun &run, qint64 timeMs) {
@@ -1038,6 +1093,42 @@ int RaceViewerController::tickDurationMs() const {
 QString RaceViewerController::timeText() const {
     return FormatTime(timeMs_) + QStringLiteral(" / ") +
             FormatTime(durationMs_);
+}
+
+QVariantList RaceViewerController::checkpointSplits() const {
+    QVariantList result;
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr) {
+        return result;
+    }
+    result.reserve(static_cast<qsizetype>(run->checkpointSplits.size()));
+    for (const RaceViewerSplit &split : run->checkpointSplits) {
+        if (split.timeMs > timeMs_) {
+            break;
+        }
+        QVariantMap item;
+        item.insert(
+                QStringLiteral("label"),
+                split.isFinish
+                        ? tr("Finish")
+                        : tr("CP %1").arg(split.index));
+        item.insert(
+                QStringLiteral("time"),
+                QString::fromStdString(
+                        FormatSignificantDurationMilliseconds(
+                                static_cast<std::uint64_t>(
+                                        std::max<std::int64_t>(
+                                                0, split.timeMs)))));
+        item.insert(
+                QStringLiteral("timeMs"),
+                static_cast<qlonglong>(split.timeMs));
+        item.insert(QStringLiteral("isFinish"), split.isFinish);
+        item.insert(
+                QStringLiteral("index"),
+                static_cast<qulonglong>(split.index));
+        result.push_back(std::move(item));
+    }
+    return result;
 }
 
 bool RaceViewerController::playing() const {
@@ -2726,16 +2817,21 @@ void RaceViewerController::upsertRun(QString id,
             });
     const QString runId = id;
     if (existing == runs_.end()) {
+        std::vector<RaceViewerSplit> checkpointSplits =
+                BuildCheckpointSplits(frames);
         runs_.push_back({std::move(id),
                          std::move(name),
                          std::move(frames),
                          std::move(inputs),
                          {},
-                         {}});
+                         {},
+                         std::move(checkpointSplits)});
     } else {
         existing->name = std::move(name);
         existing->frames = std::move(frames);
         existing->inputs = std::move(inputs);
+        existing->checkpointSplits =
+                BuildCheckpointSplits(existing->frames);
     }
     emit runsChanged();
 
@@ -2830,30 +2926,53 @@ void RaceViewerController::appendSimulationDebuggerFrame(
                     .normalized(),
             frame.value(QStringLiteral("accelerate")).toFloat(),
             frame.value(QStringLiteral("brake")).toFloat(),
-            frame.value(QStringLiteral("steering")).toFloat()};
+            frame.value(QStringLiteral("steering")).toFloat(),
+            frame.value(QStringLiteral("checkpointsCollected")).toUInt(),
+            frame.value(QStringLiteral("checkpointsTotal")).toUInt(),
+            frame.value(QStringLiteral("completedLaps")).toUInt(),
+            frame.value(QStringLiteral("totalLaps")).toUInt(),
+            frame.value(QStringLiteral("raceCompleted")).toBool(),
+            frame.contains(QStringLiteral("finishTimeMs"))
+                    ? std::optional<std::uint32_t>(
+                              frame.value(QStringLiteral("finishTimeMs"))
+                                      .toUInt())
+                    : std::nullopt};
 
     auto found = std::find_if(
             runs_.begin(), runs_.end(), [](const RaceViewerRun &run) {
                 return run.id == QStringLiteral("debug");
             });
     if (found == runs_.end()) {
+        std::vector<RaceViewerSplit> checkpointSplits =
+                BuildCheckpointSplits({viewerFrame});
         runs_.push_back(
                 {QStringLiteral("debug"),
                  QStringLiteral("Reference source"),
                  {viewerFrame},
                  {},
                  {},
-                 {}});
+                 {},
+                 std::move(checkpointSplits)});
         found = std::prev(runs_.end());
         emit runsChanged();
     } else if (
             !found->frames.empty() &&
             found->frames.back().timeMs == viewerFrame.timeMs) {
         found->frames.back() = viewerFrame;
+        found->checkpointSplits =
+                BuildCheckpointSplits(found->frames);
     } else if (
             found->frames.empty() ||
             found->frames.back().timeMs < viewerFrame.timeMs) {
+        const std::uint32_t previousCheckpointCount =
+                found->frames.empty()
+                ? 0u
+                : found->frames.back().checkpointsCollected;
         found->frames.push_back(viewerFrame);
+        AppendCheckpointTransitions(
+                found->checkpointSplits,
+                previousCheckpointCount,
+                viewerFrame);
     } else {
         setStatusText(QStringLiteral(
                 "Native debugger returned a non-monotonic "
@@ -2913,7 +3032,15 @@ void RaceViewerController::advanceManualDrive() {
             break;
         }
         manualRuntime_->state = advanced.Value();
-        run->frames.push_back(ToViewerFrame(manualRuntime_->state));
+        const RaceViewerFrame viewerFrame =
+                ToViewerFrame(manualRuntime_->state);
+        const std::uint32_t previousCheckpointCount =
+                run->frames.back().checkpointsCollected;
+        run->frames.push_back(viewerFrame);
+        AppendCheckpointTransitions(
+                run->checkpointSplits,
+                previousCheckpointCount,
+                viewerFrame);
         durationMs_ = static_cast<qint64>(
                 manualRuntime_->state.timeMs);
         timeMs_ = durationMs_;

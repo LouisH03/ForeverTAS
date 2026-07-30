@@ -64,6 +64,44 @@ inline std::string FormatHumanDurationMilliseconds(double milliseconds) {
     return stream.str();
 }
 
+inline std::string FormatSignificantDurationMilliseconds(
+        std::uint64_t milliseconds) {
+    constexpr std::uint64_t MillisecondsPerSecond = 1000u;
+    constexpr std::uint64_t SecondsPerMinute = 60u;
+    constexpr std::uint64_t SecondsPerHour = 3600u;
+
+    const std::uint64_t totalSeconds =
+            milliseconds / MillisecondsPerSecond;
+    const std::uint64_t hours = totalSeconds / SecondsPerHour;
+    const std::uint64_t minutes =
+            (totalSeconds / SecondsPerMinute) % SecondsPerMinute;
+    const std::uint64_t seconds = totalSeconds % SecondsPerMinute;
+    std::uint64_t fraction =
+            milliseconds % MillisecondsPerSecond;
+
+    std::ostringstream stream;
+    stream << std::setfill('0');
+    if (hours != 0u) {
+        stream << hours << ':' << std::setw(2) << minutes << ':'
+               << std::setw(2) << seconds;
+    } else if (minutes != 0u) {
+        stream << minutes << ':' << std::setw(2) << seconds;
+    } else {
+        stream << seconds;
+    }
+    if (fraction != 0u) {
+        std::uint64_t divisor = 100u;
+        while (fraction % 10u == 0u) {
+            fraction /= 10u;
+            divisor /= 10u;
+        }
+        stream << '.' << std::setw(
+                divisor == 100u ? 3 : divisor == 10u ? 2 : 1)
+               << fraction;
+    }
+    return stream.str();
+}
+
 template<typename Rep, typename Period>
 std::string FormatHumanDuration(
         const std::chrono::duration<Rep, Period> &duration) {
