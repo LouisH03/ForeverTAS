@@ -208,6 +208,10 @@ int main(int argc, char **argv) {
     const QString replayPath = QString::fromLocal8Bit(argv[2]);
     const std::vector<forevertas::SearchTimelineFrame> searchTimeline =
             SyntheticSearchTimeline();
+    const QString trajectoryScript = QStringLiteral(
+            "0.00 press up\n"
+            "0.10 rel up");
+    viewer.setPreviewInputScript(trajectoryScript);
     int exitCode = 1;
     bool completed = false;
     bool verificationStarted = false;
@@ -215,7 +219,7 @@ int main(int argc, char **argv) {
     bool manualVerificationStarted = false;
     bool manualDriveValid = false;
     bool manualInitialNeutral = false;
-    bool trajectorySaveValid = false;
+    bool trajectoryPreviewValid = false;
     bool improvementTrajectoriesValid = false;
     QVector3D manualInitialPosition;
     QObject::connect(
@@ -230,13 +234,13 @@ int main(int argc, char **argv) {
                     return;
                 }
                 if (viewer.loaded()) {
-                    if (viewer.runCount() == 0) {
+                    if (viewer.runCount() == 1 &&
+                        viewer.selectedRunId() == QStringLiteral("preview")) {
                         if (manualVerificationStarted) {
                             return;
                         }
-                        mapOnlyStateObserved = viewer.durationMs() == 0 &&
-                                viewer.tickCount() == 0 &&
-                                viewer.selectedRunId().isEmpty() &&
+                        mapOnlyStateObserved = viewer.durationMs() > 0 &&
+                                viewer.tickCount() > 1 &&
                                 viewer.statusText() ==
                                         QStringLiteral("Map loaded");
                         if (!mapOnlyStateObserved) {
@@ -246,12 +250,6 @@ int main(int argc, char **argv) {
                             return;
                         }
                         manualVerificationStarted = true;
-                        const QString trajectoryScript =
-                                QStringLiteral(
-                                        "0.00 press up\n"
-                                        "0.10 rel up");
-                        const bool trajectorySaved =
-                                viewer.saveInputTrajectory(trajectoryScript);
                         const QVariantList trajectoryPaths =
                                 viewer.trajectoryPaths();
                         const bool trajectoryGeometryValid =
@@ -264,42 +262,112 @@ int main(int argc, char **argv) {
                                         .toMap()
                                         .value(QStringLiteral("name"))
                                         .toString() ==
-                                        QStringLiteral("Baseline 1") &&
+                                        QStringLiteral("Manual") &&
+                                trajectoryPaths.front()
+                                                .toMap()
+                                                .value(QStringLiteral("kind"))
+                                                .toString() ==
+                                        QStringLiteral("preview") &&
                                 trajectoryPaths.front()
                                         .toMap()
                                         .value(QStringLiteral("color"))
                                         .toString() ==
                                         QStringLiteral("#41c979");
-                        const bool duplicateAccepted =
-                                viewer.saveInputTrajectory(
-                                        QStringLiteral(
-                                                "0.000 press up\n"
-                                                "0.100 release up"));
-                        const bool invalidRejected =
-                                !viewer.saveInputTrajectory(
-                                        QStringLiteral("not a command"));
-                        trajectorySaveValid =
-                                trajectorySaved &&
+                        QObject *const previewGeometry =
+                                trajectoryPaths.front()
+                                        .toMap()
+                                        .value(QStringLiteral("geometry"))
+                                        .value<QObject *>();
+                        viewer.jumpToEnd();
+                        const QVector3D shortAccelerationPosition =
+                                viewer.carPosition();
+                        viewer.setPreviewInputScript(
+                                QStringLiteral(
+                                        "0.00 press up\n"
+                                        "0.20 rel up"));
+                        viewer.jumpToEnd();
+                        const QVector3D valueEditedPosition =
+                                viewer.carPosition();
+                        const bool valueEditApplied =
+                                viewer.trajectoryCount() == 1 &&
+                                viewer.runCount() == 1 &&
+                                viewer.currentInputScript().contains(
+                                        QStringLiteral("0.20 rel up")) &&
+                                (valueEditedPosition -
+                                 shortAccelerationPosition)
+                                                .lengthSquared() >
+                                        0.000001f;
+                        viewer.setPreviewInputScript(
+                                QStringLiteral(
+                                        "0.00 press up\n"
+                                        "0.00 press left\n"
+                                        "0.20 rel left\n"
+                                        "0.20 rel up"));
+                        viewer.jumpToEnd();
+                        const bool eventEditApplied =
+                                viewer.trajectoryCount() == 1 &&
+                                viewer.runCount() == 1 &&
+                                viewer.trajectoryPaths()
+                                                .front()
+                                                .toMap()
+                                                .value(QStringLiteral(
+                                                        "geometry"))
+                                                .value<QObject *>() ==
+                                        previewGeometry &&
+                                viewer.previewInputScript().contains(
+                                        QStringLiteral("press left")) &&
+                                FindActivityTick(viewer, 'l') >= 0;
+                        viewer.jumpToStart();
+                        viewer.play();
+                        viewer.setPreviewInputScript(
+                                QStringLiteral(
+                                        "0.00 press up\n"
+                                        "0.00 press left\n"
+                                        "0.30 rel left\n"
+                                        "0.30 rel up"));
+                        const bool playbackContinuedAfterEdit =
+                                viewer.playing() &&
+                                viewer.selectedRunId() ==
+                                        QStringLiteral("preview");
+                        viewer.pause();
+                        viewer.setPreviewInputScript(
+                                QStringLiteral("not a command"));
+                        const bool invalidEditCleared =
+                                viewer.trajectoryCount() == 0 &&
+                                viewer.runCount() == 0 &&
+                                viewer.selectedRunId().isEmpty();
+                        viewer.setPreviewInputScript(
+                                QStringLiteral(
+                                        "0.00 press up\n"
+                                        "0.00 press left\n"
+                                        "0.20 rel left\n"
+                                        "0.20 rel up"));
+                        trajectoryPreviewValid =
                                 trajectoryGeometryValid &&
-                                duplicateAccepted &&
-                                invalidRejected &&
+                                valueEditApplied &&
+                                eventEditApplied &&
+                                playbackContinuedAfterEdit &&
+                                invalidEditCleared &&
+                                viewer.previewInputScript().contains(
+                                        QStringLiteral("press left")) &&
                                 viewer.trajectoryCount() == 1 &&
                                 viewer.runCount() == 1 &&
                                 viewer.tickCount() > 1 &&
                                 viewer.durationMs() > 0 &&
                                 viewer.selectedRunId() ==
-                                        QStringLiteral("baseline-1");
-                        if (!trajectorySaveValid) {
+                                        QStringLiteral("preview");
+                        if (!trajectoryPreviewValid) {
                             completed = true;
                             std::cerr
-                                    << "input trajectory save checks failed: "
-                                    << "saved=" << trajectorySaved
-                                    << ", geometry="
+                                    << "automatic trajectory preview checks failed: "
+                                    << "geometry="
                                     << trajectoryGeometryValid
-                                    << ", duplicate="
-                                    << duplicateAccepted
-                                    << ", invalid="
-                                    << invalidRejected
+                                    << ", valueEdit=" << valueEditApplied
+                                    << ", eventEdit=" << eventEditApplied
+                                    << ", playbackEdit="
+                                    << playbackContinuedAfterEdit
+                                    << ", invalidClear="
+                                    << invalidEditCleared
                                     << ", count="
                                     << viewer.trajectoryCount()
                                     << ", runs=" << viewer.runCount()
@@ -405,10 +473,7 @@ int main(int argc, char **argv) {
                             return;
                         }
                         viewer.startManualDrive();
-                        const bool trajectoryRejectedWhileDriving =
-                                !viewer.saveInputTrajectory(trajectoryScript);
-                        if (!trajectoryRejectedWhileDriving ||
-                            !viewer.manualDriving() ||
+                        if (!viewer.manualDriving() ||
                             viewer.selectedRunId() !=
                                     QStringLiteral("manual") ||
                             viewer.tickCount() != 1) {
@@ -779,7 +844,7 @@ int main(int argc, char **argv) {
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
                             timeLabelUnambiguous &&
                             searchCopyStopsAtCurrentTime &&
-                            trajectorySaveValid &&
+                            trajectoryPreviewValid &&
                             improvementTrajectoriesValid;
                     if (!sceneValid) {
                         std::cerr

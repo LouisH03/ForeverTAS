@@ -107,6 +107,8 @@ class RaceViewerController final : public QObject {
                        trajectoriesChanged)
     Q_PROPERTY(qint64 trajectoryCount READ trajectoryCount NOTIFY
                        trajectoriesChanged)
+    Q_PROPERTY(QString previewInputScript READ previewInputScript WRITE
+                       setPreviewInputScript NOTIFY previewInputScriptChanged)
     Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
     Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
     Q_PROPERTY(qint64 runCount READ runCount NOTIFY runsChanged)
@@ -172,6 +174,7 @@ public:
     QVariantList visualMaterials() const;
     QVariantList trajectoryPaths() const;
     qint64 trajectoryCount() const;
+    QString previewInputScript() const;
     QVariantList runOptions() const;
     QVariantList runPoses() const;
     qint64 runCount() const;
@@ -240,6 +243,7 @@ public slots:
     void setTimeMs(qint64 value);
     void setCurrentTick(qint64 tick);
     void setSelectedRunId(const QString &value);
+    void setPreviewInputScript(const QString &value);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void togglePlayback();
@@ -252,7 +256,6 @@ public slots:
     Q_INVOKABLE void setManualInput(const QString &input, bool active);
     Q_INVOKABLE void releaseManualInputs();
     Q_INVOKABLE QString currentInputScript() const;
-    Q_INVOKABLE bool saveInputTrajectory(const QString &script);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
                             const QString &replayPath);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
@@ -273,6 +276,7 @@ signals:
     void runsChanged();
     void selectedRunChanged();
     void trajectoriesChanged();
+    void previewInputScriptChanged();
 
 private:
     void applyLoadResult(std::uint64_t loadSerial,
@@ -286,6 +290,8 @@ private:
             std::uint64_t searchId,
             std::uint64_t improvementNumber,
             const std::vector<RaceViewerFrame> &frames);
+    bool rebuildInputPreview();
+    void clearInputPreview();
     void upsertRun(QString id,
                    QString name,
                    std::vector<RaceViewerFrame> frames,
@@ -343,6 +349,7 @@ private:
     QVariantList visualBatches_;
     QVariantList visualMaterials_;
     QVariantList trajectoryPaths_;
+    RaceGeometry inputPreviewGeometry_;
     std::vector<std::unique_ptr<RaceGeometry>> trajectoryGeometries_;
     std::vector<QString> trajectoryKeys_;
     QVector3D carPosition_{};
@@ -351,6 +358,7 @@ private:
     QString selectedRunId_;
     QString loadedPacksDirectory_;
     QString loadedReplayPath_;
+    QString previewInputScript_;
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;
@@ -368,6 +376,7 @@ private:
     bool loading_ = false;
     bool playing_ = false;
     bool manualDriving_ = false;
+    bool inputPreviewVisible_ = false;
     bool manualLeft_ = false;
     bool manualRight_ = false;
     bool manualAccelerate_ = false;

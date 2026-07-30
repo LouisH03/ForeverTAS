@@ -33,9 +33,18 @@ int main(int argc, char **argv) {
                 if (viewer.loading()) {
                     loadInProgress = true;
                     if (completedLoads > 0) {
-                        preservedSceneDuringReload &= viewer.loaded() &&
+                        const bool preserved = viewer.loaded() &&
                                 viewer.ellipsoidCount() > 0 &&
-                                viewer.runCount() == 0;
+                                viewer.runCount() == 1;
+                        preservedSceneDuringReload &= preserved;
+                        if (!preserved) {
+                            std::cerr
+                                    << "scene changed while reload was pending: "
+                                    << "loaded=" << viewer.loaded()
+                                    << ", ellipsoids="
+                                    << viewer.ellipsoidCount()
+                                    << ", runs=" << viewer.runCount() << '\n';
+                        }
                     }
                     return;
                 }
@@ -43,12 +52,12 @@ int main(int argc, char **argv) {
                 loadInProgress = false;
 
                 const bool sceneValid =
-                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 0 &&
-                        viewer.tickCount() == 0 &&
-                        viewer.durationMs() == 0 &&
-                        viewer.selectedRunId().isEmpty() &&
+                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 1 &&
+                        viewer.tickCount() > 1 &&
+                        viewer.durationMs() > 0 &&
+                        viewer.selectedRunId() == QStringLiteral("preview") &&
                         viewer.trajectoryCount() ==
-                                (completedLoads == 0 ? 1 : 0) &&
+                                (completedLoads == 0 ? 2 : 1) &&
                         viewer.visualTriangleCount() > 0 &&
                         viewer.visualMeshCount() > 0 &&
                         !viewer.visualMaterials().isEmpty() &&

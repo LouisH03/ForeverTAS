@@ -515,9 +515,6 @@ int main(int argc, char **argv) {
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
                             QStringLiteral("stepForwardShortcut"));
-                    QObject *const saveInputTrajectoryShortcut =
-                            root->findChild<QObject *>(QStringLiteral(
-                                    "saveInputTrajectoryShortcut"));
                     QObject *const autoPacksSuggestion =
                             root->findChild<QObject *>(
                                     QStringLiteral("autoPacksSuggestion"));
@@ -654,9 +651,6 @@ int main(int argc, char **argv) {
                     QObject *const copyCurrentRaceInputsButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "copyCurrentRaceInputsButton"));
-                    QObject *const saveInputTrajectoryButton =
-                            root->findChild<QObject *>(QStringLiteral(
-                                    "saveInputTrajectoryButton"));
                     QObject *const loadMapButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("loadMapButton"));
@@ -698,8 +692,8 @@ int main(int argc, char **argv) {
                     const bool keyboardStepping =
                             stepBackward != nullptr &&
                             stepForward != nullptr &&
-                            !stepBackward->property("enabled").toBool() &&
-                            !stepForward->property("enabled").toBool() &&
+                            stepBackward->property("enabled").toBool() &&
+                            stepForward->property("enabled").toBool() &&
                             stepBackward->property("sequence").toString() ==
                                     QStringLiteral("Left") &&
                             stepForward->property("sequence").toString() ==
@@ -813,8 +807,8 @@ int main(int argc, char **argv) {
                             std::abs(rowCenter(renderModeSelector) -
                                      rowCenter(resetViewButton)) < 0.6 &&
                             renderModeSelector->width() >= 179.0 &&
-                            runSelector->property("count").toInt() == 0 &&
-                            !runSelector->property("enabled").toBool();
+                            runSelector->property("count").toInt() == 1 &&
+                            runSelector->property("enabled").toBool();
                     bool globalBaseInputScriptPlacement =
                             globalScriptVisibleAcrossTabs &&
                             packsDirectorySection != nullptr &&
@@ -842,14 +836,19 @@ int main(int argc, char **argv) {
                             baseInputScriptTextArea != nullptr &&
                             baseInputScriptErrorLabel != nullptr &&
                             copyCurrentRaceInputsButton != nullptr &&
-                            !copyCurrentRaceInputsButton
+                            copyCurrentRaceInputsButton
                                      ->property("enabled").toBool() &&
-                            saveInputTrajectoryButton != nullptr &&
-                            saveInputTrajectoryButton
-                                     ->property("enabled").toBool() &&
-                            saveInputTrajectoryShortcut != nullptr &&
-                            saveInputTrajectoryShortcut
-                                     ->property("enabled").toBool() &&
+                            root->findChild<QObject *>(
+                                    QStringLiteral(
+                                            "saveInputTrajectoryButton")) ==
+                                    nullptr &&
+                            root->findChild<QObject *>(
+                                    QStringLiteral(
+                                            "saveInputTrajectoryShortcut")) ==
+                                    nullptr &&
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("Save trajectory")) &&
                             loadMapButton != nullptr &&
                             extractReplayInputsButton != nullptr &&
                             replaceBaseInputScriptDialog != nullptr &&
@@ -2140,7 +2139,7 @@ int main(int argc, char **argv) {
                     }
                     editorStructure = timeline != nullptr &&
                             timeline->viewer() == &viewer &&
-                            !timeline->isEnabled() &&
+                            timeline->isEnabled() &&
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
                             runSelectorValid &&
@@ -2163,7 +2162,7 @@ int main(int argc, char **argv) {
                             modifierFocusStable && unboundedFieldsScrubbable &&
                             playPause != nullptr && jumpStart != nullptr &&
                             jumpEnd != nullptr &&
-                            !playPause->property("enabled").toBool() &&
+                            playPause->property("enabled").toBool() &&
                             std::abs(playPause->property("width").toReal() -
                                      42.0) < 0.1 &&
                             std::abs(playPause->property("height").toReal() -
@@ -2300,24 +2299,76 @@ int main(int argc, char **argv) {
                                     "0.00 press up\n"
                                     "0.10 rel up"));
                     QCoreApplication::processEvents();
-                    const bool saveButtonInvoked =
-                            saveInputTrajectoryButton != nullptr &&
-                            saveInputTrajectoryButton
-                                    ->property("enabled").toBool() &&
-                            QMetaObject::invokeMethod(
-                                    saveInputTrajectoryButton,
-                                    "clicked",
-                                    Qt::DirectConnection);
+                    const QVariantList initialPreviewPaths =
+                            viewer.trajectoryPaths();
+                    QObject *const previewGeometry =
+                            initialPreviewPaths.size() == 1
+                            ? initialPreviewPaths.front()
+                                      .toMap()
+                                      .value(QStringLiteral("geometry"))
+                                      .value<QObject *>()
+                            : nullptr;
+                    viewer.jumpToEnd();
+                    const QVector3D shortAccelerationPosition =
+                            viewer.carPosition();
+                    controller.setBaseInputScript(
+                            QStringLiteral(
+                                    "0.00 press up\n"
+                                    "0.20 rel up"));
                     QCoreApplication::processEvents();
-                    const bool saveShortcutInvoked =
-                            saveInputTrajectoryShortcut != nullptr &&
-                            saveInputTrajectoryShortcut
-                                    ->property("enabled").toBool() &&
-                            QMetaObject::invokeMethod(
-                                    saveInputTrajectoryShortcut,
-                                    "activated",
-                                    Qt::DirectConnection);
+                    viewer.jumpToEnd();
+                    const QVector3D valueEditedPosition =
+                            viewer.carPosition();
+                    const bool valueEditUpdatedPreview =
+                            viewer.trajectoryCount() == 1 &&
+                            viewer.runCount() == 1 &&
+                            viewer.currentInputScript().contains(
+                                    QStringLiteral("0.20 rel up")) &&
+                            (valueEditedPosition -
+                             shortAccelerationPosition)
+                                            .lengthSquared() >
+                                    0.000001f;
+                    controller.setBaseInputScript(
+                            QStringLiteral(
+                                    "0.00 press up\n"
+                                    "0.00 press left\n"
+                                    "0.20 rel left\n"
+                                    "0.20 rel up"));
                     QCoreApplication::processEvents();
+                    viewer.jumpToEnd();
+                    const bool eventEditUpdatedPreview =
+                            viewer.trajectoryCount() == 1 &&
+                            viewer.runCount() == 1 &&
+                            viewer.trajectoryPaths()
+                                            .front()
+                                            .toMap()
+                                            .value(QStringLiteral("geometry"))
+                                            .value<QObject *>() ==
+                                    previewGeometry &&
+                            viewer.previewInputScript().contains(
+                                    QStringLiteral("press left")) &&
+                            viewer.inputSample(1).steering < -0.99f;
+                    controller.setBaseInputScript(
+                            QStringLiteral("not a command"));
+                    QCoreApplication::processEvents();
+                    QCoreApplication::sendPostedEvents(
+                            nullptr, QEvent::DeferredDelete);
+                    const bool invalidEditRemovedStalePreview =
+                            viewer.trajectoryCount() == 0 &&
+                            viewer.runCount() == 0 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "trajectoryPathModel"))
+                                    .isEmpty();
+                    controller.setBaseInputScript(
+                            QStringLiteral(
+                                    "0.00 press up\n"
+                                    "0.00 press left\n"
+                                    "0.20 rel left\n"
+                                    "0.20 rel up"));
+                    QCoreApplication::processEvents();
+                    QCoreApplication::sendPostedEvents(
+                            nullptr, QEvent::DeferredDelete);
                     const QList<QObject *> trajectoryModels =
                             root->findChildren<QObject *>(
                                     QStringLiteral("trajectoryPathModel"));
@@ -2329,10 +2380,40 @@ int main(int argc, char **argv) {
                             root->findChild<QObject *>(
                                     QStringLiteral(
                                             "rayTracingTrajectoryOverlay"));
-                    const bool trajectorySaveUiValid =
-                            saveButtonInvoked &&
-                            saveShortcutInvoked &&
+                    const QVariantList finalPreviewPaths =
+                            viewer.trajectoryPaths();
+                    const bool trajectoryPreviewUiValid =
+                            valueEditUpdatedPreview &&
+                            eventEditUpdatedPreview &&
+                            invalidEditRemovedStalePreview &&
+                            root->findChild<QObject *>(
+                                    QStringLiteral(
+                                            "saveInputTrajectoryButton")) ==
+                                    nullptr &&
+                            root->findChild<QObject *>(
+                                    QStringLiteral(
+                                            "saveInputTrajectoryShortcut")) ==
+                                    nullptr &&
+                            !ContainsText(
+                                    root,
+                                    QStringLiteral("Save trajectory")) &&
+                            viewer.previewInputScript() ==
+                                    controller.baseInputScript() &&
                             viewer.trajectoryCount() == 1 &&
+                            viewer.runCount() == 1 &&
+                            viewer.selectedRunId() ==
+                                    QStringLiteral("preview") &&
+                            finalPreviewPaths.size() == 1 &&
+                            finalPreviewPaths.front()
+                                            .toMap()
+                                            .value(QStringLiteral("kind"))
+                                            .toString() ==
+                                    QStringLiteral("preview") &&
+                            finalPreviewPaths.front()
+                                            .toMap()
+                                            .value(QStringLiteral("name"))
+                                            .toString() ==
+                                    QStringLiteral("Manual") &&
                             trajectoryModels.size() == 1 &&
                             rayTracingTrajectoryModels.size() == 1 &&
                             rayTracingTrajectoryOverlay != nullptr &&
@@ -2343,9 +2424,35 @@ int main(int argc, char **argv) {
                                     .value<QObject *>() != nullptr &&
                             trajectoryModels.front()
                                     ->property("visible").toBool() &&
-                            saveInputTrajectoryButton
-                                    ->property("text").toString() ==
-                                    QStringLiteral("Save trajectory");
+                            trajectoryModels.front()
+                                            ->property("geometry")
+                                            .value<QObject *>() ==
+                                    previewGeometry;
+                    if (!trajectoryPreviewUiValid) {
+                        std::cerr
+                                << "automatic preview UI checks failed: value="
+                                << valueEditUpdatedPreview
+                                << ", event=" << eventEditUpdatedPreview
+                                << ", invalid="
+                                << invalidEditRemovedStalePreview
+                                << ", paths=" << finalPreviewPaths.size()
+                                << ", runs=" << viewer.runCount()
+                                << ", selected="
+                                << viewer.selectedRunId().toStdString()
+                                << ", raster=" << trajectoryModels.size()
+                                << ", ray="
+                                << rayTracingTrajectoryModels.size()
+                                << ", geometry="
+                                << (trajectoryModels.size() == 1 &&
+                                    trajectoryModels.front()
+                                                    ->property("geometry")
+                                                    .value<QObject *>() ==
+                                            previewGeometry)
+                                << ", scriptSync="
+                                << (viewer.previewInputScript() ==
+                                    controller.baseInputScript())
+                                << '\n';
+                    }
 
                     const QVector3D baselinePosition = viewer.carPosition();
                     const QVector3D bestPosition =
@@ -2447,7 +2554,7 @@ int main(int argc, char **argv) {
                              baseInputScriptTextArea,
                              copyCurrentRaceInputsButton,
                              rayTracingTrajectoryOverlay,
-                             trajectorySaveUiValid,
+                             trajectoryPreviewUiValid,
                              improvementTrajectoryUiValid]() {
                                 QCoreApplication::sendPostedEvents(
                                         nullptr, QEvent::DeferredDelete);
@@ -3399,7 +3506,7 @@ int main(int argc, char **argv) {
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
                                                         loadedSceneThemeInvariant &&
-                                                        trajectorySaveUiValid &&
+                                                        trajectoryPreviewUiValid &&
                                                         improvementTrajectoryUiValid &&
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
@@ -3440,8 +3547,8 @@ int main(int argc, char **argv) {
                                             << onlyBestSelected
                                             << ", copyCurrentRaceInputs="
                                             << copyCurrentRaceInputsValid
-                                            << ", trajectorySave="
-                                            << trajectorySaveUiValid
+                                            << ", trajectoryPreview="
+                                            << trajectoryPreviewUiValid
                                             << "/"
                                             << viewer.trajectoryCount()
                                             << "/"

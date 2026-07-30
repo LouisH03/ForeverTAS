@@ -16,7 +16,7 @@
 
 namespace {
 
-bool MapOnlySceneIsVisible(
+bool PreviewSceneIsVisible(
         QObject *root,
         const forevertas::viewer::RaceViewerController &viewer,
         int loadNumber) {
@@ -28,15 +28,19 @@ bool MapOnlySceneIsVisible(
             QStringLiteral("runCarFilledModel"));
     const QList<QObject *> visualModels = root->findChildren<QObject *>(
             QStringLiteral("trackVisualModel"));
-    const bool okay = viewer.loaded() && viewer.runCount() == 0 &&
-            viewer.tickCount() == 0 && viewer.durationMs() == 0 &&
+    const bool okay = viewer.loaded() && viewer.runCount() == 1 &&
+            viewer.tickCount() > 1 && viewer.durationMs() > 0 &&
+            viewer.selectedRunId() == QStringLiteral("preview") &&
+            viewer.trajectoryCount() == 1 &&
             viewer.ellipsoidCount() > 0 &&
             viewer.visualBatchCount() > 0 &&
-            roots.isEmpty() && nodes.isEmpty() && models.isEmpty() &&
+            roots.size() == 1 &&
+            nodes.size() == viewer.ellipsoidCount() &&
+            models.size() == viewer.ellipsoidCount() &&
             visualModels.size() == viewer.visualBatchCount();
 
     if (!okay) {
-        std::cerr << "map-only scene failed after button load " << loadNumber
+        std::cerr << "preview scene failed after button load " << loadNumber
                   << " roots=" << roots.size()
                   << " nodes=" << nodes.size()
                   << " models=" << models.size()
@@ -136,9 +140,18 @@ int main(int argc, char **argv) {
                 if (viewer.loading()) {
                     loadInProgress = true;
                     if (completedLoads > 0) {
-                        preservedSceneDuringReload &= viewer.loaded() &&
+                        const bool preserved = viewer.loaded() &&
                                 viewer.ellipsoidCount() > 0 &&
-                                viewer.runCount() == 0;
+                                viewer.runCount() == 1;
+                        preservedSceneDuringReload &= preserved;
+                        if (!preserved) {
+                            std::cerr
+                                    << "button reload changed the scene early: "
+                                    << "loaded=" << viewer.loaded()
+                                    << ", ellipsoids="
+                                    << viewer.ellipsoidCount()
+                                    << ", runs=" << viewer.runCount() << '\n';
+                        }
                     }
                     return;
                 }
@@ -148,7 +161,7 @@ int main(int argc, char **argv) {
                 const int currentLoad = completedLoads;
                 QTimer::singleShot(500, &application, [&, currentLoad]() {
                     if (finished || currentLoad != completedLoads) return;
-                    if (!MapOnlySceneIsVisible(root, viewer, currentLoad)) {
+                    if (!PreviewSceneIsVisible(root, viewer, currentLoad)) {
                         finished = true;
                         application.quit();
                         return;

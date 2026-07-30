@@ -27,6 +27,12 @@ ApplicationWindow {
         value: window.controller.darkMode
     }
 
+    Binding {
+        target: window.viewer
+        property: "previewInputScript"
+        value: window.controller.baseInputScript
+    }
+
     FrameAnimation {
         id: frameRateMonitor
         objectName: "frameRateMonitor"
@@ -126,19 +132,6 @@ ApplicationWindow {
         }
         window.viewer.pause()
         window.viewer.currentTick = window.viewer.currentTick + delta
-    }
-
-    function saveBaseInputTrajectory() {
-        if (!window.viewer.loaded
-            || window.viewer.loading
-            || window.viewer.manualDriving
-            || window.controller.running
-            || window.controller.extractingReplayInputs
-            || window.controller.baseInputScriptError.length > 0) {
-            return
-        }
-        window.viewer.saveInputTrajectory(
-                    window.controller.baseInputScript)
     }
 
     function manualControlForKey(key) {
@@ -263,19 +256,6 @@ ApplicationWindow {
         enabled: window.viewer.runCount > 0
                  && !window.viewer.manualDriving
         onActivated: window.stepViewerTick(1)
-    }
-
-    Shortcut {
-        objectName: "saveInputTrajectoryShortcut"
-        sequence: StandardKey.Save
-        context: Qt.ApplicationShortcut
-        enabled: window.viewer.loaded
-                 && !window.viewer.loading
-                 && !window.viewer.manualDriving
-                 && !window.controller.running
-                 && !window.controller.extractingReplayInputs
-                 && window.controller.baseInputScriptError.length === 0
-        onActivated: window.saveBaseInputTrajectory()
     }
 
     SplitView {
@@ -2692,24 +2672,6 @@ ApplicationWindow {
 
                             Item {
                                 Layout.fillWidth: true
-                            }
-
-                            Button {
-                                id: saveInputTrajectoryButton
-                                objectName: "saveInputTrajectoryButton"
-                                text: qsTr("Save trajectory")
-                                enabled: window.viewer.loaded
-                                         && !window.viewer.loading
-                                         && !window.viewer.manualDriving
-                                         && !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                         && window.controller.baseInputScriptError.length
-                                            === 0
-                                onClicked:
-                                    window.saveBaseInputTrajectory()
-                                ToolTip.visible: hovered
-                                ToolTip.text: qsTr(
-                                    "Add this script's exact path to the viewer (Ctrl+S)")
                             }
 
                             Button {

@@ -888,6 +888,10 @@ qint64 RaceViewerController::trajectoryCount() const {
     return static_cast<qint64>(trajectoryPaths_.size());
 }
 
+QString RaceViewerController::previewInputScript() const {
+    return previewInputScript_;
+}
+
 QVariantList RaceViewerController::runOptions() const {
     QVariantList options;
     options.reserve(static_cast<qsizetype>(runs_.size()));
@@ -1377,6 +1381,17 @@ void RaceViewerController::setSelectedRunId(const QString &value) {
     emit timeChanged();
 }
 
+void RaceViewerController::setPreviewInputScript(const QString &value) {
+    if (previewInputScript_ == value) {
+        return;
+    }
+    previewInputScript_ = value;
+    emit previewInputScriptChanged();
+    if (loaded_ && !loading_ && !manualDriving_) {
+        rebuildInputPreview();
+    }
+}
+
 void RaceViewerController::play() {
     if (simulationDebugger_.active()) {
         RaceViewerRun *const debugRun = selectedRun();
@@ -1622,22 +1637,21 @@ QString RaceViewerController::currentInputScript() const {
     return QString::fromStdString(FormatInputScript(inputs));
 }
 
-bool RaceViewerController::saveInputTrajectory(const QString &script) {
-    if (!loaded_ || loading_ || manualRuntime_ == nullptr) {
-        setStatusText(QStringLiteral(
-                "Load a replay map before saving an input trajectory."));
+bool RaceViewerController::rebuildInputPreview() {
+    if (!loaded_ || manualRuntime_ == nullptr || manualDriving_) {
         return false;
     }
-    if (manualDriving_) {
-        setStatusText(QStringLiteral(
-                "Stop manual driving before saving an input trajectory."));
-        return false;
+    const bool resumePlayback =
+            playing_ && selectedRunId_ == QStringLiteral("preview") &&
+            !simulationDebugger_.active();
+    if (resumePlayback) {
+        pause();
     }
 
     const InputScriptParseResult parsed =
-            ParseInputScript(script.toStdString());
+            ParseInputScript(previewInputScript_.toStdString());
     if (!parsed) {
-        setStatusText(QString::fromStdString(*parsed.error));
+        clearInputPreview();
         return false;
     }
     InputScriptBaselineResult baseline = BuildInputScriptBaseline(
@@ -1646,25 +1660,18 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
             static_cast<std::int64_t>(manualRuntime_->state.durationMs),
             kViewerTickDurationMs);
     if (!baseline) {
-        setStatusText(QString::fromStdString(*baseline.error));
+        clearInputPreview();
         return false;
     }
     ConvertKeyboardSteeringToAnalog(baseline.events);
-    const QString key =
-            QString::fromStdString(FormatInputScript(baseline.events));
-    if (std::find(trajectoryKeys_.begin(), trajectoryKeys_.end(), key) !=
-        trajectoryKeys_.end()) {
-        setStatusText(QStringLiteral(
-                "This input trajectory is already saved."));
-        return true;
-    }
     std::vector<PhysicsSandboxInputEvent> savedInputs = baseline.events;
 
     auto captured = manualRuntime_->sandbox.CaptureState();
     if (!captured) {
         setStatusText(
-                QStringLiteral("Saving input trajectory failed: %1")
+                QStringLiteral("Updating the manual preview failed: %1")
                         .arg(SandboxErrorText(captured.Error())));
+        clearInputPreview();
         return false;
     }
     PhysicsSandboxState previousState = std::move(captured).Value();
@@ -1679,7 +1686,7 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
         if (!restored) {
             setStatusText(
                     QStringLiteral(
-                            "Restoring the viewer after trajectory saving "
+                            "Restoring the viewer after preview simulation "
                             "failed: %1")
                             .arg(SandboxErrorText(restored.Error())));
             return false;
@@ -1689,7 +1696,7 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
         if (!replaced) {
             setStatusText(
                     QStringLiteral(
-                            "Restoring viewer inputs after trajectory saving "
+                            "Restoring viewer inputs after preview simulation "
                             "failed: %1")
                             .arg(SandboxErrorText(replaced.Error())));
             return false;
@@ -1702,18 +1709,20 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
             manualRuntime_->initialState);
     if (!initial) {
         setStatusText(
-                QStringLiteral("Saving input trajectory failed: %1")
+                QStringLiteral("Updating the manual preview failed: %1")
                         .arg(SandboxErrorText(initial.Error())));
         restoreManualRuntime();
+        clearInputPreview();
         return false;
     }
     auto replaced = manualRuntime_->sandbox.ReplaceInputs(
             std::move(baseline.events));
     if (!replaced) {
         setStatusText(
-                QStringLiteral("Saving input trajectory failed: %1")
+                QStringLiteral("Updating the manual preview failed: %1")
                         .arg(SandboxErrorText(replaced.Error())));
         restoreManualRuntime();
+        clearInputPreview();
         return false;
     }
 
@@ -1739,9 +1748,11 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
             auto advanced = manualRuntime_->sandbox.AdvanceTicks(1u);
             if (!advanced) {
                 setStatusText(
-                        QStringLiteral("Saving input trajectory failed: %1")
+                        QStringLiteral(
+                                "Updating the manual preview failed: %1")
                                 .arg(SandboxErrorText(advanced.Error())));
                 restoreManualRuntime();
+                clearInputPreview();
                 return false;
             }
             state = advanced.Value();
@@ -1751,18 +1762,21 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
         if (restoreManualRuntime()) {
             setStatusText(
                     QStringLiteral(
-                            "Saving input trajectory failed: %1")
+                            "Updating the manual preview failed: %1")
                             .arg(QString::fromUtf8(exception.what())));
         }
+        clearInputPreview();
         return false;
     } catch (...) {
         if (restoreManualRuntime()) {
             setStatusText(QStringLiteral(
-                    "Saving input trajectory failed unexpectedly."));
+                    "Updating the manual preview failed unexpectedly."));
         }
+        clearInputPreview();
         return false;
     }
     if (!restoreManualRuntime()) {
+        clearInputPreview();
         return false;
     }
 
@@ -1772,59 +1786,108 @@ bool RaceViewerController::saveInputTrajectory(const QString &script) {
         RaceViewerMeshBuffers mesh = BuildTrajectoryMesh(frames, radius);
         if (mesh.filled.isEmpty()) {
             setStatusText(QStringLiteral(
-                    "Saving input trajectory produced no viewable path."));
+                    "The manual preview produced no viewable path."));
+            clearInputPreview();
             return false;
         }
-        auto geometry = std::make_unique<RaceGeometry>();
-        geometry->setMesh(
+        QVariantList paths = trajectoryPaths_;
+        QVariantMap path;
+        path.insert(QStringLiteral("kind"), QStringLiteral("preview"));
+        path.insert(QStringLiteral("name"), QStringLiteral("Manual"));
+        path.insert(QStringLiteral("color"), QStringLiteral("#41c979"));
+        path.insert(QStringLiteral("opacity"), 0.94);
+        path.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(
+                        static_cast<QObject *>(&inputPreviewGeometry_)));
+        const auto existingPath = std::find_if(
+                paths.begin(), paths.end(), [](const QVariant &entry) {
+                    return entry.toMap()
+                                   .value(QStringLiteral("kind"))
+                                   .toString() ==
+                            QStringLiteral("preview");
+                });
+        if (existingPath == paths.end()) {
+            paths.prepend(path);
+        } else {
+            *existingPath = path;
+        }
+        runs_.reserve(runs_.size() + 1u);
+        inputPreviewGeometry_.setMesh(
                 std::move(mesh.filled),
                 static_cast<int>(sizeof(FilledVertex)),
                 QQuick3DGeometry::PrimitiveType::Triangles,
                 true,
                 mesh.boundsMin,
                 mesh.boundsMax);
-
-        const qsizetype trajectoryNumber = trajectoryPaths_.size() + 1;
-        const QString trajectoryName =
-                QStringLiteral("Baseline %1").arg(trajectoryNumber);
-        const QString trajectoryId =
-                QStringLiteral("baseline-%1").arg(trajectoryNumber);
-        QVariantMap path;
-        path.insert(QStringLiteral("name"), trajectoryName);
-        path.insert(QStringLiteral("color"), QStringLiteral("#41c979"));
-        path.insert(QStringLiteral("opacity"), 0.94);
-        path.insert(
-                QStringLiteral("geometry"),
-                QVariant::fromValue(
-                        static_cast<QObject *>(geometry.get())));
-
-        trajectoryGeometries_.reserve(
-                trajectoryGeometries_.size() + 1u);
-        trajectoryKeys_.reserve(trajectoryKeys_.size() + 1u);
-        trajectoryPaths_.reserve(trajectoryPaths_.size() + 1);
-        runs_.reserve(runs_.size() + 1u);
-        trajectoryGeometries_.push_back(std::move(geometry));
-        trajectoryKeys_.push_back(key);
-        trajectoryPaths_.push_back(std::move(path));
+        trajectoryPaths_ = std::move(paths);
+        inputPreviewVisible_ = true;
         emit trajectoriesChanged();
         upsertRun(
-                trajectoryId,
-                trajectoryName,
+                QStringLiteral("preview"),
+                QStringLiteral("Manual"),
                 std::move(frames),
                 std::move(savedInputs),
-                true);
+                false);
+        if (resumePlayback) {
+            play();
+        }
     } catch (const std::exception &exception) {
         setStatusText(
-                QStringLiteral("Saving input trajectory failed: %1")
+                QStringLiteral("Updating the manual preview failed: %1")
                         .arg(QString::fromUtf8(exception.what())));
+        clearInputPreview();
         return false;
     } catch (...) {
         setStatusText(QStringLiteral(
-                "Saving input trajectory failed unexpectedly."));
+                "Updating the manual preview failed unexpectedly."));
+        clearInputPreview();
         return false;
     }
-    setStatusText(QStringLiteral("Baseline trajectory saved"));
     return true;
+}
+
+void RaceViewerController::clearInputPreview() {
+    const qsizetype previousPathCount = trajectoryPaths_.size();
+    trajectoryPaths_.erase(
+            std::remove_if(
+                    trajectoryPaths_.begin(),
+                    trajectoryPaths_.end(),
+                    [](const QVariant &entry) {
+                        return entry.toMap()
+                                           .value(QStringLiteral("kind"))
+                                           .toString() ==
+                                QStringLiteral("preview");
+                    }),
+            trajectoryPaths_.end());
+    if (inputPreviewVisible_) {
+        inputPreviewGeometry_.clearMesh();
+        inputPreviewVisible_ = false;
+    }
+    if (trajectoryPaths_.size() != previousPathCount) {
+        emit trajectoriesChanged();
+    }
+
+    const auto previewRun = std::find_if(
+            runs_.begin(), runs_.end(), [](const RaceViewerRun &run) {
+                return run.id == QStringLiteral("preview");
+            });
+    if (previewRun == runs_.end()) {
+        return;
+    }
+    const bool selected = selectedRunId_ == QStringLiteral("preview");
+    if (selected) {
+        pause();
+    }
+    runs_.erase(previewRun);
+    emit runsChanged();
+    if (selected) {
+        selectedRunId_ = runs_.empty() ? QString{} : runs_.front().id;
+        emit selectedRunChanged();
+    }
+    refreshSelectedRun();
+    emit timelineChanged();
+    emit timeChanged();
 }
 
 void RaceViewerController::loadMap(const QString &packsDirectory,
@@ -1953,6 +2016,9 @@ void RaceViewerController::applyLoadResult(
         pendingRun_.reset();
         pendingImprovements_.clear();
         setStatusText(result.error);
+        if (loaded_ && !queuedMapLoad_) {
+            rebuildInputPreview();
+        }
         if (!queuedMapLoad_) setLoading(false);
         return;
     }
@@ -2031,15 +2097,11 @@ void RaceViewerController::applyLoadResult(
     runs_.clear();
     selectedRunId_.clear();
     trajectoryPaths_.clear();
+    inputPreviewGeometry_.clearMesh();
+    inputPreviewVisible_ = false;
     trajectoryGeometries_.clear();
     trajectoryKeys_.clear();
     durationMs_ = 0;
-    updatePose();
-    emit runsChanged();
-    emit selectedRunChanged();
-    emit trajectoriesChanged();
-    emit timelineChanged();
-    emit timeChanged();
     const bool addingPendingRun =
             pendingRun_ &&
             pendingRun_->packsDirectory == loadedPacksDirectory_ &&
@@ -2055,6 +2117,7 @@ void RaceViewerController::applyLoadResult(
                                         loadedReplayPath_;
                     });
     applyPendingRunIfReady();
+    rebuildInputPreview();
     const bool pendingImprovementsAdded =
             applyPendingImprovementsIfReady();
     if (!addingPendingImprovements ||
@@ -2066,6 +2129,12 @@ void RaceViewerController::applyLoadResult(
                                         "Search improvement trajectories added")
                               : QStringLiteral("Map loaded"));
     }
+    updatePose();
+    emit runsChanged();
+    emit selectedRunChanged();
+    emit trajectoriesChanged();
+    emit timelineChanged();
+    emit timeChanged();
     if (!queuedMapLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();
@@ -2409,6 +2478,7 @@ void RaceViewerController::finishManualDrive(
     resetManualInputState();
     setStatusText(status);
     emit manualDrivingChanged();
+    rebuildInputPreview();
 }
 
 void RaceViewerController::resetManualInputState() {
