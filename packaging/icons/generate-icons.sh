@@ -3,7 +3,6 @@ set -euo pipefail
 
 icon_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_svg="${icon_dir}/dev.skycrafter.forevertas.svg"
-python="${PYTHON:-python3}"
 mode="${1:-write}"
 
 if [[ "${mode}" != "write" && "${mode}" != "--check" ]]; then
@@ -11,21 +10,17 @@ if [[ "${mode}" != "write" && "${mode}" != "--check" ]]; then
     exit 2
 fi
 
-for command in inkscape magick "${python}"; do
+for command in inkscape magick; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "Required icon-generation command not found: ${command}" >&2
         exit 1
     fi
 done
-if ! "${python}" -c "import PIL" 2>/dev/null; then
-    echo "Python package Pillow is required to generate the macOS icon." >&2
-    exit 1
-fi
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 
-for size in 16 24 32 48 64 128 256 512 1024; do
+for size in 16 24 32 48 64 128 256; do
     inkscape "${source_svg}" \
         --export-area-page \
         --export-width="${size}" \
@@ -44,21 +39,9 @@ magick \
     "${work_dir}/16.png" \
     "${work_dir}/ForeverTAS.ico"
 
-FOREVERTAS_ICON_WORK_DIR="${work_dir}" "${python}" <<'PY'
-import os
-from pathlib import Path
-
-from PIL import Image
-
-work_dir = Path(os.environ["FOREVERTAS_ICON_WORK_DIR"])
-with Image.open(work_dir / "1024.png") as icon:
-    icon.save(work_dir / "ForeverTAS.icns", format="ICNS")
-PY
-
 declare -A generated_assets=(
     ["dev.skycrafter.forevertas.png"]="${work_dir}/256.png"
     ["ForeverTAS.ico"]="${work_dir}/ForeverTAS.ico"
-    ["ForeverTAS.icns"]="${work_dir}/ForeverTAS.icns"
 )
 
 if [[ "${mode}" == "--check" ]]; then

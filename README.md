@@ -179,9 +179,9 @@ file picker.
 
 ## Portable bundles
 
-ForeverTAS can be packaged natively as a Linux AppImage, Windows portable ZIP,
-or macOS application DMG. All three artifacts use the same CMake installation
-definition and include the required Qt and QML runtime files.
+ForeverTAS can be packaged natively as a Linux AppImage or Windows portable
+ZIP. Both artifacts use the same CMake installation definition and include the
+required Qt and QML runtime files. macOS is not supported.
 
 See [docs/PACKAGING.md](docs/PACKAGING.md) for local packaging commands, CI
 behavior, artifact layouts, signing notes, and clean-machine release checks.

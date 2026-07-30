@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
+if(CMAKE_HOST_APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    message(FATAL_ERROR "ForeverTAS does not support macOS")
+endif()
+
 project(ForeverTAS
     VERSION 0.1.1
     DESCRIPTION "Native TrackMania Nations Forever tool-assisted search tool"
@@ -300,25 +304,12 @@ if(WIN32)
         @ONLY)
     target_sources(forevertas PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/forevertas.rc")
-elseif(APPLE)
-    set(forevertas_macos_icon
-        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/ForeverTAS.icns")
-    set_source_files_properties("${forevertas_macos_icon}" PROPERTIES
-        MACOSX_PACKAGE_LOCATION "Resources")
-    target_sources(forevertas PRIVATE "${forevertas_macos_icon}")
 endif()
 
 set_target_properties(forevertas PROPERTIES
     OUTPUT_NAME "${FOREVERTAS_DISPLAY_NAME}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
-    WIN32_EXECUTABLE TRUE
-    MACOSX_BUNDLE TRUE
-    MACOSX_BUNDLE_BUNDLE_NAME "${FOREVERTAS_DISPLAY_NAME}"
-    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_COPYRIGHT "Copyright (c) 2026 Skycrafter-dev contributors"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "${FOREVERTAS_APP_ID}"
-    MACOSX_BUNDLE_ICON_FILE "ForeverTAS.icns"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+    WIN32_EXECUTABLE TRUE)
 set_source_files_properties(qml/AppTheme.qml PROPERTIES
     QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(forevertas
@@ -384,44 +375,26 @@ target_link_libraries(forevertas PRIVATE
 target_compile_definitions(forevertas PRIVATE
     FOREVERTAS_VERSION="${PROJECT_VERSION}")
 
-if(APPLE)
-    set(forevertas_runtime_destination ".")
-elseif(WIN32)
+if(WIN32)
     set(forevertas_runtime_destination ".")
 else()
     set(forevertas_runtime_destination "${CMAKE_INSTALL_BINDIR}")
 endif()
 
 install(TARGETS forevertas
-    BUNDLE DESTINATION .
     RUNTIME DESTINATION "${forevertas_runtime_destination}")
-if(APPLE)
-    set(forevertas_debug_worker_destination
-        "${FOREVERTAS_DISPLAY_NAME}.app/Contents/MacOS")
-else()
-    set(forevertas_debug_worker_destination
-        "${forevertas_runtime_destination}")
-endif()
 install(TARGETS forevertas-simulation-debug-worker
-    RUNTIME DESTINATION "${forevertas_debug_worker_destination}")
+    RUNTIME DESTINATION "${forevertas_runtime_destination}")
 
-if(WIN32 OR APPLE)
+if(WIN32)
     set(forevertas_deploy_options NO_TRANSLATIONS)
-    if(WIN32)
-        list(APPEND forevertas_deploy_options NO_COMPILER_RUNTIME)
-    else()
-        list(APPEND forevertas_deploy_options MACOS_BUNDLE_POST_BUILD)
-    endif()
+    list(APPEND forevertas_deploy_options NO_COMPILER_RUNTIME)
     qt_generate_deploy_qml_app_script(
         TARGET forevertas
         OUTPUT_SCRIPT forevertas_deploy_script
         ${forevertas_deploy_options})
-    if(WIN32)
-        install(CODE
-            "set(QT_DEPLOY_BIN_DIR \".\")\ninclude(\"${forevertas_deploy_script}\")")
-    else()
-        install(SCRIPT "${forevertas_deploy_script}")
-    endif()
+    install(CODE
+        "set(QT_DEPLOY_BIN_DIR \".\")\ninclude(\"${forevertas_deploy_script}\")")
 endif()
 
 if(WIN32)
@@ -484,10 +457,7 @@ if(WIN32)
         DESTINATION ".")
 endif()
 
-if(APPLE)
-    set(forevertas_license_destination
-        "${FOREVERTAS_DISPLAY_NAME}.app/Contents/Resources/licenses")
-elseif(WIN32)
+if(WIN32)
     set(forevertas_license_destination "licenses")
 else()
     set(forevertas_license_destination
@@ -506,7 +476,7 @@ if(EXISTS "${forevervalidator_SOURCE_DIR}/LICENSE")
         RENAME ForeverValidator-LICENSE.txt)
 endif()
 
-if(UNIX AND NOT APPLE)
+if(UNIX)
     install(FILES packaging/linux/${FOREVERTAS_APP_ID}.desktop
         DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/applications")
     install(FILES packaging/linux/${FOREVERTAS_APP_ID}.metainfo.xml
@@ -528,11 +498,6 @@ endif()
 if(WIN32)
     set(forevertas_package_platform "windows")
     set(CPACK_GENERATOR "ZIP")
-elseif(APPLE)
-    set(forevertas_package_platform "macos")
-    set(CPACK_GENERATOR "DragNDrop")
-    set(CPACK_DMG_VOLUME_NAME "${FOREVERTAS_DISPLAY_NAME} ${PROJECT_VERSION}")
-    set(CPACK_DMG_FORMAT "UDZO")
 else()
     set(forevertas_package_platform "linux")
     set(CPACK_GENERATOR "TGZ")

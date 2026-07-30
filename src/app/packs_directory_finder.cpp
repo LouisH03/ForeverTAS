@@ -185,9 +185,6 @@ QStringList PlatformSteamRoots() {
         roots << registry.value(QStringLiteral("SteamPath")).toString()
               << registry.value(QStringLiteral("InstallPath")).toString();
     }
-#elif defined(Q_OS_MACOS)
-    roots << QDir(home).filePath(
-                     QStringLiteral("Library/Application Support/Steam"));
 #else
     roots << QDir(home).filePath(QStringLiteral(".local/share/Steam"))
           << QDir(home).filePath(QStringLiteral(".steam/steam"))
@@ -221,8 +218,7 @@ bool IsUsefulMountedRoot(const QString &path) {
     return path == QStringLiteral("/") ||
             path.startsWith(QStringLiteral("/media/")) ||
             path.startsWith(QStringLiteral("/run/media/")) ||
-            path.startsWith(QStringLiteral("/mnt/")) ||
-            path.startsWith(QStringLiteral("/Volumes/"));
+            path.startsWith(QStringLiteral("/mnt/"));
 #endif
 }
 
@@ -252,21 +248,6 @@ QStringList DefaultPacksDirectorySearchPatterns() {
             patterns, qEnvironmentVariable("ProgramFiles(x86)"));
     AddNativeInstallPatterns(patterns, qEnvironmentVariable("ProgramFiles"));
     AddNativeInstallPatterns(patterns, QStringLiteral("C:/Games"));
-#elif defined(Q_OS_MACOS)
-    AddWineInstallPatterns(
-            patterns,
-            QDir(home).filePath(QStringLiteral(
-                    "Library/Application Support/CrossOver/Bottles/*")));
-    AddWineInstallPatterns(
-            patterns,
-            QDir(home).filePath(QStringLiteral(
-                    "Library/Containers/com.isaacmarovitz.Whisky/Bottles/*")));
-    AddWineInstallPatterns(
-            patterns,
-            QDir(home).filePath(QStringLiteral(
-                    "Library/Application Support/com.isaacmarovitz.Whisky/Bottles/*")));
-    AddWineInstallPatterns(
-            patterns, QDir(home).filePath(QStringLiteral(".wine")));
 #else
     const QString winePrefix = qEnvironmentVariable("WINEPREFIX");
     if (!winePrefix.isEmpty()) {
