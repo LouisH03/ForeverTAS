@@ -1,48 +1,184 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 ColumnLayout {
+    id: root
+
     objectName: "poseTargetEvaluationSettings"
     property var controller
+    property var viewer
+    readonly property var targets: controller.poseTargets
+    readonly property var selected: targets.selectedTarget
     readonly property var settings: controller.evaluationTargetSettings
 
     Layout.fillWidth: true
     spacing: 8
 
-    TimeWindowSettings {
-        settings: parent.settings
-        updateSetting: controller.setEvaluationTargetSetting
-        running: controller.running
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 6
+
+        StyledComboBox {
+            id: targetSelector
+
+            objectName: "poseTargetSelector"
+            Layout.fillWidth: true
+            model: root.targets.targets
+            textRole: "name"
+            valueRole: "id"
+            currentIndex: root.targets.selectedIndex
+            enabled: !root.controller.running
+            onActivated: index => root.targets.selectTarget(index)
+        }
+
+        Button {
+            objectName: "addPoseTargetButton"
+            text: "+"
+            Layout.preferredWidth: 38
+            enabled: !root.controller.running
+                     && root.targets.count < root.targets.maximumCount
+            onClicked: {
+                const position = root.viewer && root.viewer.loaded
+                                 ? root.viewer.carPosition
+                                 : root.selected.position
+                const rotation = root.viewer && root.viewer.loaded
+                                 ? root.viewer.carRotation
+                                 : root.selected.rotation
+                root.targets.addTarget(
+                    position.x, position.y, position.z, rotation)
+            }
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("Add car pose")
+        }
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 6
+
+        Button {
+            objectName: "duplicatePoseTargetButton"
+            Layout.fillWidth: true
+            text: qsTr("Duplicate")
+            enabled: !root.controller.running
+                     && root.targets.count < root.targets.maximumCount
+            onClicked: root.targets.duplicateSelected()
+        }
+
+        Button {
+            objectName: "focusPoseTargetButton"
+            Layout.fillWidth: true
+            text: qsTr("Focus")
+            enabled: root.targets.count > 0
+            onClicked: root.controller.focusSelectedPoseTarget()
+        }
+
+        Button {
+            objectName: "removePoseTargetButton"
+            Layout.fillWidth: true
+            text: qsTr("Remove")
+            enabled: !root.controller.running && root.targets.count > 1
+            onClicked: root.targets.removeTarget(root.targets.selectedIndex)
+        }
+    }
+
+    TextField {
+        objectName: "poseTargetNameField"
+        Layout.fillWidth: true
+        text: root.selected.name ?? ""
+        enabled: !root.controller.running
+        selectByMouse: true
+        maximumLength: 80
+        placeholderText: qsTr("Pose target name")
+        onEditingFinished: {
+            root.targets.setName(root.targets.selectedIndex, text)
+            text = root.targets.selectedTarget.name
+        }
     }
 
     Vector3Settings {
+        objectName: "poseTargetPositionSettings"
         title: qsTr("Target position")
-        settings: parent.settings
-        updateSetting: controller.setEvaluationTargetSetting
-        running: controller.running
+        settings: root.selected
+        running: root.controller.running
+        minimum: -10000000
+        maximum: 10000000
+        updateSetting: (key, value) =>
+            root.targets.setPositionComponent(
+                root.targets.selectedIndex, key, value)
     }
 
-    Vector3Settings {
-        title: qsTr("Target rotation (degrees)")
-        settings: parent.settings
-        updateSetting: controller.setEvaluationTargetSetting
-        running: controller.running
-        xKey: "yawDegrees"
-        yKey: "pitchDegrees"
-        zKey: "rollDegrees"
+    ColumnLayout {
+        objectName: "poseTargetRotationSettings"
+        Layout.fillWidth: true
+        spacing: 4
+
+        Label {
+            text: qsTr("Target rotation (degrees)")
+            font.weight: Font.Medium
+        }
+
+        SettingTextField {
+            label: qsTr("Yaw")
+            value: root.selected.yawDegrees ?? ""
+            running: root.controller.running
+            integer: false
+            decimals: 3
+            dragStep: 1
+            minimum: -10000000
+            maximum: 10000000
+            onEdited: value =>
+                root.targets.setRotationComponent(
+                    root.targets.selectedIndex, "yaw", value)
+        }
+
+        SettingTextField {
+            label: qsTr("Pitch")
+            value: root.selected.pitchDegrees ?? ""
+            running: root.controller.running
+            integer: false
+            decimals: 3
+            dragStep: 1
+            minimum: -10000000
+            maximum: 10000000
+            onEdited: value =>
+                root.targets.setRotationComponent(
+                    root.targets.selectedIndex, "pitch", value)
+        }
+
+        SettingTextField {
+            label: qsTr("Roll")
+            value: root.selected.rollDegrees ?? ""
+            running: root.controller.running
+            integer: false
+            decimals: 3
+            dragStep: 1
+            minimum: -10000000
+            maximum: 10000000
+            onEdited: value =>
+                root.targets.setRotationComponent(
+                    root.targets.selectedIndex, "roll", value)
+        }
+    }
+
+    TimeWindowSettings {
+        settings: root.settings
+        updateSetting: root.controller.setEvaluationTargetSetting
+        running: root.controller.running
     }
 
     SettingSlider {
         sliderObjectName: "rotationWeightSlider"
         label: qsTr("Rotation weight (%)")
-        value: parent.settings["rotationWeightPercent"] ?? ""
-        running: controller.running
+        value: root.settings["rotationWeightPercent"] ?? ""
+        running: root.controller.running
         from: 0
         to: 100
         stepSize: 1
         suffix: "%"
         onEdited: value =>
-            controller.setEvaluationTargetSetting(
+            root.controller.setEvaluationTargetSetting(
                 "rotationWeightPercent", value)
     }
 }

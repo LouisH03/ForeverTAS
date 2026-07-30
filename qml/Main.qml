@@ -409,6 +409,9 @@ ApplicationWindow {
                     property bool customVertexDragActive: false
                     property int customVertexDragIndex: -1
                     property bool customDepthDragActive: false
+                    property bool poseDragActive: false
+                    property string poseDragKind: ""
+                    property string poseDragAxis: ""
 
                     function focusCuboid(center, size) {
                         cuboidFocusCenter = center
@@ -558,6 +561,68 @@ ApplicationWindow {
                         customVertexDragActive = false
                         customDepthDragActive = false
                         customVertexDragIndex = -1
+                    }
+
+                    function beginPoseInteraction(kind, axis, x, y) {
+                        if (window.controller.running)
+                            return false
+                        poseDragKind = kind
+                        poseDragAxis = axis
+                        cuboidDragX = x
+                        cuboidDragY = y
+                        poseDragActive = kind === "pose-move"
+                                         || kind === "pose-rotate"
+                        return poseDragActive
+                    }
+
+                    function updatePoseInteraction(x, y) {
+                        if (!poseDragActive)
+                            return
+                        const dx = x - cuboidDragX
+                        const dy = y - cuboidDragY
+                        if (poseDragKind === "pose-rotate") {
+                            let degrees = 0
+                            if (poseDragAxis === "yaw")
+                                degrees = dx * 0.5
+                            else if (poseDragAxis === "pitch")
+                                degrees = -dy * 0.5
+                            else
+                                degrees = (dx - dy) * 0.35
+                            window.controller.poseTargets.rotateSelected(
+                                poseDragAxis, degrees)
+                        } else {
+                            const scale = orbitDistance
+                                          / Math.max(
+                                              200, Math.min(width, height))
+                            const yaw = orbitYaw * Math.PI / 180
+                            const pitch = orbitPitch * Math.PI / 180
+                            let amount = 0
+                            if (poseDragAxis === "x") {
+                                amount = (dx * Math.cos(yaw)
+                                          - dy * Math.sin(yaw)
+                                            * Math.sin(pitch)) * scale
+                                window.controller.poseTargets
+                                      .translateSelected(amount, 0, 0)
+                            } else if (poseDragAxis === "y") {
+                                amount = -dy * Math.cos(pitch) * scale
+                                window.controller.poseTargets
+                                      .translateSelected(0, amount, 0)
+                            } else {
+                                amount = (-dx * Math.sin(yaw)
+                                          - dy * Math.cos(yaw)
+                                            * Math.sin(pitch)) * scale
+                                window.controller.poseTargets
+                                      .translateSelected(0, 0, amount)
+                            }
+                        }
+                        cuboidDragX = x
+                        cuboidDragY = y
+                    }
+
+                    function endPoseInteraction() {
+                        poseDragActive = false
+                        poseDragKind = ""
+                        poseDragAxis = ""
                     }
 
                     component CuboidEditorScene: Node {
@@ -972,6 +1037,241 @@ ApplicationWindow {
                         }
                     }
 
+                    component PoseTargetEditorScene: Node {
+                        id: poseScene
+                        property bool interactive: false
+
+                        Repeater3D {
+                            model: window.controller.poseTargets.targets
+
+                            delegate: Node {
+                                id: poseRoot
+
+                                required property int index
+                                required property var modelData
+                                readonly property int targetIndex: index
+                                readonly property bool targetActive:
+                                    modelData.selected
+                                    && window.controller.evaluationTargetId
+                                       === "pose-target"
+                                position: modelData.position
+                                visible: window.viewer.loaded
+
+                                Node {
+                                    rotation: poseRoot.modelData.rotation
+
+                                    Repeater3D {
+                                        model: carEllipsoidModel
+
+                                        delegate: Node {
+                                            required property bool
+                                                ellipsoidActive
+                                            required property var
+                                                ellipsoidPosition
+                                            required property var
+                                                ellipsoidRotation
+                                            required property var
+                                                ellipsoidRadii
+
+                                            visible: ellipsoidActive
+                                            position: ellipsoidPosition
+                                            rotation: ellipsoidRotation
+                                            scale: ellipsoidRadii
+
+                                            Model {
+                                                objectName:
+                                                    "poseTargetCarModel"
+                                                property int targetIndex:
+                                                    poseRoot.targetIndex
+                                                property string editorKind:
+                                                    "pose-select"
+                                                property string editorAxis: ""
+                                                geometry:
+                                                    window.viewer
+                                                          .ellipsoidFilledGeometry
+                                                pickable:
+                                                    poseScene.interactive
+                                                castsShadows: false
+                                                receivesShadows: false
+                                                materials: DefaultMaterial {
+                                                    lighting:
+                                                        DefaultMaterial
+                                                        .NoLighting
+                                                    diffuseColor:
+                                                        poseRoot.targetActive
+                                                        ? "#f2aa45"
+                                                        : "#65a7d8"
+                                                    opacity:
+                                                        poseRoot.targetActive
+                                                        ? 0.82 : 0.36
+                                                    cullMode:
+                                                        Material.NoCulling
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Node {
+                                    id: poseHandleRoot
+
+                                    visible: poseRoot.targetActive
+                                             && !window.controller.running
+                                    readonly property real barLength:
+                                        Math.max(
+                                            1.8,
+                                            viewport.orbitDistance * 0.05)
+                                    readonly property real thickness:
+                                        Math.max(
+                                            0.12,
+                                            viewport.orbitDistance * 0.004)
+                                    readonly property real rotationHandleSize:
+                                        Math.max(
+                                            0.5,
+                                            viewport.orbitDistance * 0.018)
+
+                                    Repeater3D {
+                                        model: [
+                                            {
+                                                "axis": "x",
+                                                "position":
+                                                    Qt.vector3d(
+                                                        1.6
+                                                        + poseHandleRoot
+                                                              .barLength
+                                                          / 2,
+                                                        0,
+                                                        0),
+                                                "scale": Qt.vector3d(
+                                                    poseHandleRoot.barLength
+                                                    / 100,
+                                                    poseHandleRoot.thickness
+                                                    / 100,
+                                                    poseHandleRoot.thickness
+                                                    / 100),
+                                                "color": "#e36d6d"
+                                            },
+                                            {
+                                                "axis": "y",
+                                                "position":
+                                                    Qt.vector3d(
+                                                        0,
+                                                        1.1
+                                                        + poseHandleRoot
+                                                              .barLength
+                                                          / 2,
+                                                        0),
+                                                "scale": Qt.vector3d(
+                                                    poseHandleRoot.thickness
+                                                    / 100,
+                                                    poseHandleRoot.barLength
+                                                    / 100,
+                                                    poseHandleRoot.thickness
+                                                    / 100),
+                                                "color": "#6ed47b"
+                                            },
+                                            {
+                                                "axis": "z",
+                                                "position":
+                                                    Qt.vector3d(
+                                                        0,
+                                                        0,
+                                                        3.2
+                                                        + poseHandleRoot
+                                                              .barLength
+                                                          / 2),
+                                                "scale": Qt.vector3d(
+                                                    poseHandleRoot.thickness
+                                                    / 100,
+                                                    poseHandleRoot.thickness
+                                                    / 100,
+                                                    poseHandleRoot.barLength
+                                                    / 100),
+                                                "color": "#669cf0"
+                                            }
+                                        ]
+
+                                        delegate: Model {
+                                            required property var modelData
+                                            objectName:
+                                                "poseTargetMoveHandle"
+                                            property int targetIndex:
+                                                poseRoot.targetIndex
+                                            property string editorKind:
+                                                "pose-move"
+                                            property string editorAxis:
+                                                modelData.axis
+                                            position: modelData.position
+                                            scale: modelData.scale
+                                            source: "#Cube"
+                                            pickable:
+                                                poseScene.interactive
+                                            materials: DefaultMaterial {
+                                                lighting:
+                                                    DefaultMaterial.NoLighting
+                                                diffuseColor: modelData.color
+                                            }
+                                        }
+                                    }
+
+                                    Repeater3D {
+                                        model: [
+                                            {
+                                                "axis": "roll",
+                                                "position":
+                                                    Qt.vector3d(-2.3, 0, 0),
+                                                "color": "#ffadad"
+                                            },
+                                            {
+                                                "axis": "pitch",
+                                                "position":
+                                                    Qt.vector3d(0, -1.8, 0),
+                                                "color": "#a9efb2"
+                                            },
+                                            {
+                                                "axis": "yaw",
+                                                "position":
+                                                    Qt.vector3d(0, 0, -3.9),
+                                                "color": "#a8c7ff"
+                                            }
+                                        ]
+
+                                        delegate: Model {
+                                            required property var modelData
+                                            objectName:
+                                                "poseTargetRotationHandle"
+                                            property int targetIndex:
+                                                poseRoot.targetIndex
+                                            property string editorKind:
+                                                "pose-rotate"
+                                            property string editorAxis:
+                                                modelData.axis
+                                            position: modelData.position
+                                            scale: Qt.vector3d(
+                                                poseHandleRoot
+                                                      .rotationHandleSize
+                                                / 100,
+                                                poseHandleRoot
+                                                      .rotationHandleSize
+                                                / 100,
+                                                poseHandleRoot
+                                                      .rotationHandleSize
+                                                / 100)
+                                            source: "#Sphere"
+                                            pickable:
+                                                poseScene.interactive
+                                            materials: DefaultMaterial {
+                                                lighting:
+                                                    DefaultMaterial.NoLighting
+                                                diffuseColor: modelData.color
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     View3D {
                         id: rasterMapView
                         objectName: "rasterMapView"
@@ -1157,6 +1457,11 @@ ApplicationWindow {
                             interactive: true
                         }
 
+                        PoseTargetEditorScene {
+                            objectName: "rasterPoseTargetEditorScene"
+                            interactive: true
+                        }
+
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
@@ -1302,7 +1607,9 @@ ApplicationWindow {
                                      || window.controller.cuboidTargets.count
                                         > 0
                                      || window.controller
-                                              .customVolumeTargets.count > 0)
+                                              .customVolumeTargets.count > 0
+                                     || window.controller.poseTargets.count
+                                        > 0)
 
                         environment: SceneEnvironment {
                             backgroundMode: SceneEnvironment.Transparent
@@ -1358,6 +1665,11 @@ ApplicationWindow {
                             objectName: "rayTracingCustomVolumeEditorScene"
                             interactive: true
                         }
+
+                        PoseTargetEditorScene {
+                            objectName: "rayTracingPoseTargetEditorScene"
+                            interactive: true
+                        }
                     }
 
                     Connections {
@@ -1367,6 +1679,9 @@ ApplicationWindow {
                             viewport.focusCuboid(center, size)
                         }
                         function onCustomVolumeFocusRequested(center, size) {
+                            viewport.focusCuboid(center, size)
+                        }
+                        function onPoseTargetFocusRequested(center, size) {
                             viewport.focusCuboid(center, size)
                         }
                     }
@@ -1421,6 +1736,18 @@ ApplicationWindow {
                                 && !window.controller.running) {
                                 viewport.cuboidPointerCaptured = true
                                 if (hit.editorKind
+                                    && hit.editorKind.indexOf("pose-")
+                                       === 0) {
+                                    window.controller.poseTargets
+                                          .selectTarget(hit.targetIndex)
+                                    window.controller.evaluationTargetId =
+                                        "pose-target"
+                                    viewport.beginPoseInteraction(
+                                        hit.editorKind,
+                                        hit.editorAxis,
+                                        mouse.x,
+                                        mouse.y)
+                                } else if (hit.editorKind
                                     && hit.editorKind.indexOf("custom-")
                                        === 0) {
                                     window.controller.customVolumeTargets
@@ -1473,6 +1800,13 @@ ApplicationWindow {
                                 previousY = mouse.y
                                 return
                             }
+                            if (viewport.poseDragActive) {
+                                viewport.updatePoseInteraction(
+                                    mouse.x, mouse.y)
+                                previousX = mouse.x
+                                previousY = mouse.y
+                                return
+                            }
                             if (viewport.cuboidPointerCaptured)
                                 return
                             viewport.orbitYaw -= mouse.x - previousX
@@ -1487,11 +1821,13 @@ ApplicationWindow {
                         onReleased: {
                             viewport.endCuboidInteraction()
                             viewport.endCustomInteraction()
+                            viewport.endPoseInteraction()
                             viewport.cuboidPointerCaptured = false
                         }
                         onCanceled: {
                             viewport.endCuboidInteraction()
                             viewport.endCustomInteraction()
+                            viewport.endPoseInteraction()
                             viewport.cuboidPointerCaptured = false
                         }
                         onWheel: wheel => {

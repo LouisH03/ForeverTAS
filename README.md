@@ -101,6 +101,12 @@ that plane, drag its vertex and depth handles, edit the same values in the
 settings list, and focus the camera on the finished prism. The selected custom
 volume is evaluated exactly by the Reference and optimized CPU backends; the UI
 reports that CUDA is unavailable rather than substituting an inexact cuboid.
+Pose targets are managed as a persistent named collection of complete car
+positions and orientations. The selected pose is the weighted pose-error goal
+for every brute-force backend. Users can add a pose from the viewer car,
+duplicate, remove, rename, and edit it in the evaluation panel, or translate
+and rotate it with color-coded handles on its visible car model in either
+viewer renderer. The Focus action frames the selected pose in the camera.
 Precise finish search ranks the inclusive upper bound of ForeverValidator's
 one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering

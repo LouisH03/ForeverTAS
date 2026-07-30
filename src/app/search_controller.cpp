@@ -69,7 +69,9 @@ SearchController::SearchController(QObject *parent)
       cuboidTargets_(configuration_.evaluationTargetSettingsFor(
               QString::fromLatin1(kVolumeEntryEvaluationId))),
       customVolumeTargets_(configuration_.evaluationTargetSettingsFor(
-              QString::fromLatin1(kCustomVolumeEntryEvaluationId))) {
+              QString::fromLatin1(kCustomVolumeEntryEvaluationId))),
+      poseTargets_(configuration_.evaluationTargetSettingsFor(
+              QString::fromLatin1(kPoseTargetEvaluationId))) {
     initialize(nullptr);
 }
 
@@ -79,7 +81,9 @@ SearchController::SearchController(const QStringList &packsSearchPatterns,
       cuboidTargets_(configuration_.evaluationTargetSettingsFor(
               QString::fromLatin1(kVolumeEntryEvaluationId))),
       customVolumeTargets_(configuration_.evaluationTargetSettingsFor(
-              QString::fromLatin1(kCustomVolumeEntryEvaluationId))) {
+              QString::fromLatin1(kCustomVolumeEntryEvaluationId))),
+      poseTargets_(configuration_.evaluationTargetSettingsFor(
+              QString::fromLatin1(kPoseTargetEvaluationId))) {
     initialize(&packsSearchPatterns);
 }
 
@@ -98,6 +102,10 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
             &CustomVolumeTargetModel::drawingChanged,
             this,
             &SearchController::customVolumeDrawingChanged);
+    connect(&poseTargets_,
+            &PoseTargetModel::selectedTargetChanged,
+            this,
+            &SearchController::synchronizeSelectedPoseTarget);
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
     baseInputScript_ = StoredValue(kBaseInputScriptKey, {});
@@ -136,6 +144,7 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
     synchronizeSelectedCuboid();
     synchronizeSelectedCustomVolume();
+    synchronizeSelectedPoseTarget();
     refreshValidation();
 }
 
@@ -285,6 +294,10 @@ bool SearchController::customVolumeDrawing() const {
     return customVolumeTargets_.drawing();
 }
 
+PoseTargetModel *SearchController::poseTargets() {
+    return &poseTargets_;
+}
+
 bool SearchController::canStart() const {
     return valid_ && !running_ && !extractingReplayInputs_;
 }
@@ -421,6 +434,7 @@ void SearchController::setEvaluationTargetId(const QString &value) {
     emit evaluationTargetSettingsChanged();
     synchronizeSelectedCuboid();
     synchronizeSelectedCustomVolume();
+    synchronizeSelectedPoseTarget();
     refreshValidation();
 }
 
@@ -472,6 +486,9 @@ void SearchController::setEvaluationTargetSetting(const QString &key,
     } else if (configuration_.evaluationTargetId() ==
                QString::fromLatin1(kCustomVolumeEntryEvaluationId)) {
         synchronizeCustomVolumeSetting(key, value);
+    } else if (configuration_.evaluationTargetId() ==
+               QString::fromLatin1(kPoseTargetEvaluationId)) {
+        synchronizePoseTargetSetting(key, value);
     }
     emit evaluationTargetSettingsChanged();
     refreshValidation();
@@ -588,6 +605,53 @@ void SearchController::finishCustomVolumeDrawing() {
 
 void SearchController::cancelCustomVolumeDrawing() {
     customVolumeTargets_.cancelDrawing();
+}
+
+void SearchController::synchronizeSelectedPoseTarget() {
+    if (configuration_.evaluationTargetId() !=
+        QString::fromLatin1(kPoseTargetEvaluationId)) {
+        return;
+    }
+    const QVariantMap target = poseTargets_.selectedTarget();
+    bool changed = false;
+    constexpr const char *keys[] = {
+            "x", "y", "z", "yawDegrees", "pitchDegrees", "rollDegrees"};
+    for (const char *const key : keys) {
+        const QString qKey = QString::fromLatin1(key);
+        changed |= configuration_.setEvaluationTargetSetting(
+                qKey, target.value(qKey).toString());
+    }
+    if (changed) {
+        emit evaluationTargetSettingsChanged();
+        refreshValidation();
+    }
+}
+
+void SearchController::synchronizePoseTargetSetting(
+        const QString &key,
+        const QString &value) {
+    const int index = poseTargets_.selectedIndex();
+    if (key == QStringLiteral("x") ||
+        key == QStringLiteral("y") ||
+        key == QStringLiteral("z")) {
+        poseTargets_.setPositionComponent(index, key, value);
+    } else if (key == QStringLiteral("yawDegrees")) {
+        poseTargets_.setRotationComponent(
+                index, QStringLiteral("yaw"), value);
+    } else if (key == QStringLiteral("pitchDegrees")) {
+        poseTargets_.setRotationComponent(
+                index, QStringLiteral("pitch"), value);
+    } else if (key == QStringLiteral("rollDegrees")) {
+        poseTargets_.setRotationComponent(
+                index, QStringLiteral("roll"), value);
+    }
+}
+
+void SearchController::focusSelectedPoseTarget() {
+    const QVariantMap target = poseTargets_.selectedTarget();
+    emit poseTargetFocusRequested(
+            target.value(QStringLiteral("position")).value<QVector3D>(),
+            QVector3D(4.0F, 2.5F, 7.0F));
 }
 
 void SearchController::setPacksDirectory(const QString &value) {
@@ -951,6 +1015,7 @@ void SearchController::setRunning(bool value) {
     running_ = value;
     cuboidTargets_.setEditingEnabled(!value);
     customVolumeTargets_.setEditingEnabled(!value);
+    poseTargets_.setEditingEnabled(!value);
     emit runningChanged();
     emit replayInputStateChanged();
     if (oldCanStart != canStart()) {

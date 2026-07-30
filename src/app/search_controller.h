@@ -5,6 +5,7 @@
 #include "app/search_completion.h"
 #include "app/cuboid_target_model.h"
 #include "app/custom_volume_target_model.h"
+#include "app/pose_target_model.h"
 
 #include <QObject>
 #include <QString>
@@ -75,6 +76,8 @@ class SearchController final : public QObject {
                        customVolumeTargets READ customVolumeTargets CONSTANT)
     Q_PROPERTY(bool customVolumeDrawing READ customVolumeDrawing NOTIFY
                        customVolumeDrawingChanged)
+    Q_PROPERTY(forevertas::app::PoseTargetModel* poseTargets READ
+                       poseTargets CONSTANT)
 
     Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
@@ -124,6 +127,7 @@ public:
     CuboidTargetModel *cuboidTargets();
     CustomVolumeTargetModel *customVolumeTargets();
     bool customVolumeDrawing() const;
+    PoseTargetModel *poseTargets();
 
     bool canStart() const;
     bool running() const;
@@ -170,6 +174,7 @@ public slots:
     Q_INVOKABLE void beginCustomVolumeDrawing();
     Q_INVOKABLE void finishCustomVolumeDrawing();
     Q_INVOKABLE void cancelCustomVolumeDrawing();
+    Q_INVOKABLE void focusSelectedPoseTarget();
     Q_INVOKABLE void startSearch();
     Q_INVOKABLE void stopSearch();
 
@@ -204,6 +209,8 @@ signals:
     void customVolumeFocusRequested(const QVector3D &center,
                                     const QVector3D &size);
     void customVolumeDrawingChanged();
+    void poseTargetFocusRequested(const QVector3D &center,
+                                  const QVector3D &size);
 
 private:
     struct ValidationResult {
@@ -238,6 +245,9 @@ private:
     void synchronizeSelectedCustomVolume();
     void synchronizeCustomVolumeSetting(const QString &key,
                                         const QString &value);
+    void synchronizeSelectedPoseTarget();
+    void synchronizePoseTargetSetting(const QString &key,
+                                      const QString &value);
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
@@ -254,6 +264,7 @@ private:
     SearchConfigurationModel configuration_;
     CuboidTargetModel cuboidTargets_;
     CustomVolumeTargetModel customVolumeTargets_;
+    PoseTargetModel poseTargets_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString iterationCountText_;

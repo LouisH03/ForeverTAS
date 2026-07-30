@@ -151,6 +151,8 @@ add_library(forevertas_gui STATIC
     src/app/cuboid_target_model.h
     src/app/custom_volume_target_model.cpp
     src/app/custom_volume_target_model.h
+    src/app/pose_target_model.cpp
+    src/app/pose_target_model.h
     src/app/search_completion.h
     src/app/search_controller.cpp
     src/app/search_controller.h

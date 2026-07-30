@@ -1275,15 +1275,155 @@ int main(int argc, char **argv) {
                     dropdownStateUpdates &=
                             activateCombo(evaluationTargetCombo, 6);
                     QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QObject *const poseEditor =
+                            evaluationTargetSelector
+                                    ->property("settingsItem")
+                                    .value<QObject *>();
                     QObject *const rotationWeightSlider =
                             root->findChild<QObject *>(
                                     QStringLiteral("rotationWeightSlider"));
-                    const bool poseSliderValid =
+                    QObject *const poseSelector =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral("poseTargetSelector"));
+                    QObject *const poseNameField =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral("poseTargetNameField"));
+                    QObject *const posePositionSettings =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "poseTargetPositionSettings"));
+                    QObject *const poseRotationSettings =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "poseTargetRotationSettings"));
+                    const int placedPoseIndex =
+                            controller.poseTargets()->addTarget(
+                                    7.0,
+                                    3.0,
+                                    -4.0,
+                                    QQuaternion::fromEulerAngles(
+                                            10.0F, 20.0F, 30.0F));
+                    QCoreApplication::processEvents();
+                    const int poseModels =
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "poseTargetCarModel"))
+                                    .size();
+                    const double initialPoseX =
+                            controller.poseTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("x"))
+                                    .toDouble();
+                    const double initialPoseYaw =
+                            controller.poseTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toDouble();
+                    QVariant beganPoseMove;
+                    QVariant beganPoseRotation;
+                    bool poseSliderValid =
                             rotationWeightSlider != nullptr &&
                             rotationWeightSlider->property("from").toReal() ==
                                     0.0 &&
                             rotationWeightSlider->property("to").toReal() ==
-                                    100.0;
+                                    100.0 &&
+                            poseEditor != nullptr &&
+                            poseSelector != nullptr &&
+                            poseNameField != nullptr &&
+                            posePositionSettings != nullptr &&
+                            poseRotationSettings != nullptr &&
+                            placedPoseIndex == 1 &&
+                            poseSelector->property("count").toInt() == 2 &&
+                            poseSelector->property("currentIndex").toInt() ==
+                                    1 &&
+                            poseModels >= 2 &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "beginPoseInteraction",
+                                    Q_RETURN_ARG(
+                                            QVariant, beganPoseMove),
+                                    Q_ARG(
+                                            QVariant,
+                                            QVariant(
+                                                    QStringLiteral(
+                                                            "pose-move"))),
+                                    Q_ARG(
+                                            QVariant,
+                                            QVariant(
+                                                    QStringLiteral("x"))),
+                                    Q_ARG(QVariant, QVariant(100.0)),
+                                    Q_ARG(QVariant, QVariant(100.0))) &&
+                            beganPoseMove.toBool() &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "updatePoseInteraction",
+                                    Q_ARG(QVariant, QVariant(140.0)),
+                                    Q_ARG(QVariant, QVariant(100.0))) &&
+                            QMetaObject::invokeMethod(
+                                    viewport, "endPoseInteraction") &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "beginPoseInteraction",
+                                    Q_RETURN_ARG(
+                                            QVariant,
+                                            beganPoseRotation),
+                                    Q_ARG(
+                                            QVariant,
+                                            QVariant(
+                                                    QStringLiteral(
+                                                            "pose-rotate"))),
+                                    Q_ARG(
+                                            QVariant,
+                                            QVariant(
+                                                    QStringLiteral("yaw"))),
+                                    Q_ARG(QVariant, QVariant(100.0)),
+                                    Q_ARG(QVariant, QVariant(100.0))) &&
+                            beganPoseRotation.toBool() &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "updatePoseInteraction",
+                                    Q_ARG(QVariant, QVariant(140.0)),
+                                    Q_ARG(QVariant, QVariant(100.0))) &&
+                            QMetaObject::invokeMethod(
+                                    viewport, "endPoseInteraction");
+                    controller.focusSelectedPoseTarget();
+                    QCoreApplication::processEvents();
+                    poseSliderValid &=
+                            controller.poseTargets()
+                                            ->selectedTarget()
+                                            .value(QStringLiteral("x"))
+                                            .toDouble() > initialPoseX &&
+                            controller.poseTargets()
+                                            ->selectedTarget()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "yawDegrees"))
+                                            .toDouble() > initialPoseYaw &&
+                            controller.evaluationTargetSettings()
+                                            .value(QStringLiteral("x"))
+                                            .toDouble() > initialPoseX &&
+                            viewport->property("cuboidFocused").toBool() &&
+                            viewport->property("cameraTarget")
+                                            .value<QVector3D>() ==
+                                    controller.poseTargets()
+                                            ->selectedTarget()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "position"))
+                                            .value<QVector3D>() &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "poseTargetMoveHandle"))
+                                            .size() >= 6 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "poseTargetRotationHandle"))
+                                            .size() >= 6;
 
                     dropdownStateUpdates &=
                             activateCombo(evaluationTargetCombo, 3);

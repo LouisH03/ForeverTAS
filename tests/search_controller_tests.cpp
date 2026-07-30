@@ -1,5 +1,6 @@
 #include "app/cuboid_target_model.h"
 #include "app/custom_volume_target_model.h"
+#include "app/pose_target_model.h"
 #include "app/packs_directory_finder.h"
 #include "app/search_configuration_model.h"
 #include "app/search_controller.h"
@@ -28,6 +29,7 @@ namespace {
 using forevertas::app::SearchController;
 using forevertas::app::CuboidTargetModel;
 using forevertas::app::CustomVolumeTargetModel;
+using forevertas::app::PoseTargetModel;
 
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
@@ -387,6 +389,215 @@ bool TestCustomVolumeTargets() {
                                   .value(QStringLiteral("depth"))
                                   .toString() == QStringLiteral("8"),
                   "custom volume did not synchronize with search settings");
+    return okay;
+}
+
+bool TestPoseTargets() {
+    QSettings().clear();
+    PoseTargetModel model;
+    bool okay = Check(
+            model.count() == 1 &&
+                    model.selectedTarget()
+                                    .value(QStringLiteral("name"))
+                                    .toString() ==
+                            QStringLiteral("Car pose 1"),
+            "pose target model did not create its default target");
+    okay &= Check(
+            model.setPositionComponent(
+                    0, QStringLiteral("x"), QStringLiteral("12.5")) &&
+                    model.setPositionComponent(
+                            0, QStringLiteral("y"), QStringLiteral("3")) &&
+                    model.setPositionComponent(
+                            0, QStringLiteral("z"), QStringLiteral("-4")) &&
+                    model.setRotationComponent(
+                            0, QStringLiteral("yaw"), QStringLiteral("90")) &&
+                    model.setRotationComponent(
+                            0,
+                            QStringLiteral("pitch"),
+                            QStringLiteral("-20")) &&
+                    model.setRotationComponent(
+                            0,
+                            QStringLiteral("roll"),
+                            QStringLiteral("45")),
+            "pose target property edits failed");
+    const QQuaternion expected = QQuaternion::fromEulerAngles(
+            45.0F, -20.0F, 90.0F);
+    const QQuaternion actual = model.selectedTarget()
+                                       .value(QStringLiteral("rotation"))
+                                       .value<QQuaternion>();
+    okay &= Check(
+            std::abs(QQuaternion::dotProduct(
+                    expected.normalized(), actual.normalized())) > 0.9999F,
+            "pose target Euler properties produced the wrong orientation");
+    okay &= Check(
+            model.translateSelected(1.0, 0.0, 0.0) &&
+                    model.rotateSelected(QStringLiteral("yaw"), 300.0) &&
+                    model.selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("30"),
+            "pose target direct manipulation failed");
+    const QVariantMap edited = model.selectedTarget();
+    okay &= Check(
+            model.duplicateSelected() == 1 &&
+                    model.selectedTarget()
+                                    .value(QStringLiteral("name"))
+                                    .toString() ==
+                            QStringLiteral("Car pose 2") &&
+                    model.selectTarget(0),
+            "pose target list operations failed");
+    PoseTargetModel restored;
+    okay &= Check(
+            restored.selectedTarget()
+                            .value(QStringLiteral("position"))
+                            .value<QVector3D>() ==
+                    edited.value(QStringLiteral("position"))
+                            .value<QVector3D>() &&
+                    restored.selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("30"),
+            "pose targets did not persist");
+    model.setEditingEnabled(false);
+    okay &= Check(
+            !model.translateSelected(1.0, 0.0, 0.0) &&
+                    !model.rotateSelected(QStringLiteral("yaw"), 1.0) &&
+                    !model.selectTarget(1) &&
+                    !model.setPositionComponent(
+                            0,
+                            QStringLiteral("x"),
+                            QStringLiteral("10000001")),
+            "pose target editing lock or bounds were bypassed");
+    model.setEditingEnabled(true);
+    const QVariantMap lockedTarget = model.selectedTarget();
+    okay &= Check(
+            !model.setPositionComponent(
+                    0, QStringLiteral("x"), QStringLiteral("nan")) &&
+                    !model.setPositionComponent(
+                            0,
+                            QStringLiteral("z"),
+                            QStringLiteral("10000001")) &&
+                    !model.setRotationComponent(
+                            0, QStringLiteral("spin"), QStringLiteral("5")) &&
+                    !model.setRotationComponent(
+                            0,
+                            QStringLiteral("yaw"),
+                            QStringLiteral("-10000001")) &&
+                    !model.translateSelected(
+                            std::numeric_limits<double>::infinity(),
+                            0.0,
+                            0.0) &&
+                    !model.rotateSelected(
+                            QStringLiteral("pitch"),
+                            std::numeric_limits<double>::quiet_NaN()) &&
+                    model.addTarget(
+                            0.0,
+                            0.0,
+                            0.0,
+                            QQuaternion(
+                                    std::numeric_limits<float>::max(),
+                                    std::numeric_limits<float>::max(),
+                                    0.0F,
+                                    0.0F)) == -1 &&
+                    model.addTarget(
+                            0.0,
+                            0.0,
+                            0.0,
+                            QQuaternion(0.0F, 0.0F, 0.0F, 0.0F)) == -1 &&
+                    !model.setName(0, QStringLiteral("   ")) &&
+                    !model.removeTarget(99) &&
+                    model.selectedTarget() == lockedTarget,
+            "invalid pose target edits changed model state");
+    okay &= Check(
+            model.removeTarget(1) &&
+                    model.count() == 1 &&
+                    !model.removeTarget(0),
+            "pose target removal did not preserve a usable final target");
+
+    QSettings().setValue(
+            QStringLiteral("targets/poses"),
+            QByteArrayLiteral(
+                    "{\"version\":1,\"selectedId\":\"missing\","
+                    "\"targets\":[{\"id\":\"\",\"name\":\"Broken\","
+                    "\"position\":[0,0,0],\"rotation\":[0,0,0]},"
+                    "{\"id\":\"valid\",\"name\":\"Recovered\","
+                    "\"position\":[1,2,3],\"rotation\":[450,-540,720]},"
+                    "{\"id\":\"valid\",\"name\":\"Duplicate\","
+                    "\"position\":[4,5,6],\"rotation\":[0,0,0]}]}"));
+    PoseTargetModel recovered;
+    okay &= Check(
+            recovered.count() == 1 &&
+                    recovered.selectedIndex() == 0 &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("name"))
+                                    .toString() ==
+                            QStringLiteral("Recovered") &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("90") &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("pitchDegrees"))
+                                    .toString() ==
+                            QStringLiteral("-180") &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("rollDegrees"))
+                                    .toString() ==
+                            QStringLiteral("0"),
+            "pose target persistence did not reject or normalize bad data");
+
+    QSettings().clear();
+    SearchController controller;
+    controller.setEvaluationTargetId(QStringLiteral("pose-target"));
+    PoseTargetModel *const targets = controller.poseTargets();
+    targets->setPositionComponent(
+            0, QStringLiteral("x"), QStringLiteral("18"));
+    targets->setRotationComponent(
+            0, QStringLiteral("yaw"), QStringLiteral("75"));
+    okay &= Check(
+            controller.evaluationTargetSettings()
+                            .value(QStringLiteral("x"))
+                            .toString() == QStringLiteral("18") &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("75"),
+            "selected pose target did not synchronize search settings");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("rollDegrees"), QStringLiteral("-35"));
+    okay &= Check(
+            targets->selectedTarget()
+                            .value(QStringLiteral("rollDegrees"))
+                                    .toString() == QStringLiteral("-35"),
+            "pose search setting did not synchronize the selected target");
+    const int alternateIndex = targets->addTarget(
+            -8.0,
+            4.0,
+            6.0,
+            QQuaternion::fromEulerAngles(15.0F, 25.0F, 35.0F));
+    okay &= Check(
+            alternateIndex == 1 &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("x"))
+                                    .toString() ==
+                            QStringLiteral("-8") &&
+                    std::abs(
+                            controller.evaluationTargetSettings()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "yawDegrees"))
+                                            .toDouble() -
+                            35.0) < 0.001 &&
+                    targets->selectTarget(0) &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("x"))
+                                    .toString() ==
+                            QStringLiteral("18") &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("rollDegrees"))
+                                    .toString() ==
+                            QStringLiteral("-35"),
+            "pose target selection did not switch the brute-force goal");
     return okay;
 }
 
@@ -1417,6 +1628,7 @@ int main(int argc, char **argv) {
     bool okay = TestCuboidTargetModel() &&
             TestCuboidControllerSynchronization() &&
             TestCustomVolumeTargets() &&
+            TestPoseTargets() &&
             TestAutomaticPacksDetection() &&
             TestDescriptiveSearchStageStatuses() &&
             TestIterationBoundaryArbitration() &&
