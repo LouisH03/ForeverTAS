@@ -59,6 +59,8 @@ ColumnLayout {
         id: settingsLoader
         objectName: root.comboObjectName + "SettingsLoader"
         Layout.fillWidth: true
+        Layout.preferredHeight: settingsLoaded
+                                ? settingsLoader.item.implicitHeight : 0
         visible: active
         active: root.selectedOption !== null
                 && root.selectedOption.settingsComponent.length > 0

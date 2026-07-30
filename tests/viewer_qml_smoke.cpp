@@ -11,6 +11,7 @@
 #include <QImage>
 #include <QInputDevice>
 #include <QPalette>
+#include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -1312,6 +1313,63 @@ int main(int argc, char **argv) {
                                         QString::fromLatin1(objectName);
                     }
                     controller.setEvaluationTargetId(
+                            QStringLiteral("pose-target"));
+                    QCoreApplication::processEvents();
+                    const qreal expandedEvaluationHeight =
+                            evaluationSection == nullptr
+                            ? 0.0
+                            : evaluationSection->height();
+                    const qreal expandedSelectorHeight =
+                            evaluationTargetSelector == nullptr
+                            ? 0.0
+                            : evaluationTargetSelector
+                                      ->property("height")
+                                      .toReal();
+                    const QPointer<QObject> expandedSettingsItem =
+                            evaluationTargetSelector == nullptr
+                            ? nullptr
+                            : evaluationTargetSelector
+                                      ->property("settingsItem")
+                                      .value<QObject *>();
+                    const QString expandedSettingsObjectName =
+                            expandedSettingsItem == nullptr
+                            ? QString()
+                            : expandedSettingsItem->objectName();
+                    controller.setEvaluationTargetId(
+                            QStringLiteral("precise-finish-time"));
+                    QCoreApplication::processEvents();
+                    const qreal compactEvaluationHeight =
+                            evaluationSection == nullptr
+                            ? 0.0
+                            : evaluationSection->height();
+                    const qreal compactSelectorHeight =
+                            evaluationTargetSelector == nullptr
+                            ? 0.0
+                            : evaluationTargetSelector
+                                      ->property("height")
+                                      .toReal();
+                    QObject *const compactSettingsItem =
+                            evaluationTargetSelector == nullptr
+                            ? nullptr
+                            : evaluationTargetSelector
+                                      ->property("settingsItem")
+                                      .value<QObject *>();
+                    const bool targetLayoutUpdatesImmediately =
+                            expandedSettingsItem != nullptr &&
+                            expandedSettingsObjectName ==
+                                    QStringLiteral(
+                                            "poseTargetEvaluationSettings") &&
+                            compactSettingsItem != nullptr &&
+                            compactSettingsItem != expandedSettingsItem.data() &&
+                            compactSettingsItem->objectName() ==
+                                    QStringLiteral(
+                                            "preciseFinishTimeEvaluationSettings") &&
+                            expandedEvaluationHeight >
+                                    compactEvaluationHeight + 250.0 &&
+                            expandedSelectorHeight >
+                                    compactSelectorHeight + 250.0 &&
+                            compactSelectorHeight < 90.0;
+                    controller.setEvaluationTargetId(
                             QStringLiteral("stunt-points"));
                     QCoreApplication::processEvents();
                     QObject *const stuntPointsTimeField =
@@ -2008,6 +2066,7 @@ int main(int argc, char **argv) {
                             algorithmSelectorsValid &&
                             autoPromoteBestValid &&
                             everyOwnedPanelLoaded && stuntPointsFieldValid &&
+                            targetLayoutUpdatesImmediately &&
                             configurationSectionsValid &&
                             comboSlotsStyled && settingComboTextValid &&
                             modifierPassLayoutValid && debuggerUiValid &&
