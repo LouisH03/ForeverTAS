@@ -348,6 +348,10 @@ SearchResult RunCudaBasicBruteForce(
         const SearchExecutionContext &context,
         const EvaluationPlan &evaluationPlan,
         std::int64_t earliestMutationTimeMs,
+        const PhysicsSandboxState &branch,
+        const std::vector<PhysicsSandboxInputEvent>
+                &originalBaselineInputs,
+        bool autoPromoteBest,
         std::chrono::steady_clock::time_point started) {
     using namespace forevervalidator::experimental;
     if (context.cudaModifiers == nullptr ||
@@ -370,10 +374,11 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
     configuration.modifiers = *context.cudaModifiers;
     configuration.evaluator = *context.cudaEvaluator;
-    PhysicsSandboxCudaSearchSession session = Require(
+    std::optional<PhysicsSandboxCudaSearchSession> session;
+    session.emplace(Require(
             CreatePhysicsSandboxCudaSearchSession(
                     context.sandbox, configuration),
-            "creating resident CUDA search session");
+            "creating resident CUDA search session"));
     std::optional<CudaBatchCalibrator> calibrator;
     if (context.calibrateCudaBatchSize) {
         calibrator.emplace();
@@ -434,7 +439,7 @@ SearchResult RunCudaBasicBruteForce(
     ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
     const auto baselineStarted = std::chrono::steady_clock::now();
     PhysicsSandboxCudaSearchBatch baseline = Require(
-            session.EvaluateBaseline(
+            session->EvaluateBaseline(
                     [control = context.control]() {
                         return control != nullptr &&
                                 control->cancellationRequested &&
@@ -471,7 +476,7 @@ SearchResult RunCudaBasicBruteForce(
                 : context.cudaBatchSize;
         if (batchSize > sessionCapacity) {
             PhysicsSandboxResult<std::uint32_t> reserved =
-                    session.ReserveBatchCapacity(batchSize);
+                    session->ReserveBatchCapacity(batchSize);
             if (!reserved) {
                 if (!calibrator ||
                     reserved.Error().code !=
@@ -518,7 +523,7 @@ SearchResult RunCudaBasicBruteForce(
         const auto batchStarted = std::chrono::steady_clock::now();
         BeginIteration(context.control);
         PhysicsSandboxCudaSearchBatch batch = Require(
-                session.RunBatch(
+                session->RunBatch(
                         iterationIndex,
                         batchSize,
                         [control = context.control]() {
@@ -539,8 +544,48 @@ SearchResult RunCudaBasicBruteForce(
         totalMutationCount += batch.totalMutationCount;
         mutationImprovementCount +=
                 batch.mutationImprovementCount;
-        if (batch.bestSnapshot) {
+        const bool promote =
+                autoPromoteBest &&
+                batch.mutationImprovementCount != 0u &&
+                batch.bestSnapshot.has_value();
+        if (batch.bestChanged && batch.bestSnapshot) {
             adoptBest(batch);
+            if (autoPromoteBest) {
+                best.mutationCount = EffectiveInputChangeCount(
+                        originalBaselineInputs, best.inputs);
+            }
+        }
+        if (promote) {
+            session.reset();
+            Require(context.sandbox.RestoreState(branch),
+                    "restoring CUDA branch for promoted baseline");
+            Require(context.sandbox.ReplaceInputs(best.inputs),
+                    "promoting CUDA best inputs to baseline");
+            configuration.maximumBatchSize = sessionCapacity;
+            session.emplace(Require(
+                    CreatePhysicsSandboxCudaSearchSession(
+                            context.sandbox, configuration),
+                    "recreating promoted CUDA search session"));
+            PhysicsSandboxCudaSearchBatch promotedBaseline = Require(
+                    session->EvaluateBaseline(
+                            [control = context.control]() {
+                                return control != nullptr &&
+                                        control->cancellationRequested &&
+                                        control->cancellationRequested();
+                            }),
+                    "evaluating promoted CUDA baseline");
+            if (promotedBaseline.cancelled) {
+                throw SearchCancelled();
+            }
+            evaluatorCalls += promotedBaseline.evaluatorCalls;
+            if (!promotedBaseline.bestSnapshot ||
+                !best.evaluation ||
+                promotedBaseline.bestScore != best.evaluation->score ||
+                promotedBaseline.bestTimeMs != best.evaluation->timeMs) {
+                throw std::runtime_error(
+                        "promoted CUDA baseline does not match the "
+                        "global best");
+            }
         }
         if (batch.mutationImprovementCount != 0u) {
             lastImprovementElapsed =
@@ -608,7 +653,7 @@ SearchResult RunCudaBasicBruteForce(
 }  // namespace
 
 OptionSettings DefaultBasicBruteForceOptionSettings() {
-    return {};
+    return {{"autoPromoteBest", "false"}};
 }
 
 std::optional<std::string> ValidateBasicBruteForceOptionSettings(
@@ -617,6 +662,9 @@ std::optional<std::string> ValidateBasicBruteForceOptionSettings(
     if (const auto keyError = ValidateOptionSettingKeys(
                 settings, DefaultBasicBruteForceOptionSettings())) {
         return keyError;
+    }
+    if (!ParseBoolean(settings.at("autoPromoteBest"))) {
+        return "auto-promote best must be true or false";
     }
     if (tickDurationMs == 0u) {
         return "tick duration must be greater than zero";
@@ -631,15 +679,19 @@ std::unique_ptr<SearchAlgorithm> CreateBasicBruteForceSearch(
                 ValidateBasicBruteForceOptionSettings(settings, tickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    return std::make_unique<BasicBruteForceSearch>();
+    return std::make_unique<BasicBruteForceSearch>(
+            *ParseBoolean(settings.at("autoPromoteBest")));
 }
+
+BasicBruteForceSearch::BasicBruteForceSearch(bool autoPromoteBest)
+    : autoPromoteBest_(autoPromoteBest) {}
 
 SearchResult BasicBruteForceSearch::Run(
         const SearchExecutionContext &context) const {
     const auto started = std::chrono::steady_clock::now();
-    if (const auto error = ValidateBasicBruteForceOptionSettings(
-                {}, context.tickDurationMs)) {
-        throw std::invalid_argument(*error);
+    if (context.tickDurationMs == 0u) {
+        throw std::invalid_argument(
+                "tick duration must be greater than zero");
     }
 
     const std::int64_t earliestMutationTimeMs =
@@ -705,6 +757,9 @@ SearchResult BasicBruteForceSearch::Run(
                 context,
                 evaluationPlan,
                 earliestMutationTimeMs,
+                branch,
+                baselineInputs,
+                autoPromoteBest_,
                 started);
     }
 #endif
@@ -745,6 +800,7 @@ SearchResult BasicBruteForceSearch::Run(
     const auto evaluateTimeline = [&](SearchWinnerSource source,
                                       std::optional<std::uint64_t> iterationIndex,
                                       std::size_t mutationCount) {
+        bool improved = false;
         PhysicsSandboxStateView state = AdvanceTo(
                 context.sandbox,
                 branchTimeMs,
@@ -784,6 +840,7 @@ SearchResult BasicBruteForceSearch::Run(
                                     "capturing improved state");
             best.inputs = Require(context.sandbox.ReadInputs(),
                                   "reading improved inputs");
+            improved = true;
             if (source == SearchWinnerSource::Mutation) {
                 ++mutationImprovementCount;
                 lastImprovementElapsed =
@@ -793,6 +850,7 @@ SearchResult BasicBruteForceSearch::Run(
                 reportLive(false);
             }
         }
+        return improved;
     };
 
     ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
@@ -811,26 +869,48 @@ SearchResult BasicBruteForceSearch::Run(
     const std::uint64_t iterationIndexStride = context.control == nullptr
             ? 1u
             : context.control->iterationIndexStride;
+    std::vector<PhysicsSandboxInputEvent> mutationBaselineInputs =
+            baselineInputs;
     while (!StopRequested(context.control) &&
            !IterationLimitReached(context.control, iterations)) {
         BeginIteration(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");
         MutationResult mutation = context.mutator.Mutate(
-                {baselineInputs,
+                {mutationBaselineInputs,
                  iterationIndex,
                  0u,
                  context.tickDurationMs,
                  earliestMutationTimeMs});
         CheckCancellation(context.control);
         ++iterations;
+        bool improved = false;
         if (mutation.mutationCount != 0u) {
             totalMutationCount += mutation.mutationCount;
+            const std::size_t overallMutationCount =
+                    EffectiveInputChangeCount(
+                            baselineInputs, mutation.inputs);
             Require(context.sandbox.ReplaceInputs(std::move(mutation.inputs)),
                     "replacing iteration inputs");
-            evaluateTimeline(SearchWinnerSource::Mutation,
-                             iterationIndex,
-                             mutation.mutationCount);
+            improved = evaluateTimeline(
+                    SearchWinnerSource::Mutation,
+                    iterationIndex,
+                    overallMutationCount);
+        }
+        if (autoPromoteBest_) {
+            std::optional<std::vector<PhysicsSandboxInputEvent>>
+                    sharedBaseline;
+            if (context.control != nullptr &&
+                context.control->promotedBaselineInputs) {
+                sharedBaseline =
+                        context.control->promotedBaselineInputs();
+            }
+            if (sharedBaseline) {
+                mutationBaselineInputs =
+                        std::move(*sharedBaseline);
+            } else if (improved) {
+                mutationBaselineInputs = best.inputs;
+            }
         }
         reportLive(false);
         if (iterationIndex >

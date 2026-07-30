@@ -791,6 +791,11 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                   "CUDA calibration was unexpectedly enabled by default");
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
+    okay &= Check(
+            controller.searchAlgorithmSettings()
+                            .value(QStringLiteral("autoPromoteBest"))
+                            .toString() == QStringLiteral("false"),
+            "auto-promote search mode was unexpectedly enabled by default");
     okay &= Check(controller.modifierOptions().size() == 5,
                   "required modifier options were not exposed");
     okay &= Check(controller.evaluationTargetOptions().size() == 7,
@@ -1015,6 +1020,9 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setCpuWorkerCount(QStringLiteral("6"));
         controller.setCudaParallelSampleCount(QStringLiteral("384"));
         controller.setCudaCalibrationEnabled(true);
+        controller.setSearchAlgorithmSetting(
+                QStringLiteral("autoPromoteBest"),
+                QStringLiteral("true"));
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
@@ -1027,8 +1035,11 @@ bool TestPersistence(const QString &packsDirectory,
     }
 
     SearchController restored;
-    bool okay = Check(restored.searchAlgorithmSettings().isEmpty(),
-                      "parameterless search exposed persisted settings");
+    bool okay = Check(
+            restored.searchAlgorithmSettings()
+                            .value(QStringLiteral("autoPromoteBest"))
+                            .toString() == QStringLiteral("true"),
+            "auto-promote search mode was not persisted");
     okay &= Check(
             restored.baseInputScript() ==
                     QStringLiteral("0.00 press up\n0.50 steer -16384") &&

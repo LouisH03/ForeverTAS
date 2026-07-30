@@ -5,6 +5,7 @@
 #include "replay_file_io.h"
 #include "searches/algorithm_registry.h"
 #include "searches/cuda_search_configuration.h"
+#include "searches/option_settings_utils.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
@@ -398,11 +399,51 @@ SearchResult RunMultiThreadedCpuSearch(
             evaluationRegistration.create(
                     request.evaluationTarget.settings,
                     kSearchTickDurationMs);
+    std::mutex evaluatorMutex;
+    const auto betterShared =
+            [&](double candidateScore,
+                double candidateTimeMs,
+                double incumbentScore,
+                double incumbentTimeMs) {
+                std::lock_guard<std::mutex> guard(evaluatorMutex);
+                return BetterEvaluation(
+                        *evaluator,
+                        candidateScore,
+                        candidateTimeMs,
+                        incumbentScore,
+                        incumbentTimeMs);
+            };
+    const auto preferShared =
+            [&](double candidateScore,
+                double candidateTimeMs,
+                SearchWinnerSource candidateSource,
+                std::optional<std::uint64_t> candidateIteration,
+                double incumbentScore,
+                double incumbentTimeMs,
+                SearchWinnerSource incumbentSource,
+                std::optional<std::uint64_t> incumbentIteration) {
+                std::lock_guard<std::mutex> guard(evaluatorMutex);
+                return PreferEvaluation(
+                        *evaluator,
+                        candidateScore,
+                        candidateTimeMs,
+                        candidateSource,
+                        candidateIteration,
+                        incumbentScore,
+                        incumbentTimeMs,
+                        incumbentSource,
+                        incumbentIteration);
+            };
     std::mutex stateMutex;
     std::mutex upstreamControlMutex;
     std::condition_variable stateChanged;
     std::vector<CpuWorkerState> states(workerCount);
     std::atomic_bool internalCancellation{false};
+    const bool autoPromoteBest = *ParseBoolean(
+            request.searchAlgorithm.settings.at(
+                    "autoPromoteBest"));
+    std::optional<EvaluationSample> promotedEvaluation;
+    std::vector<SandboxInputEvent> promotedInputs;
     std::uint64_t revision = 0u;
     std::size_t finishedWorkerCount = 0u;
     ReportProgress(
@@ -464,9 +505,38 @@ SearchResult RunMultiThreadedCpuSearch(
                                     const SearchLiveUpdate &live) {
                                 std::lock_guard<std::mutex> guard(
                                         stateMutex);
+                                if (autoPromoteBest &&
+                                    live.winnerSource ==
+                                            SearchWinnerSource::Mutation &&
+                                    (!promotedEvaluation ||
+                                     betterShared(
+                                             live.bestScore,
+                                             live.bestEvaluationTimeMs,
+                                             promotedEvaluation->score,
+                                             promotedEvaluation->timeMs))) {
+                                    promotedEvaluation = {
+                                            live.bestScore,
+                                            live.bestEvaluationTimeMs,
+                                            {}};
+                                    promotedInputs =
+                                            live.bestInputs;
+                                }
                                 states[workerIndex].live = live;
                                 ++revision;
                                 stateChanged.notify_one();
+                            };
+                    workerControl.promotedBaselineInputs =
+                            [&]() -> std::optional<
+                                    std::vector<SandboxInputEvent>> {
+                                if (!autoPromoteBest) {
+                                    return std::nullopt;
+                                }
+                                std::lock_guard<std::mutex> guard(
+                                        stateMutex);
+                                if (!promotedEvaluation) {
+                                    return std::nullopt;
+                                }
+                                return promotedInputs;
                             };
                     if (control != nullptr && control->iterationLimit) {
                         const std::uint64_t total =
@@ -563,8 +633,7 @@ SearchResult RunMultiThreadedCpuSearch(
                 evaluatorCalls += live->evaluatorCalls;
                 totalMutationCount += live->totalMutationCount;
                 if (!candidate ||
-                    PreferEvaluation(
-                            *evaluator,
+                    preferShared(
                             live->bestScore,
                             live->bestEvaluationTimeMs,
                             live->winnerSource,
@@ -590,15 +659,13 @@ SearchResult RunMultiThreadedCpuSearch(
 
             bool improved = false;
             const bool strictlyBetter = aggregateBest &&
-                    BetterEvaluation(
-                        *evaluator,
+                    betterShared(
                         candidate->bestScore,
                         candidate->bestEvaluationTimeMs,
                         aggregateBest->bestScore,
                         aggregateBest->bestEvaluationTimeMs);
             if (!aggregateBest ||
-                PreferEvaluation(
-                        *evaluator,
+                preferShared(
                         candidate->bestScore,
                         candidate->bestEvaluationTimeMs,
                         candidate->winnerSource,
@@ -681,8 +748,7 @@ SearchResult RunMultiThreadedCpuSearch(
         evaluatorCalls += result.evaluatorCalls;
         totalMutationCount += result.totalMutationCount;
         if (!bestWorker ||
-            PreferEvaluation(
-                    *evaluator,
+            preferShared(
                     result.bestScore,
                     result.bestEvaluationTimeMs,
                     result.winnerSource,
@@ -700,8 +766,7 @@ SearchResult RunMultiThreadedCpuSearch(
     SearchResult result =
             std::move(*states[*bestWorker].result);
     if (((!aggregateBest ||
-         BetterEvaluation(
-                 *evaluator,
+         betterShared(
                  result.bestScore,
                  result.bestEvaluationTimeMs,
                  aggregateBest->bestScore,

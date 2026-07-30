@@ -1,6 +1,7 @@
 #include "mutations/input_event_formatter.h"
 #include "mutations/replay_input_script.h"
 #include "replay_file_io.h"
+#include "searches/basic_brute_force_search.h"
 #include "searches/search_runner.h"
 
 #include <forevervalidator/native.h>
@@ -13,6 +14,82 @@
 
 namespace {
 
+using forevervalidator::experimental::PhysicsSandbox;
+using forevervalidator::experimental::PhysicsSandboxInputEvent;
+using forevervalidator::experimental::PhysicsSandboxInputValueKind;
+using forevervalidator::experimental::PhysicsSandboxStateView;
+
+class IncrementingSteerMutator final : public forevertas::InputMutator {
+public:
+    forevertas::MutationResult Mutate(
+            const forevertas::MutationRequest &request) const override {
+        const forevertas::AnalogInputState baseline =
+                forevertas::SteeringStateAt(
+                        request.baselineInputs, 10);
+        observedBaselines.push_back(baseline);
+        std::vector<forevertas::SandboxInputEvent> inputs =
+                request.baselineInputs;
+        PhysicsSandboxInputEvent event;
+        event.timeMs = 10;
+        event.action = forevertas::SandboxInputAction::Steer;
+        event.value.kind = PhysicsSandboxInputValueKind::Analog;
+        event.value.analog = forevertas::SaturateAnalogInputState(
+                static_cast<std::int64_t>(baseline) + 4096);
+        inputs.push_back(event);
+        forevertas::NormalizeMutableInputEvents(
+                inputs,
+                request.baselineInputs,
+                request.tickDurationMs,
+                request.mutableFromTimeMs);
+        return {
+                inputs,
+                forevertas::EffectiveInputChangeCount(
+                        request.baselineInputs, inputs)};
+    }
+
+    std::int64_t EarliestMutationTimeMs() const override {
+        return 10;
+    }
+
+    mutable std::vector<forevertas::AnalogInputState>
+            observedBaselines;
+};
+
+class SteeringSession final
+    : public forevertas::IterationEvaluationSession {
+public:
+    std::optional<forevertas::EvaluationSample> Observe(
+            const std::optional<PhysicsSandboxStateView> &,
+            const PhysicsSandboxStateView &current) override {
+        return forevertas::EvaluationSample{
+                static_cast<double>(current.steering),
+                static_cast<double>(current.timeMs),
+                "steering"};
+    }
+};
+
+class SteeringEvaluator final : public forevertas::IterationEvaluator {
+public:
+    forevertas::EvaluationPlan Plan(
+            std::int64_t,
+            std::int64_t,
+            std::uint32_t) const override {
+        return {10, 10};
+    }
+
+    std::unique_ptr<forevertas::IterationEvaluationSession>
+    CreateSession() const override {
+        return std::make_unique<SteeringSession>();
+    }
+
+    bool IsBetter(
+            const forevertas::EvaluationSample &iteration,
+            const forevertas::EvaluationSample &incumbent)
+            const override {
+        return iteration.score > incumbent.score;
+    }
+};
+
 template<typename T, typename Error>
 T Require(forevervalidator::DiscriminatedResult<T, Error> result,
           const char *operation) {
@@ -21,6 +98,132 @@ T Require(forevervalidator::DiscriminatedResult<T, Error> result,
     }
     return std::move(result).Value();
 }
+
+PhysicsSandbox CreateEmptyInputSandbox(
+        const char *packsDirectory,
+        const char *replayPath) {
+    const forevervalidator::ReplayIdentity identity{replayPath};
+    const forevervalidator::AssetBytes replay = Require(
+            forevertas::ReadReplayFileUtf8(replayPath, identity),
+            "reading replay for auto-promote test");
+    forevervalidator::experimental::PhysicsSandboxOptions options;
+    options.backend = forevervalidator::SimulationBackend::Reference;
+    options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    PhysicsSandbox sandbox = Require(
+            forevervalidator::experimental::CreatePhysicsSandbox(
+                    Require(
+                            forevervalidator::OpenInstalledPackDirectory(
+                                    packsDirectory),
+                            "opening auto-promote Packs"),
+                    options),
+            "creating auto-promote sandbox");
+    Require(sandbox.LoadReplay(
+                    {replay.data(), replay.size()}, identity),
+            "loading auto-promote replay");
+    Require(sandbox.ReplaceInputs({}),
+            "clearing auto-promote baseline inputs");
+    return sandbox;
+}
+
+bool CheckAutoPromoteSemantics(
+        const char *packsDirectory,
+        const char *replayPath) {
+    SteeringEvaluator evaluator;
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 3u;
+    control.sampleBestTimeline = false;
+
+    PhysicsSandbox fixedSandbox =
+            CreateEmptyInputSandbox(packsDirectory, replayPath);
+    IncrementingSteerMutator fixedMutator;
+    const forevertas::SearchResult fixed =
+            forevertas::BasicBruteForceSearch(false).Run(
+                    {fixedSandbox,
+                     forevertas::kSearchTickDurationMs,
+                     fixedMutator,
+                     evaluator,
+                     &control});
+
+    PhysicsSandbox promotedSandbox =
+            CreateEmptyInputSandbox(packsDirectory, replayPath);
+    IncrementingSteerMutator promotedMutator;
+    const forevertas::SearchResult promoted =
+            forevertas::BasicBruteForceSearch(true).Run(
+                    {promotedSandbox,
+                     forevertas::kSearchTickDurationMs,
+                     promotedMutator,
+                     evaluator,
+                     &control});
+
+    const std::vector<forevertas::AnalogInputState> fixedExpected{
+            0, 0, 0};
+    const std::vector<forevertas::AnalogInputState> promotedExpected{
+            0, 4096, 8192};
+    if (fixedMutator.observedBaselines != fixedExpected ||
+        promotedMutator.observedBaselines != promotedExpected ||
+        fixed.bestState.steering != 0.0625 ||
+        promoted.bestState.steering != 0.1875 ||
+        fixed.mutationImprovementCount != 1u ||
+        promoted.mutationImprovementCount != 3u) {
+        std::cerr
+                << "auto-promote did not refine each mutation from the "
+                   "current best inputs"
+                << " fixed=";
+        for (const auto value : fixedMutator.observedBaselines) {
+            std::cerr << value << ",";
+        }
+        std::cerr << " promoted=";
+        for (const auto value : promotedMutator.observedBaselines) {
+            std::cerr << value << ",";
+        }
+        std::cerr << " states=" << fixed.bestState.steering << "/"
+                  << promoted.bestState.steering
+                  << " improvements="
+                  << fixed.mutationImprovementCount << "/"
+                  << promoted.mutationImprovementCount << '\n';
+        return false;
+    }
+    return true;
+}
+
+#if FOREVERVALIDATOR_HAS_CUDA
+bool CheckCudaAutoPromoteAcrossBatches(
+        const char *packsDirectory,
+        const char *replayPath) {
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    forevertas::ExtractReplayInputScript(
+                            packsDirectory, replayPath));
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+    request.baseInputCommands = parsed.commands;
+    request.backend = forevertas::PhysicsBackend::Cuda;
+    request.parallelSampleCount = 128u;
+    request.searchAlgorithm.settings["autoPromoteBest"] = "true";
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 256u;
+    control.sampleBestTimeline = false;
+    const forevertas::SearchResult result =
+            forevertas::RunSearch(request, &control);
+    const bool mutationWon =
+            result.winnerSource ==
+            forevertas::SearchWinnerSource::Mutation;
+    if (result.iterations != 256u ||
+        result.mutationImprovementCount == 0u ||
+        mutationWon != (result.mutationImprovementCount > 0u) ||
+        result.bestInputs.empty()) {
+        std::cerr
+                << "CUDA auto-promote lost its global winner across "
+                   "multiple batches: improvements="
+                << result.mutationImprovementCount << '\n';
+        return false;
+    }
+    return true;
+}
+#endif
 
 bool RunBackend(const char *packsDirectory,
                 const char *replayPath,
@@ -86,6 +289,7 @@ bool RunBackend(const char *packsDirectory,
         };
         control.reuseLoadedSandbox = true;
         forevertas::SearchRequest request{packsDirectory, replayPath};
+        request.searchAlgorithm.settings["autoPromoteBest"] = "true";
         const forevertas::InputScriptParseResult parsed =
                 forevertas::ParseInputScript(
                         forevertas::ExtractReplayInputScript(
@@ -295,6 +499,21 @@ bool CheckMultiThreadedCpuBackend(
         std::cerr
                 << "multi-threaded CPU did not aggregate the same six "
                    "independent candidates as serial optimized CPU\n";
+        return false;
+    }
+
+    forevertas::SearchRequest promotedParallelRequest =
+            parallelRequest;
+    promotedParallelRequest.searchAlgorithm.settings[
+            "autoPromoteBest"] = "true";
+    const forevertas::SearchResult promotedParallel =
+            forevertas::RunSearch(
+                    promotedParallelRequest, &serialControl);
+    if (promotedParallel.iterations != 6u ||
+        promotedParallel.bestInputs.empty()) {
+        std::cerr
+                << "multi-threaded CPU did not run with auto-promote "
+                   "enabled\n";
         return false;
     }
 
@@ -546,7 +765,11 @@ int main(int argc, char **argv) {
     }
 
     try {
-        if (!CheckCachedScriptIsolation(argv[1], argv[2]) ||
+        if (!CheckAutoPromoteSemantics(argv[1], argv[2]) ||
+#if FOREVERVALIDATOR_HAS_CUDA
+            !CheckCudaAutoPromoteAcrossBatches(argv[1], argv[2]) ||
+#endif
+            !CheckCachedScriptIsolation(argv[1], argv[2]) ||
             !CheckKeyboardSteeringBaseline(argv[1], argv[2]) ||
             !CheckKeyboardSteeringPhysicsParity(argv[1], argv[2]) ||
             !CheckMultiThreadedCpuBackend(argv[1], argv[2]) ||

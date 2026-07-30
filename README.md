@@ -72,6 +72,9 @@ iteration applies the configured modifier passes in order, preserves the
 script-derived input prefix before the mutation branch exactly, normalizes only
 the mutable suffix, and evaluates it with the selected target. Whenever a new
 global best is found, its copy-ready input script is shown immediately.
+The optional **Promote each best result to baseline** mode turns the search
+into iterative refinement: after an improvement, later mutations start from
+that best input sequence instead of the original script-derived baseline.
 Iteration count, iterations per second, elapsed time, and time since the last
 improvement continue refreshing while the search runs. Pressing Stop
 finishes the current

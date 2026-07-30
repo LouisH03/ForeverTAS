@@ -1013,16 +1013,26 @@ bool TestLocaleIndependentFloatingPointSettings() {
 }
 
 bool TestSearchControl() {
+    const OptionSettings defaults =
+            forevertas::DefaultBasicBruteForceOptionSettings();
     bool okay = Check(
-            !forevertas::ValidateBasicBruteForceOptionSettings({}, 10u),
-            "parameterless Basic search settings were rejected");
+            defaults.at("autoPromoteBest") == "false" &&
+                    !forevertas::ValidateBasicBruteForceOptionSettings(
+                            defaults, 10u),
+            "default Basic search settings were rejected");
     okay &= Check(
             forevertas::ValidateBasicBruteForceOptionSettings(
                     {{"unexpected", "1"}}, 10u)
                     .has_value(),
             "an unexpected Basic search setting was accepted");
     okay &= Check(
-            forevertas::ValidateBasicBruteForceOptionSettings({}, 0u)
+            forevertas::ValidateBasicBruteForceOptionSettings(
+                    {{"autoPromoteBest", "yes"}}, 10u)
+                    .has_value(),
+            "an invalid auto-promote setting was accepted");
+    okay &= Check(
+            forevertas::ValidateBasicBruteForceOptionSettings(
+                    defaults, 0u)
                     .has_value(),
             "zero tick duration was accepted");
 

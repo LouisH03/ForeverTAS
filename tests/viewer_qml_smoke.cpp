@@ -431,6 +431,9 @@ int main(int argc, char **argv) {
                     QObject *const basicBruteForceSettings =
                             root->findChild<QObject *>(QStringLiteral(
                                     "basicBruteForceSearchSettings"));
+                    QObject *const autoPromoteBestSwitch =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "autoPromoteBestSwitch"));
                     QObject *const velocitySettings =
                             root->findChild<QObject *>(QStringLiteral(
                                     "velocityEvaluationSettings"));
@@ -873,10 +876,27 @@ int main(int argc, char **argv) {
                                             .toString() ==
                                     QStringLiteral("velocity") &&
                             basicBruteForceSettings != nullptr &&
+                            autoPromoteBestSwitch != nullptr &&
+                            !autoPromoteBestSwitch
+                                     ->property("checked")
+                                     .toBool() &&
                             modifierComposition
                                     ->property("firstPassSettingsLoaded")
                                     .toBool() &&
                             velocitySettings != nullptr;
+                    controller.setSearchAlgorithmSetting(
+                            QStringLiteral("autoPromoteBest"),
+                            QStringLiteral("true"));
+                    QCoreApplication::processEvents();
+                    const bool autoPromoteBestValid =
+                            autoPromoteBestSwitch != nullptr &&
+                            autoPromoteBestSwitch
+                                    ->property("checked")
+                                    .toBool();
+                    controller.setSearchAlgorithmSetting(
+                            QStringLiteral("autoPromoteBest"),
+                            QStringLiteral("false"));
+                    QCoreApplication::processEvents();
                     const bool settingComboTextValid =
                             velocityModeCombo != nullptr &&
                             velocityModeComboContent != nullptr &&
@@ -1829,6 +1849,7 @@ int main(int argc, char **argv) {
                             removedSectionDescriptions &&
                             automaticPacksUi && backendSelectorValid &&
                             algorithmSelectorsValid &&
+                            autoPromoteBestValid &&
                             everyOwnedPanelLoaded && stuntPointsFieldValid &&
                             configurationSectionsValid &&
                             comboSlotsStyled && settingComboTextValid &&

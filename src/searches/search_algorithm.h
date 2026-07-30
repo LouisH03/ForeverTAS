@@ -89,6 +89,8 @@ struct SearchRunControl {
     std::function<bool()> beginIteration;
     std::function<void(const SearchLiveUpdate &)> liveChanged;
     std::function<void(std::uint32_t)> cudaBatchSizeChanged;
+    std::function<std::optional<std::vector<SandboxInputEvent>>()>
+            promotedBaselineInputs;
     std::optional<std::uint64_t> iterationLimit;
     std::optional<std::int64_t> evaluationEndTimeLimitMs;
     std::uint64_t iterationIndexOffset = 0u;
