@@ -1,13 +1,16 @@
 #ifndef FOREVERTAS_VIEWER_WHITEBOARD_MODEL_H
 #define FOREVERTAS_VIEWER_WHITEBOARD_MODEL_H
 
+#include <QByteArray>
 #include <QColor>
 #include <QObject>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QVector3D>
 
 #include <vector>
 
@@ -27,6 +30,16 @@ class WhiteboardModel final : public QObject {
     Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged)
     Q_PROPERTY(double size READ size WRITE setSize NOTIFY sizeChanged)
     Q_PROPERTY(bool drawing READ drawing NOTIFY drawingChanged)
+    Q_PROPERTY(QVariantList boards READ boards NOTIFY boardsChanged)
+    Q_PROPERTY(QVariantList visibleBoards READ visibleBoards NOTIFY
+                       boardsChanged)
+    Q_PROPERTY(int boardCount READ boardCount NOTIFY boardsChanged)
+    Q_PROPERTY(int maximumBoardCount READ maximumBoardCount CONSTANT)
+    Q_PROPERTY(int selectedBoardIndex READ selectedBoardIndex NOTIFY
+                       boardSelectionChanged)
+    Q_PROPERTY(QString mapKey READ mapKey NOTIFY mapKeyChanged)
+    Q_PROPERTY(QString operationMessage READ operationMessage NOTIFY
+                       operationMessageChanged)
 
 public:
     explicit WhiteboardModel(QObject *parent = nullptr);
@@ -41,11 +54,19 @@ public:
     QColor color() const;
     double size() const;
     bool drawing() const;
+    QVariantList boards() const;
+    QVariantList visibleBoards() const;
+    int boardCount() const;
+    int maximumBoardCount() const;
+    int selectedBoardIndex() const;
+    QString mapKey() const;
+    QString operationMessage() const;
 
     void setActive(bool value);
     void setTool(const QString &value);
     void setColor(const QColor &value);
     void setSize(double value);
+    void setMapKey(const QString &value);
 
     Q_INVOKABLE bool beginItem(double x, double y);
     Q_INVOKABLE bool updateItem(double x, double y);
@@ -64,6 +85,14 @@ public:
                                    double y,
                                    double radius);
     Q_INVOKABLE bool removeSelected();
+    Q_INVOKABLE int captureCurrentBoard(
+            const QString &name,
+            const QVariantMap &capture);
+    Q_INVOKABLE bool selectBoard(int index);
+    Q_INVOKABLE bool setBoardVisible(int index, bool visible);
+    Q_INVOKABLE bool removeBoard(int index);
+    Q_INVOKABLE bool exportBoardSet(const QUrl &fileUrl);
+    Q_INVOKABLE bool importBoardSet(const QUrl &fileUrl);
 
 signals:
     void activeChanged();
@@ -73,6 +102,10 @@ signals:
     void colorChanged();
     void sizeChanged();
     void drawingChanged();
+    void boardsChanged();
+    void boardSelectionChanged();
+    void mapKeyChanged();
+    void operationMessageChanged();
 
 private:
     struct Erasure {
@@ -92,15 +125,43 @@ private:
         std::vector<Erasure> erasures;
     };
 
+    struct Board {
+        QString id;
+        QString name;
+        QString mapKey;
+        bool visible = true;
+        QVector3D target;
+        double yaw = 0.0;
+        double pitch = 0.0;
+        double distance = 38.0;
+        QVector3D planePosition;
+        double planeWidth = 10.0;
+        double planeHeight = 6.0;
+        std::vector<Item> items;
+    };
+
     static bool IsFinite(double value);
     static bool IsPointFinite(const QPointF &point);
     static double ClampUnit(double value);
     static QString NormalizeText(const QString &text);
     static QVariantMap ToVariantMap(const Item &item, bool selected);
+    QVariantMap boardToVariantMap(const Board &board, int index) const;
     static void TranslateItem(Item *item, const QPointF &delta);
+    static QString LocalPath(const QUrl &fileUrl);
+    static QString NormalizeBoardName(const QString &name);
+    static QByteArray serializeBoards(
+            const std::vector<Board> &boards,
+            const QString &setName);
+    static bool deserializeBoards(
+            const QByteArray &data,
+            std::vector<Board> *boards,
+            QString *error);
     void updateDraftBounds(Item *item);
     void removeDraft();
     void notifyItemsChanged(bool selectionMayHaveChanged = false);
+    void loadPersistedBoards();
+    bool persistBoards();
+    void setOperationMessage(const QString &value);
 
     std::vector<Item> items_;
     bool active_ = false;
@@ -111,6 +172,10 @@ private:
     bool drawing_ = false;
     int draftIndex_ = -1;
     QPointF draftOrigin_;
+    std::vector<Board> boards_;
+    int selectedBoardIndex_ = -1;
+    QString mapKey_;
+    QString operationMessage_;
 };
 
 }  // namespace forevertas::viewer

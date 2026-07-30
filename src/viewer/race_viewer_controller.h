@@ -63,6 +63,7 @@ struct RaceViewerLoadResult {
     QString error;
     QString packsDirectory;
     QString replayPath;
+    QString mapKey;
     RaceViewerMeshBuffers track;
     std::vector<StaticVisualBatch> visualBatches;
     std::shared_ptr<const RayTracingSceneData> rayTracingScene;

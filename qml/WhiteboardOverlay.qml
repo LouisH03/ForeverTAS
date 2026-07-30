@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import ForeverTAS.Viewer 1.0
 
@@ -12,6 +13,9 @@ Item {
     property int editingIndex: -2
     property real pendingTextX: 0
     property real pendingTextY: 0
+    property bool drawingListOpen: false
+    property var captureViewpoint: function() { return ({}) }
+    property var restoreViewpoint: function(board) {}
 
     function beginTextEntry(index, value, normalizedX, normalizedY) {
         editingIndex = index
@@ -48,6 +52,14 @@ Item {
         textEditor.visible = false
         editingIndex = -2
         boardArea.forceActiveFocus()
+    }
+
+    function focusBoard(index) {
+        if (!model.selectBoard(index))
+            return
+        const board = model.boards[index]
+        if (board)
+            restoreViewpoint(board)
     }
 
     onAvailableChanged: {
@@ -307,7 +319,7 @@ Item {
         z: 20
         width: root.model.active
                ? Math.min(parent.width - 28, 522)
-               : 116
+               : 198
         height: root.model.active ? 84 : 46
         radius: 6
         color: "#ee111513"
@@ -402,6 +414,16 @@ Item {
                         }
                     }
                 }
+
+                Button {
+                    objectName: "whiteboardInactiveListButton"
+                    visible: !root.model.active
+                    width: 76
+                    height: 32
+                    text: qsTr("Drawings")
+                    onClicked:
+                        root.drawingListOpen = !root.drawingListOpen
+                }
             }
 
             Row {
@@ -473,6 +495,219 @@ Item {
                     ToolTip.visible: hovered
                     ToolTip.delay: 350
                     ToolTip.text: qsTr("Delete selected item")
+                }
+
+                Button {
+                    objectName: "whiteboardPlaceButton"
+                    visible: root.model.active
+                    enabled: root.model.count > 0
+                             && root.model.mapKey.length > 0
+                    width: 58
+                    height: 32
+                    text: qsTr("Place")
+                    onClicked: {
+                        const index = root.model.captureCurrentBoard(
+                                        qsTr("Drawing %1").arg(
+                                            root.model.boardCount + 1),
+                                        root.captureViewpoint())
+                        if (index >= 0)
+                            root.drawingListOpen = true
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 350
+                    ToolTip.text: qsTr(
+                                      "Place this drawing at the current camera view")
+                }
+
+                Button {
+                    objectName: "whiteboardActiveListButton"
+                    visible: root.model.active
+                    width: 72
+                    height: 32
+                    text: qsTr("Drawings")
+                    onClicked:
+                        root.drawingListOpen = !root.drawingListOpen
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: drawingList
+        objectName: "whiteboardDrawingList"
+        z: 25
+        visible: root.drawingListOpen
+        width: Math.min(310, root.width - 28)
+        height: Math.min(450, root.height - y - 14)
+        x: root.width - width - 14
+        y: root.boardTop + 10
+        radius: 6
+        color: "#f4111513"
+        border.width: 1
+        border.color: "#667169"
+        clip: true
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 10
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Drawings")
+                    color: "#f4f7f4"
+                    font.pixelSize: 16
+                    font.bold: true
+                }
+
+                ToolButton {
+                    objectName: "whiteboardCloseListButton"
+                    text: "\u00d7"
+                    font.pixelSize: 20
+                    Accessible.name: qsTr("Close drawing list")
+                    onClicked: root.drawingListOpen = false
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Label {
+                    anchors.centerIn: parent
+                    width: parent.width - 24
+                    visible: root.model.boardCount === 0
+                    text: qsTr("No placed drawings")
+                    color: "#9fa9a2"
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                }
+
+                ListView {
+                    id: boardListView
+                    objectName: "whiteboardBoardListView"
+                    anchors.fill: parent
+                    visible: root.model.boardCount > 0
+                    clip: true
+                    spacing: 2
+                    model: root.model.boards
+
+                    delegate: Item {
+                        id: boardRow
+                        required property var modelData
+                        required property int index
+
+                        width: ListView.view.width
+                        height: 64
+
+                        Rectangle {
+                            anchors.fill: parent
+                            color: boardRow.modelData.selected
+                                   ? "#303a34" : "transparent"
+                        }
+
+                        Button {
+                            anchors.left: parent.left
+                            anchors.right: visibilityToggle.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.rightMargin: 6
+                            flat: true
+                            enabled: boardRow.modelData.isCurrentMap
+                            onClicked: root.focusBoard(boardRow.index)
+
+                            contentItem: Column {
+                                spacing: 2
+
+                                Label {
+                                    width: parent.width
+                                    text: boardRow.modelData.name
+                                    color: boardRow.modelData.isCurrentMap
+                                           ? "#f4f7f4" : "#8b958e"
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    width: parent.width
+                                    text: boardRow.modelData.isCurrentMap
+                                          ? qsTr("Current map")
+                                          : qsTr("Other map")
+                                    color: "#9fa9a2"
+                                    font.pixelSize: 10
+                                }
+                            }
+                        }
+
+                        CheckBox {
+                            id: visibilityToggle
+                            objectName: "whiteboardBoardVisibilityToggle"
+                            anchors.right: removeBoardButton.left
+                            anchors.rightMargin: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 36
+                            enabled: boardRow.modelData.isCurrentMap
+                            checked: boardRow.modelData.visible
+                            Accessible.name: qsTr(
+                                                 "Show %1 in the current map")
+                                             .arg(boardRow.modelData.name)
+                            onClicked: root.model.setBoardVisible(
+                                           boardRow.index, checked)
+                        }
+
+                        ToolButton {
+                            id: removeBoardButton
+                            objectName: "whiteboardRemoveBoardButton"
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 34
+                            height: 34
+                            text: "\u00d7"
+                            font.pixelSize: 20
+                            Accessible.name: qsTr("Delete %1")
+                                             .arg(boardRow.modelData.name)
+                            onClicked:
+                                root.model.removeBoard(boardRow.index)
+                        }
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: 1
+                            color: "#303833"
+                        }
+                    }
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: root.model.operationMessage.length > 0
+                text: root.model.operationMessage
+                color: "#aeb8b0"
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Button {
+                    objectName: "whiteboardImportButton"
+                    Layout.fillWidth: true
+                    text: qsTr("Import")
+                    onClicked: importDialog.open()
+                }
+
+                Button {
+                    objectName: "whiteboardExportButton"
+                    Layout.fillWidth: true
+                    enabled: root.model.boardCount > 0
+                    text: qsTr("Export set")
+                    onClicked: exportDialog.open()
                 }
             }
         }
@@ -547,5 +782,24 @@ Item {
                 }
             }
         }
+    }
+
+    FileDialog {
+        id: importDialog
+        objectName: "whiteboardImportDialog"
+        title: qsTr("Import whiteboard set")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
+        onAccepted: root.model.importBoardSet(selectedFile)
+    }
+
+    FileDialog {
+        id: exportDialog
+        objectName: "whiteboardExportDialog"
+        title: qsTr("Export named whiteboard set")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "json"
+        nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
+        onAccepted: root.model.exportBoardSet(selectedFile)
     }
 }

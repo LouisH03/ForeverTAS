@@ -3,6 +3,8 @@
 #include "viewer/race_timeline_item.h"
 
 #include <QCoreApplication>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
@@ -10,6 +12,9 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -58,6 +63,12 @@ bool Near(double lhs, double rhs, double tolerance = 0.0001) {
 int main(int argc, char **argv) {
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     QGuiApplication application(argc, argv);
+    QCoreApplication::setOrganizationName(
+            QStringLiteral("ForeverTAS Tests"));
+    QCoreApplication::setApplicationName(
+            QStringLiteral("Whiteboard Tests"));
+    QStandardPaths::setTestModeEnabled(true);
+    QSettings().clear();
 
     int failures = 0;
     const auto expect = [&failures](bool condition, const char *message) {
@@ -266,6 +277,194 @@ int main(int argc, char **argv) {
                            capacityModel.maximumCount(),
            "the item limit rejects overflow without corrupting drawings");
 
+    QSettings().clear();
+    WhiteboardModel repositoryModel;
+    repositoryModel.setMapKey(
+            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    repositoryModel.setActive(true);
+    repositoryModel.setTool(QStringLiteral("line"));
+    expect(repositoryModel.beginItem(0.1, 0.2) &&
+                   repositoryModel.updateItem(0.8, 0.7) &&
+                   repositoryModel.finishItem(),
+           "persistent board source drawing is created");
+    const QVariantMap firstCapture{
+            {QStringLiteral("targetX"), 12.0},
+            {QStringLiteral("targetY"), 3.0},
+            {QStringLiteral("targetZ"), -4.0},
+            {QStringLiteral("yaw"), 35.0},
+            {QStringLiteral("pitch"), -20.0},
+            {QStringLiteral("distance"), 38.0},
+            {QStringLiteral("planeX"), 7.0},
+            {QStringLiteral("planeY"), 4.0},
+            {QStringLiteral("planeZ"), 8.0},
+            {QStringLiteral("planeWidth"), 12.0},
+            {QStringLiteral("planeHeight"), 7.0}};
+    expect(repositoryModel.captureCurrentBoard(
+                   QStringLiteral("Entry line"), firstCapture) == 0 &&
+                   repositoryModel.count() == 0 &&
+                   repositoryModel.boardCount() == 1,
+           "placing a drawing captures its plane and clears the draft");
+    QVariantMap firstBoard =
+            repositoryModel.boards().front().toMap();
+    expect(firstBoard.value(QStringLiteral("name")).toString() ==
+                           QStringLiteral("Entry line") &&
+                   firstBoard.value(QStringLiteral("isCurrentMap"))
+                           .toBool() &&
+                   Near(firstBoard.value(
+                                   QStringLiteral("targetX"))
+                                .toDouble(),
+                        12.0) &&
+                   Near(firstBoard.value(
+                                   QStringLiteral("planeWidth"))
+                                .toDouble(),
+                        12.0) &&
+                   firstBoard.value(QStringLiteral("items"))
+                                   .toList()
+                                   .size() == 1,
+           "placed drawing retains vector items and its saved viewpoint");
+
+    repositoryModel.setTool(QStringLiteral("text"));
+    expect(repositoryModel.addText(
+                   0.2, 0.3, QStringLiteral("Brake here")) == 0,
+           "a second persistent drawing can be authored");
+    QVariantMap secondCapture = firstCapture;
+    secondCapture[QStringLiteral("yaw")] = -42.0;
+    secondCapture[QStringLiteral("pitch")] = 15.0;
+    secondCapture[QStringLiteral("planeX")] = -9.0;
+    expect(repositoryModel.captureCurrentBoard(
+                   QStringLiteral("Exit note"), secondCapture) == 1 &&
+                   repositoryModel.boardCount() == 2,
+           "multiple drawings retain independent planes");
+    expect(repositoryModel.selectBoard(0) &&
+                   repositoryModel.selectedBoardIndex() == 0,
+           "a current-map drawing can be selected for viewpoint restore");
+    expect(repositoryModel.setBoardVisible(0, false) &&
+                   !repositoryModel.boards()
+                            .front()
+                            .toMap()
+                            .value(QStringLiteral("visible"))
+                            .toBool() &&
+                   repositoryModel.visibleBoards().size() == 1,
+           "visibility hides a plane without removing its list entry");
+
+    WhiteboardModel restoredRepository;
+    restoredRepository.setMapKey(
+            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    expect(restoredRepository.boardCount() == 2 &&
+                   !restoredRepository.boards()
+                            .front()
+                            .toMap()
+                            .value(QStringLiteral("visible"))
+                            .toBool(),
+           "drawings and visibility persist across model sessions");
+    restoredRepository.setMapKey(
+            QStringLiteral("/maps/Other.Replay.Gbx"));
+    expect(!restoredRepository.boards()
+                    .front()
+                    .toMap()
+                    .value(QStringLiteral("isCurrentMap"))
+                    .toBool() &&
+                   restoredRepository.visibleBoards().isEmpty() &&
+                   !restoredRepository.selectBoard(0),
+           "other-map drawings remain listed but cannot alter this view");
+    restoredRepository.setMapKey(
+            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+
+    QTemporaryDir setDirectory;
+    expect(setDirectory.isValid(),
+           "temporary export directory is available");
+    const QString setPath = setDirectory.filePath(
+            QStringLiteral("Stadium notes.json"));
+    expect(restoredRepository.exportBoardSet(
+                   QUrl::fromLocalFile(setPath)) &&
+                   QFileInfo(setPath).size() > 0,
+           "a named set exports to the selected local file");
+
+    QSettings().clear();
+    WhiteboardModel importedRepository;
+    importedRepository.setMapKey(
+            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    expect(importedRepository.importBoardSet(
+                   QUrl::fromLocalFile(setPath)) &&
+                   importedRepository.boardCount() == 2 &&
+                   importedRepository.boards()
+                                   .front()
+                                   .toMap()
+                                   .value(QStringLiteral("items"))
+                                   .toList()
+                                   .size() == 1,
+           "an arbitrary exported set imports with complete drawings");
+    const int beforeInvalidImport =
+            importedRepository.boardCount();
+    const QString invalidPath = setDirectory.filePath(
+            QStringLiteral("invalid.json"));
+    QFile invalidFile(invalidPath);
+    expect(invalidFile.open(QIODevice::WriteOnly) &&
+                   invalidFile.write("{\"boards\":[42]}") > 0,
+           "invalid import fixture is written");
+    invalidFile.close();
+    expect(!importedRepository.importBoardSet(
+                   QUrl::fromLocalFile(invalidPath)) &&
+                   importedRepository.boardCount() ==
+                           beforeInvalidImport,
+           "invalid imports fail atomically without changing the list");
+    QFile exportedSet(setPath);
+    expect(exportedSet.open(QIODevice::ReadOnly),
+           "exported set can be reopened for corruption testing");
+    QByteArray invalidVisibility = exportedSet.readAll();
+    exportedSet.close();
+    invalidVisibility.replace(
+            "\"visible\": false", "\"visible\": \"yes\"");
+    const QString invalidVisibilityPath = setDirectory.filePath(
+            QStringLiteral("invalid-visibility.json"));
+    QFile invalidVisibilityFile(invalidVisibilityPath);
+    expect(invalidVisibilityFile.open(QIODevice::WriteOnly) &&
+                   invalidVisibilityFile.write(invalidVisibility) ==
+                           invalidVisibility.size(),
+           "type-confused import fixture is written");
+    invalidVisibilityFile.close();
+    expect(!importedRepository.importBoardSet(
+                   QUrl::fromLocalFile(invalidVisibilityPath)) &&
+                   importedRepository.boardCount() ==
+                           beforeInvalidImport,
+           "schema type errors are rejected atomically");
+
+    QByteArray mapNeutralSet = invalidVisibility;
+    mapNeutralSet.replace(
+            "\"visible\": \"yes\"", "\"visible\": false");
+    mapNeutralSet.replace(
+            "/maps/Stadium.Replay.Gbx", "");
+    const QString mapNeutralPath = setDirectory.filePath(
+            QStringLiteral("map-neutral.json"));
+    QFile mapNeutralFile(mapNeutralPath);
+    expect(mapNeutralFile.open(QIODevice::WriteOnly) &&
+                   mapNeutralFile.write(mapNeutralSet) ==
+                           mapNeutralSet.size(),
+           "map-neutral import fixture is written");
+    mapNeutralFile.close();
+    QSettings().clear();
+    WhiteboardModel neutralRepository;
+    expect(!neutralRepository.importBoardSet(
+                   QUrl::fromLocalFile(mapNeutralPath)) &&
+                   neutralRepository.boardCount() == 0,
+           "map-neutral imports require a loaded map");
+    neutralRepository.setMapKey(
+            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    expect(neutralRepository.importBoardSet(
+                   QUrl::fromLocalFile(mapNeutralPath)) &&
+                   neutralRepository.boardCount() == 2 &&
+                   neutralRepository.visibleBoards().size() == 1 &&
+                   neutralRepository.boards()
+                                   .front()
+                                   .toMap()
+                                   .value(QStringLiteral("isCurrentMap"))
+                                   .toBool(),
+           "map-neutral imports attach atomically to the loaded map");
+
+    expect(importedRepository.removeBoard(0) &&
+                   importedRepository.boardCount() == 1,
+           "drawings can be removed individually from the list");
+
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlEngine engine;
     QQmlComponent component(
@@ -311,6 +510,14 @@ int main(int argc, char **argv) {
                 QStringLiteral("whiteboardToolRepeater"));
         QObject *const drawingRepeater = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardDrawingRepeater"));
+        QObject *const placeButton = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardPlaceButton"));
+        QObject *const drawingList = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardDrawingList"));
+        QObject *const importButton = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardImportButton"));
+        QObject *const exportButton = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardExportButton"));
         auto *const toolbarContent = qobject_cast<QQuickItem *>(
                 overlay->findChild<QObject *>(
                         QStringLiteral("whiteboardToolbarContent")));
@@ -340,6 +547,10 @@ int main(int argc, char **argv) {
         expect(toolRepeater != nullptr &&
                        toolRepeater->property("count").toInt() == 7,
                "every whiteboard tool has a mode control");
+        expect(placeButton != nullptr && drawingList != nullptr &&
+                       importButton != nullptr &&
+                       exportButton != nullptr,
+               "placement, list, import, and export controls are present");
         expect(drawingRepeater != nullptr &&
                        drawingRepeater->property("count").toInt() ==
                                retainedCount,
@@ -394,7 +605,7 @@ int main(int argc, char **argv) {
         textEditor->setProperty("visible", true);
         model.setActive(false);
         QCoreApplication::processEvents();
-        expect(toolbar != nullptr && Near(toolbar->width(), 116.0) &&
+        expect(toolbar != nullptr && Near(toolbar->width(), 198.0) &&
                        input != nullptr &&
                        !input->property("enabled").toBool() &&
                        toggle != nullptr &&
@@ -414,6 +625,39 @@ int main(int argc, char **argv) {
                "empty viewer disables whiteboard activation");
     }
 
+    QQmlComponent planesComponent(
+            &engine,
+            QUrl::fromLocalFile(
+                    QStringLiteral(FOREVERTAS_SOURCE_DIR)
+                    + QStringLiteral("/qml/WhiteboardPlanes.qml")));
+    if (planesComponent.isError()) {
+        for (const QQmlError &error : planesComponent.errors()) {
+            std::cerr << error.toString().toStdString() << '\n';
+        }
+    }
+    std::unique_ptr<QObject> planes(
+            planesComponent.createWithInitialProperties({
+                    {QStringLiteral("model"),
+                     QVariant::fromValue(static_cast<QObject *>(
+                             &importedRepository))},
+                    {QStringLiteral("cameraTarget"),
+                     QVariant::fromValue(QVector3D())},
+                    {QStringLiteral("orbitYaw"), 35.0},
+                    {QStringLiteral("orbitPitch"), -20.0},
+                    {QStringLiteral("orbitDistance"), 38.0}}));
+    expect(planes != nullptr,
+           "persistent whiteboard plane view instantiates");
+    if (planes != nullptr) {
+        QCoreApplication::processEvents();
+        QObject *const planeRepeater = planes->findChild<QObject *>(
+                QStringLiteral("whiteboardPlaneRepeater"));
+        expect(planeRepeater != nullptr &&
+                       planeRepeater->property("count").toInt() ==
+                               importedRepository.boardCount(),
+               "every listed drawing has an independent 3D plane delegate");
+    }
+
+    QSettings().clear();
     if (failures == 0) {
         std::cout << "whiteboard model and vector rendering tests passed\n";
     }

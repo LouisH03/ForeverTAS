@@ -170,6 +170,13 @@ resizable items. Drawing color and stroke size are adjustable, and the eraser
 removes pixels only from the selected item. Leaving whiteboard mode restores
 normal 3D camera interaction while keeping the overlay visible.
 
+**Place** turns the current overlay into a static whiteboard plane at the
+current camera angle. The Drawings list restores each saved viewpoint, toggles
+that plane for the current map without deleting it, and keeps multiple
+map-specific drawings across application sessions. Complete drawing sets can
+also be exported to, or imported from, a location selected with the native
+file picker.
+
 ## Portable bundles
 
 ForeverTAS can be packaged natively as a Linux AppImage, Windows portable ZIP,

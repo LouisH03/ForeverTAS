@@ -228,6 +228,7 @@ qt_add_qml_module(forevertas
     QML_FILES
         qml/Main.qml
         qml/WhiteboardOverlay.qml
+        qml/WhiteboardPlanes.qml
         qml/settings/AlgorithmSelector.qml
         qml/settings/BasicBruteForceSearchSettings.qml
         qml/settings/ConfigurationSection.qml

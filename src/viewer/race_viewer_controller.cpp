@@ -8,10 +8,12 @@
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QThread>
 #include <QVariantMap>
+#include <QtEndian>
 
 #include <algorithm>
 #include <array>
@@ -76,6 +78,54 @@ T Require(DiscriminatedResult<T, Error> result, const char *operation) {
 
 QVector3D ToQt(const forevervalidator::Vector3 &value) {
     return {value.x, value.y, value.z};
+}
+
+QString CollisionSceneKey(
+        const forevervalidator::experimental::PhysicsSandboxSceneView &scene) {
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QByteArray chunk;
+    chunk.reserve(64 * 1024);
+    const auto flush = [&hash, &chunk]() {
+        if (!chunk.isEmpty()) {
+            hash.addData(QByteArrayView(chunk));
+            chunk.clear();
+        }
+    };
+    const auto appendU32 = [&chunk, &flush](std::uint32_t value) {
+        const quint32 bigEndian = qToBigEndian(static_cast<quint32>(value));
+        chunk.append(
+                reinterpret_cast<const char *>(&bigEndian),
+                sizeof(bigEndian));
+        if (chunk.size() >= 64 * 1024) {
+            flush();
+        }
+    };
+    const auto appendFloat = [&appendU32](float value) {
+        std::uint32_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        appendU32(bits);
+    };
+
+    const std::uint64_t triangleCount = scene.collisionTriangles.size();
+    appendU32(static_cast<std::uint32_t>(triangleCount >> 32u));
+    appendU32(static_cast<std::uint32_t>(triangleCount));
+    for (const PhysicsSandboxCollisionTriangle &triangle :
+         scene.collisionTriangles) {
+        const auto appendVertex =
+                [&appendFloat](
+                        const forevervalidator::Vector3 &vertex) {
+            appendFloat(vertex.x);
+            appendFloat(vertex.y);
+            appendFloat(vertex.z);
+        };
+        appendVertex(triangle.a);
+        appendVertex(triangle.b);
+        appendVertex(triangle.c);
+    }
+    flush();
+    return QStringLiteral("collision-sha256:")
+            + QString::fromLatin1(hash.result().toHex());
 }
 
 bool IsDriverInput(PhysicsSandboxInputAction action) {
@@ -493,6 +543,7 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
                 "loading replay failed");
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
+        result.mapKey = CollisionSceneKey(scene);
         PhysicsSandboxRenderSceneHandle renderScene = Require(
                 sandbox.ReadRenderScene(),
                 "reading visual render scene failed");
@@ -1884,6 +1935,7 @@ void RaceViewerController::applyLoadResult(
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
+    whiteboard_.setMapKey(result.mapKey);
     manualRuntime_ = std::move(result.manualRuntime);
     loaded_ = true;
     runs_.clear();

@@ -750,6 +750,9 @@ int main(int argc, char **argv) {
                     }
                     const bool sceneValid = mapOnlyStateObserved &&
                             manualDriveValid &&
+                            viewer.whiteboard()->mapKey().startsWith(
+                                    QStringLiteral("collision-sha256:")) &&
+                            viewer.whiteboard()->mapKey().size() == 81 &&
                             viewer.triangleCount() > 0 &&
                             viewer.visualTriangleCount() > 0 &&
                             viewer.visualMeshCount() > 0 &&

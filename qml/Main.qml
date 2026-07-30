@@ -422,6 +422,58 @@ ApplicationWindow {
                                      Math.max(size.x, size.y, size.z) * 2.4))
                     }
 
+                    function captureWhiteboardView() {
+                        const camera = viewCamera.scenePosition
+                        const target = cameraTarget
+                        const deltaX = target.x - camera.x
+                        const deltaY = target.y - camera.y
+                        const deltaZ = target.z - camera.z
+                        const length = Math.max(
+                            0.001,
+                            Math.sqrt(deltaX * deltaX
+                                      + deltaY * deltaY
+                                      + deltaZ * deltaZ))
+                        const planeDistance = Math.max(
+                            0.001,
+                            Math.min(length - 0.001,
+                                     length * 0.32))
+                        const planeHeight = 2 * Math.tan(
+                            viewCamera.fieldOfView * Math.PI / 360)
+                            * planeDistance * 0.72
+                        const aspect = whiteboardOverlay.width
+                            / Math.max(
+                                1,
+                                whiteboardOverlay.height
+                                - whiteboardOverlay.boardTop)
+                        return {
+                            "targetX": target.x,
+                            "targetY": target.y,
+                            "targetZ": target.z,
+                            "yaw": orbitYaw,
+                            "pitch": orbitPitch,
+                            "distance": orbitDistance,
+                            "planeX": camera.x
+                                      + deltaX / length * planeDistance,
+                            "planeY": camera.y
+                                      + deltaY / length * planeDistance,
+                            "planeZ": camera.z
+                                      + deltaZ / length * planeDistance,
+                            "planeWidth": planeHeight * aspect,
+                            "planeHeight": planeHeight
+                        }
+                    }
+
+                    function restoreWhiteboardView(board) {
+                        cuboidFocusCenter = Qt.vector3d(
+                            board.targetX,
+                            board.targetY,
+                            board.targetZ)
+                        cuboidFocused = true
+                        orbitYaw = board.yaw
+                        orbitPitch = board.pitch
+                        orbitDistance = board.distance
+                    }
+
                     function beginCuboidInteraction(kind, axis, x, y) {
                         if (window.controller.running)
                             return false
@@ -1672,6 +1724,18 @@ ApplicationWindow {
                         }
                     }
 
+                    WhiteboardPlanes {
+                        id: whiteboardPlaneView
+                        anchors.fill: parent
+                        z: 1.75
+                        model: window.viewer.whiteboard
+                        cameraTarget: viewport.cameraTarget
+                        orbitYaw: viewport.orbitYaw
+                        orbitPitch: viewport.orbitPitch
+                        orbitDistance: viewport.orbitDistance
+                        fieldOfView: viewCamera.fieldOfView
+                    }
+
                     Connections {
                         target: window.controller
 
@@ -1727,6 +1791,20 @@ ApplicationWindow {
                                           point.x, point.y, point.z)
                                 viewport.cuboidPointerCaptured = true
                                 return
+                            }
+                            if (!window.viewer.whiteboard.active) {
+                                const boardIndex =
+                                    whiteboardPlaneView.pickBoard(
+                                        mouse.x, mouse.y)
+                                if (boardIndex >= 0
+                                    && window.viewer.whiteboard
+                                             .selectBoard(boardIndex)) {
+                                    viewport.restoreWhiteboardView(
+                                        window.viewer.whiteboard
+                                              .boards[boardIndex])
+                                    viewport.cuboidPointerCaptured = true
+                                    return
+                                }
                             }
                             const view = window.rayTracingEnabled
                                          ? rayTracingTrajectoryOverlay
@@ -1847,6 +1925,12 @@ ApplicationWindow {
                         z: 2.5
                         model: window.viewer.whiteboard
                         available: window.viewer.loaded
+                        captureViewpoint: function() {
+                            return viewport.captureWhiteboardView()
+                        }
+                        restoreViewpoint: function(board) {
+                            viewport.restoreWhiteboardView(board)
+                        }
                     }
 
                     Rectangle {

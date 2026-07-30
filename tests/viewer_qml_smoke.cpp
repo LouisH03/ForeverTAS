@@ -2564,6 +2564,11 @@ int main(int argc, char **argv) {
                                                 root->findChild<QObject *>(
                                                         QStringLiteral(
                                                                 "whiteboardOverlay")));
+                                auto *const whiteboardViewport =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "raceViewport")));
                                 auto *const whiteboardToolbar =
                                         qobject_cast<QQuickItem *>(
                                                 root->findChild<QObject *>(
@@ -2581,6 +2586,19 @@ int main(int argc, char **argv) {
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
                                                         "whiteboardDrawingRepeater"));
+                                QObject *const whiteboardPlaneRepeater =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardPlaneRepeater"));
+                                auto *const whiteboardPlaneView =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "whiteboardPlaneView")));
+                                QObject *const whiteboardDrawingList =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardDrawingList"));
                                 auto *const whiteboard =
                                         viewer.whiteboard();
                                 whiteboard->setActive(true);
@@ -2619,21 +2637,149 @@ int main(int argc, char **argv) {
                                                         .toInt() == 2 &&
                                         VisibleModelCount(visualModels) ==
                                                 initialVisibleVisualModels;
+                                const QVector3D whiteboardTarget =
+                                        whiteboardViewport != nullptr
+                                        ? whiteboardViewport
+                                                  ->property("cameraTarget")
+                                                  .value<QVector3D>()
+                                        : QVector3D();
+                                const QVariantMap whiteboardCapture{
+                                        {QStringLiteral("targetX"),
+                                         whiteboardTarget.x()},
+                                        {QStringLiteral("targetY"),
+                                         whiteboardTarget.y()},
+                                        {QStringLiteral("targetZ"),
+                                         whiteboardTarget.z()},
+                                        {QStringLiteral("yaw"),
+                                         whiteboardViewport != nullptr
+                                         ? whiteboardViewport
+                                                 ->property("orbitYaw")
+                                                 .toDouble()
+                                         : 0.0},
+                                        {QStringLiteral("pitch"),
+                                         whiteboardViewport != nullptr
+                                         ? whiteboardViewport
+                                                 ->property("orbitPitch")
+                                                 .toDouble()
+                                         : 0.0},
+                                        {QStringLiteral("distance"),
+                                         whiteboardViewport != nullptr
+                                         ? whiteboardViewport
+                                                 ->property(
+                                                         "orbitDistance")
+                                                 .toDouble()
+                                         : 0.0},
+                                        {QStringLiteral("planeX"),
+                                         whiteboardTarget.x()},
+                                        {QStringLiteral("planeY"),
+                                         whiteboardTarget.y()},
+                                        {QStringLiteral("planeZ"),
+                                         whiteboardTarget.z()},
+                                        {QStringLiteral("planeWidth"), 12.0},
+                                        {QStringLiteral("planeHeight"), 7.0}};
+                                const bool whiteboardPlaced =
+                                        whiteboardViewport != nullptr &&
+                                        whiteboard->captureCurrentBoard(
+                                                QStringLiteral(
+                                                        "Smoke drawing"),
+                                                whiteboardCapture) == 0;
+                                QCoreApplication::processEvents();
+                                QVariant pickedWhiteboard;
+                                const bool whiteboardWorldPick =
+                                        whiteboardPlaneView != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardPlaneView,
+                                                "pickBoard",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        pickedWhiteboard),
+                                                Q_ARG(
+                                                        QVariant,
+                                                        QVariant(
+                                                                whiteboardPlaneView
+                                                                        ->width()
+                                                                * 0.5)),
+                                                Q_ARG(
+                                                        QVariant,
+                                                        QVariant(
+                                                                whiteboardPlaneView
+                                                                        ->height()
+                                                                * 0.5))) &&
+                                        pickedWhiteboard.toInt() == 0;
+                                const QVariantMap placedBoard =
+                                        whiteboard->boards()
+                                                .value(0)
+                                                .toMap();
+                                const QString planeObjectName =
+                                        QStringLiteral("whiteboardPlane_")
+                                        + placedBoard
+                                                  .value(
+                                                          QStringLiteral(
+                                                                  "id"))
+                                                  .toString();
+                                QObject *const placedPlane =
+                                        root->findChild<QObject *>(
+                                                planeObjectName);
+                                const bool whiteboardPlaneState =
+                                        whiteboardPlaced &&
+                                        whiteboardWorldPick &&
+                                        whiteboard->count() == 0 &&
+                                        whiteboard->boardCount() == 1 &&
+                                        whiteboardPlaneRepeater != nullptr &&
+                                        whiteboardPlaneRepeater
+                                                        ->property("count")
+                                                        .toInt() == 1 &&
+                                        whiteboardDrawingRepeater
+                                                        ->property("count")
+                                                        .toInt() == 0 &&
+                                        whiteboardDrawingList != nullptr &&
+                                        placedPlane != nullptr &&
+                                        whiteboard->setBoardVisible(0, false);
+                                QCoreApplication::processEvents();
+                                const bool planeInactiveWhenHidden =
+                                        whiteboard->visibleBoards().isEmpty();
+                                const int hiddenRepeaterCount =
+                                        whiteboardPlaneRepeater
+                                                ->property("count")
+                                                .toInt();
+                                const bool hiddenRole =
+                                        !whiteboard->boards()
+                                                 .value(0)
+                                                 .toMap()
+                                                 .value(
+                                                         QStringLiteral(
+                                                                 "visible"))
+                                                 .toBool();
+                                const bool whiteboardHiddenState =
+                                        whiteboardPlaneState &&
+                                        planeInactiveWhenHidden &&
+                                        hiddenRepeaterCount == 0 &&
+                                        hiddenRole &&
+                                        whiteboard->boardCount() == 1;
+                                const bool whiteboardShownAgain =
+                                        whiteboard->setBoardVisible(0, true);
+                                QCoreApplication::processEvents();
                                 whiteboard->setActive(false);
                                 QCoreApplication::processEvents();
                                 const bool whiteboardIntegrated =
                                         whiteboardActiveState &&
+                                        whiteboardHiddenState &&
+                                        whiteboardShownAgain &&
+                                        whiteboardPlaneRepeater
+                                                        ->property("count")
+                                                        .toInt() == 1 &&
                                         !whiteboardModeToggle
                                                  ->property("checked")
                                                  .toBool() &&
                                         !whiteboardDrawingInput
                                                  ->property("enabled")
                                                  .toBool() &&
-                                        whiteboardToolbar->width() <= 116.1 &&
-                                        whiteboard->count() == 2 &&
+                                        whiteboardToolbar->width() <= 198.1 &&
+                                        whiteboard->count() == 0 &&
+                                        whiteboard->boardCount() == 1 &&
                                         whiteboardDrawingRepeater
                                                         ->property("count")
-                                                        .toInt() == 2 &&
+                                                        .toInt() == 0 &&
                                         VisibleModelCount(visualModels) ==
                                                 initialVisibleVisualModels;
 
@@ -2727,6 +2873,41 @@ int main(int argc, char **argv) {
                                             << whiteboardActiveState << "/"
                                             << whiteboardIntegrated << "/"
                                             << whiteboard->count()
+                                            << "/placed="
+                                            << whiteboardPlaced
+                                            << "/plane="
+                                            << whiteboardPlaneState
+                                            << "/worldPick="
+                                            << whiteboardWorldPick
+                                            << "/hidden="
+                                            << whiteboardHiddenState
+                                            << "/boards="
+                                            << whiteboard->boardCount()
+                                            << "/repeater="
+                                            << (whiteboardPlaneRepeater
+                                                        ? whiteboardPlaneRepeater
+                                                                  ->property(
+                                                                          "count")
+                                                                  .toInt()
+                                                        : -1)
+                                            << "/planeObject="
+                                            << (placedPlane != nullptr)
+                                            << "/hiddenObject="
+                                            << planeInactiveWhenHidden
+                                            << "/hiddenRepeater="
+                                            << hiddenRepeaterCount
+                                            << "/hiddenRole="
+                                            << hiddenRole
+                                            << "/modelVisible="
+                                            << whiteboard->boards()
+                                                       .value(0)
+                                                       .toMap()
+                                                       .value(
+                                                               QStringLiteral(
+                                                                       "visible"))
+                                                       .toBool()
+                                            << "/shownAgain="
+                                            << whiteboardShownAgain
                                             << ", optimizedRenderState="
                                             << optimizedRenderState
                                             << ", daylightEnvironment="
