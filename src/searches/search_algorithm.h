@@ -22,15 +22,29 @@ enum class SearchWinnerSource : std::uint8_t {
     Mutation,
 };
 
+enum class SearchIterationPhase : std::uint8_t {
+    Pending,
+    Started,
+    Cancelled,
+};
+
 enum class SearchProgressStage : std::uint8_t {
+    OpeningPacksDirectory,
+    ReadingReplay,
+    CreatingSimulation,
+    LoadingReplay,
+    RestoringSimulation,
+    ApplyingBaselineInputs,
+    PreparingSearch,
     Baseline,
     Calibration,
     Mutations,
+    FinalSamplingSetup,
     FinalSampling,
 };
 
 struct SearchProgress {
-    SearchProgressStage stage = SearchProgressStage::Baseline;
+    SearchProgressStage stage = SearchProgressStage::OpeningPacksDirectory;
     std::uint64_t completedWork = 0u;
     std::uint64_t totalWork = 0u;
 };
@@ -57,6 +71,7 @@ struct SearchRunControl {
     std::function<bool()> stopRequested;
     std::function<bool()> cancellationRequested;
     std::function<void(const SearchProgress &)> progressChanged;
+    std::function<bool()> beginIteration;
     std::function<void(const SearchLiveUpdate &)> liveChanged;
     std::function<void(std::uint32_t)> cudaBatchSizeChanged;
     std::optional<std::uint64_t> iterationLimit;

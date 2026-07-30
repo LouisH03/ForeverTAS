@@ -81,6 +81,14 @@ void CheckCancellation(const SearchRunControl *control) {
     }
 }
 
+void BeginIteration(const SearchRunControl *control) {
+    CheckCancellation(control);
+    if (control != nullptr && control->beginIteration &&
+        !control->beginIteration()) {
+        throw SearchCancelled();
+    }
+}
+
 bool StopRequested(const SearchRunControl *control) {
     return control != nullptr && control->stopRequested &&
             control->stopRequested();
@@ -497,6 +505,7 @@ SearchResult RunCudaBasicBruteForce(
                     iterationIndex + 1u);
         }
         const auto batchStarted = std::chrono::steady_clock::now();
+        BeginIteration(context.control);
         PhysicsSandboxCudaSearchBatch batch = Require(
                 session.RunBatch(
                         iterationIndex,
@@ -783,7 +792,7 @@ SearchResult BasicBruteForceSearch::Run(
     std::uint64_t iterationIndex = 0u;
     while (!StopRequested(context.control) &&
            !IterationLimitReached(context.control, iterations)) {
-        CheckCancellation(context.control);
+        BeginIteration(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");
         MutationResult mutation = context.mutator.Mutate(

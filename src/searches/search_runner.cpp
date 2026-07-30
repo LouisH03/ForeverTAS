@@ -76,6 +76,8 @@ std::vector<SearchTimelineFrame> SampleBestTimeline(
     using namespace forevervalidator::experimental;
 
     CheckCancellation(control);
+    ReportProgress(
+            control, SearchProgressStage::FinalSamplingSetup, 0u, 0u);
     AssetSource source = Require(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory for final sampling");
@@ -182,6 +184,7 @@ SearchResult RunLoadedSearch(
                     kSearchTickDurationMs);
     std::vector<PhysicsSandboxCudaModifier> cudaModifiers;
     std::optional<PhysicsSandboxCudaEvaluator> cudaEvaluator;
+    ReportProgress(control, SearchProgressStage::PreparingSearch, 0u, 0u);
 #if FOREVERVALIDATOR_HAS_CUDA
     if (request.backend == PhysicsBackend::Cuda) {
         if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
@@ -287,15 +290,29 @@ SearchResult RunSearch(const SearchRequest &request,
         std::lock_guard<std::mutex> guard(cached->lock);
         CheckCancellation(control);
         if (!cached->sandbox) {
+            ReportProgress(
+                    control,
+                    SearchProgressStage::OpeningPacksDirectory,
+                    0u,
+                    0u);
             AssetSource source = Require(
                     OpenInstalledPackDirectory(request.packDirectory),
                     "opening cached pack directory");
+            ReportProgress(
+                    control, SearchProgressStage::ReadingReplay, 0u, 0u);
             cached->replay = Require(
                     ReadNativeReplayFile(request.replayPath, identity),
                     "reading cached replay");
+            ReportProgress(
+                    control,
+                    SearchProgressStage::CreatingSimulation,
+                    0u,
+                    0u);
             cached->sandbox.emplace(Require(
                     CreatePhysicsSandbox(std::move(source), options),
                     "creating cached sandbox"));
+            ReportProgress(
+                    control, SearchProgressStage::LoadingReplay, 0u, 0u);
             Require(
                     cached->sandbox->LoadReplay(
                             {cached->replay.data(),
@@ -309,6 +326,11 @@ SearchResult RunSearch(const SearchRequest &request,
                     cached->sandbox->ReadInputs(),
                     "reading cached initial inputs");
         } else {
+            ReportProgress(
+                    control,
+                    SearchProgressStage::RestoringSimulation,
+                    0u,
+                    0u);
             Require(
                     cached->sandbox->RestoreState(
                             *cached->initialState),
@@ -321,6 +343,11 @@ SearchResult RunSearch(const SearchRequest &request,
         const PhysicsSandboxStateView initialView = Require(
                 cached->sandbox->ReadState(),
                 "reading cached initial state");
+        ReportProgress(
+                control,
+                SearchProgressStage::ApplyingBaselineInputs,
+                0u,
+                0u);
         Require(
                 cached->sandbox->ReplaceInputs(BuildBaselineOrThrow(
                         request,
@@ -339,23 +366,34 @@ SearchResult RunSearch(const SearchRequest &request,
                 control);
     }
 
+    ReportProgress(
+            control, SearchProgressStage::OpeningPacksDirectory, 0u, 0u);
     AssetSource source = Require(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory");
     CheckCancellation(control);
+    ReportProgress(control, SearchProgressStage::ReadingReplay, 0u, 0u);
     AssetBytes replay = Require(
             ReadNativeReplayFile(request.replayPath, identity),
             "reading replay");
     CheckCancellation(control);
+    ReportProgress(
+            control, SearchProgressStage::CreatingSimulation, 0u, 0u);
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating sandbox");
     CheckCancellation(control);
+    ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
     const PhysicsSandboxStateView initialView = Require(
             sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay");
     const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
             sandbox.ReadInputs(), "reading replay inputs");
+    ReportProgress(
+            control,
+            SearchProgressStage::ApplyingBaselineInputs,
+            0u,
+            0u);
     Require(
             sandbox.ReplaceInputs(BuildBaselineOrThrow(
                     request,

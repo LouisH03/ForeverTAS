@@ -9,8 +9,16 @@
 
 #include <atomic>
 #include <memory>
+#include <string_view>
 
 namespace forevertas::app {
+
+QString SearchStageStatus(SearchProgressStage stage,
+                          std::string_view backendId);
+bool TryBeginSearchIteration(
+        const std::shared_ptr<std::atomic<SearchIterationPhase>> &phase);
+bool TryCancelBeforeSearchIteration(
+        const std::shared_ptr<std::atomic<SearchIterationPhase>> &phase);
 
 class SearchWorker final : public QObject {
     Q_OBJECT
@@ -18,7 +26,9 @@ class SearchWorker final : public QObject {
 public:
     SearchWorker(SearchRequest request,
                  std::shared_ptr<std::atomic_bool> stopRequested,
-                 std::shared_ptr<std::atomic_bool> cancellationRequested);
+                 std::shared_ptr<std::atomic_bool> cancellationRequested,
+                 std::shared_ptr<std::atomic<SearchIterationPhase>>
+                         iterationPhase);
 
 public slots:
     void run();
@@ -40,6 +50,7 @@ private:
     SearchRequest request_;
     std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
+    std::shared_ptr<std::atomic<SearchIterationPhase>> iterationPhase_;
 };
 
 }  // namespace forevertas::app

@@ -1,6 +1,7 @@
 #include "app/packs_directory_finder.h"
 #include "app/search_configuration_model.h"
 #include "app/search_controller.h"
+#include "app/search_worker.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -551,6 +552,123 @@ bool TestExtractionWorkerShutdown(const QString &packsDirectory,
                  "input extraction worker did not stop during shutdown");
 }
 
+bool TestDescriptiveSearchStageStatuses() {
+    using forevertas::SearchProgressStage;
+    using forevertas::app::SearchStageStatus;
+
+    bool okay = Check(
+            SearchStageStatus(
+                    SearchProgressStage::OpeningPacksDirectory,
+                    "reference") ==
+                    QStringLiteral("Opening Packs directory..."),
+            "Packs loading stage was not descriptive");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::ReadingReplay,
+                    "reference") ==
+                    QStringLiteral("Reading replay file..."),
+            "replay reading stage was not descriptive");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::CreatingSimulation,
+                    "optimized-cpu")
+                    .contains(QStringLiteral("optimized CPU")),
+            "optimized CPU initialization was not identified");
+    const QString cudaInitialization = SearchStageStatus(
+            SearchProgressStage::CreatingSimulation,
+            "cuda");
+    const QString cudaReplayLoad = SearchStageStatus(
+            SearchProgressStage::LoadingReplay,
+            "cuda");
+    const QString cudaBaseline = SearchStageStatus(
+            SearchProgressStage::Baseline,
+            "cuda");
+    const QString cudaCalibration = SearchStageStatus(
+            SearchProgressStage::Calibration,
+            "cuda");
+    const QString cudaMutations = SearchStageStatus(
+            SearchProgressStage::Mutations,
+            "cuda");
+    okay &= Check(
+            cudaInitialization.contains(QStringLiteral("CUDA")) &&
+                    cudaInitialization.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaReplayLoad.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaBaseline.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaCalibration.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaMutations.contains(
+                            QStringLiteral("GPU availability")),
+            "CUDA wait-prone stages did not explain GPU availability waits");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::FinalSamplingSetup,
+                    "reference")
+                    .contains(QStringLiteral("final best-run sampling")),
+            "final sampling setup was not identified");
+    return okay;
+}
+
+bool TestIterationBoundaryArbitration() {
+    using forevertas::SearchIterationPhase;
+    using forevertas::app::TryBeginSearchIteration;
+    using forevertas::app::TryCancelBeforeSearchIteration;
+
+    auto cancelled =
+            std::make_shared<std::atomic<SearchIterationPhase>>(
+                    SearchIterationPhase::Pending);
+    bool okay = Check(
+            TryCancelBeforeSearchIteration(cancelled) &&
+                    !TryBeginSearchIteration(cancelled) &&
+                    cancelled->load(std::memory_order_acquire) ==
+                            SearchIterationPhase::Cancelled,
+            "a pre-iteration cancellation did not win the boundary");
+
+    auto started =
+            std::make_shared<std::atomic<SearchIterationPhase>>(
+                    SearchIterationPhase::Pending);
+    okay &= Check(
+            TryBeginSearchIteration(started) &&
+                    !TryCancelBeforeSearchIteration(started) &&
+                    TryBeginSearchIteration(started) &&
+                    started->load(std::memory_order_acquire) ==
+                            SearchIterationPhase::Started,
+            "a started iteration did not retain the boundary");
+    return okay;
+}
+
+bool TestStopAbortsBeforeFirstIteration(const QString &packsDirectory,
+                                        const QString &replayPath) {
+    QSettings().clear();
+    SearchController controller;
+    SetValidPaths(controller, packsDirectory, replayPath);
+    QSignalSpy completionSpy(
+            &controller, &SearchController::searchCompleted);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    controller.startSearch();
+    controller.stopSearch();
+    bool okay = Check(
+            controller.running() && controller.stopping() &&
+                    controller.statusText() ==
+                            QStringLiteral("Aborting search startup..."),
+            "Stop did not request an immediate startup abort");
+    okay &= Check(
+            WaitUntil([&controller]() { return !controller.running(); }, 5000),
+            "startup abort did not terminate promptly");
+    okay &= Check(
+            elapsed.elapsed() < 5000 &&
+                    controller.statusText() ==
+                            QStringLiteral("Search aborted") &&
+                    completionSpy.isEmpty() &&
+                    controller.resultText().isEmpty(),
+            "startup abort ran or completed a search iteration");
+    return okay;
+}
+
 bool TestLocaleIndependentPersistedDecimals(const QString &packsDirectory,
                                              const QString &replayPath) {
     NumericLocaleGuard locale;
@@ -886,10 +1004,14 @@ int main(int argc, char **argv) {
     replay.close();
 
     bool okay = TestAutomaticPacksDetection() &&
+            TestDescriptiveSearchStageStatuses() &&
+            TestIterationBoundaryArbitration() &&
             TestUserTimelineConfigurationBoundary() &&
             TestRegistryAndValidation(packsDirectory.path(), replayPath) &&
             TestCompositionEditing(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath) &&
+            TestStopAbortsBeforeFirstIteration(
+                    packsDirectory.path(), replayPath) &&
             TestExtractionFailurePreservesDraft(
                     packsDirectory.path(), replayPath) &&
             TestExtractionWorkerShutdown(

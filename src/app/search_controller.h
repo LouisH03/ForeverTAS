@@ -238,6 +238,7 @@ private:
     bool extractingReplayInputs_ = false;
     std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
+    std::shared_ptr<std::atomic<SearchIterationPhase>> iterationPhase_;
     SearchCompletionPtr lastCompletion_;
 };
 

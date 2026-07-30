@@ -535,11 +535,14 @@ void SearchController::startSearch() {
 
     stopRequested_ = std::make_shared<std::atomic_bool>(false);
     cancellationRequested_ = std::make_shared<std::atomic_bool>(false);
+    iterationPhase_ = std::make_shared<std::atomic<SearchIterationPhase>>(
+            SearchIterationPhase::Pending);
     QThread *const thread = new QThread(this);
     SearchWorker *const worker = new SearchWorker(
             *validation.request,
             stopRequested_,
-            cancellationRequested_);
+            cancellationRequested_,
+            iterationPhase_);
     worker->moveToThread(thread);
     workerThread_ = thread;
 
@@ -613,6 +616,7 @@ void SearchController::startSearch() {
             workerThread_ = nullptr;
             stopRequested_.reset();
             cancellationRequested_.reset();
+            iterationPhase_.reset();
             setStopping(false);
             setRunning(false);
         }
@@ -626,8 +630,15 @@ void SearchController::stopSearch() {
     if (!running_ || stopping_ || !stopRequested_) {
         return;
     }
-    stopRequested_->store(true, std::memory_order_relaxed);
     setStopping(true);
+    if (iterationPhase_ != nullptr &&
+        TryCancelBeforeSearchIteration(iterationPhase_) &&
+        cancellationRequested_ != nullptr) {
+        cancellationRequested_->store(true, std::memory_order_relaxed);
+        setStatusText(QStringLiteral("Aborting search startup..."));
+        return;
+    }
+    stopRequested_->store(true, std::memory_order_relaxed);
     setStatusText(QStringLiteral("Stopping after current iteration..."));
 }
 
