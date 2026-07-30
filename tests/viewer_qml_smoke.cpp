@@ -343,6 +343,7 @@ int main(int argc, char **argv) {
                     QObject *const simulationBackendCombo =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationBackendCombo"));
+#if FOREVERVALIDATOR_HAS_CUDA
                     auto *const cudaParallelSampleSettings =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
@@ -354,6 +355,7 @@ int main(int argc, char **argv) {
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
                                             "cudaCalibrationCheckBox")));
+#endif
                     QObject *const settingsScroll = root->findChild<QObject *>(
                             QStringLiteral("settingsScroll"));
                     QObject *const settingsWheelRedirector =

@@ -692,6 +692,80 @@ bool TestAnalogInputRepresentation() {
     return okay;
 }
 
+bool TestKeyboardSteeringConversion() {
+    std::vector<SandboxInputEvent> events{
+            Switch(0, SandboxInputAction::SteerLeft, true),
+            Switch(0, SandboxInputAction::SteerRight, true),
+            Switch(0, SandboxInputAction::Accelerate, true),
+            Switch(10, SandboxInputAction::SteerLeft, false),
+            Steering(20, -32768),
+            Switch(20, SandboxInputAction::SteerRight, true),
+            Switch(30, SandboxInputAction::SteerLeft, true),
+            Switch(40, SandboxInputAction::SteerLeft, false),
+            Switch(50, SandboxInputAction::SteerRight, false),
+            Steering(50, 500),
+            Switch(60, SandboxInputAction::SteerRight, false),
+            Steering(60, 656),
+            Switch(70, SandboxInputAction::SteerLeft, true),
+            Switch(70, SandboxInputAction::SteerRight, true),
+            Switch(80, SandboxInputAction::SteerLeft, false),
+            Switch(90, SandboxInputAction::SteerRight, false)};
+    forevertas::ConvertKeyboardSteeringToAnalog(events);
+
+    const std::vector<SandboxInputEvent> expected{
+            Switch(0, SandboxInputAction::Accelerate, true),
+            Steering(0, -65536),
+            Steering(10, 65536),
+            Steering(20, 65536),
+            Steering(30, -65536),
+            Steering(40, 65536),
+            Steering(50, 0),
+            Steering(60, 656),
+            Steering(70, -65536),
+            Steering(80, 65536),
+            Steering(90, 0)};
+    bool okay = Check(
+            SameEvents(events, expected),
+            "keyboard steering did not follow engine priority semantics");
+    okay &= Check(
+            std::none_of(
+                    events.begin(),
+                    events.end(),
+                    [](const SandboxInputEvent &event) {
+                        return event.action ==
+                                       SandboxInputAction::SteerLeft ||
+                                event.action ==
+                                       SandboxInputAction::SteerRight;
+                    }),
+            "keyboard steering actions remained after analog conversion");
+
+    std::vector<SandboxInputEvent> unsorted{
+            Switch(30, SandboxInputAction::SteerRight, false),
+            Switch(10, SandboxInputAction::SteerRight, true),
+            Steering(20, -16384)};
+    forevertas::ConvertKeyboardSteeringToAnalog(unsorted);
+    okay &= Check(
+            SameEvents(
+                    unsorted,
+                    {Steering(10, 65536),
+                     Steering(20, -16384),
+                     Steering(30, 0)}),
+            "unsorted mixed steering inputs were not converted chronologically");
+
+    std::vector<SandboxInputEvent> invalid{
+            Steering(10, 70000),
+            Switch(20, SandboxInputAction::SteerLeft, true)};
+    forevertas::ConvertKeyboardSteeringToAnalog(invalid);
+    okay &= Check(
+            invalid.size() == 2u &&
+                    invalid[0].action == SandboxInputAction::Steer &&
+                    invalid[0].value.analog == 70000 &&
+                    invalid[1].action == SandboxInputAction::Steer &&
+                    invalid[1].value.analog == -65536,
+            "keyboard conversion concealed an invalid analog input");
+    return okay;
+}
+
 bool TestAllModifierAnalogInvariants() {
     const std::vector<SandboxInputEvent> baseline{
             Steering(1000, -32768),
@@ -1148,6 +1222,7 @@ int main() {
             TestInputScriptFormatting() &&
             TestInputScriptParsingAndBaseline() &&
             TestAnalogInputRepresentation() &&
+            TestKeyboardSteeringConversion() &&
             TestAllModifierAnalogInvariants() &&
             TestRegistries() &&
             TestLocaleIndependentFloatingPointSettings() &&

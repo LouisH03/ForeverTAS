@@ -9,6 +9,8 @@ namespace {
 using forevervalidator::experimental::PhysicsSandboxInputValueKind;
 using forevervalidator::experimental::PhysicsSandboxSwitchState;
 
+constexpr AnalogInputState kEngineAnalogSteeringDeadZone = 655;
+
 bool SameValue(const SandboxInputEvent &left,
                const SandboxInputEvent &right) {
     if (left.value.kind != right.value.kind) return false;
@@ -82,6 +84,97 @@ void NormalizeInputEvents(std::vector<SandboxInputEvent> &events,
         }
     }
     events.swap(normalized);
+}
+
+void ConvertKeyboardSteeringToAnalog(
+        std::vector<SandboxInputEvent> &events) {
+    struct SteeringState {
+        bool left = false;
+        bool right = false;
+        std::int32_t leftTimeMs = 0;
+        std::int32_t rightTimeMs = 0;
+        std::int32_t analogTimeMs = 0;
+        AnalogInputState analog = 0;
+    } state;
+
+    std::stable_sort(events.begin(), events.end(),
+                     [](const SandboxInputEvent &left,
+                        const SandboxInputEvent &right) {
+                         return left.timeMs < right.timeMs;
+                     });
+
+    std::vector<SandboxInputEvent> converted;
+    converted.reserve(events.size());
+    std::size_t first = 0u;
+    while (first < events.size()) {
+        std::size_t last = first + 1u;
+        while (last < events.size() &&
+               events[last].timeMs == events[first].timeMs) {
+            ++last;
+        }
+
+        bool steeringChanged = false;
+        for (std::size_t index = first; index < last; ++index) {
+            const SandboxInputEvent &event = events[index];
+            if (event.action == SandboxInputAction::Steer &&
+                event.value.kind ==
+                        PhysicsSandboxInputValueKind::Analog &&
+                forevervalidator::IsAnalogInputStateValid(
+                        event.value.analog)) {
+                state.analog = event.value.analog;
+                state.analogTimeMs = event.timeMs;
+                steeringChanged = true;
+            } else if (
+                    event.action == SandboxInputAction::SteerLeft &&
+                    event.value.kind ==
+                            PhysicsSandboxInputValueKind::Switch) {
+                state.left = event.value.switchState !=
+                        PhysicsSandboxSwitchState::Released;
+                state.leftTimeMs = event.timeMs;
+                steeringChanged = true;
+            } else if (
+                    event.action == SandboxInputAction::SteerRight &&
+                    event.value.kind ==
+                            PhysicsSandboxInputValueKind::Switch) {
+                state.right = event.value.switchState !=
+                        PhysicsSandboxSwitchState::Released;
+                state.rightTimeMs = event.timeMs;
+                steeringChanged = true;
+            } else {
+                converted.push_back(event);
+            }
+        }
+
+        if (steeringChanged) {
+            const std::int32_t digitalTimeMs =
+                    std::max(state.leftTimeMs, state.rightTimeMs);
+            const std::int64_t analogMagnitude =
+                    state.analog < 0
+                    ? -static_cast<std::int64_t>(state.analog)
+                    : static_cast<std::int64_t>(state.analog);
+            const bool analogWins =
+                    state.analogTimeMs > digitalTimeMs ||
+                    (state.analogTimeMs == digitalTimeMs &&
+                     !state.left && !state.right &&
+                     analogMagnitude >
+                             kEngineAnalogSteeringDeadZone);
+            const AnalogInputState effective = analogWins
+                    ? state.analog
+                    : state.left
+                    ? kAnalogInputMinimum
+                    : state.right
+                    ? kAnalogInputMaximum
+                    : 0;
+            SandboxInputEvent analog;
+            analog.timeMs = events[first].timeMs;
+            analog.action = SandboxInputAction::Steer;
+            analog.value.kind = PhysicsSandboxInputValueKind::Analog;
+            analog.value.analog = effective;
+            converted.push_back(analog);
+        }
+        first = last;
+    }
+    events.swap(converted);
 }
 
 void NormalizeMutableInputEvents(

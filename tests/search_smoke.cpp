@@ -1,6 +1,9 @@
 #include "mutations/input_event_formatter.h"
 #include "mutations/replay_input_script.h"
+#include "replay_file_io.h"
 #include "searches/search_runner.h"
+
+#include <forevervalidator/native.h>
 
 #include <chrono>
 #include <exception>
@@ -8,6 +11,15 @@
 #include <stdexcept>
 
 namespace {
+
+template<typename T, typename Error>
+T Require(forevervalidator::DiscriminatedResult<T, Error> result,
+          const char *operation) {
+    if (!result) {
+        throw std::runtime_error(std::string(operation) + " failed");
+    }
+    return std::move(result).Value();
+}
 
 bool RunBackend(const char *packsDirectory,
                 const char *replayPath,
@@ -54,10 +66,12 @@ bool RunBackend(const char *packsDirectory,
         }
         request.baseInputCommands = parsed.commands;
         request.backend = backend;
+#if FOREVERVALIDATOR_HAS_CUDA
         if (backend == forevertas::PhysicsBackend::Cuda) {
             request.parallelSampleCount =
                     forevertas::kDefaultCudaParallelSampleCount;
         }
+#endif
         const forevertas::SearchResult result =
                 forevertas::RunSearch(request, &control);
         const bool mutationWon =
@@ -181,6 +195,146 @@ bool CheckCachedScriptIsolation(const char *packsDirectory,
     return true;
 }
 
+bool CheckKeyboardSteeringBaseline(const char *packsDirectory,
+                                   const char *replayPath) {
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    "0.00 press left\n"
+                    "0.00 press right\n"
+                    "0.10 rel left\n"
+                    "0.20 steer -32768\n"
+                    "0.30 press left\n"
+                    "0.40 rel left\n"
+                    "0.50 rel right");
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 0u;
+    control.reuseLoadedSandbox = true;
+    control.sampleBestTimeline = false;
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    request.baseInputCommands = parsed.commands;
+    const forevertas::SearchResult result =
+            forevertas::RunSearch(request, &control);
+    const std::string script =
+            forevertas::FormatInputScript(result.bestInputs);
+    const std::string expected =
+            "0.00 steer -65536\n"
+            "0.10 steer 65536\n"
+            "0.20 steer -32768\n"
+            "0.30 steer -65536\n"
+            "0.40 steer 65536\n"
+            "0.50 steer 0";
+    if (script != expected) {
+        std::cerr << "keyboard steering baseline was not converted exactly\n"
+                  << "expected:\n" << expected << "\nactual:\n"
+                  << script << '\n';
+        return false;
+    }
+    return true;
+}
+
+bool CheckKeyboardSteeringPhysicsParity(const char *packsDirectory,
+                                        const char *replayPath) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    const ReplayIdentity identity{replayPath};
+    const AssetBytes replay = Require(
+            forevertas::ReadReplayFileUtf8(replayPath, identity),
+            "reading replay for keyboard parity");
+    PhysicsSandboxOptions options;
+    options.backend = SimulationBackend::Reference;
+    options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    PhysicsSandbox keyboard = Require(
+            CreatePhysicsSandbox(
+                    Require(OpenInstalledPackDirectory(packsDirectory),
+                            "opening keyboard parity Packs"),
+                    options),
+            "creating keyboard parity sandbox");
+    PhysicsSandbox analog = Require(
+            CreatePhysicsSandbox(
+                    Require(OpenInstalledPackDirectory(packsDirectory),
+                            "opening analog parity Packs"),
+                    options),
+            "creating analog parity sandbox");
+    const PhysicsSandboxStateView initial = Require(
+            keyboard.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading keyboard parity replay");
+    Require(analog.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading analog parity replay");
+
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    "0.00 press left\n"
+                    "0.00 press right\n"
+                    "0.10 rel left\n"
+                    "0.20 steer -32768\n"
+                    "0.20 press right\n"
+                    "0.30 press left\n"
+                    "0.40 rel left\n"
+                    "0.50 rel right\n"
+                    "0.50 steer 500\n"
+                    "0.60 steer 656");
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+    const std::vector<forevertas::SandboxInputEvent> replayInputs =
+            Require(keyboard.ReadInputs(), "reading keyboard parity inputs");
+    const forevertas::InputScriptBaselineResult materialized =
+            forevertas::BuildInputScriptBaseline(
+                    replayInputs,
+                    parsed.commands,
+                    static_cast<std::int64_t>(initial.durationMs),
+                    forevertas::kSearchTickDurationMs);
+    if (!materialized) {
+        throw std::runtime_error(*materialized.error);
+    }
+    std::vector<forevertas::SandboxInputEvent> converted =
+            materialized.events;
+    forevertas::ConvertKeyboardSteeringToAnalog(converted);
+    Require(keyboard.ReplaceInputs(materialized.events),
+            "applying keyboard parity inputs");
+    Require(analog.ReplaceInputs(std::move(converted)),
+            "applying analog parity inputs");
+
+    for (std::uint32_t tick = 0u; tick <= 70u; ++tick) {
+        const PhysicsSandboxStateView keyboardState =
+                Require(keyboard.ReadState(), "reading keyboard parity state");
+        const PhysicsSandboxStateView analogState =
+                Require(analog.ReadState(), "reading analog parity state");
+        const bool equal =
+                keyboardState.timeMs == analogState.timeMs &&
+                keyboardState.steering == analogState.steering &&
+                keyboardState.accelerate == analogState.accelerate &&
+                keyboardState.brake == analogState.brake &&
+                keyboardState.car.position.x == analogState.car.position.x &&
+                keyboardState.car.position.y == analogState.car.position.y &&
+                keyboardState.car.position.z == analogState.car.position.z &&
+                keyboardState.car.linearSpeed.x ==
+                        analogState.car.linearSpeed.x &&
+                keyboardState.car.linearSpeed.y ==
+                        analogState.car.linearSpeed.y &&
+                keyboardState.car.linearSpeed.z ==
+                        analogState.car.linearSpeed.z &&
+                keyboardState.stuntsScore == analogState.stuntsScore;
+        if (!equal) {
+            std::cerr << "keyboard and analog simulations diverged at tick "
+                      << tick << '\n';
+            return false;
+        }
+        if (tick != 70u) {
+            Require(keyboard.AdvanceTicks(1u),
+                    "advancing keyboard parity sandbox");
+            Require(analog.AdvanceTicks(1u),
+                    "advancing analog parity sandbox");
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -191,6 +345,8 @@ int main(int argc, char **argv) {
 
     try {
         if (!CheckCachedScriptIsolation(argv[1], argv[2]) ||
+            !CheckKeyboardSteeringBaseline(argv[1], argv[2]) ||
+            !CheckKeyboardSteeringPhysicsParity(argv[1], argv[2]) ||
             !RunBackend(argv[1],
                         argv[2],
                         forevertas::PhysicsBackend::Reference) ||

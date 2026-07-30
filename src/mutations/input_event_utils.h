@@ -30,6 +30,8 @@ bool SameInputEvent(const SandboxInputEvent &left,
                     const SandboxInputEvent &right);
 void NormalizeInputEvents(std::vector<SandboxInputEvent> &events,
                           std::uint32_t tickDurationMs);
+void ConvertKeyboardSteeringToAnalog(
+        std::vector<SandboxInputEvent> &events);
 void NormalizeMutableInputEvents(
         std::vector<SandboxInputEvent> &events,
         const std::vector<SandboxInputEvent> &baseline,

@@ -1,6 +1,7 @@
 #include "searches/search_runner.h"
 
 #include "mutations/composite_input_mutator.h"
+#include "mutations/input_event_utils.h"
 #include "replay_file_io.h"
 #include "searches/algorithm_registry.h"
 #include "searches/cuda_search_configuration.h"
@@ -234,6 +235,7 @@ BuildBaselineOrThrow(
     if (!baseline) {
         throw std::invalid_argument(*baseline.error);
     }
+    ConvertKeyboardSteeringToAnalog(baseline.events);
     return std::move(baseline.events);
 }
 

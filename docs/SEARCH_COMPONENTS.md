@@ -223,6 +223,12 @@ convention is explicit: negative steering is left, positive steering is right;
 analog gas uses negative values for accelerate and positive values for brake. Replay decoding converts the game's signed-24
 storage representation directly into this canonical form.
 
+Before a search starts, keyboard left/right events are collapsed into canonical
+analog steering events. The conversion mirrors the engine's timestamp
+arbitration, same-tick analog dead zone, and left-over-right priority, so mixed
+keyboard and analog scripts produce the same physics while modifiers see one
+steering channel.
+
 Modifier settings remain normalized decimal strings in `[-1, 1]` for UI and
 persistence compatibility. `ParseNormalizedAnalogInput` quantizes each setting
 once to an integer state. Mutators subsequently use integer sampling, addition,
