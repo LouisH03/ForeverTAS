@@ -3,6 +3,7 @@
 #include "viewer/race_timeline_item.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -380,6 +381,46 @@ int main(int argc, char **argv) {
                    QFileInfo(setPath).size() > 0,
            "a named set exports to the selected local file");
 
+    const QString transparentImagePath = setDirectory.filePath(
+            QStringLiteral("Entry line.png"));
+    expect(restoredRepository.exportBoardContentImage(
+                   0, QUrl::fromLocalFile(transparentImagePath)),
+           "a placed drawing exports to the selected local image file");
+    const QImage transparentImage(transparentImagePath);
+    const int transparentOpaquePixels =
+            OpaquePixelCount(transparentImage);
+    expect(!transparentImage.isNull() &&
+                   transparentImage.width() == 2048 &&
+                   std::abs(transparentImage.height() - 1195) <= 1 &&
+                   transparentOpaquePixels > 0 &&
+                   transparentOpaquePixels <
+                           transparentImage.width() *
+                                   transparentImage.height(),
+           "drawing-only export preserves plane aspect and transparency");
+    expect(restoredRepository.operationMessage().contains(
+                   QStringLiteral("Transparent drawing image exported")),
+           "successful transparent export reports completion");
+    expect(!restoredRepository.exportBoardContentImage(
+                   -1, QUrl::fromLocalFile(transparentImagePath)) &&
+                   !restoredRepository.exportBoardContentImage(
+                           0, QUrl(QStringLiteral(
+                                      "https://example.invalid/drawing.png"))),
+           "image export rejects invalid boards and non-local destinations");
+    const QString directoryAsImage = setDirectory.filePath(
+            QStringLiteral("directory.png"));
+    expect(QDir().mkpath(directoryAsImage) &&
+                   !restoredRepository.exportBoardContentImage(
+                           0, QUrl::fromLocalFile(directoryAsImage)),
+           "image export reports unwritable destinations without crashing");
+    expect(!restoredRepository.saveBoardBackgroundImage(
+                   QVariant(QStringLiteral("not an image")),
+                   QUrl::fromLocalFile(transparentImagePath)) &&
+                   !restoredRepository.saveBoardBackgroundImage(
+                           QVariant::fromValue(transparentImage),
+                           QUrl(QStringLiteral(
+                                      "https://example.invalid/background.png"))),
+           "background image saving rejects invalid image values and destinations");
+
     QSettings().clear();
     WhiteboardModel importedRepository;
     importedRepository.setMapKey(
@@ -518,6 +559,18 @@ int main(int argc, char **argv) {
                 QStringLiteral("whiteboardImportButton"));
         QObject *const exportButton = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardExportButton"));
+        QObject *const imageExportMenu = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardImageExportMenu"));
+        QObject *const imageExportDialog = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardImageExportDialog"));
+        QObject *const backgroundExportItem =
+                overlay->findChild<QObject *>(
+                        QStringLiteral(
+                                "whiteboardExportBackgroundMenuItem"));
+        QObject *const transparentExportItem =
+                overlay->findChild<QObject *>(
+                        QStringLiteral(
+                                "whiteboardExportTransparentMenuItem"));
         auto *const toolbarContent = qobject_cast<QQuickItem *>(
                 overlay->findChild<QObject *>(
                         QStringLiteral("whiteboardToolbarContent")));
@@ -549,8 +602,12 @@ int main(int argc, char **argv) {
                "every whiteboard tool has a mode control");
         expect(placeButton != nullptr && drawingList != nullptr &&
                        importButton != nullptr &&
-                       exportButton != nullptr,
-               "placement, list, import, and export controls are present");
+                       exportButton != nullptr &&
+                       imageExportMenu != nullptr &&
+                       imageExportDialog != nullptr &&
+                       backgroundExportItem != nullptr &&
+                       transparentExportItem != nullptr,
+               "placement, set transfer, and both image export modes are present");
         expect(drawingRepeater != nullptr &&
                        drawingRepeater->property("count").toInt() ==
                                retainedCount,
@@ -601,6 +658,13 @@ int main(int argc, char **argv) {
         }
         expect(compactLayout,
                "whiteboard remains bounded at a compact window size");
+        overlay->setProperty("drawingListOpen", true);
+        QCoreApplication::processEvents();
+        expect(drawingList != nullptr &&
+                       drawingList->property("height").toDouble() <=
+                               286.0,
+               "compact drawing repository leaves room for bottom viewer controls");
+        overlay->setProperty("drawingListOpen", false);
 
         textEditor->setProperty("visible", true);
         model.setActive(false);
@@ -655,6 +719,20 @@ int main(int argc, char **argv) {
                        planeRepeater->property("count").toInt() ==
                                importedRepository.boardCount(),
                "every listed drawing has an independent 3D plane delegate");
+        importedRepository.setBoardVisible(0, false);
+        planes->setProperty("forcedBoardIndex", 0);
+        planes->setProperty("exportMode", true);
+        QCoreApplication::processEvents();
+        expect(planeRepeater != nullptr &&
+                       planeRepeater->property("count").toInt() == 1 &&
+                       planes->property("exportMode").toBool(),
+               "background export can render a hidden chosen board without persisting visibility");
+        expect(!importedRepository.boards()
+                        .front()
+                        .toMap()
+                        .value(QStringLiteral("visible"))
+                        .toBool(),
+               "forcing an export plane leaves stored visibility unchanged");
     }
 
     QSettings().clear();

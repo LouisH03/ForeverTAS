@@ -14,8 +14,23 @@ Item {
     property real pendingTextX: 0
     property real pendingTextY: 0
     property bool drawingListOpen: false
+    property bool imageExportInProgress: false
+    property int pendingImageBoardIndex: -1
+    property string pendingImageMode: ""
     property var captureViewpoint: function() { return ({}) }
     property var restoreViewpoint: function(board) {}
+    property var exportBackgroundImage: function(index, fileUrl) {
+        return false
+    }
+
+    function chooseImageExport(index, mode) {
+        if (imageExportInProgress
+                || index < 0 || index >= model.boardCount)
+            return
+        pendingImageBoardIndex = index
+        pendingImageMode = mode
+        imageExportDialog.open()
+    }
 
     function beginTextEntry(index, value, normalizedX, normalizedY) {
         editingIndex = index
@@ -538,7 +553,9 @@ Item {
         z: 25
         visible: root.drawingListOpen
         width: Math.min(310, root.width - 28)
-        height: Math.min(450, root.height - y - 14)
+        height: Math.max(
+                    250,
+                    Math.min(450, root.height - y - 104))
         x: root.width - width - 14
         y: root.boardTop + 10
         radius: 6
@@ -611,7 +628,7 @@ Item {
 
                         Button {
                             anchors.left: parent.left
-                            anchors.right: visibilityToggle.left
+                            anchors.right: imageExportButton.left
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
                             anchors.rightMargin: 6
@@ -639,6 +656,33 @@ Item {
                                     font.pixelSize: 10
                                 }
                             }
+                        }
+
+                        ToolButton {
+                            id: imageExportButton
+                            objectName: "whiteboardBoardImageExportButton"
+                            anchors.right: visibilityToggle.left
+                            anchors.rightMargin: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 34
+                            height: 34
+                            enabled: !root.imageExportInProgress
+                            text: "\u2193"
+                            font.pixelSize: 18
+                            Accessible.name: qsTr("Export %1 as an image")
+                                             .arg(boardRow.modelData.name)
+                            onClicked: {
+                                imageExportMenu.boardIndex = boardRow.index
+                                imageExportMenu.currentMap =
+                                        boardRow.modelData.isCurrentMap
+                                imageExportMenu.popup(
+                                            imageExportButton,
+                                            0,
+                                            imageExportButton.height)
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 350
+                            ToolTip.text: qsTr("Export image")
                         }
 
                         CheckBox {
@@ -710,6 +754,30 @@ Item {
                     onClicked: exportDialog.open()
                 }
             }
+        }
+    }
+
+    Menu {
+        id: imageExportMenu
+        objectName: "whiteboardImageExportMenu"
+        property int boardIndex: -1
+        property bool currentMap: false
+
+        MenuItem {
+            objectName: "whiteboardExportBackgroundMenuItem"
+            text: qsTr("Image with full background")
+            enabled: imageExportMenu.currentMap
+                     && !root.imageExportInProgress
+            onTriggered: root.chooseImageExport(
+                             imageExportMenu.boardIndex, "background")
+        }
+
+        MenuItem {
+            objectName: "whiteboardExportTransparentMenuItem"
+            text: qsTr("Transparent drawing only")
+            enabled: !root.imageExportInProgress
+            onTriggered: root.chooseImageExport(
+                             imageExportMenu.boardIndex, "transparent")
         }
     }
 
@@ -801,5 +869,35 @@ Item {
         defaultSuffix: "json"
         nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
         onAccepted: root.model.exportBoardSet(selectedFile)
+    }
+
+    FileDialog {
+        id: imageExportDialog
+        objectName: "whiteboardImageExportDialog"
+        title: root.pendingImageMode === "background"
+               ? qsTr("Export drawing with full background")
+               : qsTr("Export transparent drawing")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "png"
+        nameFilters: [qsTr("PNG images (*.png)")]
+        onAccepted: {
+            const index = root.pendingImageBoardIndex
+            const mode = root.pendingImageMode
+            root.pendingImageBoardIndex = -1
+            root.pendingImageMode = ""
+            if (mode === "background") {
+                if (!root.exportBackgroundImage(
+                            index, selectedFile)) {
+                    root.model.finishBoardImageExport(false, true)
+                }
+            } else {
+                root.model.exportBoardContentImage(
+                            index, selectedFile)
+            }
+        }
+        onRejected: {
+            root.pendingImageBoardIndex = -1
+            root.pendingImageMode = ""
+        }
     }
 }

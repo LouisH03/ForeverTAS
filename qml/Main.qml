@@ -412,6 +412,8 @@ ApplicationWindow {
                     property bool poseDragActive: false
                     property string poseDragKind: ""
                     property string poseDragAxis: ""
+                    property bool exportingWhiteboardImage: false
+                    property url whiteboardImageExportUrl: ""
 
                     function focusCuboid(center, size) {
                         cuboidFocusCenter = center
@@ -472,6 +474,78 @@ ApplicationWindow {
                         orbitYaw = board.yaw
                         orbitPitch = board.pitch
                         orbitDistance = board.distance
+                    }
+
+                    function finishWhiteboardImageExport(success) {
+                        whiteboardExportTimer.stop()
+                        whiteboardExportWatchdog.stop()
+                        whiteboardPlaneView.forcedBoardIndex = -1
+                        whiteboardPlaneView.exportMode = false
+                        exportingWhiteboardImage = false
+                        whiteboardImageExportUrl = ""
+                        window.viewer.whiteboard.finishBoardImageExport(
+                                    success, true)
+                    }
+
+                    function exportWhiteboardBackground(index, fileUrl) {
+                        if (exportingWhiteboardImage
+                                || index < 0
+                                || index >= window.viewer.whiteboard.boardCount) {
+                            return false
+                        }
+                        const board = window.viewer.whiteboard.boards[index]
+                        const path =
+                                window.viewer.whiteboard.imageExportPath(fileUrl)
+                        if (!board || !board.isCurrentMap
+                                || path.length === 0
+                                || !window.viewer.whiteboard.selectBoard(index)) {
+                            return false
+                        }
+                        restoreWhiteboardView(board)
+                        whiteboardImageExportUrl = fileUrl
+                        whiteboardPlaneView.forcedBoardIndex = index
+                        whiteboardPlaneView.exportMode = true
+                        exportingWhiteboardImage = true
+                        whiteboardExportTimer.restart()
+                        return true
+                    }
+
+                    Timer {
+                        id: whiteboardExportTimer
+                        interval: 120
+                        repeat: false
+                        onTriggered: {
+                            const path =
+                                    window.viewer.whiteboard.imageExportPath(
+                                        viewport.whiteboardImageExportUrl)
+                            if (path.length === 0) {
+                                viewport.finishWhiteboardImageExport(false)
+                                return
+                            }
+                            const started = viewport.grabToImage(
+                                function(result) {
+                                    const saved = result !== null
+                                            && window.viewer.whiteboard
+                                                   .saveBoardBackgroundImage(
+                                                       result.image,
+                                                       viewport
+                                                           .whiteboardImageExportUrl)
+                                    viewport.finishWhiteboardImageExport(saved)
+                                })
+                            if (started) {
+                                whiteboardExportWatchdog.restart()
+                            } else {
+                                viewport.finishWhiteboardImageExport(false)
+                            }
+                        }
+                    }
+
+                    Timer {
+                        id: whiteboardExportWatchdog
+                        interval: 10000
+                        repeat: false
+                        onTriggered:
+                            viewport.finishWhiteboardImageExport(false)
                     }
 
                     function beginCuboidInteraction(kind, axis, x, y) {
@@ -1931,6 +2005,13 @@ ApplicationWindow {
                         restoreViewpoint: function(board) {
                             viewport.restoreWhiteboardView(board)
                         }
+                        imageExportInProgress:
+                            viewport.exportingWhiteboardImage
+                        exportBackgroundImage: function(index, fileUrl) {
+                            return viewport.exportWhiteboardBackground(
+                                        index, fileUrl)
+                        }
+                        visible: !viewport.exportingWhiteboardImage
                     }
 
                     Rectangle {
@@ -1940,6 +2021,7 @@ ApplicationWindow {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         z: 3
+                        visible: !viewport.exportingWhiteboardImage
                         height: 52
                         color: "#cc111412"
 
@@ -2102,6 +2184,7 @@ ApplicationWindow {
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 20
                         z: 3
+                        visible: !viewport.exportingWhiteboardImage
                         width: 286
                         height: 58
                         radius: 16
@@ -2334,6 +2417,7 @@ ApplicationWindow {
                         height: 36
                         radius: 6
                         visible: window.viewer.manualDriving
+                                 && !viewport.exportingWhiteboardImage
                         color: "#e6111513"
                         border.width: 1
                         border.color: "#465049"
@@ -2393,6 +2477,7 @@ ApplicationWindow {
                         width: Math.min(parent.width - 60, 430)
                         spacing: 12
                         visible: !window.viewer.loaded
+                                 && !viewport.exportingWhiteboardImage
 
                         BusyIndicator {
                             anchors.horizontalCenter: parent.horizontalCenter

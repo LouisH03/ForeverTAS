@@ -93,6 +93,16 @@ public:
     Q_INVOKABLE bool removeBoard(int index);
     Q_INVOKABLE bool exportBoardSet(const QUrl &fileUrl);
     Q_INVOKABLE bool importBoardSet(const QUrl &fileUrl);
+    Q_INVOKABLE bool exportBoardContentImage(
+            int index,
+            const QUrl &fileUrl);
+    Q_INVOKABLE QString imageExportPath(const QUrl &fileUrl) const;
+    Q_INVOKABLE bool saveBoardBackgroundImage(
+            const QVariant &imageValue,
+            const QUrl &fileUrl);
+    Q_INVOKABLE void finishBoardImageExport(
+            bool success,
+            bool fullBackground);
 
 signals:
     void activeChanged();

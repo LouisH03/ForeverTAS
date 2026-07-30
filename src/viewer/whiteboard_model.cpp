@@ -1,10 +1,15 @@
 #include "viewer/whiteboard_model.h"
 
+#include "viewer/whiteboard_canvas_item.h"
+
+#include <QBuffer>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPainter>
 #include <QSaveFile>
 #include <QSettings>
 #include <QUuid>
@@ -28,6 +33,7 @@ constexpr double kMaximumSize = 24.0;
 constexpr char kPersistedBoardsKey[] = "whiteboards/boardsV1";
 constexpr char kFileFormat[] = "ForeverTAS whiteboard set";
 constexpr int kFileVersion = 1;
+constexpr int kExportImageLongEdge = 2048;
 
 bool IsDrawingTool(const QString &tool) {
     return tool == QStringLiteral("pen") ||
@@ -41,6 +47,22 @@ bool IsKnownTool(const QString &tool) {
             tool == QStringLiteral("eraser") ||
             tool == QStringLiteral("text") ||
             IsDrawingTool(tool);
+}
+
+bool SavePngAtomically(const QImage &image, const QString &path) {
+    if (image.isNull() || path.isEmpty()) {
+        return false;
+    }
+    QByteArray encoded;
+    QBuffer buffer(&encoded);
+    if (!buffer.open(QIODevice::WriteOnly) ||
+        !image.save(&buffer, "PNG")) {
+        return false;
+    }
+    QSaveFile file(path);
+    return file.open(QIODevice::WriteOnly) &&
+            file.write(encoded) == encoded.size() &&
+            file.commit();
 }
 
 QRectF ClampedBounds(const QPointF &first, const QPointF &second) {
@@ -722,6 +744,107 @@ bool WhiteboardModel::importBoardSet(const QUrl &fileUrl) {
             "Imported %1 drawing(s).")
                                 .arg(imported.size()));
     return true;
+}
+
+bool WhiteboardModel::exportBoardContentImage(
+        int index,
+        const QUrl &fileUrl) {
+    const QString path = LocalPath(fileUrl);
+    if (index < 0 || index >= boardCount() || path.isEmpty()) {
+        setOperationMessage(QStringLiteral(
+                "Choose a valid drawing and local image file."));
+        return false;
+    }
+    const Board &board = boards_[static_cast<std::size_t>(index)];
+    const double aspect = board.planeWidth / board.planeHeight;
+    if (!IsFinite(aspect) || aspect <= 0.0) {
+        setOperationMessage(QStringLiteral(
+                "The drawing has invalid image dimensions."));
+        return false;
+    }
+    const int width = aspect >= 1.0
+            ? kExportImageLongEdge
+            : std::max(1, qRound(kExportImageLongEdge * aspect));
+    const int height = aspect >= 1.0
+            ? std::max(1, qRound(kExportImageLongEdge / aspect))
+            : kExportImageLongEdge;
+    QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
+    if (image.isNull()) {
+        setOperationMessage(QStringLiteral(
+                "The transparent drawing image could not be created."));
+        return false;
+    }
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    if (!painter.isActive()) {
+        setOperationMessage(QStringLiteral(
+                "The transparent drawing image could not be rendered."));
+        return false;
+    }
+    const double strokeScale = std::max(
+            0.01,
+            std::min(width / 1024.0, height / 576.0));
+    for (const Item &item : board.items) {
+        const QRectF pixelBounds(
+                item.bounds.x() * width,
+                item.bounds.y() * height,
+                std::max(1.0, item.bounds.width() * width),
+                std::max(1.0, item.bounds.height() * height));
+        QVariantMap drawing = ToVariantMap(item, false);
+        drawing.insert(
+                QStringLiteral("strokeWidth"),
+                item.strokeWidth * strokeScale);
+        WhiteboardCanvasItem canvas;
+        canvas.setWidth(pixelBounds.width());
+        canvas.setHeight(pixelBounds.height());
+        canvas.setDrawing(drawing);
+        painter.save();
+        painter.translate(pixelBounds.topLeft());
+        canvas.paint(&painter);
+        painter.restore();
+    }
+    painter.end();
+
+    if (!SavePngAtomically(image, path)) {
+        setOperationMessage(QStringLiteral(
+                "The transparent drawing image could not be saved."));
+        return false;
+    }
+    setOperationMessage(QStringLiteral(
+            "Transparent drawing image exported."));
+    return true;
+}
+
+QString WhiteboardModel::imageExportPath(
+        const QUrl &fileUrl) const {
+    return LocalPath(fileUrl);
+}
+
+bool WhiteboardModel::saveBoardBackgroundImage(
+        const QVariant &imageValue,
+        const QUrl &fileUrl) {
+    return imageValue.canConvert<QImage>() &&
+            SavePngAtomically(
+                    imageValue.value<QImage>(),
+                    LocalPath(fileUrl));
+}
+
+void WhiteboardModel::finishBoardImageExport(
+        bool success,
+        bool fullBackground) {
+    if (success) {
+        setOperationMessage(fullBackground
+                ? QStringLiteral(
+                          "Drawing image with background exported.")
+                : QStringLiteral(
+                          "Transparent drawing image exported."));
+    } else {
+        setOperationMessage(fullBackground
+                ? QStringLiteral(
+                          "The drawing image with background could not be saved.")
+                : QStringLiteral(
+                          "The transparent drawing image could not be saved."));
+    }
 }
 
 bool WhiteboardModel::IsFinite(double value) {

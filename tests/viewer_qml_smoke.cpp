@@ -5,6 +5,9 @@
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QImage>
 #include <QInputDevice>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
@@ -12,6 +15,7 @@
 #include <QSettings>
 #include <QQuickWindow>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -2783,6 +2787,128 @@ int main(int argc, char **argv) {
                                         VisibleModelCount(visualModels) ==
                                                 initialVisibleVisualModels;
 
+                                QTemporaryDir imageExportDirectory;
+                                const QString backgroundImagePath =
+                                        imageExportDirectory.filePath(
+                                                QStringLiteral(
+                                                        "board-background.png"));
+                                QVariant backgroundExportStarted;
+                                const bool backgroundExportInvoked =
+                                        imageExportDirectory.isValid() &&
+                                        whiteboardViewport != nullptr &&
+                                        whiteboard->setBoardVisible(0, false) &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "exportWhiteboardBackground",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        backgroundExportStarted),
+                                                Q_ARG(QVariant, QVariant(0)),
+                                                Q_ARG(
+                                                        QVariant,
+                                                                QVariant(
+                                                                        QUrl::fromLocalFile(
+                                                                        backgroundImagePath))));
+                                const bool exportStartedState =
+                                        backgroundExportStarted.toBool();
+                                const bool exportBusyState =
+                                        whiteboardViewport
+                                                ->property(
+                                                        "exportingWhiteboardImage")
+                                                .toBool();
+                                auto *const exportOverlay =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "whiteboardOverlay")));
+                                auto *const exportHeader =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "raceViewerHeader")));
+                                auto *const exportDock =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "playbackDock")));
+                                const bool exportOverlayHidden =
+                                        exportOverlay != nullptr &&
+                                        !exportOverlay->isVisible();
+                                const bool exportHeaderHidden =
+                                        exportHeader != nullptr &&
+                                        !exportHeader->isVisible();
+                                const bool exportDockHidden =
+                                        exportDock != nullptr &&
+                                        !exportDock->isVisible();
+                                const bool exportPlaneMode =
+                                        whiteboardPlaneView != nullptr &&
+                                        whiteboardPlaneView
+                                                ->property("exportMode")
+                                                .toBool();
+                                const bool exportForcedPlane =
+                                        whiteboardPlaneRepeater != nullptr &&
+                                        whiteboardPlaneRepeater
+                                                        ->property("count")
+                                                        .toInt() == 1;
+                                const bool exportCaptureState =
+                                        backgroundExportInvoked &&
+                                        exportStartedState &&
+                                        exportBusyState &&
+                                        exportOverlayHidden &&
+                                        exportHeaderHidden &&
+                                        exportDockHidden &&
+                                        exportPlaneMode &&
+                                        exportForcedPlane;
+                                QEventLoop imageExportLoop;
+                                QTimer::singleShot(
+                                        800,
+                                        &imageExportLoop,
+                                        &QEventLoop::quit);
+                                imageExportLoop.exec();
+                                const QImage backgroundImage(
+                                        backgroundImagePath);
+                                auto *const postExportViewport =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "raceViewport")));
+                                auto *const postExportPlaneView =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "whiteboardPlaneView")));
+                                const bool fullBackgroundExportValid =
+                                        exportCaptureState &&
+                                        postExportViewport != nullptr &&
+                                        !postExportViewport
+                                                 ->property(
+                                                         "exportingWhiteboardImage")
+                                                 .toBool() &&
+                                        postExportPlaneView != nullptr &&
+                                        !postExportPlaneView
+                                                 ->property("exportMode")
+                                                 .toBool() &&
+                                        postExportPlaneView
+                                                        ->property(
+                                                                "forcedBoardIndex")
+                                                        .toInt() == -1 &&
+                                        QFileInfo(backgroundImagePath).size() >
+                                                0 &&
+                                        !backgroundImage.isNull() &&
+                                        backgroundImage.width() ==
+                                                qRound(
+                                                        postExportViewport
+                                                                ->width()) &&
+                                        backgroundImage.height() ==
+                                                qRound(
+                                                        postExportViewport
+                                                                ->height()) &&
+                                        whiteboard->operationMessage().contains(
+                                                QStringLiteral(
+                                                        "with background exported"));
+                                const bool whiteboardVisibilityRestored =
+                                        whiteboard->setBoardVisible(0, true);
+
                                 completed = true;
                                 exitCode =
                                         geometryAttached && rootsVisible &&
@@ -2802,7 +2928,9 @@ int main(int argc, char **argv) {
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
                                                         editorStructure &&
-                                                        whiteboardIntegrated
+                                                        whiteboardIntegrated &&
+                                                        fullBackgroundExportValid &&
+                                                        whiteboardVisibilityRestored
                                                 ? 0
                                                 : 1;
                                 if (exitCode != 0) {
@@ -2908,6 +3036,39 @@ int main(int argc, char **argv) {
                                                        .toBool()
                                             << "/shownAgain="
                                             << whiteboardShownAgain
+                                            << "/imageExport="
+                                            << fullBackgroundExportValid
+                                            << "/captureState="
+                                            << exportCaptureState
+                                            << "/file="
+                                            << QFileInfo(
+                                                       backgroundImagePath)
+                                                       .size()
+                                            << "/captureBits="
+                                            << backgroundExportInvoked << "/"
+                                            << exportStartedState << "/"
+                                            << exportBusyState << "/"
+                                            << exportOverlayHidden << "/"
+                                            << exportHeaderHidden << "/"
+                                            << exportDockHidden << "/"
+                                            << exportPlaneMode << "/"
+                                            << exportForcedPlane
+                                            << "/image="
+                                            << backgroundImage.width() << "x"
+                                            << backgroundImage.height()
+                                            << "/viewport="
+                                            << (postExportViewport
+                                                        ? postExportViewport
+                                                                  ->width()
+                                                        : -1.0)
+                                            << "x"
+                                            << (postExportViewport
+                                                        ? postExportViewport
+                                                                  ->height()
+                                                        : -1.0)
+                                            << "/message="
+                                            << whiteboard->operationMessage()
+                                                       .toStdString()
                                             << ", optimizedRenderState="
                                             << optimizedRenderState
                                             << ", daylightEnvironment="

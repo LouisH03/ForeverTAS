@@ -11,10 +11,26 @@ View3D {
     required property real orbitPitch
     required property real orbitDistance
     property real fieldOfView: 55
+    property int forcedBoardIndex: -1
+    property bool exportMode: false
+    readonly property var renderedBoards: {
+        const visible = model.visibleBoards.slice()
+        if (forcedBoardIndex < 0 || forcedBoardIndex >= model.boardCount)
+            return visible
+        const forced = model.boards[forcedBoardIndex]
+        if (!forced || !forced.isCurrentMap)
+            return visible
+        for (let index = 0; index < visible.length; ++index) {
+            if (visible[index].boardIndex === forcedBoardIndex)
+                return visible
+        }
+        visible.push(forced)
+        return visible
+    }
 
     objectName: "whiteboardPlaneView"
     camera: planeCamera
-    visible: model.visibleBoards.length > 0
+    visible: renderedBoards.length > 0
 
     function pointInProjectedQuad(point, corners) {
         let sign = 0
@@ -93,7 +109,7 @@ View3D {
     Repeater3D {
         id: planeRepeater
         objectName: "whiteboardPlaneRepeater"
-        model: root.model.visibleBoards
+        model: root.renderedBoards
 
         delegate: Model {
             id: plane
@@ -124,7 +140,7 @@ View3D {
                         width: 1024
                         height: 576
                         color: "#b8111513"
-                        border.width: 3
+                        border.width: root.exportMode ? 0 : 3
                         border.color: plane.modelData.selected
                                       ? "#dce75c" : "#8aa096"
 
