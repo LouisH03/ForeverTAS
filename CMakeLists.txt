@@ -69,6 +69,12 @@ FetchContent_Declare(
         "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
         "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-stunt-points.patch"
         "-DSOURCE_DIR=<SOURCE_DIR>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake"
+        COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-map-name.patch"
+        "-DSOURCE_DIR=<SOURCE_DIR>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake")
 FetchContent_MakeAvailable(ForeverValidator)
 

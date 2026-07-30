@@ -133,7 +133,8 @@ int main(int argc, char **argv) {
     }
 
     try {
-        const ReplayIdentity identity{argv[2]};
+        const ReplayIdentity identity{
+                "identity-is-not-the-map-name.Replay.Gbx"};
         AssetSource source = Require(
                 OpenInstalledPackDirectory(argv[1]),
                 "opening Packs directory failed");
@@ -146,16 +147,24 @@ int main(int argc, char **argv) {
         PhysicsSandbox sandbox = Require(
                 CreatePhysicsSandbox(std::move(source), options),
                 "creating sandbox failed");
+        bool okay = Check(!sandbox.ReadMapName(),
+                          "map name was readable before replay loading");
         static_cast<void>(Require(
                 sandbox.LoadReplay({replay.data(), replay.size()}, identity),
                 "loading replay failed"));
+        const std::string mapName = Require(
+                sandbox.ReadMapName(), "reading map name failed");
         const PhysicsSandboxSceneView collisionScene = Require(
                 sandbox.ReadScene(), "reading collision scene failed");
         const PhysicsSandboxRenderSceneHandle renderScene = Require(
                 sandbox.ReadRenderScene(), "reading render scene failed");
 
-        bool okay = Check(renderScene != nullptr,
-                          "render-scene handle was null");
+        okay &= Check(!mapName.empty(),
+                      "embedded challenge map name was empty");
+        okay &= Check(mapName != identity.name,
+                      "map name was inferred from the replay identity");
+        okay &= Check(renderScene != nullptr,
+                      "render-scene handle was null");
         if (!renderScene) return 1;
         okay &= Check(!renderScene->meshes.empty(),
                       "render scene has no visual meshes");
@@ -490,7 +499,8 @@ int main(int argc, char **argv) {
                               collisionScene.collisionTriangles.size(),
                       "visual scene aliases the collision triangle stream");
 
-        std::cout << "render-scene-data: meshes=" << renderScene->meshes.size()
+        std::cout << "render-scene-data: mapName=\"" << mapName
+                  << "\", meshes=" << renderScene->meshes.size()
                   << ", instances=" << renderScene->instances.size()
                   << ", materials=" << renderScene->materials.size()
                   << ", subsets=" << subsetCount

@@ -38,6 +38,7 @@ class WhiteboardModel final : public QObject {
     Q_PROPERTY(int selectedBoardIndex READ selectedBoardIndex NOTIFY
                        boardSelectionChanged)
     Q_PROPERTY(QString mapKey READ mapKey NOTIFY mapKeyChanged)
+    Q_PROPERTY(QString mapName READ mapName NOTIFY mapNameChanged)
     Q_PROPERTY(QString operationMessage READ operationMessage NOTIFY
                        operationMessageChanged)
 
@@ -60,13 +61,14 @@ public:
     int maximumBoardCount() const;
     int selectedBoardIndex() const;
     QString mapKey() const;
+    QString mapName() const;
     QString operationMessage() const;
 
     void setActive(bool value);
     void setTool(const QString &value);
     void setColor(const QColor &value);
     void setSize(double value);
-    void setMapKey(const QString &value);
+    void setMapIdentity(const QString &key, const QString &name);
 
     Q_INVOKABLE bool beginItem(double x, double y);
     Q_INVOKABLE bool updateItem(double x, double y);
@@ -115,6 +117,7 @@ signals:
     void boardsChanged();
     void boardSelectionChanged();
     void mapKeyChanged();
+    void mapNameChanged();
     void operationMessageChanged();
 
 private:
@@ -139,6 +142,7 @@ private:
         QString id;
         QString name;
         QString mapKey;
+        QString mapName;
         bool visible = true;
         QVector3D target;
         double yaw = 0.0;
@@ -159,6 +163,7 @@ private:
     static void TranslateItem(Item *item, const QPointF &delta);
     static QString LocalPath(const QUrl &fileUrl);
     static QString NormalizeBoardName(const QString &name);
+    static QString NormalizeMapName(const QString &name);
     static QByteArray serializeBoards(
             const std::vector<Board> &boards,
             const QString &setName);
@@ -185,6 +190,7 @@ private:
     std::vector<Board> boards_;
     int selectedBoardIndex_ = -1;
     QString mapKey_;
+    QString mapName_;
     QString operationMessage_;
 };
 

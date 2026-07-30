@@ -30,9 +30,10 @@ constexpr double kMinimumExtent = 0.01;
 constexpr double kMinimumGestureExtent = 0.002;
 constexpr double kMinimumSize = 1.0;
 constexpr double kMaximumSize = 24.0;
-constexpr char kPersistedBoardsKey[] = "whiteboards/boardsV1";
+constexpr int kMaximumMapNameLength = 512;
+constexpr char kPersistedBoardsKey[] = "whiteboards/boardsV2";
 constexpr char kFileFormat[] = "ForeverTAS whiteboard set";
-constexpr int kFileVersion = 1;
+constexpr int kFileVersion = 2;
 constexpr int kExportImageLongEdge = 2048;
 
 bool IsDrawingTool(const QString &tool) {
@@ -47,6 +48,56 @@ bool IsKnownTool(const QString &tool) {
             tool == QStringLiteral("eraser") ||
             tool == QStringLiteral("text") ||
             IsDrawingTool(tool);
+}
+
+bool IsHexDigit(QChar character) {
+    const ushort code = character.toLower().unicode();
+    return (code >= '0' && code <= '9') ||
+            (code >= 'a' && code <= 'f');
+}
+
+QString StripTrackmaniaFormatting(const QString &name) {
+    QString result;
+    result.reserve(name.size());
+    for (qsizetype index = 0; index < name.size(); ++index) {
+        const QChar character = name.at(index);
+        if (character != QLatin1Char('$') ||
+            index + 1 >= name.size()) {
+            result.append(character);
+            continue;
+        }
+        const QChar marker = name.at(index + 1);
+        if (marker == QLatin1Char('$')) {
+            result.append(QLatin1Char('$'));
+            ++index;
+            continue;
+        }
+        if (index + 3 < name.size() &&
+            IsHexDigit(marker) &&
+            IsHexDigit(name.at(index + 2)) &&
+            IsHexDigit(name.at(index + 3))) {
+            index += 3;
+            continue;
+        }
+        const QChar lower = marker.toLower();
+        if (QStringLiteral("iswnmgzot").contains(lower)) {
+            ++index;
+            continue;
+        }
+        if (lower == QLatin1Char('l') ||
+            lower == QLatin1Char('h')) {
+            ++index;
+            if (index + 1 < name.size() &&
+                name.at(index + 1) == QLatin1Char('[')) {
+                const qsizetype end =
+                        name.indexOf(QLatin1Char(']'), index + 2);
+                index = end < 0 ? name.size() - 1 : end;
+            }
+            continue;
+        }
+        result.append(character);
+    }
+    return result;
 }
 
 bool SavePngAtomically(const QImage &image, const QString &path) {
@@ -173,6 +224,10 @@ QString WhiteboardModel::mapKey() const {
     return mapKey_;
 }
 
+QString WhiteboardModel::mapName() const {
+    return mapName_;
+}
+
 QString WhiteboardModel::operationMessage() const {
     return operationMessage_;
 }
@@ -218,16 +273,33 @@ void WhiteboardModel::setSize(double value) {
     emit sizeChanged();
 }
 
-void WhiteboardModel::setMapKey(const QString &value) {
-    const QString normalized = value.trimmed();
-    if (mapKey_ == normalized) {
+void WhiteboardModel::setMapIdentity(const QString &key,
+                                     const QString &name) {
+    const QString normalizedKey = key.trimmed();
+    const QString normalizedName = normalizedKey.isEmpty()
+            ? QString()
+            : NormalizeMapName(name);
+    const bool keyChanged = mapKey_ != normalizedKey;
+    const bool nameChanged = mapName_ != normalizedName;
+    if (!keyChanged && !nameChanged) {
         return;
     }
-    mapKey_ = normalized;
-    selectedBoardIndex_ = -1;
-    emit mapKeyChanged();
+    mapKey_ = normalizedKey;
+    mapName_ = normalizedName;
+    if (keyChanged) {
+        selectedBoardIndex_ = -1;
+    }
+
+    if (keyChanged) {
+        emit mapKeyChanged();
+    }
+    if (nameChanged) {
+        emit mapNameChanged();
+    }
     emit boardsChanged();
-    emit boardSelectionChanged();
+    if (keyChanged) {
+        emit boardSelectionChanged();
+    }
 }
 
 bool WhiteboardModel::beginItem(double x, double y) {
@@ -514,7 +586,8 @@ int WhiteboardModel::captureCurrentBoard(
         const QString &name,
         const QVariantMap &capture) {
     if (!active_ || drawing_ || items_.empty() ||
-        mapKey_.isEmpty() || boardCount() >= maximumBoardCount()) {
+        mapKey_.isEmpty() || mapName_.isEmpty() ||
+        boardCount() >= maximumBoardCount()) {
         setOperationMessage(QStringLiteral(
                 "Draw something on a loaded map before placing it."));
         return -1;
@@ -539,6 +612,7 @@ int WhiteboardModel::captureCurrentBoard(
     board.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     board.name = normalizedName;
     board.mapKey = mapKey_;
+    board.mapName = mapName_;
     double targetX = 0.0;
     double targetY = 0.0;
     double targetZ = 0.0;
@@ -910,6 +984,7 @@ QVariantMap WhiteboardModel::boardToVariantMap(
             {QStringLiteral("id"), board.id},
             {QStringLiteral("name"), board.name},
             {QStringLiteral("mapKey"), board.mapKey},
+            {QStringLiteral("mapName"), board.mapName},
             {QStringLiteral("visible"), board.visible},
             {QStringLiteral("isCurrentMap"), board.mapKey == mapKey_},
             {QStringLiteral("boardIndex"), index},
@@ -943,6 +1018,20 @@ QString WhiteboardModel::NormalizeBoardName(
         const QString &name) {
     QString normalized = name.simplified();
     return normalized.left(120);
+}
+
+QString WhiteboardModel::NormalizeMapName(
+        const QString &name) {
+    QString normalized = StripTrackmaniaFormatting(name);
+    for (qsizetype index = 0; index < normalized.size(); ++index) {
+        QChar character = normalized.at(index);
+        if (character.category() == QChar::Other_Control ||
+            character == QChar::LineSeparator ||
+            character == QChar::ParagraphSeparator) {
+            normalized[index] = QLatin1Char(' ');
+        }
+    }
+    return normalized.simplified().left(kMaximumMapNameLength);
 }
 
 QByteArray WhiteboardModel::serializeBoards(
@@ -982,6 +1071,7 @@ QByteArray WhiteboardModel::serializeBoards(
                 {QStringLiteral("id"), board.id},
                 {QStringLiteral("name"), board.name},
                 {QStringLiteral("mapKey"), board.mapKey},
+                {QStringLiteral("mapName"), board.mapName},
                 {QStringLiteral("visible"), board.visible},
                 {QStringLiteral("target"),
                  QJsonArray{board.target.x(),
@@ -1090,16 +1180,27 @@ bool WhiteboardModel::deserializeBoards(
                 object.value(QStringLiteral("name")).toString());
         board.mapKey =
                 object.value(QStringLiteral("mapKey")).toString().trimmed();
+        const QJsonValue mapNameValue =
+                object.value(QStringLiteral("mapName"));
+        const QString rawMapName = mapNameValue.toString();
+        board.mapName = NormalizeMapName(rawMapName);
         board.visible =
                 object.value(QStringLiteral("visible")).toBool(true);
         if (!object.value(QStringLiteral("id")).isString() ||
             !object.value(QStringLiteral("name")).isString() ||
             !object.value(QStringLiteral("mapKey")).isString() ||
+            !mapNameValue.isString() ||
             !object.value(QStringLiteral("visible")).isBool() ||
             board.id.isEmpty() || board.id.size() > 120 ||
             board.name.isEmpty() ||
             board.mapKey.size() > 4096 ||
-            !vector(object.value(QStringLiteral("target")),
+            rawMapName.size() > 4096 ||
+            board.mapName.isEmpty()) {
+            *error = QStringLiteral(
+                    "A drawing has invalid identity or map data.");
+            return false;
+        }
+        if (!vector(object.value(QStringLiteral("target")),
                     &board.target) ||
             !vector(object.value(QStringLiteral("planePosition")),
                     &board.planePosition) ||

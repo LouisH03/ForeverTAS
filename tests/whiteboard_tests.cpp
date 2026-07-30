@@ -8,10 +8,14 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QPainter>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
+#include <QQuickWindow>
 #include <QQuickStyle>
 #include <QSettings>
 #include <QStandardPaths>
@@ -57,6 +61,21 @@ QImage Render(const QVariantMap &drawing) {
 
 bool Near(double lhs, double rhs, double tolerance = 0.0001) {
     return std::abs(lhs - rhs) <= tolerance;
+}
+
+QList<QQuickItem *> FindVisualItems(QQuickItem *root,
+                                    const QString &objectName) {
+    QList<QQuickItem *> result;
+    if (root == nullptr) {
+        return result;
+    }
+    if (root->objectName() == objectName) {
+        result.push_back(root);
+    }
+    for (QQuickItem *child : root->childItems()) {
+        result.append(FindVisualItems(child, objectName));
+    }
+    return result;
 }
 
 }  // namespace
@@ -280,10 +299,35 @@ int main(int argc, char **argv) {
 
     QSettings().clear();
     WhiteboardModel repositoryModel;
-    repositoryModel.setMapKey(
-            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    repositoryModel.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral(
+                    "$fffStadium $$Mix $l[https://example.test]Training$l"
+                    "\nCup$z"));
+    expect(repositoryModel.mapName() ==
+                   QStringLiteral("Stadium $Mix Training Cup"),
+           "authoritative map names strip formatting, links, and controls "
+           "without using a filename");
+    repositoryModel.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("  $fff$i$z  "));
     repositoryModel.setActive(true);
     repositoryModel.setTool(QStringLiteral("line"));
+    expect(repositoryModel.beginItem(0.1, 0.2) &&
+                   repositoryModel.updateItem(0.8, 0.7) &&
+                   repositoryModel.finishItem() &&
+                   repositoryModel.captureCurrentBoard(
+                           QStringLiteral("Unidentified"),
+                           QVariantMap{}) == -1 &&
+                   repositoryModel.boardCount() == 0,
+           "a formatting-only challenge name cannot create an unidentified "
+           "saved drawing");
+    expect(repositoryModel.removeSelected() &&
+                   repositoryModel.count() == 0,
+           "rejected unidentified drawing remains editable as a draft");
+    repositoryModel.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("$fffStadium $iTraining$z"));
     expect(repositoryModel.beginItem(0.1, 0.2) &&
                    repositoryModel.updateItem(0.8, 0.7) &&
                    repositoryModel.finishItem(),
@@ -311,6 +355,8 @@ int main(int argc, char **argv) {
                            QStringLiteral("Entry line") &&
                    firstBoard.value(QStringLiteral("isCurrentMap"))
                            .toBool() &&
+                   firstBoard.value(QStringLiteral("mapName")).toString() ==
+                           QStringLiteral("Stadium Training") &&
                    Near(firstBoard.value(
                                    QStringLiteral("targetX"))
                                 .toDouble(),
@@ -349,17 +395,25 @@ int main(int argc, char **argv) {
            "visibility hides a plane without removing its list entry");
 
     WhiteboardModel restoredRepository;
-    restoredRepository.setMapKey(
-            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    restoredRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
     expect(restoredRepository.boardCount() == 2 &&
+                   restoredRepository.boards()
+                                   .front()
+                                   .toMap()
+                                   .value(QStringLiteral("mapName"))
+                                   .toString() ==
+                           QStringLiteral("Stadium Training") &&
                    !restoredRepository.boards()
                             .front()
                             .toMap()
                             .value(QStringLiteral("visible"))
                             .toBool(),
            "drawings and visibility persist across model sessions");
-    restoredRepository.setMapKey(
-            QStringLiteral("/maps/Other.Replay.Gbx"));
+    restoredRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:other"),
+            QStringLiteral("Sunrise Sprint"));
     expect(!restoredRepository.boards()
                     .front()
                     .toMap()
@@ -368,8 +422,9 @@ int main(int argc, char **argv) {
                    restoredRepository.visibleBoards().isEmpty() &&
                    !restoredRepository.selectBoard(0),
            "other-map drawings remain listed but cannot alter this view");
-    restoredRepository.setMapKey(
-            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    restoredRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
 
     QTemporaryDir setDirectory;
     expect(setDirectory.isValid(),
@@ -380,6 +435,31 @@ int main(int argc, char **argv) {
                    QUrl::fromLocalFile(setPath)) &&
                    QFileInfo(setPath).size() > 0,
            "a named set exports to the selected local file");
+    QFile authoritativeSetFile(setPath);
+    expect(authoritativeSetFile.open(QIODevice::ReadOnly),
+           "exported authoritative set can be inspected");
+    const QByteArray authoritativeSet = authoritativeSetFile.readAll();
+    authoritativeSetFile.close();
+    expect(authoritativeSet.contains(
+                   "\"mapName\": \"Stadium Training\"") &&
+                   !authoritativeSet.contains(
+                           "\"mapName\": \"Stadium notes\"") &&
+                   !authoritativeSet.contains(
+                           "\"mapName\": \"Entry line\""),
+           "exports persist challenge data rather than filenames or drawing labels");
+
+    QJsonDocument legacyDocument =
+            QJsonDocument::fromJson(authoritativeSet);
+    QJsonObject legacyRoot = legacyDocument.object();
+    legacyRoot[QStringLiteral("version")] = 1;
+    QJsonArray legacyBoards =
+            legacyRoot.value(QStringLiteral("boards")).toArray();
+    for (qsizetype index = 0; index < legacyBoards.size(); ++index) {
+        QJsonObject board = legacyBoards.at(index).toObject();
+        board.remove(QStringLiteral("mapName"));
+        legacyBoards[index] = board;
+    }
+    legacyRoot[QStringLiteral("boards")] = legacyBoards;
 
     const QString transparentImagePath = setDirectory.filePath(
             QStringLiteral("Entry line.png"));
@@ -423,8 +503,9 @@ int main(int argc, char **argv) {
 
     QSettings().clear();
     WhiteboardModel importedRepository;
-    importedRepository.setMapKey(
-            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    importedRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
     expect(importedRepository.importBoardSet(
                    QUrl::fromLocalFile(setPath)) &&
                    importedRepository.boardCount() == 2 &&
@@ -435,6 +516,45 @@ int main(int argc, char **argv) {
                                    .toList()
                                    .size() == 1,
            "an arbitrary exported set imports with complete drawings");
+    const QString legacySetPath = setDirectory.filePath(
+            QStringLiteral("legacy-without-map-names.json"));
+    QFile legacySetFile(legacySetPath);
+    const QByteArray legacySet =
+            QJsonDocument(legacyRoot).toJson();
+    expect(legacySetFile.open(QIODevice::WriteOnly) &&
+                   legacySetFile.write(legacySet) ==
+                           legacySet.size(),
+           "legacy import fixture without map names is written");
+    legacySetFile.close();
+    QSettings().clear();
+    WhiteboardModel unrelatedLegacyImport;
+    unrelatedLegacyImport.setMapIdentity(
+            QStringLiteral("collision-sha256:other"),
+            QStringLiteral("Sunrise Sprint"));
+    expect(!unrelatedLegacyImport.importBoardSet(
+                   QUrl::fromLocalFile(legacySetPath)) &&
+                   unrelatedLegacyImport.boardCount() == 0 &&
+                   unrelatedLegacyImport.operationMessage().contains(
+                           QStringLiteral("supported whiteboard set")),
+           "unidentified legacy drawings are rejected rather than mislabeled");
+    QJsonObject unidentifiedRoot = legacyRoot;
+    unidentifiedRoot[QStringLiteral("version")] = 2;
+    const QString unidentifiedSetPath = setDirectory.filePath(
+            QStringLiteral("current-without-map-names.json"));
+    QFile unidentifiedSetFile(unidentifiedSetPath);
+    const QByteArray unidentifiedSet =
+            QJsonDocument(unidentifiedRoot).toJson();
+    expect(unidentifiedSetFile.open(QIODevice::WriteOnly) &&
+                   unidentifiedSetFile.write(unidentifiedSet) ==
+                           unidentifiedSet.size(),
+           "current-schema unidentified drawing fixture is written");
+    unidentifiedSetFile.close();
+    expect(!unrelatedLegacyImport.importBoardSet(
+                   QUrl::fromLocalFile(unidentifiedSetPath)) &&
+                   unrelatedLegacyImport.boardCount() == 0 &&
+                   unrelatedLegacyImport.operationMessage().contains(
+                           QStringLiteral("identity or map data")),
+           "current-schema drawings require a nonempty authoritative map name");
     const int beforeInvalidImport =
             importedRepository.boardCount();
     const QString invalidPath = setDirectory.filePath(
@@ -474,7 +594,7 @@ int main(int argc, char **argv) {
     mapNeutralSet.replace(
             "\"visible\": \"yes\"", "\"visible\": false");
     mapNeutralSet.replace(
-            "/maps/Stadium.Replay.Gbx", "");
+            "collision-sha256:stadium", "");
     const QString mapNeutralPath = setDirectory.filePath(
             QStringLiteral("map-neutral.json"));
     QFile mapNeutralFile(mapNeutralPath);
@@ -489,8 +609,9 @@ int main(int argc, char **argv) {
                    QUrl::fromLocalFile(mapNeutralPath)) &&
                    neutralRepository.boardCount() == 0,
            "map-neutral imports require a loaded map");
-    neutralRepository.setMapKey(
-            QStringLiteral("/maps/Stadium.Replay.Gbx"));
+    neutralRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
     expect(neutralRepository.importBoardSet(
                    QUrl::fromLocalFile(mapNeutralPath)) &&
                    neutralRepository.boardCount() == 2 &&
@@ -608,6 +729,10 @@ int main(int argc, char **argv) {
                        backgroundExportItem != nullptr &&
                        transparentExportItem != nullptr,
                "placement, set transfer, and both image export modes are present");
+        expect(placeButton != nullptr &&
+                       !placeButton->property("enabled").toBool(),
+               "a draft without an authoritative loaded-map identity cannot "
+               "be placed");
         expect(drawingRepeater != nullptr &&
                        drawingRepeater->property("count").toInt() ==
                                retainedCount,
@@ -688,6 +813,124 @@ int main(int argc, char **argv) {
                        !toggle->property("enabled").toBool(),
                "empty viewer disables whiteboard activation");
     }
+
+    restoredRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:other"),
+            QStringLiteral("Sunrise Sprint"));
+    QQuickWindow drawingListWindow;
+    drawingListWindow.setWidth(520);
+    drawingListWindow.setHeight(390);
+    std::unique_ptr<QObject> drawingListOverlay(
+            component.createWithInitialProperties({
+                    {QStringLiteral("model"),
+                     QVariant::fromValue(static_cast<QObject *>(
+                             &restoredRepository))},
+                    {QStringLiteral("available"), true},
+                    {QStringLiteral("drawingListOpen"), true}}));
+    expect(drawingListOverlay != nullptr,
+           "drawing-list map-name view instantiates");
+    if (drawingListOverlay != nullptr) {
+        auto *const drawingListRoot =
+                qobject_cast<QQuickItem *>(drawingListOverlay.get());
+        if (drawingListRoot != nullptr) {
+            drawingListRoot->setParentItem(
+                    drawingListWindow.contentItem());
+        }
+        drawingListOverlay->setProperty("width", 520.0);
+        drawingListOverlay->setProperty("height", 390.0);
+        drawingListWindow.show();
+        QCoreApplication::processEvents();
+        const QList<QQuickItem *> mapLabels = FindVisualItems(
+                drawingListRoot,
+                QStringLiteral("whiteboardBoardMapName"));
+        const bool everyLabelIsAuthoritative =
+                mapLabels.size() == restoredRepository.boardCount() &&
+                std::all_of(
+                        mapLabels.cbegin(),
+                        mapLabels.cend(),
+                        [](const QQuickItem *label) {
+                            const QString text =
+                                    label->property("text").toString();
+                            return text == QStringLiteral(
+                                                   "Stadium Training") &&
+                                    !text.contains(
+                                            QStringLiteral("Other map"));
+                        });
+        if (!everyLabelIsAuthoritative) {
+            QObject *const listView =
+                    drawingListOverlay->findChild<QObject *>(
+                            QStringLiteral("whiteboardBoardListView"));
+            std::cerr << "other-map label count=" << mapLabels.size()
+                      << ", boards="
+                      << restoredRepository.boardCount()
+                      << ", listCount="
+                      << (listView != nullptr
+                                  ? listView->property("count").toInt()
+                                  : -1)
+                      << ", listVisible="
+                      << (listView != nullptr
+                                  ? listView->property("visible").toBool()
+                                  : false)
+                      << ", listSize="
+                      << (listView != nullptr
+                                  ? listView->property("width").toDouble()
+                                  : -1.0)
+                      << 'x'
+                      << (listView != nullptr
+                                  ? listView->property("height").toDouble()
+                                  : -1.0)
+                      << '\n';
+            for (const QQuickItem *label : mapLabels) {
+                std::cerr << "  label=\""
+                          << label->property("text")
+                                     .toString()
+                                     .toStdString()
+                          << "\"\n";
+            }
+        }
+        expect(everyLabelIsAuthoritative,
+               "other-map drawing rows show their stored challenge name");
+        restoredRepository.setMapIdentity(
+                QStringLiteral("collision-sha256:stadium"),
+                QStringLiteral("Stadium Training"));
+        QCoreApplication::processEvents();
+        const QList<QQuickItem *> currentMapLabels =
+                FindVisualItems(
+                        drawingListRoot,
+                        QStringLiteral("whiteboardBoardMapName"));
+        const bool everyCurrentLabelIsAuthoritative =
+                currentMapLabels.size() ==
+                        restoredRepository.boardCount() &&
+                std::all_of(
+                       currentMapLabels.cbegin(),
+                       currentMapLabels.cend(),
+                       [](const QQuickItem *label) {
+                           const QString text =
+                                   label->property("text").toString();
+                           return text.startsWith(
+                                          QStringLiteral(
+                                                  "Stadium Training")) &&
+                                   text.contains(
+                                           QStringLiteral("Current"));
+                       });
+        if (!everyCurrentLabelIsAuthoritative) {
+            std::cerr << "current-map label count="
+                      << currentMapLabels.size() << ", boards="
+                      << restoredRepository.boardCount() << '\n';
+            for (const QQuickItem *label : currentMapLabels) {
+                std::cerr << "  label=\""
+                          << label->property("text")
+                                     .toString()
+                                     .toStdString()
+                          << "\"\n";
+            }
+        }
+        expect(everyCurrentLabelIsAuthoritative,
+               "current-map rows keep the challenge name and add status");
+    }
+    restoredRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
 
     QQmlComponent planesComponent(
             &engine,

@@ -2,6 +2,7 @@
 #include "viewer/race_viewer_controller.h"
 
 #include <QGuiApplication>
+#include <QFileInfo>
 #include <QImage>
 #include <QMouseEvent>
 #include <QPainter>
@@ -1116,6 +1117,10 @@ int main(int argc, char **argv) {
                             viewer.whiteboard()->mapKey().startsWith(
                                     QStringLiteral("collision-sha256:")) &&
                             viewer.whiteboard()->mapKey().size() == 81 &&
+                            !viewer.whiteboard()->mapName().isEmpty() &&
+                            viewer.whiteboard()->mapName() !=
+                                    QFileInfo(replayPath)
+                                            .completeBaseName() &&
                             viewer.triangleCount() > 0 &&
                             viewer.visualTriangleCount() > 0 &&
                             viewer.visualMeshCount() > 0 &&

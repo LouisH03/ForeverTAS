@@ -78,6 +78,7 @@ struct RaceViewerLoadResult {
     QString packsDirectory;
     QString replayPath;
     QString mapKey;
+    QString mapName;
     RaceViewerMeshBuffers track;
     std::vector<StaticVisualBatch> visualBatches;
     std::shared_ptr<const RayTracingSceneData> rayTracingScene;

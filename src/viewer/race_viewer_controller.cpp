@@ -605,6 +605,9 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
         result.mapKey = CollisionSceneKey(scene);
+        result.mapName = QString::fromUtf8(Require(
+                sandbox.ReadMapName(),
+                "reading replay map name failed"));
         PhysicsSandboxRenderSceneHandle renderScene = Require(
                 sandbox.ReadRenderScene(),
                 "reading visual render scene failed");
@@ -2677,7 +2680,7 @@ void RaceViewerController::applyLoadResult(
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
-    whiteboard_.setMapKey(result.mapKey);
+    whiteboard_.setMapIdentity(result.mapKey, result.mapName);
     manualRuntime_ = std::move(result.manualRuntime);
     resetManualTakeoverState();
     simulationDebugger_.configure(QStringLiteral("Reference"));

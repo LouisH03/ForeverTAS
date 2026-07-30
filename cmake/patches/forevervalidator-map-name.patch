@@ -1,0 +1,74 @@
+diff --git a/include/forevervalidator/experimental/physics_sandbox.h b/include/forevervalidator/experimental/physics_sandbox.h
+index d5a8acd..1e7e932 100644
+--- a/include/forevervalidator/experimental/physics_sandbox.h
++++ b/include/forevervalidator/experimental/physics_sandbox.h
+@@ -495,2 +495,4 @@ public:
+             const ReplayIdentity &identity) noexcept;
++    PhysicsSandboxResult<std::string> ReadMapName()
++            const noexcept;
+     PhysicsSandboxResult<std::vector<PhysicsSandboxInputEvent>> ReadInputs()
+diff --git a/src/format/replay/replay_challenge_metadata.h b/src/format/replay/replay_challenge_metadata.h
+index d69cf76..d4f865c 100644
+--- a/src/format/replay/replay_challenge_metadata.h
++++ b/src/format/replay/replay_challenge_metadata.h
+@@ -49,2 +49,3 @@ struct ReplayPuzzleBlockStockEntry {
+ struct ReplayChallengeMetadata {
++    std::string mapName;
+     ReplayArchiveIdentifier challengeVehicle;
+diff --git a/src/format/replay/replay_file_reader.cpp b/src/format/replay/replay_file_reader.cpp
+index 196bc3b..f042d80 100644
+--- a/src/format/replay/replay_file_reader.cpp
++++ b/src/format/replay/replay_file_reader.cpp
+@@ -842,2 +842,3 @@ bool SeekChallengeBlocks(
+ struct ChallengeBlockHeader {
++    std::string mapName;
+     ArchiveIdentifier mapIdentifiers[3];
+@@ -853,6 +854,5 @@ std::optional<ChallengeBlockHeader> ReadChallengeBlockHeader(
+     ChallengeBlockHeader header;
+-    std::string ignoredMapName;
+     Nat32 ignoredSerializedLightmap = 0u;
+     if (!identifiers.ReadTriple(&cursor, header.mapIdentifiers) ||
+-        !cursor.ReadString(&ignoredMapName) ||
++        !cursor.ReadString(&header.mapName) ||
+         !identifiers.ReadTriple(&cursor, header.decorationIdentifiers) ||
+@@ -978,4 +978,7 @@ ReplayFileReadError ParseChallengeBody(
+             outMap);
+-    return created ? ReplayFileReadError::Success
+-                   : ReplayFileReadError::InvalidMap;
++    if (!created) {
++        return ReplayFileReadError::InvalidMap;
++    }
++    outMetadata->mapName = std::move(header->mapName);
++    return ReplayFileReadError::Success;
+ }
+diff --git a/src/validation/api/validation_api.cpp b/src/validation/api/validation_api.cpp
+index 1560080..3a63934 100644
+--- a/src/validation/api/validation_api.cpp
++++ b/src/validation/api/validation_api.cpp
+@@ -1996,4 +1996,25 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadReplay(
+     }
+ }
+-
++
++PhysicsSandboxResult<std::string> PhysicsSandbox::ReadMapName()
++        const noexcept {
++    try {
++        if (!impl_ || !impl_->loaded) {
++            return PhysicsSandboxResult<std::string>::Failure(
++                    SandboxError(PhysicsSandboxErrorCode::InvalidSandbox,
++                                 "sandbox has no loaded map name"));
++        }
++        return PhysicsSandboxResult<std::string>::Success(
++                impl_->challengeMetadata.mapName);
++    } catch (const std::bad_alloc &) {
++        return PhysicsSandboxResult<std::string>::Failure(
++                SandboxError(PhysicsSandboxErrorCode::AllocationFailed,
++                             "could not copy sandbox map name"));
++    } catch (...) {
++        return PhysicsSandboxResult<std::string>::Failure(
++                SandboxError(PhysicsSandboxErrorCode::UnexpectedFailure,
++                             "unexpected sandbox map name read failure"));
++    }
++}
++
+ PhysicsSandboxResult<std::vector<PhysicsSandboxInputEvent>>

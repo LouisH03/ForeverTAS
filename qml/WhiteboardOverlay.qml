@@ -542,6 +542,7 @@ Item {
                     visible: root.model.active
                     enabled: root.model.count > 0
                              && root.model.mapKey.length > 0
+                             && root.model.mapName.length > 0
                     width: 58
                     height: 32
                     text: qsTr("Place")
@@ -675,12 +676,22 @@ Item {
                                 }
 
                                 Label {
+                                    objectName: "whiteboardBoardMapName"
                                     width: parent.width
-                                    text: boardRow.modelData.isCurrentMap
-                                          ? qsTr("Current map")
-                                          : qsTr("Other map")
+                                    text: boardRow.modelData.mapName
+                                          + (boardRow.modelData.isCurrentMap
+                                             ? qsTr(" \u00b7 Current")
+                                             : "")
                                     color: AppTheme.viewerOverlayMuted
                                     font.pixelSize: 10
+                                    elide: Text.ElideRight
+                                    ToolTip.visible: mapNameHover.hovered
+                                                     && truncated
+                                    ToolTip.text: boardRow.modelData.mapName
+
+                                    HoverHandler {
+                                        id: mapNameHover
+                                    }
                                 }
                             }
                         }
