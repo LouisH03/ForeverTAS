@@ -19,6 +19,8 @@ class RaceTimelineItem : public QQuickPaintedItem {
                        viewerChanged)
     Q_PROPERTY(qreal pixelsPerTick READ pixelsPerTick WRITE setPixelsPerTick
                        NOTIFY pixelsPerTickChanged)
+    Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
+                       darkModeChanged)
 
 public:
     explicit RaceTimelineItem(QQuickItem *parent = nullptr);
@@ -29,11 +31,15 @@ public:
     qreal pixelsPerTick() const;
     void setPixelsPerTick(qreal value);
 
+    bool darkMode() const;
+    void setDarkMode(bool value);
+
     void paint(QPainter *painter) override;
 
 signals:
     void viewerChanged();
     void pixelsPerTickChanged();
+    void darkModeChanged();
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -52,6 +58,7 @@ private:
 
     QPointer<RaceViewerController> viewer_;
     qreal pixelsPerTick_ = 3.0;
+    bool darkMode_ = false;
     qint64 dragAnchorTimeMs_ = 0;
     qreal dragAnchorY_ = 0.0;
     qreal zoomAnchorPixelsPerTick_ = 3.0;

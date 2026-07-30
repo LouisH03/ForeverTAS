@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import ".." as ThemeControls
 
 TextField {
     id: control
@@ -80,7 +81,9 @@ TextField {
         width: 16
         horizontalAlignment: Text.AlignHCenter
         text: control.scrubLabel
-        color: control.enabled ? AppTheme.textMuted : AppTheme.disabledText
+        color: control.enabled
+               ? ThemeControls.AppTheme.textMuted
+               : ThemeControls.AppTheme.disabledText
         font.pixelSize: 12
     }
 

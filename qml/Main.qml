@@ -201,8 +201,31 @@ ApplicationWindow {
         anchors.centerIn: parent
         modal: true
         title: qsTr("Replace base input script?")
-        standardButtons: Dialog.Yes | Dialog.Cancel
         onAccepted: window.controller.extractReplayInputs()
+
+        footer: DialogButtonBox {
+            spacing: 8
+
+            ThemedButton {
+                objectName: "confirmReplaceBaseInputButton"
+                text: qsTr("Yes")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.YesRole
+            }
+
+            ThemedButton {
+                objectName: "cancelReplaceBaseInputButton"
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+
+            onAccepted: replaceBaseInputScriptDialog.accept()
+            onRejected: replaceBaseInputScriptDialog.reject()
+
+            background: Rectangle {
+                color: AppTheme.panel
+            }
+        }
 
         Label {
             width: 360
@@ -271,7 +294,7 @@ ApplicationWindow {
         Rectangle {
             SplitView.fillWidth: true
             SplitView.minimumWidth: 680
-            color: AppTheme.dark ? "#151815" : "#181b19"
+            color: AppTheme.window
 
             RowLayout {
                 anchors.fill: parent
@@ -284,7 +307,7 @@ ApplicationWindow {
                     Layout.minimumWidth: 220
                     Layout.maximumWidth: 300
                     Layout.fillHeight: true
-                    color: AppTheme.dark ? "#0d100e" : "#101412"
+                    color: AppTheme.panel
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -293,7 +316,7 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 52
-                            color: AppTheme.dark ? "#121613" : "#151a17"
+                            color: AppTheme.panelAlternate
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -306,7 +329,7 @@ ApplicationWindow {
                                 Label {
                                     objectName: "timelineTimeLabel"
                                     text: window.viewer.timeText
-                                    color: AppTheme.viewerOverlayText
+                                    color: AppTheme.text
                                     font.family: "monospace"
                                     font.pixelSize: 15
                                     font.weight: Font.Medium
@@ -321,7 +344,7 @@ ApplicationWindow {
                                           : window.viewer.loaded
                                             ? qsTr("Map loaded · no search run")
                                             : qsTr("100 physics ticks / second")
-                                    color: AppTheme.dark ? "#8a958c" : "#747f77"
+                                    color: AppTheme.textMuted
                                     font.pixelSize: 10
                                 }
                             }
@@ -333,6 +356,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             viewer: window.viewer
+                            darkMode: AppTheme.dark
                             enabled: window.viewer.runCount > 0
                                      && !window.viewer.manualDriving
                             pixelsPerTick: 3
@@ -341,7 +365,7 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 50
-                            color: AppTheme.dark ? "#121613" : "#151a17"
+                            color: AppTheme.panelAlternate
 
                             RowLayout {
                                 anchors.fill: parent
@@ -353,7 +377,7 @@ ApplicationWindow {
                                     Layout.preferredWidth: 10
                                     Layout.preferredHeight: 10
                                     radius: 2
-                                    color: "#4f9ddd"
+                                    color: AppTheme.info
                                 }
                                 Label {
                                     text: qsTr("Steer")
@@ -364,7 +388,7 @@ ApplicationWindow {
                                     Layout.preferredWidth: 10
                                     Layout.preferredHeight: 10
                                     radius: 2
-                                    color: "#3dbd73"
+                                    color: AppTheme.accent
                                 }
                                 Label {
                                     text: qsTr("Gas")
@@ -375,7 +399,7 @@ ApplicationWindow {
                                     Layout.preferredWidth: 10
                                     Layout.preferredHeight: 10
                                     radius: 2
-                                    color: "#df5555"
+                                    color: AppTheme.error
                                 }
                                 Label {
                                     Layout.fillWidth: true
@@ -391,7 +415,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.preferredWidth: 1
                     Layout.fillHeight: true
-                    color: AppTheme.viewerOverlayControl
+                    color: AppTheme.border
                 }
 
                 Item {
@@ -2172,7 +2196,7 @@ ApplicationWindow {
                                     ? gpuRayTracingView.status : ""
                             }
 
-                            Button {
+                            ThemedButton {
                                 objectName: "resetViewButton"
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth:
@@ -2208,7 +2232,8 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             spacing: 8
 
-                            ToolButton {
+                            ThemedToolButton {
+                                id: jumpStartButton
                                 objectName: "jumpStartButton"
                                 Layout.preferredWidth: 42
                                 Layout.preferredHeight: 42
@@ -2235,7 +2260,8 @@ ApplicationWindow {
                                             width: 3
                                             height: 14
                                             radius: 1
-                                            color: AppTheme.viewerOverlayText
+                                            color:
+                                                jumpStartButton.effectiveTextColor
                                         }
 
                                         Shape {
@@ -2244,7 +2270,7 @@ ApplicationWindow {
                                             ShapePath {
                                                 strokeWidth: -1
                                                 fillColor:
-                                                    AppTheme.viewerOverlayText
+                                                    jumpStartButton.effectiveTextColor
                                                 startX: 15
                                                 startY: 2
                                                 PathLine {
@@ -2265,7 +2291,8 @@ ApplicationWindow {
                                 }
                             }
 
-                            ToolButton {
+                            ThemedToolButton {
+                                id: playPauseButton
                                 objectName: "playPauseButton"
                                 Layout.preferredWidth: 42
                                 Layout.preferredHeight: 42
@@ -2293,7 +2320,7 @@ ApplicationWindow {
                                         ShapePath {
                                             strokeWidth: -1
                                             fillColor:
-                                                AppTheme.viewerOverlayText
+                                                playPauseButton.effectiveTextColor
                                             startX: 4
                                             startY: 2
                                             PathLine {
@@ -2324,7 +2351,8 @@ ApplicationWindow {
                                             width: 4
                                             height: 14
                                             radius: 1
-                                            color: AppTheme.viewerOverlayText
+                                            color:
+                                                playPauseButton.effectiveTextColor
                                         }
 
                                         Rectangle {
@@ -2333,13 +2361,15 @@ ApplicationWindow {
                                             width: 4
                                             height: 14
                                             radius: 1
-                                            color: AppTheme.viewerOverlayText
+                                            color:
+                                                playPauseButton.effectiveTextColor
                                         }
                                     }
                                 }
                             }
 
-                            ToolButton {
+                            ThemedToolButton {
+                                id: jumpEndButton
                                 objectName: "jumpEndButton"
                                 Layout.preferredWidth: 42
                                 Layout.preferredHeight: 42
@@ -2366,7 +2396,7 @@ ApplicationWindow {
                                             ShapePath {
                                                 strokeWidth: -1
                                                 fillColor:
-                                                    AppTheme.viewerOverlayText
+                                                    jumpEndButton.effectiveTextColor
                                                 startX: 3
                                                 startY: 2
                                                 PathLine {
@@ -2390,13 +2420,14 @@ ApplicationWindow {
                                             width: 3
                                             height: 14
                                             radius: 1
-                                            color: AppTheme.viewerOverlayText
+                                            color:
+                                                jumpEndButton.effectiveTextColor
                                         }
                                     }
                                 }
                             }
 
-                            Button {
+                            ThemedButton {
                                 id: manualDriveButton
                                 objectName: "manualDriveButton"
                                 Layout.preferredWidth: 84
@@ -2419,17 +2450,9 @@ ApplicationWindow {
                                     }
                                 }
 
-                                contentItem: Label {
-                                    text: manualDriveButton.text
-                                    color: manualDriveButton.enabled
-                                           ? AppTheme.text
-                                           : AppTheme.disabledText
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
                             }
 
-                            CheckBox {
+                            ThemedCheckBox {
                                 id: takeOverOnInputCheckBox
                                 objectName: "takeOverOnInputCheckBox"
                                 Layout.preferredWidth: 156
@@ -2444,44 +2467,7 @@ ApplicationWindow {
                                 onToggled:
                                     window.viewer.takeOverOnInput = checked
 
-                                indicator: Rectangle {
-                                    implicitWidth: 20
-                                    implicitHeight: 20
-                                    x: takeOverOnInputCheckBox.leftPadding
-                                    y: (takeOverOnInputCheckBox.height -
-                                        height) / 2
-                                    radius: 4
-                                    color: takeOverOnInputCheckBox.checked
-                                           ? "#3dbd73"
-                                           : AppTheme.viewerOverlayControl
-                                    border.width: 1
-                                    border.color:
-                                        takeOverOnInputCheckBox.checked
-                                        ? "#73d99a"
-                                        : AppTheme.viewerOverlayBorder
-
-                                    Label {
-                                        anchors.centerIn: parent
-                                        text: "✓"
-                                        visible:
-                                            takeOverOnInputCheckBox.checked
-                                        color: "#0c2014"
-                                        font.pixelSize: 14
-                                        font.weight: Font.Bold
-                                    }
-                                }
-
-                                contentItem: Label {
-                                    leftPadding:
-                                        takeOverOnInputCheckBox.indicator.width
-                                        + takeOverOnInputCheckBox.spacing
-                                    text: takeOverOnInputCheckBox.text
-                                    color: takeOverOnInputCheckBox.enabled
-                                           ? AppTheme.viewerOverlayText
-                                           : AppTheme.viewerOverlayMuted
-                                    font.pixelSize: 11
-                                    verticalAlignment: Text.AlignVCenter
-                                }
+                                font.pixelSize: 11
                             }
                         }
                     }
@@ -2668,17 +2654,17 @@ ApplicationWindow {
                                     Layout.preferredWidth: 26
                                     Layout.preferredHeight: 24
                                     radius: 4
-                                    color: active ? "#3dbd73"
+                                    color: active ? AppTheme.accent
                                                   : AppTheme.viewerOverlayControl
                                     border.width: 1
                                     border.color:
-                                        active ? "#73d99a"
+                                        active ? AppTheme.accentBorder
                                                : AppTheme.viewerOverlayBorder
 
                                     Label {
                                         anchors.centerIn: parent
                                         text: symbol
-                                        color: active ? "#0c2014"
+                                        color: active ? AppTheme.textOnAccent
                                                       : AppTheme.viewerOverlayMuted
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
@@ -2819,7 +2805,7 @@ ApplicationWindow {
                                     }
                                 }
 
-                                Button {
+                                ThemedButton {
                                     objectName: "applyAutoPacksButton"
                                     text: qsTr("Apply")
                                     enabled: !window.controller.running
@@ -2845,7 +2831,7 @@ ApplicationWindow {
                                     window.controller.packsDirectory = text
                             }
 
-                            Button {
+                            ThemedButton {
                                 text: qsTr("Browse")
                                 enabled: !window.controller.running
                                          && !window.controller.extractingReplayInputs
@@ -2871,7 +2857,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                             }
 
-                            Button {
+                            ThemedButton {
                                 id: copyCurrentRaceInputsButton
                                 objectName: "copyCurrentRaceInputsButton"
                                 text: qsTr("Copy current race")
@@ -2967,68 +2953,18 @@ ApplicationWindow {
                             }
                         }
 
-                        TabButton {
+                        ThemedTabButton {
                             id: bruteforceTabButton
                             objectName: "bruteforceTab"
                             text: qsTr("Bruteforce")
 
-                            contentItem: Label {
-                                text: bruteforceTabButton.text
-                                color: bruteforceTabButton.enabled
-                                       ? AppTheme.text
-                                       : AppTheme.disabledText
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-
-                            background: Rectangle {
-                                color: bruteforceTabButton.checked
-                                       ? AppTheme.selection
-                                       : (bruteforceTabButton.hovered
-                                          ? AppTheme.controlHover
-                                          : AppTheme.surfaceAlternate)
-
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    height: 2
-                                    visible: bruteforceTabButton.checked
-                                    color: AppTheme.accent
-                                }
-                            }
                         }
 
-                        TabButton {
+                        ThemedTabButton {
                             id: codeTabButton
                             objectName: "codeDebuggerTab"
                             text: qsTr("Code")
 
-                            contentItem: Label {
-                                text: codeTabButton.text
-                                color: codeTabButton.enabled
-                                       ? AppTheme.text
-                                       : AppTheme.disabledText
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-
-                            background: Rectangle {
-                                color: codeTabButton.checked
-                                       ? AppTheme.selection
-                                       : (codeTabButton.hovered
-                                          ? AppTheme.controlHover
-                                          : AppTheme.surfaceAlternate)
-
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    height: 2
-                                    visible: codeTabButton.checked
-                                    color: AppTheme.accent
-                                }
-                            }
                         }
                     }
 
@@ -3046,7 +2982,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                         }
 
-                        Switch {
+                        ThemedSwitch {
                             id: darkModeToggle
                             objectName: "darkModeToggle"
                             text: qsTr("Dark mode")
@@ -3094,7 +3030,7 @@ ApplicationWindow {
                                 onTextEdited: window.controller.replayPath = text
                             }
 
-                            Button {
+                            ThemedButton {
                                 text: qsTr("Browse")
                                 enabled: !window.controller.running
                                          && !window.controller.extractingReplayInputs
@@ -3107,7 +3043,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             spacing: 8
 
-                            Button {
+                            ThemedButton {
                                 objectName: "loadMapButton"
                                 Layout.fillWidth: true
                                 text: window.viewer.loading
@@ -3126,7 +3062,7 @@ ApplicationWindow {
                                     window.controller.simulationBackendId)
                             }
 
-                            Button {
+                            ThemedButton {
                                 objectName: "extractReplayInputsButton"
                                 Layout.fillWidth: true
                                 text: window.controller.extractingReplayInputs
@@ -3246,7 +3182,7 @@ ApplicationWindow {
                                 window.controller.cudaParallelSampleCount = value
                         }
 
-                        CheckBox {
+                        ThemedCheckBox {
                             objectName: "cudaCalibrationCheckBox"
                             visible: window.controller.simulationBackendId
                                      === "cuda"
@@ -3340,7 +3276,7 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         spacing: 8
 
-                        Button {
+                        ThemedButton {
                             objectName: "startSearchButton"
                             Layout.fillWidth: true
                             text: qsTr("Start")
@@ -3350,7 +3286,7 @@ ApplicationWindow {
                             onClicked: window.controller.startSearch()
                         }
 
-                        Button {
+                        ThemedButton {
                             objectName: "stopSearchButton"
                             Layout.fillWidth: true
                             text: window.controller.stopping
@@ -3543,7 +3479,7 @@ ApplicationWindow {
                                     font.weight: Font.Medium
                                 }
 
-                                Button {
+                                ThemedButton {
                                     objectName: "copyBestInputsButton"
                                     text: qsTr("Copy all")
                                     onClicked: {

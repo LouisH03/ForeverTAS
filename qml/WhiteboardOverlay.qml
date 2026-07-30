@@ -175,7 +175,7 @@ Item {
                     anchors.margins: -3
                     color: "transparent"
                     border.width: 1
-                    border.color: "#dce75c"
+                    border.color: AppTheme.focus
                     visible: root.model.active
                              && drawingDelegate.modelData.selected
                              && root.model.tool !== "eraser"
@@ -262,9 +262,9 @@ Item {
                     anchors.rightMargin: -7
                     anchors.bottomMargin: -7
                     radius: 2
-                    color: "#dce75c"
+                    color: AppTheme.focus
                     border.width: 1
-                    border.color: "#111513"
+                    border.color: AppTheme.text
                     visible: root.model.active
                              && drawingDelegate.modelData.selected
                              && root.model.tool === "select"
@@ -323,7 +323,7 @@ Item {
                 color: AppTheme.viewerOverlayStrong
                 border.width: 1
                 border.color: textEditor.activeFocus
-                              ? "#dce75c" : AppTheme.viewerOverlayBorder
+                              ? AppTheme.focus : AppTheme.viewerOverlayBorder
             }
         }
     }
@@ -356,9 +356,10 @@ Item {
             Row {
                 spacing: 4
 
-                Button {
+                ThemedButton {
                     id: modeToggle
                     objectName: "whiteboardModeToggle"
+                    contentObjectName: "whiteboardModeToggleLabel"
                     width: 98
                     height: 34
                     checkable: true
@@ -366,27 +367,6 @@ Item {
                     enabled: root.available
                     text: qsTr("Whiteboard")
                     onToggled: root.model.active = checked
-
-                    contentItem: Label {
-                        objectName: "whiteboardModeToggleLabel"
-                        text: modeToggle.text
-                        color: modeToggle.checked
-                               ? "#111513"
-                               : root.toolbarControlText
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
-                    background: Rectangle {
-                        radius: 4
-                        color: modeToggle.checked
-                               ? "#dce75c"
-                               : (AppTheme.dark ? AppTheme.control : "#e8ebe8")
-                        border.width: 1
-                        border.color: modeToggle.checked
-                                      ? "#f4f7a0" : AppTheme.borderStrong
-                        opacity: modeToggle.enabled ? 1 : 0.55
-                    }
 
                     ToolTip.visible: hovered
                     ToolTip.delay: 350
@@ -422,7 +402,7 @@ Item {
                           "buttonWidth": 52 }
                     ]
 
-                    delegate: Button {
+                    delegate: ThemedButton {
                         id: toolButton
                         objectName: "whiteboardToolButton_" + modelData.id
                         visible: root.model.active
@@ -434,28 +414,10 @@ Item {
                         text: modelData.label
                         onClicked: root.model.tool = modelData.id
 
-                        contentItem: Label {
-                            text: toolButton.text
-                            color: toolButton.checked
-                                   ? "#111513"
-                                   : root.toolbarControlText
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
-                        background: Rectangle {
-                            radius: 3
-                            color: toolButton.checked
-                                   ? "#dce75c"
-                                   : (AppTheme.dark ? AppTheme.control : "#e8ebe8")
-                            border.width: 1
-                            border.color: toolButton.checked
-                                          ? "#f4f7a0" : AppTheme.borderStrong
-                        }
                     }
                 }
 
-                Button {
+                ThemedButton {
                     objectName: "whiteboardInactiveListButton"
                     visible: !root.model.active
                     width: 76
@@ -471,7 +433,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 4
 
-                ToolButton {
+                ThemedToolButton {
                     id: colorButton
                     objectName: "whiteboardColorButton"
                     visible: root.model.active
@@ -503,7 +465,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
-                Slider {
+                ThemedSlider {
                     id: sizeSlider
                     objectName: "whiteboardSizeSlider"
                     visible: root.model.active
@@ -522,7 +484,7 @@ Item {
                     ToolTip.text: qsTr("%1 px").arg(Math.round(value))
                 }
 
-                ToolButton {
+                ThemedToolButton {
                     objectName: "whiteboardDeleteButton"
                     visible: root.model.active
                     enabled: root.model.selectedIndex >= 0
@@ -537,7 +499,7 @@ Item {
                     ToolTip.text: qsTr("Delete selected item")
                 }
 
-                Button {
+                ThemedButton {
                     objectName: "whiteboardPlaceButton"
                     visible: root.model.active
                     enabled: root.model.count > 0
@@ -560,7 +522,7 @@ Item {
                                       "Place this drawing at the current camera view")
                 }
 
-                Button {
+                ThemedButton {
                     objectName: "whiteboardActiveListButton"
                     visible: root.model.active
                     width: 72
@@ -606,7 +568,7 @@ Item {
                     font.bold: true
                 }
 
-                ToolButton {
+                ThemedToolButton {
                     objectName: "whiteboardCloseListButton"
                     text: "\u00d7"
                     font.pixelSize: 20
@@ -649,11 +611,10 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             color: boardRow.modelData.selected
-                                   ? (AppTheme.dark ? "#3a443e" : "#303a34")
-                                   : "transparent"
+                                   ? AppTheme.selection : "transparent"
                         }
 
-                        Button {
+                        ThemedButton {
                             anchors.left: parent.left
                             anchors.right: imageExportButton.left
                             anchors.top: parent.top
@@ -696,7 +657,7 @@ Item {
                             }
                         }
 
-                        ToolButton {
+                        ThemedToolButton {
                             id: imageExportButton
                             objectName: "whiteboardBoardImageExportButton"
                             anchors.right: visibilityToggle.left
@@ -723,7 +684,7 @@ Item {
                             ToolTip.text: qsTr("Export image")
                         }
 
-                        CheckBox {
+                        ThemedCheckBox {
                             id: visibilityToggle
                             objectName: "whiteboardBoardVisibilityToggle"
                             anchors.right: removeBoardButton.left
@@ -739,7 +700,7 @@ Item {
                                            boardRow.index, checked)
                         }
 
-                        ToolButton {
+                        ThemedToolButton {
                             id: removeBoardButton
                             objectName: "whiteboardRemoveBoardButton"
                             anchors.right: parent.right
@@ -777,14 +738,14 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
 
-                Button {
+                ThemedButton {
                     objectName: "whiteboardImportButton"
                     Layout.fillWidth: true
                     text: qsTr("Import")
                     onClicked: importDialog.open()
                 }
 
-                Button {
+                ThemedButton {
                     objectName: "whiteboardExportButton"
                     Layout.fillWidth: true
                     enabled: root.model.boardCount > 0
@@ -801,7 +762,7 @@ Item {
         property int boardIndex: -1
         property bool currentMap: false
 
-        MenuItem {
+        ThemedMenuItem {
             objectName: "whiteboardExportBackgroundMenuItem"
             text: qsTr("Image with full background")
             enabled: imageExportMenu.currentMap
@@ -810,7 +771,7 @@ Item {
                              imageExportMenu.boardIndex, "background")
         }
 
-        MenuItem {
+        ThemedMenuItem {
             objectName: "whiteboardExportTransparentMenuItem"
             text: qsTr("Transparent drawing only")
             enabled: !root.imageExportInProgress
@@ -851,7 +812,7 @@ Item {
                         "#f8faf9", "#dce75c", "#42d3c6",
                         "#ff785a", "#ff4f86", "#7ca9ff"
                     ]
-                    delegate: ToolButton {
+                    delegate: ThemedToolButton {
                         objectName: "whiteboardColorSwatch"
                         Layout.preferredWidth: 26
                         Layout.preferredHeight: 26
@@ -867,7 +828,10 @@ Item {
                             color: modelData
                             border.width: root.model.color.toString()
                                           === modelData ? 2 : 1
-                            border.color: "#f8faf9"
+                            border.color: root.model.color.toString()
+                                          === modelData
+                                          ? AppTheme.focus
+                                          : AppTheme.viewerOverlayBorder
                         }
                     }
                 }

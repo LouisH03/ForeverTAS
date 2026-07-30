@@ -1,16 +1,32 @@
 import QtQuick
 import QtQuick.Controls
+import ".." as ThemeControls
 
 ComboBox {
     id: control
 
     readonly property bool slotStyled: true
+    readonly property bool themedControl: true
+    readonly property color effectiveBackgroundColor:
+        !enabled ? ThemeControls.AppTheme.disabledSurface
+        : pressed ? ThemeControls.AppTheme.controlPressed
+        : hovered ? ThemeControls.AppTheme.controlHover
+                  : ThemeControls.AppTheme.surface
+    readonly property color effectiveBorderColor:
+        !enabled ? ThemeControls.AppTheme.border
+        : popup.visible ? ThemeControls.AppTheme.accent
+        : activeFocus ? ThemeControls.AppTheme.focus
+                      : ThemeControls.AppTheme.border
+    readonly property color effectiveTextColor:
+        enabled ? ThemeControls.AppTheme.text
+                : ThemeControls.AppTheme.disabledText
 
+    hoverEnabled: true
     implicitHeight: 36
     leftPadding: 12
     rightPadding: 38
 
-    delegate: ItemDelegate {
+    delegate: ThemeControls.ThemedItemDelegate {
         id: optionDelegate
 
         required property int index
@@ -30,17 +46,12 @@ ComboBox {
 
         contentItem: Text {
             text: optionDelegate.text
-            color: optionDelegate.highlighted
-                   ? AppTheme.textOnAccent : AppTheme.text
+            color: optionDelegate.effectiveTextColor
             font: optionDelegate.font
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
 
-        background: Rectangle {
-            color: optionDelegate.highlighted
-                   ? AppTheme.accent : AppTheme.surface
-        }
     }
 
     contentItem: Text {
@@ -48,7 +59,7 @@ ComboBox {
                     ? control.objectName + "Content"
                     : "styledComboContent"
         text: control.displayText
-        color: control.enabled ? AppTheme.text : AppTheme.disabledText
+        color: control.effectiveTextColor
         font: control.font
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
@@ -67,7 +78,9 @@ ComboBox {
             y: 8
             radius: 1
             rotation: 42
-            color: control.enabled ? AppTheme.textMuted : AppTheme.disabledText
+            color: control.enabled
+                   ? ThemeControls.AppTheme.textMuted
+                   : ThemeControls.AppTheme.disabledText
         }
 
         Rectangle {
@@ -77,19 +90,17 @@ ComboBox {
             y: 8
             radius: 1
             rotation: -42
-            color: control.enabled ? AppTheme.textMuted : AppTheme.disabledText
+            color: control.enabled
+                   ? ThemeControls.AppTheme.textMuted
+                   : ThemeControls.AppTheme.disabledText
         }
     }
 
     background: Rectangle {
         radius: 7
-        color: control.enabled ? AppTheme.surface : AppTheme.disabledSurface
+        color: control.effectiveBackgroundColor
         border.width: control.popup.visible || control.activeFocus ? 2 : 1
-        border.color: control.popup.visible
-                      ? AppTheme.accent
-                      : control.activeFocus
-                        ? AppTheme.focus
-                        : AppTheme.border
+        border.color: control.effectiveBorderColor
     }
 
     popup: Popup {
@@ -110,9 +121,9 @@ ComboBox {
         }
 
         background: Rectangle {
-            color: AppTheme.surface
+            color: ThemeControls.AppTheme.surface
             border.width: 1
-            border.color: AppTheme.borderStrong
+            border.color: ThemeControls.AppTheme.borderStrong
             radius: 6
         }
     }

@@ -880,6 +880,20 @@ int main(int argc, char **argv) {
                     RaceTimelineItem timeline;
                     timeline.setWidth(252);
                     timeline.setHeight(600);
+                    const QImage lightTimelineImage =
+                            RenderTimeline(timeline);
+                    timeline.setDarkMode(true);
+                    const QImage darkTimelineImage =
+                            RenderTimeline(timeline);
+                    const bool timelineThemePalette =
+                            PixelIs(lightTimelineImage,
+                                    0,
+                                    0,
+                                    QColor(QStringLiteral("#f4f5f2"))) &&
+                            PixelIs(darkTimelineImage,
+                                    0,
+                                    0,
+                                    QColor(QStringLiteral("#101412")));
                     timeline.setViewer(&viewer);
                     const qint64 leftSteeringTick =
                             FindActivityTick(viewer, 'l');
@@ -1142,6 +1156,7 @@ int main(int argc, char **argv) {
                                     viewer.durationMs() /
                                                     viewer.tickDurationMs() +
                                             1 &&
+                            timelineThemePalette &&
                             timelineInputs && naturalScrubDirection &&
                             leftPressDoesNotSnap && dynamicRulerScale &&
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
@@ -1166,6 +1181,8 @@ int main(int argc, char **argv) {
                                 << ", accelerationPainted="
                                 << accelerationPainted
                                 << ", brakePainted=" << brakePainted
+                                << ", timelineThemePalette="
+                                << timelineThemePalette
                                 << ", naturalScrubDirection="
                                 << naturalScrubDirection
                                 << ", leftPressDoesNotSnap="

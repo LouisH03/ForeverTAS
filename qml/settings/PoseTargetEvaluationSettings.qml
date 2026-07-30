@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 ColumnLayout {
     id: root
@@ -32,7 +33,7 @@ ColumnLayout {
             onActivated: index => root.targets.selectTarget(index)
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "addPoseTargetButton"
             text: "+"
             Layout.preferredWidth: 38
@@ -57,7 +58,7 @@ ColumnLayout {
         Layout.fillWidth: true
         spacing: 6
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "duplicatePoseTargetButton"
             Layout.fillWidth: true
             text: qsTr("Duplicate")
@@ -66,7 +67,7 @@ ColumnLayout {
             onClicked: root.targets.duplicateSelected()
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "focusPoseTargetButton"
             Layout.fillWidth: true
             text: qsTr("Focus")
@@ -74,7 +75,7 @@ ColumnLayout {
             onClicked: root.controller.focusSelectedPoseTarget()
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "removePoseTargetButton"
             Layout.fillWidth: true
             text: qsTr("Remove")

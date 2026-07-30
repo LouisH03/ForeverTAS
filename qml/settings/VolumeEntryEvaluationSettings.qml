@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 ColumnLayout {
     id: root
@@ -80,7 +81,7 @@ ColumnLayout {
             }
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             id: addShapeButton
 
             objectName: "addShapeTargetButton"
@@ -99,7 +100,7 @@ ColumnLayout {
             Menu {
                 id: addShapeMenu
 
-                MenuItem {
+                ThemeControls.ThemedMenuItem {
                     text: qsTr("Cuboid")
                     enabled:
                         root.controller.cuboidTargets.count
@@ -115,7 +116,7 @@ ColumnLayout {
                             "volume-entry-time"
                     }
                 }
-                MenuItem {
+                ThemeControls.ThemedMenuItem {
                     text: qsTr("Polygon volume")
                     enabled:
                         root.controller.customVolumeTargets.count
@@ -139,7 +140,7 @@ ColumnLayout {
         Layout.fillWidth: true
         spacing: 6
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "duplicateShapeTargetButton"
             Layout.fillWidth: true
             text: qsTr("Duplicate")
@@ -150,7 +151,7 @@ ColumnLayout {
             onClicked: root.activeModel.duplicateSelected()
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "focusShapeTargetButton"
             Layout.fillWidth: true
             text: qsTr("Focus")
@@ -163,7 +164,7 @@ ColumnLayout {
             }
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "removeShapeTargetButton"
             Layout.fillWidth: true
             text: qsTr("Remove")
@@ -294,7 +295,7 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: 6
 
-            Button {
+            ThemeControls.ThemedButton {
                 objectName: "drawCustomVolumeButton"
                 Layout.fillWidth: true
                 text: root.controller.customVolumeDrawing
@@ -313,7 +314,7 @@ ColumnLayout {
                 }
             }
 
-            Button {
+            ThemeControls.ThemedButton {
                 objectName: "cancelCustomVolumeDrawingButton"
                 visible: root.controller.customVolumeDrawing
                 text: qsTr("Cancel")
@@ -328,7 +329,9 @@ ColumnLayout {
                   ? qsTr("%1 of 3 minimum vertices")
                         .arg(root.selected.vertexCount)
                   : qsTr("%1 vertices").arg(root.selected.vertexCount)
-            color: root.selected.valid ? AppTheme.success : AppTheme.warning
+            color: root.selected.valid
+                   ? ThemeControls.AppTheme.success
+                   : ThemeControls.AppTheme.warning
             font.pixelSize: 11
         }
 
@@ -349,7 +352,7 @@ ColumnLayout {
                 Label {
                     Layout.preferredWidth: 20
                     text: modelData.index + 1
-                    color: AppTheme.textMuted
+                    color: ThemeControls.AppTheme.textMuted
                     horizontalAlignment: Text.AlignHCenter
                 }
                 ScrubNumberField {
@@ -388,7 +391,7 @@ ColumnLayout {
                             "v",
                             value)
                 }
-                ToolButton {
+                ThemeControls.ThemedToolButton {
                     text: "x"
                     enabled: !root.controller.running
                              && !root.controller.customVolumeDrawing
@@ -409,7 +412,7 @@ ColumnLayout {
         text: root.customActive
               ? qsTr("Active custom-volume search target")
               : qsTr("Active cuboid search target")
-        color: AppTheme.success
+        color: ThemeControls.AppTheme.success
         font.pixelSize: 11
         font.weight: Font.Medium
     }

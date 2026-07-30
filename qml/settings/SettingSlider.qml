@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 RowLayout {
     id: root
@@ -42,7 +43,7 @@ RowLayout {
         wrapMode: Text.WordWrap
     }
 
-    Slider {
+    ThemeControls.ThemedSlider {
         id: slider
 
         objectName: root.sliderObjectName

@@ -14,6 +14,7 @@
 #include <QPalette>
 #include <QPointer>
 #include <QQmlApplicationEngine>
+#include <QQmlError>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QSettings>
@@ -225,6 +226,19 @@ bool IsCenteredIcon(QQuickItem *item, qreal expectedSize) {
                      parent->height() * 0.5) < tolerance;
 }
 
+QColor FirstDescendantColor(QObject *root) {
+    if (root == nullptr) {
+        return {};
+    }
+    for (QObject *const object : root->findChildren<QObject *>()) {
+        const QVariant color = object->property("color");
+        if (color.isValid() && color.canConvert<QColor>()) {
+            return color.value<QColor>();
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -245,6 +259,14 @@ int main(int argc, char **argv) {
     forevertas::viewer::RaceViewerController viewer;
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
+    QObject::connect(
+            &engine,
+            &QQmlApplicationEngine::warnings,
+            [](const QList<QQmlError> &warnings) {
+                for (const QQmlError &warning : warnings) {
+                    std::cerr << warning.toString().toStdString() << '\n';
+                }
+            });
     engine.setInitialProperties({
             {QStringLiteral("controller"),
              QVariant::fromValue(static_cast<QObject *>(&controller))},
@@ -299,6 +321,83 @@ int main(int argc, char **argv) {
             root->findChild<QObject *>(QStringLiteral("fillMapLight"));
     QObject *const initialMapEnvironment =
             root->findChild<QObject *>(QStringLiteral("mapEnvironment"));
+    QObject *const initialPlaybackDock =
+            root->findChild<QObject *>(QStringLiteral("playbackDock"));
+    QObject *const initialStartButton =
+            root->findChild<QObject *>(QStringLiteral("startSearchButton"));
+    QObject *const initialJumpStartButton =
+            root->findChild<QObject *>(QStringLiteral("jumpStartButton"));
+    QObject *const initialJumpStartIcon =
+            root->findChild<QObject *>(
+                    QStringLiteral("jumpStartTransportIcon"));
+    QObject *const initialRaceTimeline =
+            root->findChild<QObject *>(QStringLiteral("raceTimeline"));
+    QList<QObject *> themedControls;
+    QStringList unthemedControlTypes;
+    for (QObject *const object : root->findChildren<QObject *>()) {
+        if (object->property("themedControl").toBool()) {
+            themedControls.append(object);
+            continue;
+        }
+        const QByteArray className = object->metaObject()->className();
+        const bool concreteButtonLike =
+                className.contains("Button") ||
+                className.contains("CheckBox") ||
+                className.contains("Switch") ||
+                className.contains("Slider") ||
+                className.contains("ComboBox") ||
+                className.contains("ItemDelegate") ||
+                className.contains("MenuItem");
+        if (concreteButtonLike &&
+            !className.contains("IndicatorButton") &&
+            object->property("pressed").isValid() &&
+            object->property("hovered").isValid()) {
+            unthemedControlTypes.append(
+                    QString::fromUtf8(className) + QLatin1Char(':') +
+                    object->objectName());
+        }
+    }
+    const QColor lightDisabledButton =
+            initialStartButton != nullptr
+            ? initialStartButton
+                      ->property("effectiveBackgroundColor")
+                      .value<QColor>()
+            : QColor();
+    const QColor lightDisabledButtonBorder =
+            initialStartButton != nullptr
+            ? initialStartButton
+                      ->property("effectiveBorderColor")
+                      .value<QColor>()
+            : QColor();
+    const QColor lightSwitchTrack =
+            darkModeToggle != nullptr
+            ? darkModeToggle->property("effectiveTrackColor").value<QColor>()
+            : QColor();
+    const QColor lightPlaybackDock =
+            initialPlaybackDock != nullptr
+            ? initialPlaybackDock->property("color").value<QColor>()
+            : QColor();
+    const QColor lightDisabledTransportIcon =
+            FirstDescendantColor(initialJumpStartIcon);
+    const bool completeControlAudit =
+            themedControls.size() >= 20 &&
+            unthemedControlTypes.isEmpty() &&
+            initialStartButton != nullptr &&
+            !initialStartButton->property("enabled").toBool() &&
+            lightDisabledButton ==
+                    QColor(QStringLiteral("#ecefe9")) &&
+            lightDisabledButtonBorder ==
+                    QColor(QStringLiteral("#cbd1c8")) &&
+            lightSwitchTrack ==
+                    QColor(QStringLiteral("#e1e5df")) &&
+            lightPlaybackDock ==
+                    QColor(QStringLiteral("#edf4f5f2")) &&
+            initialJumpStartButton != nullptr &&
+            !initialJumpStartButton->property("enabled").toBool() &&
+            lightDisabledTransportIcon ==
+                    QColor(QStringLiteral("#92988f")) &&
+            initialRaceTimeline != nullptr &&
+            !initialRaceTimeline->property("darkMode").toBool();
     const QColor lightWindowColor = root->property("color").value<QColor>();
     const QColor lightPanelColor =
             settingsPanel != nullptr
@@ -318,8 +417,71 @@ int main(int argc, char **argv) {
             : QColor();
     const QColor lightWidgetWindowColor =
             application.palette().color(QPalette::Window);
+    const auto exerciseControlStates =
+            [](QQuickItem *item) {
+                if (item == nullptr) {
+                    return false;
+                }
+                QMetaObject::invokeMethod(item, "forceActiveFocus");
+                QCoreApplication::processEvents();
+                const bool focusState =
+                        item->property("activeFocus").toBool() &&
+                        item->property("effectiveBorderColor")
+                                        .value<QColor>() ==
+                                QColor(QStringLiteral("#315f8f"));
+                const QPointF scenePosition = item->mapToScene(
+                        QPointF(item->width() * 0.5,
+                                item->height() * 0.5));
+                QHoverEvent hover(
+                        QEvent::HoverEnter,
+                        scenePosition,
+                        scenePosition,
+                        QPointF(-1, -1));
+                QCoreApplication::sendEvent(item, &hover);
+                QCoreApplication::processEvents();
+                const bool hoverState =
+                        item->property("hovered").toBool() &&
+                        item->property("effectiveTrackColor")
+                                        .value<QColor>() ==
+                                QColor(QStringLiteral("#d9ded9"));
+                const bool downWritable =
+                        item->setProperty("down", true);
+                QCoreApplication::processEvents();
+                const bool pressedState =
+                        item->property("down").toBool() &&
+                        item->property("effectiveTrackColor")
+                                        .value<QColor>() ==
+                                QColor(QStringLiteral("#cbd2cc"));
+                item->setProperty("down", false);
+                QCoreApplication::processEvents();
+                return focusState && hoverState && downWritable &&
+                        pressedState;
+            };
+    const bool interactiveControlStates =
+            exerciseControlStates(
+                    qobject_cast<QQuickItem *>(darkModeToggle));
     controller.setDarkMode(true);
     QCoreApplication::processEvents();
+    const QColor darkDisabledButton =
+            initialStartButton != nullptr
+            ? initialStartButton
+                      ->property("effectiveBackgroundColor")
+                      .value<QColor>()
+            : QColor();
+    const QColor darkDisabledButtonBorder =
+            initialStartButton != nullptr
+            ? initialStartButton
+                      ->property("effectiveBorderColor")
+                      .value<QColor>()
+            : QColor();
+    const QColor darkSwitchTrack =
+            darkModeToggle != nullptr
+            ? darkModeToggle->property("effectiveTrackColor").value<QColor>()
+            : QColor();
+    const QColor darkPlaybackDock =
+            initialPlaybackDock != nullptr
+            ? initialPlaybackDock->property("color").value<QColor>()
+            : QColor();
     const bool darkThemeValid =
             controller.darkMode() && darkModeToggle != nullptr &&
             darkModeToggle->property("checked").toBool() &&
@@ -337,6 +499,16 @@ int main(int argc, char **argv) {
             application.palette().color(
                     QPalette::Disabled, QPalette::Text) ==
                     QColor(QStringLiteral("#737b74")) &&
+            darkDisabledButton ==
+                    QColor(QStringLiteral("#252925")) &&
+            darkDisabledButtonBorder ==
+                    QColor(QStringLiteral("#4a534b")) &&
+            darkSwitchTrack ==
+                    QColor(QStringLiteral("#58c98c")) &&
+            darkPlaybackDock ==
+                    QColor(QStringLiteral("#ed111513")) &&
+            initialRaceTimeline != nullptr &&
+            initialRaceTimeline->property("darkMode").toBool() &&
             initialMainMapLight != nullptr &&
             initialMainMapLight->property("color").value<QColor>() ==
                     mainLightColor &&
@@ -356,8 +528,11 @@ int main(int argc, char **argv) {
             settingsPanel->property("color").value<QColor>() ==
                     lightPanelColor &&
             application.palette().color(QPalette::Window) ==
-                    lightWidgetWindowColor;
-    if (!darkThemeValid || !lightThemeRestored) {
+                    lightWidgetWindowColor &&
+            initialRaceTimeline != nullptr &&
+            !initialRaceTimeline->property("darkMode").toBool();
+    if (!completeControlAudit || !interactiveControlStates ||
+        !darkThemeValid || !lightThemeRestored) {
         std::cerr << "light/dark theme switching changed scene rendering or "
                      "failed to update the complete UI shell"
                   << " (toggle=" << (darkModeToggle != nullptr)
@@ -380,7 +555,28 @@ int main(int argc, char **argv) {
                               : std::string("<missing>"))
                   << ", scene=" << (initialMainMapLight != nullptr)
                   << "/" << (initialFillMapLight != nullptr)
-                  << "/" << (initialMapEnvironment != nullptr) << ")\n";
+                  << "/" << (initialMapEnvironment != nullptr)
+                  << ", themed-controls=" << themedControls.size()
+                  << ", interactive-states="
+                  << interactiveControlStates
+                  << ", unthemed="
+                  << unthemedControlTypes.join(QLatin1Char(','))
+                             .toStdString()
+                  << ", disabled-button="
+                  << lightDisabledButton.name().toStdString()
+                  << "->"
+                  << darkDisabledButton.name().toStdString()
+                  << ", switch="
+                  << lightSwitchTrack.name().toStdString()
+                  << "->"
+                  << darkSwitchTrack.name().toStdString()
+                  << ", playback="
+                  << lightPlaybackDock.name(QColor::HexArgb).toStdString()
+                  << "->"
+                  << darkPlaybackDock.name(QColor::HexArgb).toStdString()
+                  << ", disabled-icon="
+                  << lightDisabledTransportIcon.name().toStdString()
+                  << ")\n";
         return 1;
     }
 

@@ -58,9 +58,13 @@ QColor InterpolateColor(const QColor &start,
             start.alphaF() + (end.alphaF() - start.alphaF()) * progress);
 }
 
-QColor CentisecondTickColor(qreal pixelsPerTick) {
-    const QColor microColor(QStringLiteral("#343b37"));
-    const QColor minorColor(QStringLiteral("#59635d"));
+QColor CentisecondTickColor(qreal pixelsPerTick, bool darkMode) {
+    const QColor microColor(
+            darkMode ? QStringLiteral("#343b37")
+                     : QStringLiteral("#cbd1c8"));
+    const QColor minorColor(
+            darkMode ? QStringLiteral("#59635d")
+                     : QStringLiteral("#aeb8b0"));
     if (pixelsPerTick <= 7.0) {
         QColor color = microColor;
         color.setAlphaF(InterpolationProgress(pixelsPerTick, 5.0, 7.0));
@@ -159,13 +163,31 @@ void RaceTimelineItem::setPixelsPerTick(qreal value) {
     emit pixelsPerTickChanged();
 }
 
+bool RaceTimelineItem::darkMode() const {
+    return darkMode_;
+}
+
+void RaceTimelineItem::setDarkMode(bool value) {
+    if (darkMode_ == value) {
+        return;
+    }
+    darkMode_ = value;
+    update();
+    emit darkModeChanged();
+}
+
 void RaceTimelineItem::paint(QPainter *painter) {
     const QRectF area = boundingRect();
-    painter->fillRect(area, QColor(QStringLiteral("#101412")));
+    painter->fillRect(
+            area,
+            QColor(darkMode_ ? QStringLiteral("#101412")
+                             : QStringLiteral("#f4f5f2")));
 
     if (viewer_ == nullptr || !viewer_->loaded() ||
         viewer_->tickCount() <= 0) {
-        painter->setPen(QColor(QStringLiteral("#778079")));
+        painter->setPen(
+                QColor(darkMode_ ? QStringLiteral("#778079")
+                                 : QStringLiteral("#667064")));
         painter->drawText(
                 area.adjusted(18.0, 18.0, -18.0, -18.0),
                 Qt::AlignCenter | Qt::TextWordWrap,
@@ -189,15 +211,21 @@ void RaceTimelineItem::paint(QPainter *painter) {
 
     painter->fillRect(
             QRectF(0.0, 0.0, rulerWidth, area.height()),
-            QColor(QStringLiteral("#0c100e")));
-    painter->setPen(QColor(QStringLiteral("#2b332f")));
+            QColor(darkMode_ ? QStringLiteral("#0c100e")
+                             : QStringLiteral("#eef2ed")));
+    painter->setPen(
+            QColor(darkMode_ ? QStringLiteral("#2b332f")
+                             : QStringLiteral("#cbd1c8")));
     painter->drawLine(QPointF(rulerRight, 0.0),
                       QPointF(rulerRight, area.height()));
 
     painter->fillRect(
             QRectF(controlLeft, 0.0, controlWidth, area.height()),
-            QColor(QStringLiteral("#171d1a")));
-    painter->setPen(QColor(QStringLiteral("#29312c")));
+            QColor(darkMode_ ? QStringLiteral("#171d1a")
+                             : QStringLiteral("#e1e5df")));
+    painter->setPen(
+            QColor(darkMode_ ? QStringLiteral("#29312c")
+                             : QStringLiteral("#cbd1c8")));
     painter->drawLine(QPointF(controlLeft, 0.0),
                       QPointF(controlLeft, area.height()));
     painter->drawLine(QPointF(controlLeft + brakeWidth, 0.0),
@@ -291,15 +319,20 @@ void RaceTimelineItem::paint(QPainter *painter) {
     const qint64 lastScaleTick = std::min<qint64>(
             viewer_->tickCount(), lastVisible + 1);
 
-    QPen majorTickPen(QColor(QStringLiteral("#9aa69e")));
+    QPen majorTickPen(
+            QColor(darkMode_ ? QStringLiteral("#9aa69e")
+                             : QStringLiteral("#667064")));
     majorTickPen.setCosmetic(true);
     majorTickPen.setWidthF(1.0);
-    QPen minorTickPen(QColor(QStringLiteral("#59635d")));
+    QPen minorTickPen(
+            QColor(darkMode_ ? QStringLiteral("#59635d")
+                             : QStringLiteral("#aeb8b0")));
     minorTickPen.setCosmetic(true);
     minorTickPen.setWidthF(1.0);
     const qreal centisecondTickLength =
             CentisecondTickLength(pixelsPerTick_);
-    QPen centisecondTickPen(CentisecondTickColor(pixelsPerTick_));
+    QPen centisecondTickPen(
+            CentisecondTickColor(pixelsPerTick_, darkMode_));
     centisecondTickPen.setCosmetic(true);
     centisecondTickPen.setWidthF(1.0);
 
@@ -335,7 +368,9 @@ void RaceTimelineItem::paint(QPainter *painter) {
                           QPointF(rulerRight, alignedY));
 
         if (majorTick) {
-            painter->setPen(QColor(QStringLiteral("#aeb8b0")));
+            painter->setPen(
+                    QColor(darkMode_ ? QStringLiteral("#aeb8b0")
+                                     : QStringLiteral("#667064")));
             painter->drawText(
                     QRectF(2.0, alignedY - 8.0, 34.0, 16.0),
                     Qt::AlignRight | Qt::AlignVCenter,
@@ -343,10 +378,13 @@ void RaceTimelineItem::paint(QPainter *painter) {
         }
     }
 
-    painter->setPen(QPen(QColor(QStringLiteral("#f3c85b")), 2.0));
+    const QColor currentTickColor(
+            darkMode_ ? QStringLiteral("#f3c85b")
+                      : QStringLiteral("#9a5b28"));
+    painter->setPen(QPen(currentTickColor, 2.0));
     painter->drawLine(QPointF(0.0, centerY),
                       QPointF(area.width(), centerY));
-    painter->setBrush(QColor(QStringLiteral("#f3c85b")));
+    painter->setBrush(currentTickColor);
     painter->setPen(Qt::NoPen);
     painter->drawPolygon(QPolygonF{
             QPointF(area.width() - 1.0, centerY),

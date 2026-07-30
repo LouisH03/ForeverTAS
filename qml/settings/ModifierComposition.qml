@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 ColumnLayout {
     id: root
@@ -116,9 +117,9 @@ ColumnLayout {
             Layout.fillWidth: true
             implicitHeight: passLayout.implicitHeight + 16
             radius: 8
-            color: AppTheme.surfaceAlternate
+            color: ThemeControls.AppTheme.surfaceAlternate
             border.width: 1
-            border.color: AppTheme.border
+            border.color: ThemeControls.AppTheme.border
 
             ColumnLayout {
                 id: passLayout
@@ -140,7 +141,7 @@ ColumnLayout {
                         font.weight: Font.DemiBold
                     }
 
-                    ToolButton {
+                    ThemeControls.ThemedToolButton {
                         id: passUpButton
                         objectName: "modifierPassUp" + index
                         text: "↑"
@@ -148,7 +149,7 @@ ColumnLayout {
                         onClicked:
                             root.controller.moveModifierPass(index, index - 1)
                     }
-                    ToolButton {
+                    ThemeControls.ThemedToolButton {
                         id: passDownButton
                         objectName: "modifierPassDown" + index
                         text: "↓"
@@ -157,7 +158,7 @@ ColumnLayout {
                         onClicked:
                             root.controller.moveModifierPass(index, index + 1)
                     }
-                    ToolButton {
+                    ThemeControls.ThemedToolButton {
                         id: passRemoveButton
                         objectName: "modifierPassRemove" + index
                         text: "×"
@@ -227,7 +228,7 @@ ColumnLayout {
             enabled: !root.controller.running
         }
 
-        Button {
+        ThemeControls.ThemedButton {
             objectName: "addModifierButton"
             text: qsTr("Add pass")
             enabled: addModifierCombo.currentIndex >= 0

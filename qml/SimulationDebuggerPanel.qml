@@ -134,7 +134,7 @@ Item {
                 }
             }
 
-            Button {
+            ThemedButton {
                 objectName: "restartLiveSimulationButton"
                 text: qsTr("Restart")
                 enabled: root.viewer.loaded && !root.viewer.loading
@@ -147,7 +147,7 @@ Item {
                 ToolTip.text: qsTr("Restart the reference engine from tick zero")
             }
 
-            Button {
+            ThemedButton {
                 objectName: "resetLiveEditsButton"
                 text: qsTr("Reset")
                 enabled: root.debuggerModel.hasEdits || root.hasDraftEdit
@@ -173,7 +173,7 @@ Item {
             Layout.fillWidth: true
             spacing: 6
 
-            Button {
+            ThemedButton {
                 objectName: "debuggerSubstepForwardButton"
                 Layout.fillWidth: true
                 text: qsTr("Substep Forward")
@@ -186,7 +186,7 @@ Item {
                 ToolTip.text: qsTr("Advance one native execution substep")
             }
 
-            Button {
+            ThemedButton {
                 objectName: "debuggerSourceLineStepButton"
                 Layout.fillWidth: true
                 text: qsTr("Source Line Step")
@@ -199,7 +199,7 @@ Item {
                 ToolTip.text: qsTr("Execute through the current source line")
             }
 
-            Button {
+            ThemedButton {
                 objectName: "debuggerTickStepButton"
                 Layout.fillWidth: true
                 text: qsTr("Tick Step")
@@ -232,7 +232,7 @@ Item {
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar {}
 
-                delegate: ItemDelegate {
+                delegate: ThemedItemDelegate {
                     id: sourceRow
 
                     required property var modelData
@@ -551,7 +551,7 @@ Item {
             Repeater {
                 model: root.debuggerModel.pinnedVariables
 
-                delegate: Button {
+                delegate: ThemedButton {
                     id: pinnedButton
 
                     required property var modelData
@@ -569,7 +569,7 @@ Item {
                     contentItem: Label {
                         text: pinnedButton.text
                         font: pinnedButton.font
-                        color: pinnedButton.palette.buttonText
+                        color: pinnedButton.effectiveTextColor
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
@@ -614,7 +614,7 @@ Item {
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar {}
 
-                delegate: ItemDelegate {
+                delegate: ThemedItemDelegate {
                     id: variableButton
 
                     required property var modelData

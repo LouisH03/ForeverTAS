@@ -334,6 +334,14 @@ qt_add_qml_module(forevertas
         qml/AppTheme.qml
         qml/Main.qml
         qml/SimulationDebuggerPanel.qml
+        qml/ThemedButton.qml
+        qml/ThemedCheckBox.qml
+        qml/ThemedItemDelegate.qml
+        qml/ThemedMenuItem.qml
+        qml/ThemedSlider.qml
+        qml/ThemedSwitch.qml
+        qml/ThemedTabButton.qml
+        qml/ThemedToolButton.qml
         qml/WhiteboardOverlay.qml
         qml/WhiteboardPlanes.qml
         qml/settings/AlgorithmSelector.qml

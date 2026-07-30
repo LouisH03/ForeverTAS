@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 Rectangle {
     id: root
@@ -12,9 +13,9 @@ Rectangle {
     Layout.fillWidth: true
     implicitHeight: sectionLayout.implicitHeight + 28
     radius: 10
-    color: AppTheme.panelAlternate
+    color: ThemeControls.AppTheme.panelAlternate
     border.width: 1
-    border.color: AppTheme.border
+    border.color: ThemeControls.AppTheme.border
 
     ColumnLayout {
         id: sectionLayout
@@ -25,7 +26,7 @@ Rectangle {
         Label {
             Layout.fillWidth: true
             text: root.title
-            color: AppTheme.text
+            color: ThemeControls.AppTheme.text
             font.pixelSize: 16
             font.weight: Font.DemiBold
         }
@@ -34,7 +35,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: text.length > 0
             text: root.description
-            color: AppTheme.textMuted
+            color: ThemeControls.AppTheme.textMuted
             font.pixelSize: 12
             wrapMode: Text.WordWrap
         }
