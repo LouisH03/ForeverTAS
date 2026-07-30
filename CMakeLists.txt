@@ -74,6 +74,8 @@ add_library(forevertas_core STATIC
     src/replay_file_io.cpp
     src/replay_file_io.h
     src/evaluators/iteration_evaluator.h
+    src/evaluators/custom_volume_entry_evaluator.cpp
+    src/evaluators/custom_volume_entry_evaluator.h
     src/evaluators/evaluator_utils.h
     src/evaluators/precise_finish_time_evaluator.cpp
     src/evaluators/precise_finish_time_evaluator.h
@@ -129,6 +131,8 @@ target_link_libraries(forevertas_core PUBLIC
 add_library(forevertas_gui STATIC
     src/viewer/gpu_ray_tracing_view.cpp
     src/viewer/gpu_ray_tracing_view.h
+    src/viewer/custom_volume_geometry.cpp
+    src/viewer/custom_volume_geometry.h
     src/viewer/material_classifier.cpp
     src/viewer/material_classifier.h
     src/viewer/race_geometry.cpp
@@ -145,6 +149,8 @@ add_library(forevertas_gui STATIC
     src/app/search_configuration_model.h
     src/app/cuboid_target_model.cpp
     src/app/cuboid_target_model.h
+    src/app/custom_volume_target_model.cpp
+    src/app/custom_volume_target_model.h
     src/app/search_completion.h
     src/app/search_controller.cpp
     src/app/search_controller.h

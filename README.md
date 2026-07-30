@@ -94,6 +94,13 @@ duplicate, remove, rename, and directly edit every cuboid or focus the viewer
 camera on it. Every cuboid is visible in both viewer renderers, and the selected
 one exposes color-coded 3D axis bars for movement plus endpoint handles for
 resizing.
+Custom polygon volumes share the same shape-target menu. A target stores a
+drawing plane, editable 2D vertices, and an independent extrusion depth. Users
+can select an axis plane in the viewer, redraw the polygon directly against
+that plane, drag its vertex and depth handles, edit the same values in the
+settings list, and focus the camera on the finished prism. The selected custom
+volume is evaluated exactly by the Reference and optimized CPU backends; the UI
+reports that CUDA is unavailable rather than substituting an inexact cuboid.
 Precise finish search ranks the inclusive upper bound of ForeverValidator's
 one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering

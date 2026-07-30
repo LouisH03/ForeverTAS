@@ -397,6 +397,59 @@ bool TestEvaluationTargets() {
     }
 
     {
+        OptionSettings settings =
+                forevertas::FindEvaluationTarget(
+                        forevertas::kCustomVolumeEntryEvaluationId)
+                        ->defaultSettings;
+        auto evaluator = Evaluator(
+                forevertas::kCustomVolumeEntryEvaluationId, &settings);
+        auto session = evaluator->CreateSession();
+        PhysicsSandboxStateView previous;
+        previous.timeMs = 100u;
+        previous.car.position = {-10.0f, 1.0f, 0.0f};
+        PhysicsSandboxStateView current = previous;
+        current.timeMs = 110u;
+        current.car.position = {10.0f, 1.0f, 0.0f};
+        const auto sample = session->Observe(previous, current);
+        okay &= Check(
+                sample && std::abs(sample->timeMs - 103.75) < 1e-9,
+                "custom volume outside-to-outside interpolation was "
+                "incorrect");
+        settings["plane"] = "xy";
+        settings["polygon"] = "-1,-1;1,-1;1,1;-1,1";
+        settings["depth"] = "2";
+        evaluator = Evaluator(
+                forevertas::kCustomVolumeEntryEvaluationId, &settings);
+        session = evaluator->CreateSession();
+        previous.car.position = {0.0f, 0.0f, -1.0f};
+        current.car.position = {0.0f, 0.0f, 3.0f};
+        const auto xySample = session->Observe(previous, current);
+        okay &= Check(
+                xySample && std::abs(xySample->timeMs - 102.5) < 1e-9,
+                "custom XY volume interpolation was incorrect");
+        settings["plane"] = "yz";
+        evaluator = Evaluator(
+                forevertas::kCustomVolumeEntryEvaluationId, &settings);
+        session = evaluator->CreateSession();
+        previous.car.position = {-1.0f, 0.0f, 0.0f};
+        current.car.position = {3.0f, 0.0f, 0.0f};
+        const auto yzSample = session->Observe(previous, current);
+        okay &= Check(
+                yzSample && std::abs(yzSample->timeMs - 102.5) < 1e-9,
+                "custom YZ volume interpolation was incorrect");
+        settings["polygon"] = "0,0;4,4;0,4;4,0";
+        const auto *const registration = forevertas::FindEvaluationTarget(
+                forevertas::kCustomVolumeEntryEvaluationId);
+        okay &= Check(
+                registration->validateSettings(settings, 10u).has_value(),
+                "self-intersecting custom polygon was accepted");
+        settings["polygon"] = "0,0;10000001,0;0,1";
+        okay &= Check(
+                registration->validateSettings(settings, 10u).has_value(),
+                "out-of-range custom polygon was accepted");
+    }
+
+    {
         auto evaluator = Evaluator(
                 forevertas::kPreciseFinishTimeEvaluationId);
         auto session = evaluator->CreateSession();
@@ -870,7 +923,7 @@ bool TestRegistries() {
     }
     okay &= Check(forevertas::ModifierRegistry().size() == 5u,
                   "not all required modifiers are registered");
-    okay &= Check(forevertas::EvaluationTargetRegistry().size() == 6u,
+    okay &= Check(forevertas::EvaluationTargetRegistry().size() == 7u,
                   "not all required evaluation targets are registered");
     return okay;
 }
@@ -1141,6 +1194,20 @@ bool TestCudaConfigurationCoverage() {
     }
     for (const auto &registration :
          forevertas::EvaluationTargetRegistry()) {
+        if (registration.id ==
+            forevertas::kCustomVolumeEntryEvaluationId) {
+            try {
+                static_cast<void>(forevertas::BuildCudaEvaluator(
+                        {registration.id, registration.defaultSettings},
+                        10u));
+                okay &= Check(
+                        false,
+                        "custom volume unexpectedly used an inexact CUDA "
+                        "evaluator");
+            } catch (const std::invalid_argument &) {
+            }
+            continue;
+        }
         try {
             const auto evaluator = forevertas::BuildCudaEvaluator(
                     {registration.id,

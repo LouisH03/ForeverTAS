@@ -2,6 +2,7 @@
 
 #include "input_timeline_time.h"
 #include "evaluators/precise_finish_time_evaluator.h"
+#include "evaluators/custom_volume_entry_evaluator.h"
 #include "evaluators/point_target_evaluator.h"
 #include "evaluators/pose_target_evaluator.h"
 #include "evaluators/stunt_points_evaluator.h"
@@ -230,6 +231,14 @@ const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
              {},
              &ValidateVolumeEntryOptionSettings,
              &CreateVolumeEntryEvaluator},
+            {kCustomVolumeEntryEvaluationId,
+             {},
+             "Custom volume entry time",
+             "VolumeEntryEvaluationSettings.qml",
+             DefaultCustomVolumeEntryOptionSettings(),
+             {},
+             &ValidateCustomVolumeEntryOptionSettings,
+             &CreateCustomVolumeEntryEvaluator},
             {kPointTargetEvaluationId,
              {},
              "Point target",

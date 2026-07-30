@@ -67,7 +67,9 @@ QString BackendId(PhysicsBackend backend) {
 SearchController::SearchController(QObject *parent)
     : QObject(parent),
       cuboidTargets_(configuration_.evaluationTargetSettingsFor(
-              QString::fromLatin1(kVolumeEntryEvaluationId))) {
+              QString::fromLatin1(kVolumeEntryEvaluationId))),
+      customVolumeTargets_(configuration_.evaluationTargetSettingsFor(
+              QString::fromLatin1(kCustomVolumeEntryEvaluationId))) {
     initialize(nullptr);
 }
 
@@ -75,7 +77,9 @@ SearchController::SearchController(const QStringList &packsSearchPatterns,
                                    QObject *parent)
     : QObject(parent),
       cuboidTargets_(configuration_.evaluationTargetSettingsFor(
-              QString::fromLatin1(kVolumeEntryEvaluationId))) {
+              QString::fromLatin1(kVolumeEntryEvaluationId))),
+      customVolumeTargets_(configuration_.evaluationTargetSettingsFor(
+              QString::fromLatin1(kCustomVolumeEntryEvaluationId))) {
     initialize(&packsSearchPatterns);
 }
 
@@ -86,6 +90,14 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
             &CuboidTargetModel::selectedTargetChanged,
             this,
             &SearchController::synchronizeSelectedCuboid);
+    connect(&customVolumeTargets_,
+            &CustomVolumeTargetModel::selectedTargetChanged,
+            this,
+            &SearchController::synchronizeSelectedCustomVolume);
+    connect(&customVolumeTargets_,
+            &CustomVolumeTargetModel::drawingChanged,
+            this,
+            &SearchController::customVolumeDrawingChanged);
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
     baseInputScript_ = StoredValue(kBaseInputScriptKey, {});
@@ -123,6 +135,7 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     }
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
     synchronizeSelectedCuboid();
+    synchronizeSelectedCustomVolume();
     refreshValidation();
 }
 
@@ -264,6 +277,14 @@ CuboidTargetModel *SearchController::cuboidTargets() {
     return &cuboidTargets_;
 }
 
+CustomVolumeTargetModel *SearchController::customVolumeTargets() {
+    return &customVolumeTargets_;
+}
+
+bool SearchController::customVolumeDrawing() const {
+    return customVolumeTargets_.drawing();
+}
+
 bool SearchController::canStart() const {
     return valid_ && !running_ && !extractingReplayInputs_;
 }
@@ -399,6 +420,7 @@ void SearchController::setEvaluationTargetId(const QString &value) {
     emit evaluationTargetIdChanged();
     emit evaluationTargetSettingsChanged();
     synchronizeSelectedCuboid();
+    synchronizeSelectedCustomVolume();
     refreshValidation();
 }
 
@@ -447,6 +469,9 @@ void SearchController::setEvaluationTargetSetting(const QString &key,
     if (configuration_.evaluationTargetId() ==
         QString::fromLatin1(kVolumeEntryEvaluationId)) {
         synchronizeCuboidSetting(key, value);
+    } else if (configuration_.evaluationTargetId() ==
+               QString::fromLatin1(kCustomVolumeEntryEvaluationId)) {
+        synchronizeCustomVolumeSetting(key, value);
     }
     emit evaluationTargetSettingsChanged();
     refreshValidation();
@@ -499,6 +524,70 @@ void SearchController::focusSelectedCuboid() {
     }
     emit cuboidFocusRequested(
             center.value<QVector3D>(), size.value<QVector3D>());
+}
+
+void SearchController::synchronizeSelectedCustomVolume() {
+    if (configuration_.evaluationTargetId() !=
+        QString::fromLatin1(kCustomVolumeEntryEvaluationId)) {
+        return;
+    }
+    const QVariantMap target = customVolumeTargets_.selectedTarget();
+    bool changed = false;
+    constexpr const char *keys[] = {
+            "plane", "originX", "originY", "originZ", "depth", "polygon"};
+    for (const char *const key : keys) {
+        const QString qKey = QString::fromLatin1(key);
+        changed |= configuration_.setEvaluationTargetSetting(
+                qKey, target.value(qKey).toString());
+    }
+    if (changed) {
+        emit evaluationTargetSettingsChanged();
+        refreshValidation();
+    }
+}
+
+void SearchController::synchronizeCustomVolumeSetting(
+        const QString &key,
+        const QString &value) {
+    const int index = customVolumeTargets_.selectedIndex();
+    if (key == QStringLiteral("plane")) {
+        customVolumeTargets_.setPlane(index, value);
+    } else if (key == QStringLiteral("originX")) {
+        customVolumeTargets_.setOriginComponent(
+                index, QStringLiteral("x"), value);
+    } else if (key == QStringLiteral("originY")) {
+        customVolumeTargets_.setOriginComponent(
+                index, QStringLiteral("y"), value);
+    } else if (key == QStringLiteral("originZ")) {
+        customVolumeTargets_.setOriginComponent(
+                index, QStringLiteral("z"), value);
+    } else if (key == QStringLiteral("depth")) {
+        customVolumeTargets_.setDepth(index, value);
+    } else if (key == QStringLiteral("polygon")) {
+        customVolumeTargets_.setPolygon(index, value);
+    }
+}
+
+void SearchController::focusSelectedCustomVolume() {
+    const QVariantMap target = customVolumeTargets_.selectedTarget();
+    emit customVolumeFocusRequested(
+            target.value(QStringLiteral("focusCenter")).value<QVector3D>(),
+            target.value(QStringLiteral("focusSize")).value<QVector3D>());
+}
+
+void SearchController::beginCustomVolumeDrawing() {
+    if (configuration_.evaluationTargetId() ==
+        QString::fromLatin1(kCustomVolumeEntryEvaluationId)) {
+        customVolumeTargets_.beginDrawing();
+    }
+}
+
+void SearchController::finishCustomVolumeDrawing() {
+    customVolumeTargets_.finishDrawing();
+}
+
+void SearchController::cancelCustomVolumeDrawing() {
+    customVolumeTargets_.cancelDrawing();
 }
 
 void SearchController::setPacksDirectory(const QString &value) {
@@ -796,6 +885,14 @@ SearchController::ValidationResult SearchController::validate() const {
     }
 #if FOREVERVALIDATOR_HAS_CUDA
     if (simulationBackend_ == PhysicsBackend::Cuda) {
+        if (configuration.evaluationTarget.id ==
+            kCustomVolumeEntryEvaluationId) {
+            return {
+                    {},
+                    QStringLiteral(
+                            "Custom volume targets currently require a CPU "
+                            "physics backend.")};
+        }
         calibrateCudaParallelSampleCount =
                 cudaCalibrationEnabled_;
         if (!calibrateCudaParallelSampleCount) {
@@ -853,6 +950,7 @@ void SearchController::setRunning(bool value) {
     const bool oldCanStart = canStart();
     running_ = value;
     cuboidTargets_.setEditingEnabled(!value);
+    customVolumeTargets_.setEditingEnabled(!value);
     emit runningChanged();
     emit replayInputStateChanged();
     if (oldCanStart != canStart()) {

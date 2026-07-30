@@ -858,7 +858,7 @@ int main(int argc, char **argv) {
                                             .toInt() == 5 &&
                             addModifierCombo->property("count").toInt() == 5 &&
                             evaluationTargetCombo->property("count").toInt() ==
-                                    6 &&
+                                    7 &&
                             searchAlgorithmCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("basic-brute-force") &&
@@ -1103,7 +1103,7 @@ int main(int argc, char **argv) {
                     bool everyOwnedPanelLoaded =
                             evaluationTargetSelector != nullptr &&
                             modifierComposition != nullptr;
-                    const std::array<std::pair<const char *, const char *>, 6>
+                    const std::array<std::pair<const char *, const char *>, 7>
                             evaluationPanels{{
                                     {"velocity",
                                      "velocityEvaluationSettings"},
@@ -1112,6 +1112,8 @@ int main(int argc, char **argv) {
                                     {"precise-finish-time",
                                      "preciseFinishTimeEvaluationSettings"},
                                     {"volume-entry-time",
+                                     "volumeEntryEvaluationSettings"},
+                                    {"custom-volume-entry-time",
                                      "volumeEntryEvaluationSettings"},
                                     {"point-target",
                                      "pointTargetEvaluationSettings"},
@@ -1258,7 +1260,7 @@ int main(int argc, char **argv) {
                                     1.0;
 
                     dropdownStateUpdates &=
-                            activateCombo(evaluationTargetCombo, 4);
+                            activateCombo(evaluationTargetCombo, 5);
                     QCoreApplication::processEvents();
                     QCoreApplication::processEvents();
                     dropdownStateUpdates &=
@@ -1271,7 +1273,7 @@ int main(int argc, char **argv) {
                                             "pointTargetEvaluationSettings");
 
                     dropdownStateUpdates &=
-                            activateCombo(evaluationTargetCombo, 5);
+                            activateCombo(evaluationTargetCombo, 6);
                     QCoreApplication::processEvents();
                     QObject *const rotationWeightSlider =
                             root->findChild<QObject *>(
@@ -1294,27 +1296,30 @@ int main(int argc, char **argv) {
                     QObject *const cuboidSelector =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
-                                    QStringLiteral("cuboidTargetSelector"));
+                                    QStringLiteral("shapeTargetSelector"));
                     QObject *const addCuboidButton =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
-                                    QStringLiteral("addCuboidButton"));
+                                    QStringLiteral("addShapeTargetButton"));
                     QObject *const duplicateCuboidButton =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
-                                    QStringLiteral("duplicateCuboidButton"));
+                                    QStringLiteral(
+                                            "duplicateShapeTargetButton"));
                     QObject *const focusCuboidButton =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
-                                    QStringLiteral("focusCuboidButton"));
+                                    QStringLiteral(
+                                            "focusShapeTargetButton"));
                     QObject *const removeCuboidButton =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
-                                    QStringLiteral("removeCuboidButton"));
+                                    QStringLiteral(
+                                            "removeShapeTargetButton"));
                     QObject *const cuboidNameField =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
-                                    QStringLiteral("cuboidNameField"));
+                                    QStringLiteral("shapeTargetNameField"));
                     const int placedIndex =
                             controller.cuboidTargets()->addTarget(
                                     14.0, 3.0, -2.0);
@@ -1338,7 +1343,7 @@ int main(int argc, char **argv) {
                             removeCuboidButton != nullptr &&
                             cuboidNameField != nullptr &&
                             placedIndex == 1 &&
-                            cuboidSelector->property("count").toInt() == 2 &&
+                            cuboidSelector->property("count").toInt() == 3 &&
                             cuboidSelector->property("currentIndex").toInt() ==
                                     1 &&
                             initialCuboidModels >= 4 &&
@@ -1416,6 +1421,122 @@ int main(int argc, char **argv) {
                                 << "/" << initialCuboidSize << '\n';
                     }
                     dropdownStateUpdates &= cuboidEditorValid;
+
+                    dropdownStateUpdates &=
+                            activateCombo(evaluationTargetCombo, 4);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QObject *const customEditor =
+                            evaluationTargetSelector
+                                    ->property("settingsItem")
+                                    .value<QObject *>();
+                    QObject *const customPlaneSetting =
+                            customEditor == nullptr ? nullptr
+                            : customEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "customVolumePlaneSetting"));
+                    QObject *const customDepthField =
+                            customEditor == nullptr ? nullptr
+                            : customEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "customVolumeDepthField"));
+                    QObject *const drawCustomVolumeButton =
+                            customEditor == nullptr ? nullptr
+                            : customEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "drawCustomVolumeButton"));
+                    QObject *const cancelCustomDrawingButton =
+                            customEditor == nullptr ? nullptr
+                            : customEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "cancelCustomVolumeDrawingButton"));
+                    const int initialCustomModels =
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "customVolumeTargetModel"))
+                                    .size();
+                    controller.customVolumeTargets()->setDepth(
+                            0, QStringLiteral("6.5"));
+                    controller.beginCustomVolumeDrawing();
+                    QVariant projectedPlanePoint;
+                    QVariant secondProjectedPlanePoint;
+                    bool customVolumeEditorValid =
+                            customEditor != nullptr &&
+                            customPlaneSetting != nullptr &&
+                            customDepthField != nullptr &&
+                            drawCustomVolumeButton != nullptr &&
+                            cancelCustomDrawingButton != nullptr &&
+                            controller.customVolumeDrawing() &&
+                            initialCustomModels >= 2 &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "customPlanePoint",
+                                    Q_RETURN_ARG(
+                                            QVariant,
+                                            projectedPlanePoint),
+                                    Q_ARG(QVariant, QVariant(400.0)),
+                                    Q_ARG(QVariant, QVariant(300.0))) &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "customPlanePoint",
+                                    Q_RETURN_ARG(
+                                            QVariant,
+                                            secondProjectedPlanePoint),
+                                    Q_ARG(QVariant, QVariant(600.0)),
+                                    Q_ARG(QVariant, QVariant(450.0))) &&
+                            projectedPlanePoint.canConvert<QVector3D>() &&
+                            secondProjectedPlanePoint.canConvert<QVector3D>() &&
+                            projectedPlanePoint.value<QVector3D>()
+                                            .distanceToPoint(
+                                                    secondProjectedPlanePoint
+                                                            .value<QVector3D>()) >
+                                    0.01F &&
+                            controller.customVolumeTargets()->addVertexWorld(
+                                    -2.0, 0.0, -2.0) &&
+                            controller.customVolumeTargets()->addVertexWorld(
+                                    2.0, 0.0, -2.0) &&
+                            controller.customVolumeTargets()->addVertexWorld(
+                                    0.0, 0.0, 2.0);
+                    controller.finishCustomVolumeDrawing();
+                    controller.focusSelectedCustomVolume();
+                    QCoreApplication::processEvents();
+                    if (projectedPlanePoint.canConvert<QVector3D>() &&
+                        secondProjectedPlanePoint.canConvert<QVector3D>() &&
+                        projectedPlanePoint.value<QVector3D>()
+                                        .distanceToPoint(
+                                                secondProjectedPlanePoint
+                                                        .value<QVector3D>()) <=
+                                0.01F) {
+                        const QVector3D first =
+                                projectedPlanePoint.value<QVector3D>();
+                        const QVector3D second =
+                                secondProjectedPlanePoint.value<QVector3D>();
+                        std::cerr
+                                << "custom plane projection collapsed: "
+                                << first.x() << "," << first.y() << ","
+                                << first.z() << " / " << second.x() << ","
+                                << second.y() << "," << second.z() << '\n';
+                    }
+                    customVolumeEditorValid &=
+                            !controller.customVolumeDrawing() &&
+                            controller.evaluationTargetSettings()
+                                            .value(QStringLiteral("depth"))
+                                            .toString() ==
+                                    QStringLiteral("6.5") &&
+                            controller.evaluationTargetSettings()
+                                            .value(QStringLiteral("polygon"))
+                                            .toString() ==
+                                    QStringLiteral("-2,-2;2,-2;0,2") &&
+                            viewport->property("cuboidFocused").toBool() &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "customVolumePlaneChoiceXZ"))
+                                            .size() >= 2 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "customVolumeDepthHandle"))
+                                            .size() >= 2;
+                    dropdownStateUpdates &= customVolumeEditorValid;
 
                     dropdownStateUpdates &=
                             activateCombo(evaluationTargetCombo, 0);

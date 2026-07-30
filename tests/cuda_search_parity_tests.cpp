@@ -538,6 +538,10 @@ int main(int argc, char **argv) {
                 true);
         for (const auto &registration :
              forevertas::EvaluationTargetRegistry()) {
+            if (registration.id ==
+                forevertas::kCustomVolumeEntryEvaluationId) {
+                continue;
+            }
             OptionConfiguration configured{
                     registration.id,
                     registration.defaultSettings};

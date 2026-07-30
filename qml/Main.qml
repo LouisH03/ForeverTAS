@@ -406,6 +406,9 @@ ApplicationWindow {
                     property string cuboidDragAxis: ""
                     property real cuboidDragX: 0
                     property real cuboidDragY: 0
+                    property bool customVertexDragActive: false
+                    property int customVertexDragIndex: -1
+                    property bool customDepthDragActive: false
 
                     function focusCuboid(center, size) {
                         cuboidFocusCenter = center
@@ -472,6 +475,91 @@ ApplicationWindow {
                         cuboidDragAxis = ""
                     }
 
+                    function customPlanePoint(x, y) {
+                        const target =
+                            window.controller.customVolumeTargets.selectedTarget
+                        const view = window.rayTracingEnabled
+                                   ? rayTracingTrajectoryOverlay
+                                   : rasterMapView
+                        const nearPoint = view.mapTo3DScene(
+                            Qt.vector3d(x, y, 1))
+                        const farPoint = view.mapTo3DScene(
+                            Qt.vector3d(x, y, 2))
+                        const direction = farPoint.minus(nearPoint)
+                        let numerator = 0
+                        let denominator = 0
+                        if (target.plane === "xy") {
+                            numerator = target.origin.z - nearPoint.z
+                            denominator = direction.z
+                        } else if (target.plane === "yz") {
+                            numerator = target.origin.x - nearPoint.x
+                            denominator = direction.x
+                        } else {
+                            numerator = target.origin.y - nearPoint.y
+                            denominator = direction.y
+                        }
+                        if (Math.abs(denominator) < 0.000001)
+                            return target.origin
+                        const amount = numerator / denominator
+                        return nearPoint.plus(direction.times(amount))
+                    }
+
+                    function beginCustomInteraction(kind, index, x, y) {
+                        if (window.controller.running
+                            || window.controller.customVolumeDrawing)
+                            return false
+                        cuboidDragX = x
+                        cuboidDragY = y
+                        customVertexDragIndex = index
+                        customVertexDragActive = kind === "custom-vertex"
+                        customDepthDragActive = kind === "custom-depth"
+                        return customVertexDragActive
+                               || customDepthDragActive
+                    }
+
+                    function updateCustomInteraction(x, y) {
+                        if (customVertexDragActive) {
+                            const point = customPlanePoint(x, y)
+                            window.controller.customVolumeTargets.setVertexWorld(
+                                customVertexDragIndex,
+                                point.x,
+                                point.y,
+                                point.z)
+                        } else if (customDepthDragActive) {
+                            const target =
+                                window.controller.customVolumeTargets.selectedTarget
+                            const dx = x - cuboidDragX
+                            const dy = y - cuboidDragY
+                            const scale = orbitDistance
+                                          / Math.max(200,
+                                                     Math.min(width, height))
+                            const yaw = orbitYaw * Math.PI / 180
+                            const pitch = orbitPitch * Math.PI / 180
+                            let amount = 0
+                            if (target.plane === "xy") {
+                                amount = (-dx * Math.sin(yaw)
+                                          - dy * Math.cos(yaw)
+                                            * Math.sin(pitch)) * scale
+                            } else if (target.plane === "yz") {
+                                amount = (dx * Math.cos(yaw)
+                                          - dy * Math.sin(yaw)
+                                            * Math.sin(pitch)) * scale
+                            } else {
+                                amount = -dy * Math.cos(pitch) * scale
+                            }
+                            window.controller.customVolumeTargets
+                                  .resizeDepthSelected(amount)
+                        }
+                        cuboidDragX = x
+                        cuboidDragY = y
+                    }
+
+                    function endCustomInteraction() {
+                        customVertexDragActive = false
+                        customDepthDragActive = false
+                        customVertexDragIndex = -1
+                    }
+
                     component CuboidEditorScene: Node {
                         id: cuboidScene
                         property bool interactive: false
@@ -489,6 +577,10 @@ ApplicationWindow {
                                     modelData.size
                                 readonly property bool targetSelected:
                                     modelData.selected
+                                readonly property bool targetActive:
+                                    targetSelected
+                                    && window.controller.evaluationTargetId
+                                       === "volume-entry-time"
                                 position: modelData.center
 
                                 Model {
@@ -508,17 +600,17 @@ ApplicationWindow {
                                     materials: DefaultMaterial {
                                         lighting: DefaultMaterial.NoLighting
                                         diffuseColor:
-                                            cuboidRoot.targetSelected
+                                            cuboidRoot.targetActive
                                             ? "#35d978" : "#55a7d8"
                                         opacity:
-                                            cuboidRoot.targetSelected
+                                            cuboidRoot.targetActive
                                             ? 0.27 : 0.13
                                         cullMode: Material.NoCulling
                                     }
                                 }
 
                                 Node {
-                                    visible: cuboidRoot.targetSelected
+                                    visible: cuboidRoot.targetActive
                                              && !window.controller.running
                                     readonly property real barLength:
                                         Math.max(1.6,
@@ -653,11 +745,239 @@ ApplicationWindow {
                         }
                     }
 
+                    component CustomVolumeEditorScene: Node {
+                        id: customVolumeScene
+                        property bool interactive: false
+
+                        Repeater3D {
+                            model:
+                                window.controller.customVolumeTargets.targets
+
+                            delegate: Node {
+                                id: customVolumeRoot
+
+                                required property int index
+                                required property var modelData
+                                readonly property int targetIndex: index
+                                readonly property bool targetSelected:
+                                    modelData.selected
+                                readonly property bool targetActive:
+                                    targetSelected
+                                    && window.controller.evaluationTargetId
+                                       === "custom-volume-entry-time"
+
+                                Model {
+                                    objectName: "customVolumeTargetModel"
+                                    property int targetIndex:
+                                        customVolumeRoot.targetIndex
+                                    property string editorKind:
+                                        "custom-select"
+                                    property int vertexIndex: -1
+                                    visible: window.viewer.loaded
+                                    geometry: customVolumeRoot.modelData.geometry
+                                    pickable: customVolumeScene.interactive
+                                    castsShadows: false
+                                    receivesShadows: false
+                                    materials: DefaultMaterial {
+                                        lighting: DefaultMaterial.NoLighting
+                                        diffuseColor:
+                                            customVolumeRoot.targetActive
+                                            ? "#f2aa45" : "#ca7ccc"
+                                        opacity:
+                                            customVolumeRoot.targetActive
+                                            ? 0.3 : 0.14
+                                        cullMode: Material.NoCulling
+                                    }
+                                }
+
+                                Model {
+                                    objectName: "customVolumeDrawingPlane"
+                                    visible:
+                                        window.viewer.loaded
+                                        && customVolumeRoot.targetActive
+                                        && window.controller.customVolumeDrawing
+                                    position: customVolumeRoot.modelData.origin
+                                    source: "#Cube"
+                                    scale:
+                                        customVolumeRoot.modelData.plane === "xy"
+                                        ? Qt.vector3d(0.5, 0.5, 0.002)
+                                        : customVolumeRoot.modelData.plane
+                                          === "yz"
+                                          ? Qt.vector3d(0.002, 0.5, 0.5)
+                                          : Qt.vector3d(0.5, 0.002, 0.5)
+                                    materials: DefaultMaterial {
+                                        lighting: DefaultMaterial.NoLighting
+                                        diffuseColor: "#e6b75d"
+                                        opacity: 0.1
+                                        cullMode: Material.NoCulling
+                                    }
+                                }
+
+                                Node {
+                                    visible:
+                                        window.viewer.loaded
+                                        && customVolumeRoot.targetSelected
+                                        && window.controller.evaluationTargetId
+                                           === "custom-volume-entry-time"
+                                        && !window.controller
+                                                  .customVolumeDrawing
+
+                                    Model {
+                                        objectName:
+                                            "customVolumePlaneChoiceXY"
+                                        property int targetIndex:
+                                            customVolumeRoot.targetIndex
+                                        property string editorKind:
+                                            "custom-plane"
+                                        property string planeChoice: "xy"
+                                        property int vertexIndex: -1
+                                        position:
+                                            customVolumeRoot.modelData.origin
+                                            .plus(Qt.vector3d(-6, 3, 0))
+                                        source: "#Cube"
+                                        scale: Qt.vector3d(
+                                            0.04, 0.04, 0.002)
+                                        pickable:
+                                            customVolumeScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#e36d6d"
+                                            opacity: 0.22
+                                        }
+                                    }
+                                    Model {
+                                        objectName:
+                                            "customVolumePlaneChoiceXZ"
+                                        property int targetIndex:
+                                            customVolumeRoot.targetIndex
+                                        property string editorKind:
+                                            "custom-plane"
+                                        property string planeChoice: "xz"
+                                        property int vertexIndex: -1
+                                        position:
+                                            customVolumeRoot.modelData.origin
+                                            .plus(Qt.vector3d(0, 0, 0))
+                                        source: "#Cube"
+                                        scale: Qt.vector3d(
+                                            0.04, 0.002, 0.04)
+                                        pickable:
+                                            customVolumeScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#6ed47b"
+                                            opacity: 0.22
+                                        }
+                                    }
+                                    Model {
+                                        objectName:
+                                            "customVolumePlaneChoiceYZ"
+                                        property int targetIndex:
+                                            customVolumeRoot.targetIndex
+                                        property string editorKind:
+                                            "custom-plane"
+                                        property string planeChoice: "yz"
+                                        property int vertexIndex: -1
+                                        position:
+                                            customVolumeRoot.modelData.origin
+                                            .plus(Qt.vector3d(6, 3, 0))
+                                        source: "#Cube"
+                                        scale: Qt.vector3d(
+                                            0.002, 0.04, 0.04)
+                                        pickable:
+                                            customVolumeScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#669cf0"
+                                            opacity: 0.22
+                                        }
+                                    }
+                                }
+
+                                Repeater3D {
+                                    model:
+                                        customVolumeRoot.modelData.vertices
+
+                                    delegate: Model {
+                                        required property var modelData
+                                        property int targetIndex:
+                                            customVolumeRoot.targetIndex
+                                        property string editorKind:
+                                            "custom-vertex"
+                                        property int vertexIndex:
+                                            modelData.index
+                                        visible:
+                                            window.viewer.loaded
+                                            && customVolumeRoot.targetActive
+                                        position: modelData.world
+                                        source: "#Sphere"
+                                        scale: Qt.vector3d(
+                                            Math.max(
+                                                0.004,
+                                                viewport.orbitDistance
+                                                * 0.00016),
+                                            Math.max(
+                                                0.004,
+                                                viewport.orbitDistance
+                                                * 0.00016),
+                                            Math.max(
+                                                0.004,
+                                                viewport.orbitDistance
+                                                * 0.00016))
+                                        pickable:
+                                            customVolumeScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#ffd06a"
+                                        }
+                                    }
+                                }
+
+                                Model {
+                                    objectName: "customVolumeDepthHandle"
+                                    property int targetIndex:
+                                        customVolumeRoot.targetIndex
+                                    property string editorKind: "custom-depth"
+                                    property int vertexIndex: -1
+                                    visible:
+                                        window.viewer.loaded
+                                        && customVolumeRoot.targetActive
+                                        && !window.controller.customVolumeDrawing
+                                    position:
+                                        customVolumeRoot.modelData.depthHandle
+                                    source: "#Cube"
+                                    scale: Qt.vector3d(
+                                        Math.max(
+                                            0.005,
+                                            viewport.orbitDistance
+                                            * 0.0002),
+                                        Math.max(
+                                            0.005,
+                                            viewport.orbitDistance
+                                            * 0.0002),
+                                        Math.max(
+                                            0.005,
+                                            viewport.orbitDistance
+                                            * 0.0002))
+                                    pickable: customVolumeScene.interactive
+                                    materials: DefaultMaterial {
+                                        lighting: DefaultMaterial.NoLighting
+                                        diffuseColor: "#fff0a6"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     View3D {
                         id: rasterMapView
                         objectName: "rasterMapView"
                         anchors.fill: parent
                         visible: !window.rayTracingEnabled
+                        camera: viewCamera
 
                         environment: SceneEnvironment {
                             objectName: "mapEnvironment"
@@ -832,6 +1152,11 @@ ApplicationWindow {
                             interactive: true
                         }
 
+                        CustomVolumeEditorScene {
+                            objectName: "rasterCustomVolumeEditorScene"
+                            interactive: true
+                        }
+
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
@@ -971,10 +1296,13 @@ ApplicationWindow {
                         objectName: "rayTracingTrajectoryOverlay"
                         anchors.fill: parent
                         z: 1.5
+                        camera: rayTracingOverlayCamera
                         visible: window.rayTracingEnabled
                                  && (window.viewer.trajectoryCount > 0
                                      || window.controller.cuboidTargets.count
-                                        > 0)
+                                        > 0
+                                     || window.controller
+                                              .customVolumeTargets.count > 0)
 
                         environment: SceneEnvironment {
                             backgroundMode: SceneEnvironment.Transparent
@@ -988,6 +1316,7 @@ ApplicationWindow {
                             eulerRotation.y: viewport.orbitYaw
 
                             PerspectiveCamera {
+                                id: rayTracingOverlayCamera
                                 readonly property var dynamicClipPlanes:
                                     window.viewer.cameraClipPlanes(
                                         scenePosition,
@@ -1024,12 +1353,20 @@ ApplicationWindow {
                             objectName: "rayTracingCuboidEditorScene"
                             interactive: true
                         }
+
+                        CustomVolumeEditorScene {
+                            objectName: "rayTracingCustomVolumeEditorScene"
+                            interactive: true
+                        }
                     }
 
                     Connections {
                         target: window.controller
 
                         function onCuboidFocusRequested(center, size) {
+                            viewport.focusCuboid(center, size)
+                        }
+                        function onCustomVolumeFocusRequested(center, size) {
                             viewport.focusCuboid(center, size)
                         }
                     }
@@ -1067,6 +1404,15 @@ ApplicationWindow {
                                 manualInputFocus.forceActiveFocus()
                             previousX = mouse.x
                             previousY = mouse.y
+                            if (window.controller.customVolumeDrawing) {
+                                const point = viewport.customPlanePoint(
+                                    mouse.x, mouse.y)
+                                window.controller.customVolumeTargets
+                                      .addVertexWorld(
+                                          point.x, point.y, point.z)
+                                viewport.cuboidPointerCaptured = true
+                                return
+                            }
                             const view = window.rayTracingEnabled
                                          ? rayTracingTrajectoryOverlay
                                          : rasterMapView
@@ -1074,8 +1420,30 @@ ApplicationWindow {
                             if (hit && hit.targetIndex !== undefined
                                 && !window.controller.running) {
                                 viewport.cuboidPointerCaptured = true
-                                window.controller.cuboidTargets.selectTarget(
-                                    hit.targetIndex)
+                                if (hit.editorKind
+                                    && hit.editorKind.indexOf("custom-")
+                                       === 0) {
+                                    window.controller.customVolumeTargets
+                                          .selectTarget(hit.targetIndex)
+                                    window.controller.evaluationTargetId =
+                                        "custom-volume-entry-time"
+                                    if (hit.editorKind === "custom-plane") {
+                                        window.controller.customVolumeTargets
+                                              .setPlane(
+                                                  hit.targetIndex,
+                                                  hit.planeChoice)
+                                    }
+                                    viewport.beginCustomInteraction(
+                                        hit.editorKind,
+                                        hit.vertexIndex,
+                                        mouse.x,
+                                        mouse.y)
+                                } else {
+                                    window.controller.cuboidTargets
+                                          .selectTarget(hit.targetIndex)
+                                    window.controller.evaluationTargetId =
+                                        "volume-entry-time"
+                                }
                                 if (hit.editorKind === "move"
                                     || hit.editorKind === "resize") {
                                     viewport.beginCuboidInteraction(
@@ -1097,6 +1465,14 @@ ApplicationWindow {
                                 previousY = mouse.y
                                 return
                             }
+                            if (viewport.customVertexDragActive
+                                || viewport.customDepthDragActive) {
+                                viewport.updateCustomInteraction(
+                                    mouse.x, mouse.y)
+                                previousX = mouse.x
+                                previousY = mouse.y
+                                return
+                            }
                             if (viewport.cuboidPointerCaptured)
                                 return
                             viewport.orbitYaw -= mouse.x - previousX
@@ -1110,10 +1486,12 @@ ApplicationWindow {
                         }
                         onReleased: {
                             viewport.endCuboidInteraction()
+                            viewport.endCustomInteraction()
                             viewport.cuboidPointerCaptured = false
                         }
                         onCanceled: {
                             viewport.endCuboidInteraction()
+                            viewport.endCustomInteraction()
                             viewport.cuboidPointerCaptured = false
                         }
                         onWheel: wheel => {

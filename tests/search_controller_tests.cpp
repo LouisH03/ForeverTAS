@@ -1,4 +1,5 @@
 #include "app/cuboid_target_model.h"
+#include "app/custom_volume_target_model.h"
 #include "app/packs_directory_finder.h"
 #include "app/search_configuration_model.h"
 #include "app/search_controller.h"
@@ -26,6 +27,7 @@ namespace {
 
 using forevertas::app::SearchController;
 using forevertas::app::CuboidTargetModel;
+using forevertas::app::CustomVolumeTargetModel;
 
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
@@ -255,6 +257,139 @@ bool TestCuboidControllerSynchronization() {
     return okay;
 }
 
+bool TestCustomVolumeTargets() {
+    QSettings().clear();
+    CustomVolumeTargetModel model;
+    bool okay = Check(model.count() == 1 &&
+                              model.selectedTarget()
+                                      .value(QStringLiteral("valid"))
+                                      .toBool(),
+                      "custom volume model did not create a valid target");
+    const QString originalPolygon =
+            model.selectedTarget()
+                    .value(QStringLiteral("polygon"))
+                    .toString();
+    okay &= Check(model.setPlane(0, QStringLiteral("xy")) &&
+                          model.setDepth(0, QStringLiteral("7.5")) &&
+                          model.setVertex(
+                                  0,
+                                  0,
+                                  QStringLiteral("u"),
+                                  QStringLiteral("-6")),
+                  "custom volume property edits failed");
+    const QString editedPolygon =
+            model.selectedTarget()
+                    .value(QStringLiteral("polygon"))
+                    .toString();
+    okay &= Check(editedPolygon != originalPolygon &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("depth"))
+                                          .toString() ==
+                                  QStringLiteral("7.5"),
+                  "polygon and extrusion properties did not update");
+    okay &= Check(model.beginDrawing() && model.drawing() &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("vertexCount"))
+                                          .toInt() == 0 &&
+                          model.addVertexWorld(0.0, 0.0, 0.0) &&
+                          model.addVertexWorld(4.0, 0.0, 0.0) &&
+                          model.addVertexWorld(0.0, 4.0, 0.0) &&
+                          model.finishDrawing() && !model.drawing() &&
+                          model.setVertex(
+                                  0,
+                                  0,
+                                  QStringLiteral("u"),
+                                  QStringLiteral("1.23456789")),
+                  "3D polygon drawing lifecycle failed");
+    const QString drawnPolygon =
+            model.selectedTarget()
+                    .value(QStringLiteral("polygon"))
+                    .toString();
+    const QVariantMap displayedVertex =
+            model.selectedTarget()
+                    .value(QStringLiteral("vertices"))
+                    .toList()
+                    .front()
+                    .toMap();
+    okay &= Check(
+            displayedVertex.value(QStringLiteral("u")).toString() ==
+                    QStringLiteral("1.235"),
+            "custom volume vertex properties were not display-formatted");
+    okay &= Check(model.resizeDepthSelected(1.0) &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("polygon"))
+                                          .toString() == drawnPolygon,
+                  "extrusion editing changed the 2D polygon");
+    okay &= Check(!model.setDepth(0, QStringLiteral("10000001")) &&
+                          !model.translateSelected(
+                                  10000001.0, 0.0, 0.0),
+                  "custom volume accepted out-of-range geometry");
+    okay &= Check(model.beginDrawing() &&
+                          model.addVertexWorld(1.0, 1.0, 0.0),
+                  "custom volume redraw did not start");
+    model.cancelDrawing();
+    okay &= Check(!model.drawing() &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("polygon"))
+                                          .toString() == drawnPolygon,
+                  "cancel drawing did not restore the polygon");
+    okay &= Check(model.beginDrawing() &&
+                          model.addVertexWorld(0.0, 0.0, 0.0) &&
+                          model.addVertexWorld(4.0, 4.0, 0.0) &&
+                          model.addVertexWorld(0.0, 4.0, 0.0) &&
+                          model.addVertexWorld(4.0, 0.0, 0.0) &&
+                          !model.finishDrawing() && model.drawing(),
+                  "self-intersecting drawn polygon was accepted");
+    model.cancelDrawing();
+    okay &= Check(
+            model.setOriginComponent(
+                    0, QStringLiteral("x"), QStringLiteral("10000000")) &&
+                    model.setOriginComponent(
+                            0,
+                            QStringLiteral("z"),
+                            QStringLiteral("10000000")) &&
+                    model.duplicateSelected() == 1 &&
+                    std::abs(
+                            model.selectedTarget()
+                                    .value(QStringLiteral("origin"))
+                                    .value<QVector3D>()
+                                    .x()) <= 10000000.0F &&
+                    std::abs(
+                            model.selectedTarget()
+                                    .value(QStringLiteral("origin"))
+                                    .value<QVector3D>()
+                                    .z()) <= 10000000.0F,
+            "custom volume duplication exceeded coordinate limits");
+    model.selectTarget(0);
+    CustomVolumeTargetModel restored;
+    okay &= Check(restored.selectedTarget()
+                                  .value(QStringLiteral("polygon"))
+                                  .toString() == drawnPolygon,
+                  "custom volume did not persist");
+    QSettings().setValue(
+            QStringLiteral("targets/customVolumes"),
+            QByteArrayLiteral("{not valid json"));
+    CustomVolumeTargetModel recovered;
+    okay &= Check(recovered.count() == 1 &&
+                          recovered.selectedTarget()
+                                  .value(QStringLiteral("valid"))
+                                  .toBool(),
+                  "custom volume did not recover from corrupt persistence");
+
+    QSettings().clear();
+    SearchController controller;
+    controller.setEvaluationTargetId(
+            QStringLiteral("custom-volume-entry-time"));
+    CustomVolumeTargetModel *const targets =
+            controller.customVolumeTargets();
+    targets->setDepth(0, QStringLiteral("8"));
+    okay &= Check(controller.evaluationTargetSettings()
+                                  .value(QStringLiteral("depth"))
+                                  .toString() == QStringLiteral("8"),
+                  "custom volume did not synchronize with search settings");
+    return okay;
+}
+
 QVariantMap Pass(const SearchController &controller, int index) {
     return controller.modifierPasses().at(index).toMap();
 }
@@ -447,7 +582,7 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                   "unexpected search algorithm count");
     okay &= Check(controller.modifierOptions().size() == 5,
                   "required modifier options were not exposed");
-    okay &= Check(controller.evaluationTargetOptions().size() == 6,
+    okay &= Check(controller.evaluationTargetOptions().size() == 7,
                   "required evaluation targets were not exposed");
     okay &= Check(
             HasOption(controller.modifierOptions(),
@@ -480,6 +615,11 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                       QStringLiteral("volume-entry-time"),
                       QStringLiteral("VolumeEntryEvaluationSettings.qml")),
             "volume target metadata was not exposed");
+    okay &= Check(
+            HasOption(controller.evaluationTargetOptions(),
+                      QStringLiteral("custom-volume-entry-time"),
+                      QStringLiteral("VolumeEntryEvaluationSettings.qml")),
+            "custom volume target metadata was not exposed");
     okay &= Check(
             HasOption(controller.evaluationTargetOptions(),
                       QStringLiteral("stunt-points"),
@@ -1276,6 +1416,7 @@ int main(int argc, char **argv) {
 
     bool okay = TestCuboidTargetModel() &&
             TestCuboidControllerSynchronization() &&
+            TestCustomVolumeTargets() &&
             TestAutomaticPacksDetection() &&
             TestDescriptiveSearchStageStatuses() &&
             TestIterationBoundaryArbitration() &&

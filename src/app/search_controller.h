@@ -4,6 +4,7 @@
 #include "app/search_configuration_model.h"
 #include "app/search_completion.h"
 #include "app/cuboid_target_model.h"
+#include "app/custom_volume_target_model.h"
 
 #include <QObject>
 #include <QString>
@@ -70,6 +71,10 @@ class SearchController final : public QObject {
                        evaluationTargetSettingsChanged)
     Q_PROPERTY(forevertas::app::CuboidTargetModel* cuboidTargets READ
                        cuboidTargets CONSTANT)
+    Q_PROPERTY(forevertas::app::CustomVolumeTargetModel*
+                       customVolumeTargets READ customVolumeTargets CONSTANT)
+    Q_PROPERTY(bool customVolumeDrawing READ customVolumeDrawing NOTIFY
+                       customVolumeDrawingChanged)
 
     Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
@@ -117,6 +122,8 @@ public:
     QVariantList modifierPasses() const;
     QVariantMap evaluationTargetSettings() const;
     CuboidTargetModel *cuboidTargets();
+    CustomVolumeTargetModel *customVolumeTargets();
+    bool customVolumeDrawing() const;
 
     bool canStart() const;
     bool running() const;
@@ -159,6 +166,10 @@ public slots:
     Q_INVOKABLE void setEvaluationTargetSetting(const QString &key,
                                                 const QString &value);
     Q_INVOKABLE void focusSelectedCuboid();
+    Q_INVOKABLE void focusSelectedCustomVolume();
+    Q_INVOKABLE void beginCustomVolumeDrawing();
+    Q_INVOKABLE void finishCustomVolumeDrawing();
+    Q_INVOKABLE void cancelCustomVolumeDrawing();
     Q_INVOKABLE void startSearch();
     Q_INVOKABLE void stopSearch();
 
@@ -190,6 +201,9 @@ signals:
     void searchCompleted(forevertas::app::SearchCompletionPtr completion);
     void cuboidFocusRequested(const QVector3D &center,
                               const QVector3D &size);
+    void customVolumeFocusRequested(const QVector3D &center,
+                                    const QVector3D &size);
+    void customVolumeDrawingChanged();
 
 private:
     struct ValidationResult {
@@ -221,6 +235,9 @@ private:
     void synchronizeSelectedCuboid();
     void synchronizeCuboidSetting(const QString &key,
                                    const QString &value);
+    void synchronizeSelectedCustomVolume();
+    void synchronizeCustomVolumeSetting(const QString &key,
+                                        const QString &value);
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
@@ -236,6 +253,7 @@ private:
     bool cudaCalibrationEnabled_ = false;
     SearchConfigurationModel configuration_;
     CuboidTargetModel cuboidTargets_;
+    CustomVolumeTargetModel customVolumeTargets_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString iterationCountText_;
