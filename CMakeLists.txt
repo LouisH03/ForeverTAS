@@ -26,6 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 include(CTest)
 include(GNUInstallDirs)
+find_package(Git REQUIRED)
 
 set(FOREVERTAS_APP_ID "dev.skycrafter.forevertas")
 set(FOREVERTAS_DISPLAY_NAME "ForeverTAS")
@@ -58,7 +59,13 @@ FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
     GIT_TAG 696d8355795b40f1adf6b56772e8da21c86f3fab
-    GIT_SHALLOW FALSE)
+    GIT_SHALLOW FALSE
+    PATCH_COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-stunt-points.patch"
+        "-DSOURCE_DIR=<SOURCE_DIR>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake")
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
@@ -74,6 +81,8 @@ add_library(forevertas_core STATIC
     src/evaluators/point_target_evaluator.h
     src/evaluators/pose_target_evaluator.cpp
     src/evaluators/pose_target_evaluator.h
+    src/evaluators/stunt_points_evaluator.cpp
+    src/evaluators/stunt_points_evaluator.h
     src/evaluators/velocity_evaluator.cpp
     src/evaluators/velocity_evaluator.h
     src/evaluators/volume_entry_evaluator.cpp
@@ -221,6 +230,7 @@ qt_add_qml_module(forevertas
         qml/settings/SettingSwitch.qml
         qml/settings/SettingTextField.qml
         qml/settings/SmoothSteeringSettings.qml
+        qml/settings/StuntPointsEvaluationSettings.qml
         qml/settings/StyledComboBox.qml
         qml/settings/TimeWindowSettings.qml
         qml/settings/Vector3Settings.qml

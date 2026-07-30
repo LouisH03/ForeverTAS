@@ -1,0 +1,151 @@
+diff --git a/include/forevervalidator/experimental/physics_sandbox.h b/include/forevervalidator/experimental/physics_sandbox.h
+index e210e9a..d5a8acd 100644
+--- a/include/forevervalidator/experimental/physics_sandbox.h
++++ b/include/forevervalidator/experimental/physics_sandbox.h
+@@ -388,6 +388,8 @@ struct PhysicsSandboxCudaVolumeEntryEvaluator {
+     PhysicsSandboxCudaVector3 maximum{};
+ };
+
++struct PhysicsSandboxCudaStuntPointsEvaluator {};
++
+ struct PhysicsSandboxCudaFinishTimeEvaluator {};
+
+ using PhysicsSandboxCudaEvaluator = std::variant<
+@@ -395,6 +397,7 @@ using PhysicsSandboxCudaEvaluator = std::variant<
+         PhysicsSandboxCudaPointEvaluator,
+         PhysicsSandboxCudaPoseEvaluator,
+         PhysicsSandboxCudaVolumeEntryEvaluator,
++        PhysicsSandboxCudaStuntPointsEvaluator,
+         PhysicsSandboxCudaFinishTimeEvaluator>;
+
+ struct PhysicsSandboxCudaSearchConfiguration {
+diff --git a/src/simulation/backends/cuda/cuda_search_executor.cu b/src/simulation/backends/cuda/cuda_search_executor.cu
+index f0e2cd4..e41e9a3 100644
+--- a/src/simulation/backends/cuda/cuda_search_executor.cu
++++ b/src/simulation/backends/cuda/cuda_search_executor.cu
+@@ -1283,6 +1283,7 @@ __device__ DeviceSample EvaluateState(
+         const GmVec3 &previousPosition,
+         double previousTimeMs,
+         double currentTimeMs,
++        std::uint32_t stuntsScore,
+         bool *reported) {
+     DeviceSample result;
+     result.timeMs = currentTimeMs;
+@@ -1369,6 +1370,10 @@ __device__ DeviceSample EvaluateState(
+             result.valid = true;
+         }
+         break;
++    case CudaSearchEvaluatorKind::StuntPoints:
++        result.score = static_cast<double>(stuntsScore);
++        result.valid = true;
++        break;
+     case CudaSearchEvaluatorKind::FinishTime:
+         if (*reported || !state.race.progress.raceCompleted) {
+             return result;
+@@ -1383,9 +1388,10 @@ __device__ DeviceSample EvaluateState(
+     return result;
+ }
+
+-__device__ bool MaximizeEvaluator(
+-        const CudaSearchEvaluatorConfiguration &evaluator) {
+-    return evaluator.kind == CudaSearchEvaluatorKind::Velocity;
++__host__ __device__ bool MaximizesScore(
++        CudaSearchEvaluatorKind kind) {
++    return kind == CudaSearchEvaluatorKind::Velocity ||
++            kind == CudaSearchEvaluatorKind::StuntPoints;
+ }
+
+ __global__ void SeedCandidateBestSamplesKernel(
+@@ -1690,7 +1696,7 @@ __global__ __launch_bounds__(
+         ++eventCursor;
+     }
+     bool evaluatorReported = false;
+-    const bool maximize = MaximizeEvaluator(configuredEvaluator);
++    const bool maximize = MaximizesScore(configuredEvaluator.kind);
+     DeviceSample localBest;
+     std::uint32_t evaluationIndex = 0u;
+     for (std::uint32_t tickIndex = 0u;
+@@ -1781,10 +1787,15 @@ __global__ __launch_bounds__(
+         if (publicTime < evaluationStartTimeMs) {
+             continue;
+         }
++        std::uint32_t stuntsScore = 0u;
++        if constexpr (SimulateStunts) {
++            stuntsScore = state.stunts.stuntsScore;
++        }
+         DeviceSample sample = EvaluateState(
+                 configuredEvaluator, state, previousPosition,
+                 static_cast<double>(publicTime - tickDurationMs),
+                 static_cast<double>(publicTime),
++                stuntsScore,
+                 &evaluatorReported);
+         sample.candidateId = candidateId;
+         sample.candidateSlot = slot;
+@@ -2629,8 +2640,7 @@ struct CudaSearchExecutor::Impl {
+                 nextCandidateBestSamples.Get(), reducedBest.Get(),
+                 winnerSlots,
+                 BetterSample{
+-                        configuration.evaluator.kind ==
+-                                CudaSearchEvaluatorKind::Velocity},
++                        MaximizesScore(configuration.evaluator.kind)},
+                 DeviceSample{});
+         if (error != cudaSuccess ||
+             !nextReductionTemporary.Allocate(reductionBytes)) {
+@@ -2929,8 +2939,7 @@ struct CudaSearchExecutor::Impl {
+                 candidateBestSamples.Get(), reducedBest.Get(),
+                 winnerCount,
+                 BetterSample{
+-                        configuration.evaluator.kind ==
+-                                CudaSearchEvaluatorKind::Velocity},
++                        MaximizesScore(configuration.evaluator.kind)},
+                 DeviceSample{});
+         if (error != cudaSuccess) {
+             result.status = CudaSearchStatus::DeviceFailure;
+@@ -2992,8 +3001,7 @@ struct CudaSearchExecutor::Impl {
+                 static_cast<std::uint32_t>(
+                         configuration.maximumEventCount),
+                 evaluationTickCount,
+-                configuration.evaluator.kind ==
+-                        CudaSearchEvaluatorKind::Velocity,
++                MaximizesScore(configuration.evaluator.kind),
+                 baseline,
+                 globalBestSample.Get(),
+                 globalBestState.Get(),
+@@ -3476,8 +3484,7 @@ std::unique_ptr<CudaSearchExecutor> CudaSearchExecutor::Create(
+                 impl->reducedBest.Get(),
+                 winnerSampleSlots,
+                 BetterSample{
+-                        configuration.evaluator.kind ==
+-                                CudaSearchEvaluatorKind::Velocity},
++                        MaximizesScore(configuration.evaluator.kind)},
+                 DeviceSample{});
+         if (error != cudaSuccess ||
+             !impl->reductionTemporary.Allocate(reductionBytes)) {
+diff --git a/src/simulation/backends/cuda/cuda_search_executor.h b/src/simulation/backends/cuda/cuda_search_executor.h
+index 92ea7ec..d4bfd8b 100644
+--- a/src/simulation/backends/cuda/cuda_search_executor.h
++++ b/src/simulation/backends/cuda/cuda_search_executor.h
+@@ -57,6 +57,7 @@ enum class CudaSearchEvaluatorKind : std::uint32_t {
+     Point,
+     Pose,
+     VolumeEntry,
++    StuntPoints,
+     FinishTime,
+ };
+
+diff --git a/src/validation/api/validation_api.cpp b/src/validation/api/validation_api.cpp
+index be631fe..1560080 100644
+--- a/src/validation/api/validation_api.cpp
++++ b/src/validation/api/validation_api.cpp
+@@ -1680,6 +1680,11 @@ simulation::CudaSearchEvaluatorConfiguration CudaEvaluator(
+                     result.values[3] = evaluator.maximum.x;
+                     result.values[4] = evaluator.maximum.y;
+                     result.values[5] = evaluator.maximum.z;
++                } else if constexpr (std::is_same_v<
++                                             T,
++                                             PhysicsSandboxCudaStuntPointsEvaluator>) {
++                    result.kind =
++                            simulation::CudaSearchEvaluatorKind::StuntPoints;
+                 } else {
+                     result.kind =
+                             simulation::CudaSearchEvaluatorKind::FinishTime;

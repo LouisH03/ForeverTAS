@@ -193,6 +193,46 @@ bool RunBackend(const char *packsDirectory,
         return true;
 }
 
+bool CheckStuntTargetBackend(
+        const char *packsDirectory,
+        const char *replayPath,
+        forevertas::PhysicsBackend backend) {
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    forevertas::ExtractReplayInputScript(
+                            packsDirectory, replayPath));
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 0u;
+    control.sampleBestTimeline = false;
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    request.backend = backend;
+    request.baseInputCommands = parsed.commands;
+    request.evaluationTarget = {
+            forevertas::kStuntPointsEvaluationId,
+            {{"targetTimeMs", "6000"}}};
+    const forevertas::SearchResult result =
+            forevertas::RunSearch(request, &control);
+    const bool valid =
+            result.bestEvaluationTimeMs == 6010.0 &&
+            result.bestState.timeMs == 6010u &&
+            result.bestScore ==
+                    static_cast<double>(
+                            result.bestState.stuntsScore.value_or(0u)) &&
+            result.bestEvaluationDescription.rfind(
+                    "Stunt points: ", 0u) == 0u;
+    if (!valid) {
+        std::cerr
+                << "stunt target did not observe the configured deadline "
+                << "with backend "
+                << forevertas::PhysicsBackendId(backend) << '\n';
+    }
+    return valid;
+}
+
 bool CheckCachedScriptIsolation(const char *packsDirectory,
                                 const char *replayPath) {
     const std::string replayScript =
@@ -386,6 +426,14 @@ int main(int argc, char **argv) {
         if (!CheckCachedScriptIsolation(argv[1], argv[2]) ||
             !CheckKeyboardSteeringBaseline(argv[1], argv[2]) ||
             !CheckKeyboardSteeringPhysicsParity(argv[1], argv[2]) ||
+            !CheckStuntTargetBackend(
+                    argv[1],
+                    argv[2],
+                    forevertas::PhysicsBackend::Reference) ||
+            !CheckStuntTargetBackend(
+                    argv[1],
+                    argv[2],
+                    forevertas::PhysicsBackend::OptimizedCpu) ||
             !RunBackend(argv[1],
                         argv[2],
                         forevertas::PhysicsBackend::Reference) ||
@@ -393,6 +441,10 @@ int main(int argc, char **argv) {
                         argv[2],
                         forevertas::PhysicsBackend::OptimizedCpu)
 #if FOREVERVALIDATOR_HAS_CUDA
+            || !CheckStuntTargetBackend(
+                    argv[1],
+                    argv[2],
+                    forevertas::PhysicsBackend::Cuda)
             || !RunBackend(argv[1],
                            argv[2],
                            forevertas::PhysicsBackend::Cuda)

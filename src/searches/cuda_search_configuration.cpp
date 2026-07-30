@@ -235,6 +235,9 @@ std::optional<PhysicsSandboxCudaEvaluator> BuildCudaEvaluator(
         configuration.id == "finish-time") {
         return PhysicsSandboxCudaFinishTimeEvaluator{};
     }
+    if (configuration.id == kStuntPointsEvaluationId) {
+        return PhysicsSandboxCudaStuntPointsEvaluator{};
+    }
     throw std::invalid_argument(
             "CUDA does not support evaluator: " + configuration.id);
 }

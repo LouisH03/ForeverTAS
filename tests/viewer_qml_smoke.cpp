@@ -816,7 +816,7 @@ int main(int argc, char **argv) {
                                             .toInt() == 5 &&
                             addModifierCombo->property("count").toInt() == 5 &&
                             evaluationTargetCombo->property("count").toInt() ==
-                                    5 &&
+                                    6 &&
                             searchAlgorithmCombo->property("currentValue")
                                             .toString() ==
                                     QStringLiteral("basic-brute-force") &&
@@ -1061,10 +1061,12 @@ int main(int argc, char **argv) {
                     bool everyOwnedPanelLoaded =
                             evaluationTargetSelector != nullptr &&
                             modifierComposition != nullptr;
-                    const std::array<std::pair<const char *, const char *>, 5>
+                    const std::array<std::pair<const char *, const char *>, 6>
                             evaluationPanels{{
                                     {"velocity",
                                      "velocityEvaluationSettings"},
+                                    {"stunt-points",
+                                     "stuntPointsEvaluationSettings"},
                                     {"precise-finish-time",
                                      "preciseFinishTimeEvaluationSettings"},
                                     {"volume-entry-time",
@@ -1088,6 +1090,18 @@ int main(int argc, char **argv) {
                                                 .toString() ==
                                         QString::fromLatin1(objectName);
                     }
+                    controller.setEvaluationTargetId(
+                            QStringLiteral("stunt-points"));
+                    QCoreApplication::processEvents();
+                    QObject *const stuntPointsTimeField =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("stuntPointsTimeField"));
+                    const bool stuntPointsFieldValid =
+                            stuntPointsTimeField != nullptr &&
+                            stuntPointsTimeField->property("text").toString() ==
+                                    QStringLiteral("6000") &&
+                            stuntPointsTimeField->property("minimum").toReal() ==
+                                    0.0;
                     const std::array<std::pair<const char *, const char *>, 5>
                             modifierPanels{{
                                     {"random-steering",
@@ -1202,7 +1216,7 @@ int main(int argc, char **argv) {
                                     1.0;
 
                     dropdownStateUpdates &=
-                            activateCombo(evaluationTargetCombo, 3);
+                            activateCombo(evaluationTargetCombo, 4);
                     QCoreApplication::processEvents();
                     QCoreApplication::processEvents();
                     dropdownStateUpdates &=
@@ -1215,7 +1229,7 @@ int main(int argc, char **argv) {
                                             "pointTargetEvaluationSettings");
 
                     dropdownStateUpdates &=
-                            activateCombo(evaluationTargetCombo, 4);
+                            activateCombo(evaluationTargetCombo, 5);
                     QCoreApplication::processEvents();
                     QObject *const rotationWeightSlider =
                             root->findChild<QObject *>(
@@ -1378,7 +1392,8 @@ int main(int argc, char **argv) {
                             removedSectionDescriptions &&
                             automaticPacksUi && backendSelectorValid &&
                             algorithmSelectorsValid &&
-                            everyOwnedPanelLoaded && configurationSectionsValid &&
+                            everyOwnedPanelLoaded && stuntPointsFieldValid &&
+                            configurationSectionsValid &&
                             comboSlotsStyled && settingComboTextValid &&
                             modifierPassLayoutValid &&
                             wheelScrollingValid &&
@@ -1422,6 +1437,7 @@ int main(int argc, char **argv) {
                                 << ", backend=" << backendSelectorValid
                                 << ", selectors=" << algorithmSelectorsValid
                                 << ", panels=" << everyOwnedPanelLoaded
+                                << ", stuntField=" << stuntPointsFieldValid
                                 << ", sections=" << configurationSectionsValid
                                 << ", comboStyle=" << comboSlotsStyled
                                 << ", comboText=" << settingComboTextValid

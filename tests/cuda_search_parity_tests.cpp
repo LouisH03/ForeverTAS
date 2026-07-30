@@ -551,6 +551,10 @@ int main(int argc, char **argv) {
                 maximum->second = "1000";
             }
             if (registration.id ==
+                forevertas::kStuntPointsEvaluationId) {
+                configured.settings["targetTimeMs"] = "1010";
+            }
+            if (registration.id ==
                 forevertas::kVolumeEntryEvaluationId) {
                 configured.settings["centerX"] =
                         decimal(volumeTarget.positionX);

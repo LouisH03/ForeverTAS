@@ -4,6 +4,7 @@
 #include "evaluators/precise_finish_time_evaluator.h"
 #include "evaluators/point_target_evaluator.h"
 #include "evaluators/pose_target_evaluator.h"
+#include "evaluators/stunt_points_evaluator.h"
 #include "evaluators/velocity_evaluator.h"
 #include "evaluators/volume_entry_evaluator.h"
 #include "mutations/existing_event_perturbation_mutator.h"
@@ -205,6 +206,14 @@ const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
              {},
              &ValidateVelocityOptionSettings,
              &CreateVelocityEvaluator},
+            {kStuntPointsEvaluationId,
+             {},
+             "Stunt points",
+             "StuntPointsEvaluationSettings.qml",
+             DefaultStuntPointsOptionSettings(),
+             {},
+             &ValidateStuntPointsOptionSettings,
+             &CreateStuntPointsEvaluator},
             {kPreciseFinishTimeEvaluationId,
              {"finish-time"},
              "Precise finish time",

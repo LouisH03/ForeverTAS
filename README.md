@@ -45,9 +45,9 @@ adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
 The pinned dependency is extended by
-`cmake/patches/forevervalidator-race-viewer.patch`. The patch is produced from
-a worktree at the pinned revision and adds the immutable visual render-scene
-API without requiring a local Validator checkout at build time.
+`cmake/patches/forevervalidator-stunt-points.patch`. It adds the native CUDA
+stunt-points batch evaluator without requiring a local Validator checkout at
+build time.
 
 ## Desktop application
 
@@ -85,10 +85,11 @@ first actionable input, which is simulation time `10 ms` at 100 Hz. Absolute
 setting keys ending in `TimeMs` are translated by one physics tick exactly once
 when a registry creates a simulation component; stored values and relative
 durations remain user-facing.
-Built-in targets cover precise finish time, cuboid entry time, velocity,
-point distance, and weighted pose error. Precise finish search ranks the
-inclusive upper bound of ForeverValidator's one-nanosecond transition bracket
-and displays all nine fractional digits.
+Built-in targets cover precise finish time, stunt points by a chosen deadline,
+cuboid entry time, velocity, point distance, and weighted pose error. The stunt
+target observes only the chosen deadline because the score is monotonic.
+Precise finish search ranks the inclusive upper bound of ForeverValidator's
+one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering
 deformation, input insertion, input deletion, and random steering.
 

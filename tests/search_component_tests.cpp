@@ -439,6 +439,53 @@ bool TestEvaluationTargets() {
                 "precise finish target fell back to tick time");
     }
 
+    {
+        OptionSettings settings =
+                forevertas::FindEvaluationTarget(
+                        forevertas::kStuntPointsEvaluationId)->defaultSettings;
+        settings["targetTimeMs"] = "2500";
+        auto evaluator = Evaluator(
+                forevertas::kStuntPointsEvaluationId, &settings);
+        const forevertas::EvaluationPlan plan =
+                evaluator->Plan(10000, 1010, 10u);
+        auto session = evaluator->CreateSession();
+        PhysicsSandboxStateView previous;
+        previous.timeMs = 2500u;
+        previous.stuntsScore = 999u;
+        PhysicsSandboxStateView current = previous;
+        current.timeMs = 2510u;
+        current.stuntsScore = 250u;
+        const auto sample = session->Observe(previous, current);
+        EvaluationSample incumbent{249.0, 2510.0, {}};
+        okay &= Check(
+                plan.startTimeMs == 2510 &&
+                        plan.endTimeMs == 2510,
+                "stunt target did not observe only its chosen deadline");
+        okay &= Check(
+                sample && sample->score == 250.0 &&
+                        sample->timeMs == 2510.0 &&
+                        sample->description.find("Stunt points: 250") == 0u,
+                "stunt target did not use the deadline's monotonic score");
+        okay &= Check(
+                sample && evaluator->IsBetter(*sample, incumbent) &&
+                        !evaluator->IsBetter(incumbent, *sample),
+                "stunt target did not rank the highest score first");
+        current.stuntsScore.reset();
+        const auto noPoints = evaluator->CreateSession()->Observe(
+                previous, current);
+        okay &= Check(
+                noPoints && noPoints->score == 0.0 &&
+                        noPoints->description.find("Stunt points: 0") == 0u,
+                "an absent stunt score was not treated as zero points");
+        settings["targetTimeMs"] = "2501";
+        const auto *const registration =
+                forevertas::FindEvaluationTarget(
+                        forevertas::kStuntPointsEvaluationId);
+        okay &= Check(
+                registration->validateSettings(settings, 10u).has_value(),
+                "stunt target accepted a time between physics ticks");
+    }
+
     return okay;
 }
 
@@ -823,7 +870,7 @@ bool TestRegistries() {
     }
     okay &= Check(forevertas::ModifierRegistry().size() == 5u,
                   "not all required modifiers are registered");
-    okay &= Check(forevertas::EvaluationTargetRegistry().size() == 5u,
+    okay &= Check(forevertas::EvaluationTargetRegistry().size() == 6u,
                   "not all required evaluation targets are registered");
     return okay;
 }
@@ -1095,10 +1142,13 @@ bool TestCudaConfigurationCoverage() {
     for (const auto &registration :
          forevertas::EvaluationTargetRegistry()) {
         try {
-            static_cast<void>(forevertas::BuildCudaEvaluator(
+            const auto evaluator = forevertas::BuildCudaEvaluator(
                     {registration.id,
                      registration.defaultSettings},
-                    10u));
+                    10u);
+            okay &= Check(
+                    evaluator.has_value(),
+                    "a registered evaluator skipped CUDA batching");
         } catch (...) {
             okay &= Check(
                     false,

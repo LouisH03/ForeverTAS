@@ -283,7 +283,7 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                   "unexpected search algorithm count");
     okay &= Check(controller.modifierOptions().size() == 5,
                   "required modifier options were not exposed");
-    okay &= Check(controller.evaluationTargetOptions().size() == 5,
+    okay &= Check(controller.evaluationTargetOptions().size() == 6,
                   "required evaluation targets were not exposed");
     okay &= Check(
             HasOption(controller.modifierOptions(),
@@ -316,6 +316,11 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                       QStringLiteral("volume-entry-time"),
                       QStringLiteral("VolumeEntryEvaluationSettings.qml")),
             "volume target metadata was not exposed");
+    okay &= Check(
+            HasOption(controller.evaluationTargetOptions(),
+                      QStringLiteral("stunt-points"),
+                      QStringLiteral("StuntPointsEvaluationSettings.qml")),
+            "stunt points target metadata was not exposed");
     okay &= Check(controller.modifierPasses().size() == 1 &&
                           PassId(controller, 0) ==
                                   QStringLiteral("random-steering"),
@@ -388,6 +393,30 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
             QStringLiteral("precise-finish-time"));
     okay &= Check(controller.canStart(),
                   "precise finish target defaults did not validate");
+    controller.setEvaluationTargetId(QStringLiteral("stunt-points"));
+    okay &= Check(
+            controller.canStart() &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("targetTimeMs"))
+                                    .toString() == QStringLiteral("6000"),
+            "stunt target defaults did not validate");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("6001"));
+    okay &= Check(!controller.canStart(),
+                  "unaligned stunt target time enabled Start");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("4320"));
+    okay &= Check(controller.canStart(),
+                  "valid stunt target time did not enable Start");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("500"));
+    okay &= Check(
+            !controller.canStart() &&
+                    controller.validationMessage().contains(
+                            QStringLiteral("first modifier time")),
+            "stunt target accepted a deadline before any mutation");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("4320"));
     controller.setEvaluationTargetId(QStringLiteral("missing-target"));
     okay &= Check(!controller.canStart(),
                   "unknown evaluation target enabled Start");
@@ -457,6 +486,9 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
+        controller.setEvaluationTargetId(QStringLiteral("stunt-points"));
+        controller.setEvaluationTargetSetting(
+                QStringLiteral("targetTimeMs"), QStringLiteral("4320"));
         controller.setBaseInputScript(
                 QStringLiteral("0.00 press up\n0.50 steer -16384"));
         QSettings().sync();
@@ -492,10 +524,10 @@ bool TestPersistence(const QString &packsDirectory,
                                           .toString() == QStringLiteral("321"),
                   "second modifier pass was not persisted");
     okay &= Check(restored.evaluationTargetId() ==
-                          QStringLiteral("point-target") &&
+                          QStringLiteral("stunt-points") &&
                           restored.evaluationTargetSettings()
-                                          .value(QStringLiteral("x"))
-                                          .toString() == QStringLiteral("12.5"),
+                                          .value(QStringLiteral("targetTimeMs"))
+                                          .toString() == QStringLiteral("4320"),
                   "evaluation target configuration was not persisted");
     okay &= Check(QSettings().contains(
                           QStringLiteral("composition/modifiers")),

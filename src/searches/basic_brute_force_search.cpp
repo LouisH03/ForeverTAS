@@ -324,6 +324,16 @@ std::string CudaEvaluationDescription(
                                              PhysicsSandboxCudaVolumeEntryEvaluator>) {
                     return TimeMetricDescription(
                             "Volume entry time", batch.bestTimeMs);
+                } else if constexpr (std::is_same_v<
+                                             T,
+                                             PhysicsSandboxCudaStuntPointsEvaluator>) {
+                    return "Stunt points: " +
+                            std::to_string(
+                                    static_cast<std::uint32_t>(
+                                            batch.bestScore)) +
+                            " at " +
+                            FormatHumanDurationMilliseconds(
+                                    batch.bestTimeMs);
                 } else {
                     return "Precise finish time: " +
                             FormatHumanDurationNanoseconds(
