@@ -3,6 +3,8 @@
 
 #include <QGuiApplication>
 #include <QHash>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QVariantMap>
 
@@ -14,6 +16,8 @@ namespace {
 constexpr auto kVehicleSource =
         "src/simulation/runtime/replay_vehicle_simulation.cpp";
 constexpr int kApplyControlsLine = 31;
+constexpr int kRelocatedBreakpointRequestLine = 34;
+constexpr int kRelocatedBreakpointLine = 37;
 constexpr int kPreparedBodyLine = 200;
 
 bool Check(bool condition, const char *message) {
@@ -74,6 +78,18 @@ bool HasModifiedEntry(
     return false;
 }
 
+QVariantMap FileEntry(
+        forevertas::viewer::SimulationDebuggerModel &model,
+        const QString &path) {
+    for (const QVariant &entry : model.fileEntries()) {
+        const QVariantMap data = entry.toMap();
+        if (data.value(QStringLiteral("path")).toString() == path) {
+            return data;
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -83,10 +99,36 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    QStandardPaths::setTestModeEnabled(true);
     QGuiApplication application(argc, argv);
+    QSettings().clear();
     forevertas::viewer::RaceViewerController viewer;
     auto *const model = viewer.simulationDebugger();
     bool okay = true;
+    okay &= Check(
+            model->toggleBreakpoint(
+                    QString::fromLatin1(kVehicleSource), kApplyControlsLine),
+            "persistent breakpoint setup failed");
+    {
+        forevertas::viewer::SimulationDebuggerModel restored;
+        const QVariantMap restoredEntry =
+                FileEntry(restored, QString::fromLatin1(kVehicleSource));
+        okay &= Check(
+                restored.selectFile(QString::fromLatin1(kVehicleSource)) &&
+                        restored.lines()
+                                .at(kApplyControlsLine - 1)
+                                .toMap()
+                                .value(QStringLiteral("breakpoint"))
+                                .toBool() &&
+                        restoredEntry.value(QStringLiteral("breakpoint"))
+                                .toBool(),
+                "line and file breakpoint state did not survive model "
+                "reconstruction");
+    }
+    okay &= Check(
+            model->toggleBreakpoint(
+                    QString::fromLatin1(kVehicleSource), kApplyControlsLine),
+            "persistent breakpoint cleanup failed");
     okay &=
             Check(!viewer.startSimulationDebugger(),
                   "debugger started without a loaded replay");
@@ -95,7 +137,10 @@ int main(int argc, char **argv) {
         Loading,
         WaitingInitialFrame,
         WaitingApplyControls,
-        WaitingEditedTick,
+        WaitingEditedSourceStep,
+        WaitingSubstep,
+        WaitingSourceLineStep,
+        WaitingTickStep,
         WaitingPastLine,
         WaitingDeferredTick,
         WaitingRestoredTick,
@@ -110,6 +155,10 @@ int main(int argc, char **argv) {
     QHash<qint64, QVariantMap> frames;
     qint64 frameCountBeforeInvalid = 0;
     qint64 firstBreakpointTick = -1;
+    qint64 stepTick = -1;
+    qint64 framesBeforeSteps = -1;
+    QString sourceStepFile;
+    int sourceStepLine = -1;
 
     QObject::connect(
             model,
@@ -132,19 +181,13 @@ int main(int argc, char **argv) {
                             "live viewer did not retain the replay duration");
                     phase = Phase::WaitingApplyControls;
                     viewer.play();
-                } else if (phase == Phase::WaitingEditedTick && tick == 1) {
+                } else if (phase == Phase::WaitingTickStep && tick == 1) {
                     const double forward = VectorComponent(
                             frame, QStringLiteral("linearSpeed"), 2);
                     okay &= Check(
                             std::abs(forward) < 0.02,
                             "edited real ApplyControls statement did not alter "
                             "reference physics");
-                    okay &=
-                            Check(model->toggleBreakpoint(
-                                          QString::fromLatin1(kVehicleSource),
-                                          kPreparedBodyLine),
-                                  "future real-source breakpoint was rejected");
-                    phase = Phase::WaitingPastLine;
                 } else if (phase == Phase::WaitingDeferredTick && tick == 2) {
                     const double forward = VectorComponent(
                             frame, QStringLiteral("linearSpeed"), 2);
@@ -184,9 +227,93 @@ int main(int argc, char **argv) {
         if (phase == Phase::WaitingApplyControls && !model->running() &&
             model->activeFilePath() == QString::fromLatin1(kVehicleSource) &&
             model->activeLine() == kApplyControlsLine) {
-            model->toggleBreakpoint(
-                    QString::fromLatin1(kVehicleSource), kApplyControlsLine);
-            phase = Phase::WaitingEditedTick;
+            okay &= Check(
+                    !model->lines().at(kRelocatedBreakpointRequestLine - 1)
+                                    .toMap()
+                                    .value(QStringLiteral("breakpoint"))
+                                    .toBool() &&
+                            model->lines()
+                                    .at(kRelocatedBreakpointLine - 1)
+                                    .toMap()
+                                    .value(QStringLiteral("breakpoint"))
+                                    .toBool() &&
+                            model->toggleBreakpoint(
+                                    QString::fromLatin1(kVehicleSource),
+                                    kRelocatedBreakpointLine),
+                    "non-executable breakpoint was not moved to the resolved "
+                    "native source line");
+            stepTick = model->executionTick();
+            framesBeforeSteps = viewer.tickCount();
+            okay &= Check(
+                    model->canStepSource() && model->canStepTick() &&
+                            model->stepSourceLine(),
+                    "source-line step could not execute the pending edited "
+                    "line");
+            phase = Phase::WaitingEditedSourceStep;
+        } else if (
+                phase == Phase::WaitingEditedSourceStep && !model->stepping() &&
+                model->activeLine() > 0) {
+            okay &= Check(
+                    model->executionTick() == stepTick &&
+                            viewer.tickCount() == framesBeforeSteps &&
+                            model->statusText().startsWith(QStringLiteral(
+                                    "Source-line step completed")),
+                    "edited source-line step advanced a physics tick or did "
+                    "not settle at the next source location");
+            okay &=
+                    Check(model->toggleBreakpoint(
+                                  QString::fromLatin1(kVehicleSource),
+                                  kApplyControlsLine),
+                          "initial execution breakpoint could not be removed");
+            okay &=
+                    Check(model->canStepSource() && model->stepSubstep(),
+                          "native substep could not start");
+            phase = Phase::WaitingSubstep;
+        } else if (
+                phase == Phase::WaitingSubstep && !model->stepping() &&
+                model->activeLine() > 0) {
+            okay &= Check(
+                    model->executionTick() == stepTick &&
+                            viewer.tickCount() == framesBeforeSteps &&
+                            model->statusText().startsWith(
+                                    QStringLiteral("Substep completed")),
+                    "native substep advanced a physics tick or lost its source "
+                    "location");
+            sourceStepFile = model->activeFilePath();
+            sourceStepLine = model->activeLine();
+            okay &=
+                    Check(model->canStepSource() && model->stepSourceLine(),
+                          "native source-line step could not start");
+            phase = Phase::WaitingSourceLineStep;
+        } else if (
+                phase == Phase::WaitingSourceLineStep && !model->stepping() &&
+                model->activeLine() > 0) {
+            okay &= Check(
+                    model->executionTick() == stepTick &&
+                            viewer.tickCount() == framesBeforeSteps &&
+                            (model->activeFilePath() != sourceStepFile ||
+                             model->activeLine() != sourceStepLine),
+                    "source-line step did not advance to a new source line");
+            okay &=
+                    Check(model->canStepTick() && model->stepTick(),
+                          "one-tick step could not start");
+            phase = Phase::WaitingTickStep;
+        } else if (
+                phase == Phase::WaitingTickStep && !model->stepping() &&
+                model->executionTick() == stepTick + 1) {
+            okay &= Check(
+                    viewer.tickCount() == framesBeforeSteps + 1 &&
+                            frames.contains(stepTick + 1) &&
+                            model->statusText() == QStringLiteral(
+                                                           "Advanced exactly "
+                                                           "one physics tick."),
+                    "one-tick step did not produce exactly one new tick");
+            okay &=
+                    Check(model->toggleBreakpoint(
+                                  QString::fromLatin1(kVehicleSource),
+                                  kPreparedBodyLine),
+                          "future real-source breakpoint was rejected");
+            phase = Phase::WaitingPastLine;
             viewer.play();
         } else if (
                 phase == Phase::WaitingPastLine && !model->running() &&
@@ -337,6 +464,9 @@ int main(int argc, char **argv) {
                                 model->toggleBreakpoint(
                                         QString::fromLatin1(kVehicleSource),
                                         kApplyControlsLine) &&
+                                model->toggleBreakpoint(
+                                        QString::fromLatin1(kVehicleSource),
+                                        kRelocatedBreakpointRequestLine) &&
                                 model->updateLine(
                                         kApplyControlsLine,
                                         QStringLiteral(
@@ -347,15 +477,26 @@ int main(int argc, char **argv) {
                         "future real-engine source edit setup failed");
                 const QVariantMap editedLine =
                         model->lines().at(kApplyControlsLine - 1).toMap();
+                const QVariantMap editedBreakpointEntry =
+                        FileEntry(*model, QString::fromLatin1(kVehicleSource));
                 okay &= Check(
                         editedLine.value(QStringLiteral("modified")).toBool() &&
+                                editedLine.value(QStringLiteral("breakpoint"))
+                                        .toBool() &&
                                 editedLine.value(QStringLiteral("original"))
                                                 .toString() ==
                                         originalApplyLine &&
                                 HasModifiedEntry(
                                         *model,
-                                        QString::fromLatin1(kVehicleSource)),
-                        "non-persistent line and file edit tracking failed");
+                                        QString::fromLatin1(kVehicleSource)) &&
+                                editedBreakpointEntry
+                                        .value(QStringLiteral("modified"))
+                                        .toBool() &&
+                                editedBreakpointEntry
+                                        .value(QStringLiteral("breakpoint"))
+                                        .toBool(),
+                        "combined line edit and persistent file breakpoint "
+                        "tracking failed");
                 phase = Phase::WaitingInitialFrame;
                 okay &= Check(
                         model->hasEdits() && viewer.startSimulationDebugger(),

@@ -405,6 +405,23 @@ int main(int argc, char **argv) {
             initialToolTabs != nullptr &&
             initialBruteforceContent != nullptr &&
             initialDebuggerContent != nullptr;
+    bool debuggerCombinedNameValid = false;
+    if (initialDebuggerContent != nullptr) {
+        QVariant decoratedName;
+        const QVariantMap combinedEntry{
+                {QStringLiteral("name"), QStringLiteral("physics.cpp")},
+                {QStringLiteral("modified"), true},
+                {QStringLiteral("breakpoint"), true}};
+        debuggerCombinedNameValid =
+                QMetaObject::invokeMethod(
+                        initialDebuggerContent,
+                        "sourceName",
+                        Q_RETURN_ARG(QVariant, decoratedName),
+                        Q_ARG(QVariant, combinedEntry)) &&
+                decoratedName.toString().count(
+                        QStringLiteral("<font color=")) ==
+                        QStringLiteral("physics.cpp").size();
+    }
     if (globalScriptVisibleAcrossTabs) {
         initialToolTabs->setProperty("currentIndex", 1);
         QCoreApplication::processEvents();
@@ -601,6 +618,15 @@ int main(int argc, char **argv) {
                     QObject *const resetLiveEditsButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("resetLiveEditsButton"));
+                    QObject *const debuggerSubstepForwardButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "debuggerSubstepForwardButton"));
+                    QObject *const debuggerSourceLineStepButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "debuggerSourceLineStepButton"));
+                    QObject *const debuggerTickStepButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("debuggerTickStepButton"));
                     auto *const evaluationSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationSection")));
@@ -1279,7 +1305,23 @@ int main(int argc, char **argv) {
                             simulationCodeViewer != nullptr &&
                             simulationVariables != nullptr &&
                             restartLiveSimulationButton != nullptr &&
-                            resetLiveEditsButton != nullptr;
+                            resetLiveEditsButton != nullptr &&
+                            debuggerSubstepForwardButton != nullptr &&
+                            debuggerSubstepForwardButton
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Substep Forward") &&
+                            debuggerSourceLineStepButton != nullptr &&
+                            debuggerSourceLineStepButton
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Source Line Step") &&
+                            debuggerTickStepButton != nullptr &&
+                            debuggerTickStepButton
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Tick Step") &&
+                            debuggerCombinedNameValid;
 
                     bool wheelScrollingValid =
                             settingsScroll != nullptr &&

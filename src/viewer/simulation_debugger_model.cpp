@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QTimer>
 #include <QVariantMap>
 
@@ -86,6 +87,7 @@ SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
                 }
                 setRunning(false);
                 active_ = false;
+                cancelStep();
                 clearExecutionLocation();
                 if (status == QProcess::NormalExit && exitCode == 0) {
                     setStatus(
@@ -114,8 +116,18 @@ bool SimulationDebuggerModel::active() const {
 bool SimulationDebuggerModel::running() const {
     return running_;
 }
+bool SimulationDebuggerModel::stepping() const {
+    return stepping_;
+}
 bool SimulationDebuggerModel::compiling() const {
     return compiling_;
+}
+bool SimulationDebuggerModel::canStepSource() const {
+    return active_ && workerReady_ && !running_ && !compiling_ && !stepping_ &&
+           activeLine_ > 0 && sourceIndex(activeFilePath_) >= 0;
+}
+bool SimulationDebuggerModel::canStepTick() const {
+    return active_ && workerReady_ && !running_ && !compiling_ && !stepping_;
 }
 QString SimulationDebuggerModel::backendName() const {
     return backendName_;
@@ -329,6 +341,7 @@ bool SimulationDebuggerModel::toggleBreakpoint(
         source.breakpoints.insert(lineNumber);
         source.executableLines.insert(lineNumber);
     }
+    saveBreakpoints();
     if (active_) {
         syncSourceBreakpoints(source);
         if (running_ && commandInFlight_ && !handlingDebuggerOutput_ &&
@@ -375,6 +388,18 @@ void SimulationDebuggerModel::resetEdits() {
     setStatus(QStringLiteral("All in-memory source edits were reset."));
 }
 
+bool SimulationDebuggerModel::stepSubstep() {
+    return beginStep(StepMode::Substep);
+}
+
+bool SimulationDebuggerModel::stepSourceLine() {
+    return beginStep(StepMode::SourceLine);
+}
+
+bool SimulationDebuggerModel::stepTick() {
+    return beginStep(StepMode::Tick);
+}
+
 void SimulationDebuggerModel::configure(const QString &backendName) {
     backendName_ = backendName.trimmed().isEmpty() ? QStringLiteral("Reference")
                                                    : backendName;
@@ -401,11 +426,13 @@ bool SimulationDebuggerModel::startSession(
     lastBreakpointKey_.clear();
     executionTick_ = 0;
     installedBreakpointKeys_.clear();
+    installedBreakpointIds_.clear();
     setupQueued_ = false;
     startupPromptsRemaining_ = 1;
     hasCurrentCommand_ = false;
     commandInFlight_ = false;
     advanceScheduled_ = false;
+    cancelStep();
     pauseRequested_ = false;
     editInterruptRequested_ = false;
     handlingDebuggerOutput_ = false;
@@ -442,9 +469,12 @@ void SimulationDebuggerModel::stopSession() {
     compiling_ = false;
     commandInFlight_ = false;
     advanceScheduled_ = false;
+    cancelStep();
     atTickBoundary_ = false;
     commandQueue_.clear();
     hasCurrentCommand_ = false;
+    installedBreakpointKeys_.clear();
+    installedBreakpointIds_.clear();
     clearExecutionLocation();
     if (debugger_.state() != QProcess::NotRunning) {
         debugger_.write("quit\n");
@@ -466,7 +496,7 @@ void SimulationDebuggerModel::stopSession() {
 }
 
 void SimulationDebuggerModel::play() {
-    if (!active_ || compiling_) {
+    if (!active_ || compiling_ || stepping_) {
         return;
     }
     lastBreakpointKey_.clear();
@@ -479,6 +509,9 @@ void SimulationDebuggerModel::play() {
 
 void SimulationDebuggerModel::pause() {
     if (!active_) {
+        return;
+    }
+    if (stepping_) {
         return;
     }
     setRunning(false);
@@ -659,6 +692,13 @@ QVariantList SimulationDebuggerModel::visibleFileEntries() const {
                     return source.path.startsWith(prefix) &&
                            !source.edits.isEmpty();
                 });
+        const bool breakpoint = std::any_of(
+                sources_.begin(),
+                sources_.end(),
+                [&prefix](const SourceFile &source) {
+                    return source.path.startsWith(prefix) &&
+                           !source.breakpoints.isEmpty();
+                });
         result.push_back(
                 QVariantMap{
                         {QStringLiteral("path"), directory},
@@ -668,6 +708,7 @@ QVariantList SimulationDebuggerModel::visibleFileEntries() const {
                         {QStringLiteral("expanded"),
                          expandedFolders_.contains(directory)},
                         {QStringLiteral("modified"), modified},
+                        {QStringLiteral("breakpoint"), breakpoint},
                         {QStringLiteral("selected"), false}});
     }
     for (const SourceFile &source : sources_) {
@@ -682,6 +723,8 @@ QVariantList SimulationDebuggerModel::visibleFileEntries() const {
                         {QStringLiteral("directory"), false},
                         {QStringLiteral("expanded"), false},
                         {QStringLiteral("modified"), !source.edits.isEmpty()},
+                        {QStringLiteral("breakpoint"),
+                         !source.breakpoints.isEmpty()},
                         {QStringLiteral("selected"),
                          source.path == selectedFilePath_},
                         {QStringLiteral("active"),
@@ -867,6 +910,7 @@ void SimulationDebuggerModel::loadSources() {
                  QFileInfo::exists(workerExecutablePath()) &&
                  QFileInfo::exists(lldbExecutablePath()) &&
                  QFileInfo::exists(scriptExecutablePath());
+    restoreBreakpoints();
     statusText_ =
             available_
                     ? QStringLiteral("Real reference engine source is ready.")
@@ -875,11 +919,67 @@ void SimulationDebuggerModel::loadSources() {
                               "worker, LLDB, and a terminal bridge.");
 }
 
+void SimulationDebuggerModel::restoreBreakpoints() {
+    const QStringList persisted = QSettings()
+                                          .value(QStringLiteral(
+                                                  "simulationDebugger/"
+                                                  "breakpointsV1"))
+                                          .toStringList();
+    for (const QString &key : persisted) {
+        const qsizetype separator = key.lastIndexOf(QLatin1Char(':'));
+        bool lineValid = false;
+        const int line = key.mid(separator + 1).toInt(&lineValid);
+        const QString path = separator > 0 ? key.left(separator) : QString();
+        const int index = sourceIndex(path);
+        if (!lineValid || line <= 0 || index < 0 ||
+            line > sources_[static_cast<std::size_t>(index)]
+                            .currentLines.size()) {
+            continue;
+        }
+        SourceFile &source = sources_[static_cast<std::size_t>(index)];
+        source.breakpoints.insert(line);
+        source.executableLines.insert(line);
+    }
+}
+
+void SimulationDebuggerModel::saveBreakpoints() const {
+    QStringList persisted;
+    for (const SourceFile &source : sources_) {
+        for (const int line : source.breakpoints) {
+            persisted.push_back(lineKey(source.path, line));
+        }
+    }
+    std::sort(persisted.begin(), persisted.end());
+    QSettings().setValue(
+            QStringLiteral("simulationDebugger/breakpointsV1"), persisted);
+}
+
 void SimulationDebuggerModel::syncSourceBreakpoints(SourceFile &source) {
     QSet<int> lines = source.breakpoints;
     for (auto edit = source.edits.cbegin(); edit != source.edits.cend();
          ++edit) {
         lines.insert(edit.key());
+    }
+    const QString keyPrefix = source.path + QLatin1Char(':');
+    const QList<QString> installed = installedBreakpointKeys_.values();
+    for (const QString &key : installed) {
+        if (!key.startsWith(keyPrefix)) {
+            continue;
+        }
+        bool lineValid = false;
+        const int installedLine = key.mid(keyPrefix.size()).toInt(&lineValid);
+        if (!lineValid || lines.contains(installedLine)) {
+            continue;
+        }
+        installedBreakpointKeys_.remove(key);
+        const int breakpointId = installedBreakpointIds_.take(key);
+        if (breakpointId > 0) {
+            queueCommand(
+                    CommandKind::SourceBreakpointRemove,
+                    QStringLiteral("breakpoint delete %1").arg(breakpointId),
+                    key,
+                    breakpointId);
+        }
     }
     QList<int> sorted(lines.begin(), lines.end());
     std::sort(sorted.begin(), sorted.end());
@@ -1005,18 +1105,26 @@ void SimulationDebuggerModel::handleCommandResult(
         }
         break;
     case CommandKind::SourceBreakpoint:
+        handleSourceBreakpointResult(command, output);
+        scheduleAdvance();
+        break;
+    case CommandKind::SourceBreakpointRemove:
         if (debuggerCommandFailed(output)) {
-            installedBreakpointKeys_.remove(
-                    lineKey(command.sourcePath, command.line));
-            editError_ = QStringLiteral("Line %1 cannot be stopped at: %2")
-                                 .arg(command.line)
-                                 .arg(TrimDebuggerNoise(output));
+            installedBreakpointKeys_.insert(command.sourcePath);
+            installedBreakpointIds_.insert(command.sourcePath, command.line);
+            editError_ =
+                    QStringLiteral("Could not remove native breakpoint %1: %2")
+                            .arg(command.line)
+                            .arg(TrimDebuggerNoise(output));
             emit linesChanged();
         }
         scheduleAdvance();
         break;
     case CommandKind::Run:
     case CommandKind::Continue:
+    case CommandKind::Substep:
+    case CommandKind::SourceLineStep:
+    case CommandKind::RefreshLocation:
         handleDebuggerStop(output);
         break;
     case CommandKind::Variables:
@@ -1034,6 +1142,7 @@ void SimulationDebuggerModel::handleCommandResult(
             diagnostic = diagnostic.trimmed();
         }
         if (debuggerCommandFailed(diagnostic)) {
+            cancelStep();
             editError_ = diagnostic;
             if (editError_.isEmpty()) {
                 editError_ = QStringLiteral(
@@ -1049,6 +1158,7 @@ void SimulationDebuggerModel::handleCommandResult(
     }
     case CommandKind::JumpAfterEdit:
         if (debuggerCommandFailed(output)) {
+            cancelStep();
             editError_ = QStringLiteral(
                                  "The debugger could not skip the original "
                                  "source statement: %1")
@@ -1058,11 +1168,126 @@ void SimulationDebuggerModel::handleCommandResult(
             emit linesChanged();
         } else {
             executedLinesThisTick_.insert(currentLineKey_);
-            scheduleAdvance();
+            if (stepping_) {
+                if (stepMode_ == StepMode::Tick) {
+                    queueCommand(
+                            CommandKind::Continue, QStringLiteral("continue"));
+                } else {
+                    queueCommand(
+                            CommandKind::RefreshLocation,
+                            QStringLiteral("frame info"));
+                }
+            } else {
+                scheduleAdvance();
+            }
         }
         break;
     case CommandKind::Quit:
         break;
+    }
+}
+
+void SimulationDebuggerModel::handleSourceBreakpointResult(
+        const DebuggerCommand &command, const QString &output) {
+    const QString requestedKey = lineKey(command.sourcePath, command.line);
+    const int index = sourceIndex(command.sourcePath);
+    if (index < 0) {
+        installedBreakpointKeys_.remove(requestedKey);
+        return;
+    }
+    SourceFile &source = sources_[static_cast<std::size_t>(index)];
+
+    static const QRegularExpression locationPattern(
+            QStringLiteral("\\bat\\s+(.+?):(\\d+)(?::\\d+)?(?:\\s|,|$)"));
+    static const QRegularExpression idPattern(
+            QStringLiteral("\\bBreakpoint\\s+(\\d+):"),
+            QRegularExpression::CaseInsensitiveOption);
+    const int breakpointId = idPattern.match(output).captured(1).toInt();
+    int resolvedLine = -1;
+    QRegularExpressionMatchIterator locations =
+            locationPattern.globalMatch(output);
+    while (locations.hasNext()) {
+        const QRegularExpressionMatch location = locations.next();
+        const QString resolvedPath =
+                relativeSourcePath(QDir::cleanPath(location.captured(1)));
+        if (resolvedPath == command.sourcePath ||
+            QFileInfo(location.captured(1)).fileName() ==
+                    fileName(command.sourcePath)) {
+            resolvedLine = location.captured(2).toInt();
+            break;
+        }
+    }
+
+    const bool unresolved =
+            resolvedLine <= 0 ||
+            output.contains(
+                    QStringLiteral("no locations (pending)"),
+                    Qt::CaseInsensitive) ||
+            output.contains(
+                    QStringLiteral("Unable to resolve breakpoint"),
+                    Qt::CaseInsensitive);
+    if (debuggerCommandFailed(output) || unresolved) {
+        installedBreakpointKeys_.remove(requestedKey);
+        installedBreakpointIds_.remove(requestedKey);
+        if (breakpointId > 0) {
+            queueCommand(
+                    CommandKind::SourceBreakpointRemove,
+                    QStringLiteral("breakpoint delete %1").arg(breakpointId),
+                    requestedKey,
+                    breakpointId);
+        }
+        if (source.breakpoints.remove(command.line)) {
+            saveBreakpoints();
+            emit filesChanged();
+        }
+        editError_ =
+                QStringLiteral("Line %1 has no executable debugger location.")
+                        .arg(command.line);
+        const QString diagnostic = TrimDebuggerNoise(output);
+        if (!diagnostic.isEmpty()) {
+            editError_ += QLatin1Char('\n') + diagnostic;
+        }
+        emit linesChanged();
+        setStatus(QStringLiteral("Breakpoint could not be resolved."));
+        return;
+    }
+
+    const bool stillWanted = source.breakpoints.contains(command.line) ||
+                             source.edits.contains(command.line);
+    if (!stillWanted) {
+        installedBreakpointKeys_.remove(requestedKey);
+        if (breakpointId > 0) {
+            queueCommand(
+                    CommandKind::SourceBreakpointRemove,
+                    QStringLiteral("breakpoint delete %1").arg(breakpointId),
+                    requestedKey,
+                    breakpointId);
+        }
+        return;
+    }
+
+    if (breakpointId > 0) {
+        installedBreakpointIds_.insert(requestedKey, breakpointId);
+    }
+    source.executableLines.insert(resolvedLine);
+    if (source.breakpoints.contains(command.line) &&
+        resolvedLine != command.line) {
+        source.breakpoints.remove(command.line);
+        source.breakpoints.insert(resolvedLine);
+        installedBreakpointKeys_.remove(requestedKey);
+        installedBreakpointIds_.remove(requestedKey);
+        const QString resolvedKey = lineKey(command.sourcePath, resolvedLine);
+        installedBreakpointKeys_.insert(resolvedKey);
+        if (breakpointId > 0) {
+            installedBreakpointIds_.insert(resolvedKey, breakpointId);
+        }
+        saveBreakpoints();
+        emit filesChanged();
+        emit linesChanged();
+        setStatus(
+                QStringLiteral("Breakpoint moved to executable line %1 in %2.")
+                        .arg(resolvedLine)
+                        .arg(fileName(command.sourcePath)));
     }
 }
 
@@ -1086,7 +1311,14 @@ void SimulationDebuggerModel::handleDebuggerStop(const QString &output) {
         for (SourceFile &source : sources_) {
             syncSourceBreakpoints(source);
         }
-        if (pauseRequested_) {
+        if (stepping_) {
+            finishStep(
+                    stepMode_ == StepMode::Tick
+                            ? QStringLiteral(
+                                      "Advanced exactly one physics tick.")
+                            : QStringLiteral(
+                                      "Step reached the next tick boundary."));
+        } else if (pauseRequested_) {
             setStatus(QStringLiteral(
                     "Locating the next native source-line boundary..."));
             queueCommand(CommandKind::Continue, QStringLiteral("continue"));
@@ -1121,6 +1353,16 @@ void SimulationDebuggerModel::handleDebuggerStop(const QString &output) {
         scheduleAdvance();
         return;
     }
+    if (stepping_) {
+        if (stepMode_ == StepMode::Tick) {
+            queueCommand(CommandKind::Continue, QStringLiteral("continue"));
+        } else {
+            cancelStep();
+            setStatus(QStringLiteral(
+                    "The debugger step did not resolve to a source line."));
+        }
+        return;
+    }
     if (running_) {
         queueCommand(CommandKind::Continue, QStringLiteral("continue"));
     }
@@ -1134,7 +1376,14 @@ void SimulationDebuggerModel::handleSourceStop(
         return;
     }
     if (relative.isEmpty() || line <= 0) {
-        if (running_ || pauseRequested_) {
+        if (stepping_) {
+            if (stepMode_ == StepMode::Tick) {
+                queueCommand(CommandKind::Continue, QStringLiteral("continue"));
+            } else {
+                finishStep(QStringLiteral(
+                        "Step paused outside the explorable source tree."));
+            }
+        } else if (running_ || pauseRequested_) {
             editInterruptRequested_ = false;
             queueCommand(CommandKind::Continue, QStringLiteral("continue"));
         } else {
@@ -1168,6 +1417,7 @@ void SimulationDebuggerModel::handleSourceStop(
     if (userBreakpoint && lastBreakpointKey_ != currentLineKey_) {
         lastBreakpointKey_ = currentLineKey_;
         setRunning(false);
+        cancelStep();
         setStatus(QStringLiteral("Paused at breakpoint %1:%2.")
                           .arg(fileName(relative))
                           .arg(line));
@@ -1175,7 +1425,28 @@ void SimulationDebuggerModel::handleSourceStop(
         lastBreakpointKey_.clear();
     }
 
-    if (!running_ && !editApplies(source, line)) {
+    if (stepping_ && stepMode_ == StepMode::Tick) {
+        if (!executedLinesThisTick_.contains(currentLineKey_) &&
+            editApplies(source, line)) {
+            applyCurrentEdit();
+        } else {
+            queueCommand(CommandKind::Continue, QStringLiteral("continue"));
+        }
+    } else if (stepping_) {
+        const QString status =
+                stepMode_ == StepMode::Substep
+                        ? QStringLiteral("Substep completed at %1:%2.")
+                                  .arg(fileName(relative))
+                                  .arg(line)
+                        : QStringLiteral("Source-line step completed at %1:%2.")
+                                  .arg(fileName(relative))
+                                  .arg(line);
+        finishStep(status);
+        variables_.clear();
+        queueCommand(
+                CommandKind::Variables,
+                QStringLiteral("frame variable --show-types"));
+    } else if (!running_ && !editApplies(source, line)) {
         if (!userBreakpoint) {
             setStatus(QStringLiteral("Paused at %1:%2.")
                               .arg(fileName(relative))
@@ -1342,6 +1613,75 @@ void SimulationDebuggerModel::scheduleAdvance() {
     });
 }
 
+bool SimulationDebuggerModel::beginStep(StepMode mode) {
+    if (mode == StepMode::None ||
+        (mode == StepMode::Tick ? !canStepTick() : !canStepSource())) {
+        return false;
+    }
+    pauseRequested_ = false;
+    editError_.clear();
+    stepMode_ = mode;
+    stepping_ = true;
+    emit stateChanged();
+    emit executionChanged();
+
+    const int index = sourceIndex(activeFilePath_);
+    if (index >= 0 && activeLine_ > 0 &&
+        !executedLinesThisTick_.contains(currentLineKey_) &&
+        editApplies(sources_[static_cast<std::size_t>(index)], activeLine_)) {
+        setStatus(QStringLiteral(
+                "Executing the edited source line before stepping."));
+        applyCurrentEdit();
+        return true;
+    }
+    queueStepCommand();
+    return true;
+}
+
+void SimulationDebuggerModel::queueStepCommand() {
+    switch (stepMode_) {
+    case StepMode::Substep:
+        setStatus(QStringLiteral("Advancing one native substep..."));
+        queueCommand(CommandKind::Substep, QStringLiteral("thread step-inst"));
+        break;
+    case StepMode::SourceLine:
+        setStatus(QStringLiteral("Advancing one source line..."));
+        queueCommand(
+                CommandKind::SourceLineStep,
+                QStringLiteral("thread step-over"));
+        break;
+    case StepMode::Tick:
+        setStatus(QStringLiteral("Advancing one physics tick..."));
+        queueCommand(CommandKind::Continue, QStringLiteral("continue"));
+        break;
+    case StepMode::None:
+        break;
+    }
+}
+
+void SimulationDebuggerModel::finishStep(const QString &status) {
+    if (!stepping_) {
+        return;
+    }
+    stepping_ = false;
+    stepMode_ = StepMode::None;
+    if (!status.isEmpty()) {
+        setStatus(status);
+    }
+    emit stateChanged();
+    emit executionChanged();
+}
+
+void SimulationDebuggerModel::cancelStep() {
+    if (!stepping_ && stepMode_ == StepMode::None) {
+        return;
+    }
+    stepping_ = false;
+    stepMode_ = StepMode::None;
+    emit stateChanged();
+    emit executionChanged();
+}
+
 void SimulationDebuggerModel::advanceExecution() {
     if (!active_ || !running_ || compiling_ || commandInFlight_) {
         return;
@@ -1420,6 +1760,7 @@ void SimulationDebuggerModel::failSession(const QString &message) {
     }
     const bool wasActive = active_;
     setRunning(false);
+    cancelStep();
     active_ = false;
     compiling_ = false;
     commandInFlight_ = false;

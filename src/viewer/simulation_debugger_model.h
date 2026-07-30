@@ -19,7 +19,10 @@ class SimulationDebuggerModel final : public QObject {
     Q_PROPERTY(bool available READ available NOTIFY stateChanged)
     Q_PROPERTY(bool active READ active NOTIFY stateChanged)
     Q_PROPERTY(bool running READ running NOTIFY stateChanged)
+    Q_PROPERTY(bool stepping READ stepping NOTIFY stateChanged)
     Q_PROPERTY(bool compiling READ compiling NOTIFY stateChanged)
+    Q_PROPERTY(bool canStepSource READ canStepSource NOTIFY stateChanged)
+    Q_PROPERTY(bool canStepTick READ canStepTick NOTIFY stateChanged)
     Q_PROPERTY(QString backendName READ backendName NOTIFY stateChanged)
     Q_PROPERTY(QVariantList fileEntries READ fileEntries NOTIFY filesChanged)
     Q_PROPERTY(
@@ -47,7 +50,10 @@ class SimulationDebuggerModel final : public QObject {
     bool available() const;
     bool active() const;
     bool running() const;
+    bool stepping() const;
     bool compiling() const;
+    bool canStepSource() const;
+    bool canStepTick() const;
     QString backendName() const;
     QVariantList fileEntries() const;
     QString selectedFilePath() const;
@@ -68,6 +74,9 @@ class SimulationDebuggerModel final : public QObject {
     Q_INVOKABLE bool toggleBreakpoint(const QString &path, int lineNumber);
     Q_INVOKABLE bool togglePinned(const QString &name);
     Q_INVOKABLE void resetEdits();
+    Q_INVOKABLE bool stepSubstep();
+    Q_INVOKABLE bool stepSourceLine();
+    Q_INVOKABLE bool stepTick();
     void setDarkMode(bool value);
 
     void configure(const QString &backendName);
@@ -114,8 +123,12 @@ class SimulationDebuggerModel final : public QObject {
         Setting,
         FunctionBreakpoint,
         SourceBreakpoint,
+        SourceBreakpointRemove,
         Run,
         Continue,
+        Substep,
+        SourceLineStep,
+        RefreshLocation,
         Variables,
         EvaluateEdit,
         JumpAfterEdit,
@@ -127,6 +140,13 @@ class SimulationDebuggerModel final : public QObject {
         QString text;
         QString sourcePath;
         int line = 0;
+    };
+
+    enum class StepMode {
+        None,
+        Substep,
+        SourceLine,
+        Tick,
     };
 
     QString syntaxHighlighted(const QString &text) const;
@@ -149,6 +169,8 @@ class SimulationDebuggerModel final : public QObject {
     int statementEndLine(const SourceFile &source, int line) const;
     bool editApplies(const SourceFile &source, int line) const;
     void loadSources();
+    void restoreBreakpoints();
+    void saveBreakpoints() const;
     void syncSourceBreakpoints(SourceFile &source);
     void installSourceBreakpoint(SourceFile &source, int line);
     void queueCommand(
@@ -161,6 +183,8 @@ class SimulationDebuggerModel final : public QObject {
     void consumeDebuggerPrompts();
     void
     handleCommandResult(const DebuggerCommand &command, const QString &output);
+    void handleSourceBreakpointResult(
+            const DebuggerCommand &command, const QString &output);
     void handleDebuggerStop(const QString &output);
     void handleSourceStop(const QString &absolutePath, int line);
     void parseWorkerOutput(const QString &output);
@@ -172,6 +196,10 @@ class SimulationDebuggerModel final : public QObject {
     void advanceExecution();
     void applyCurrentEdit();
     void jumpPastCurrentStatement();
+    bool beginStep(StepMode mode);
+    void queueStepCommand();
+    void finishStep(const QString &status = {});
+    void cancelStep();
     void clearExecutionLocation();
     void failSession(const QString &message);
     void setRunning(bool value);
@@ -182,6 +210,7 @@ class SimulationDebuggerModel final : public QObject {
     QSet<QString> pinnedNames_;
     QSet<QString> executedLinesThisTick_;
     QSet<QString> installedBreakpointKeys_;
+    QHash<QString, int> installedBreakpointIds_;
     QQueue<DebuggerCommand> commandQueue_;
     DebuggerCommand currentCommand_;
     QProcess debugger_;
@@ -200,6 +229,7 @@ class SimulationDebuggerModel final : public QObject {
     bool available_ = false;
     bool active_ = false;
     bool running_ = false;
+    bool stepping_ = false;
     bool compiling_ = false;
     bool setupQueued_ = false;
     int startupPromptsRemaining_ = 0;
@@ -213,6 +243,7 @@ class SimulationDebuggerModel final : public QObject {
     bool workerReady_ = false;
     bool stopping_ = false;
     bool darkMode_ = false;
+    StepMode stepMode_ = StepMode::None;
 };
 
 } // namespace forevertas::viewer

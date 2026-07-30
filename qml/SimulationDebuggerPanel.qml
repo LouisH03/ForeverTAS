@@ -30,6 +30,55 @@ Item {
             root.editingLine.cancelEdit()
     }
 
+    function escapeStyledText(value) {
+        return String(value || "").replace(/&/g, "&amp;")
+                                     .replace(/</g, "&lt;")
+                                     .replace(/>/g, "&gt;")
+    }
+
+    function sourceName(entry) {
+        const name = String(entry.name || "")
+        if (!entry.modified || !entry.breakpoint)
+            return name
+        let result = ""
+        for (let index = 0; index < name.length; ++index) {
+            const color = index % 2 === 0
+                        ? AppTheme.codeBreakpoint : AppTheme.success
+            result += "<font color=\"" + color + "\">"
+                    + root.escapeStyledText(name.charAt(index)) + "</font>"
+        }
+        return result
+    }
+
+    function restoreEditorPositions(sourcePosition, codePosition) {
+        Qt.callLater(function() {
+            sourceTree.contentY = Math.max(
+                0, Math.min(sourcePosition,
+                            sourceTree.contentHeight - sourceTree.height))
+            codeList.contentY = Math.max(
+                0, Math.min(codePosition,
+                            codeList.contentHeight - codeList.height))
+        })
+    }
+
+    function toggleBreakpoint(lineNumber) {
+        const sourcePosition = sourceTree.contentY
+        const codePosition = codeList.contentY
+        if (!root.debuggerModel.toggleBreakpoint(
+                    root.debuggerModel.selectedFilePath, lineNumber))
+            return
+        root.restoreEditorPositions(sourcePosition, codePosition)
+    }
+
+    function updateLine(lineNumber, text) {
+        const sourcePosition = sourceTree.contentY
+        const codePosition = codeList.contentY
+        if (!root.debuggerModel.updateLine(lineNumber, text))
+            return false
+        root.restoreEditorPositions(sourcePosition, codePosition)
+        return true
+    }
+
     function revealExecutingLine() {
         Qt.callLater(function() {
             if (root.debuggerModel.selectedFilePath
@@ -73,9 +122,11 @@ Item {
                     Layout.fillWidth: true
                     text: root.debuggerModel.running
                           ? qsTr("native execution running")
-                          : (root.debuggerModel.compiling
-                             ? qsTr("compiling edited C++")
-                             : qsTr("native execution paused"))
+                          : (root.debuggerModel.stepping
+                             ? qsTr("native execution stepping")
+                             : (root.debuggerModel.compiling
+                                ? qsTr("compiling edited C++")
+                                : qsTr("native execution paused")))
                     font.family: "monospace"
                     font.pixelSize: 10
                     color: AppTheme.textMuted
@@ -116,6 +167,50 @@ Item {
                    ? AppTheme.error : AppTheme.textMuted
             wrapMode: Text.WordWrap
             font.pixelSize: 11
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            Button {
+                objectName: "debuggerSubstepForwardButton"
+                Layout.fillWidth: true
+                text: qsTr("Substep Forward")
+                enabled: root.debuggerModel.canStepSource
+                onClicked: {
+                    root.commitActiveEdit()
+                    root.debuggerModel.stepSubstep()
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Advance one native execution substep")
+            }
+
+            Button {
+                objectName: "debuggerSourceLineStepButton"
+                Layout.fillWidth: true
+                text: qsTr("Source Line Step")
+                enabled: root.debuggerModel.canStepSource
+                onClicked: {
+                    root.commitActiveEdit()
+                    root.debuggerModel.stepSourceLine()
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Execute through the current source line")
+            }
+
+            Button {
+                objectName: "debuggerTickStepButton"
+                Layout.fillWidth: true
+                text: qsTr("Tick Step")
+                enabled: root.debuggerModel.canStepTick
+                onClicked: {
+                    root.commitActiveEdit()
+                    root.debuggerModel.stepTick()
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Advance exactly one physics tick")
+            }
         }
 
         Rectangle {
@@ -164,18 +259,28 @@ Item {
                             text: sourceRow.modelData.directory
                                   ? (sourceRow.modelData.expanded ? "v" : ">")
                                   : "{}"
-                            color: sourceRow.modelData.modified
-                                   ? AppTheme.success : AppTheme.textMuted
+                            color: sourceRow.modelData.breakpoint
+                                   ? AppTheme.codeBreakpoint
+                                   : (sourceRow.modelData.modified
+                                      ? AppTheme.success
+                                      : AppTheme.textMuted)
                             font.family: "monospace"
                             font.pixelSize: 10
                         }
 
                         Label {
+                            objectName: "simulationSourceName"
                             Layout.fillWidth: true
-                            text: String(sourceRow.modelData.name || "")
-                            color: sourceRow.modelData.modified
-                                   ? AppTheme.success : AppTheme.text
+                            text: root.sourceName(sourceRow.modelData)
+                            textFormat: sourceRow.modelData.modified
+                                        && sourceRow.modelData.breakpoint
+                                        ? Text.StyledText : Text.PlainText
+                            color: sourceRow.modelData.breakpoint
+                                   ? AppTheme.codeBreakpoint
+                                   : (sourceRow.modelData.modified
+                                      ? AppTheme.success : AppTheme.text)
                             font.weight: sourceRow.modelData.modified
+                                         || sourceRow.modelData.breakpoint
                                          ? Font.DemiBold : Font.Normal
                             font.family: sourceRow.modelData.directory
                                          ? "sans-serif" : "monospace"
@@ -250,7 +355,7 @@ Item {
                         codeLine.editing = false
                         if (root.editingLine === codeLine)
                             root.editingLine = null
-                        root.debuggerModel.updateLine(
+                        root.updateLine(
                             codeLine.modelData.number, committedText)
                         root.hasDraftEdit = false
                     }
@@ -262,6 +367,22 @@ Item {
                         if (root.editingLine === codeLine)
                             root.editingLine = null
                         root.hasDraftEdit = false
+                    }
+                    function beginEdit() {
+                        if (!codeLine.modelData.editable)
+                            return
+                        if (root.debuggerModel.running
+                                || root.debuggerModel.stepping) {
+                            root.viewer.pause()
+                            return
+                        }
+                        root.commitActiveEdit()
+                        codeLine.editing = true
+                        root.editingLine = codeLine
+                        root.hasDraftEdit =
+                            liveEdit.text !== codeLine.modelData.original
+                        liveEdit.forceActiveFocus()
+                        liveEdit.selectAll()
                     }
                     readonly property bool draftModified:
                         codeLine.editing
@@ -275,6 +396,28 @@ Item {
                            : (index % 2 === 0
                               ? AppTheme.codeSurface
                               : AppTheme.codeAlternate)
+
+                    Timer {
+                        id: lineBreakpointTimer
+                        interval: 280
+                        repeat: false
+                        onTriggered:
+                            root.toggleBreakpoint(codeLine.modelData.number)
+                    }
+
+                    TapHandler {
+                        enabled: !codeLine.editing
+                        acceptedButtons: Qt.LeftButton
+                        onTapped: function(eventPoint, button) {
+                            if (eventPoint.position.x >= 23)
+                                lineBreakpointTimer.restart()
+                        }
+                        onDoubleTapped: function(eventPoint, button) {
+                            lineBreakpointTimer.stop()
+                            if (eventPoint.position.x >= 23)
+                                codeLine.beginEdit()
+                        }
+                    }
 
                     Rectangle {
                         anchors.left: parent.left
@@ -305,9 +448,9 @@ Item {
 
                             TapHandler {
                                 enabled: codeLine.modelData.editable
-                                onTapped: root.debuggerModel.toggleBreakpoint(
-                                              root.debuggerModel.selectedFilePath,
-                                              codeLine.modelData.number)
+                                onTapped:
+                                    root.toggleBreakpoint(
+                                        codeLine.modelData.number)
                             }
                         }
 
@@ -369,26 +512,6 @@ Item {
                             font.family: "monospace"
                             font.pixelSize: 11
                             elide: Text.ElideNone
-
-                            TapHandler {
-                                acceptedButtons: Qt.LeftButton
-                                onDoubleTapped: {
-                                    if (codeLine.modelData.editable) {
-                                        if (root.debuggerModel.running) {
-                                            root.viewer.pause()
-                                            return
-                                        }
-                                        root.commitActiveEdit()
-                                        codeLine.editing = true
-                                        root.editingLine = codeLine
-                                        root.hasDraftEdit =
-                                            liveEdit.text
-                                            !== codeLine.modelData.original
-                                        liveEdit.forceActiveFocus()
-                                        liveEdit.selectAll()
-                                    }
-                                }
-                            }
                         }
 
                         Label {
