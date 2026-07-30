@@ -3,6 +3,7 @@
 
 #include "app/search_configuration_model.h"
 #include "app/search_completion.h"
+#include "app/cuboid_target_model.h"
 
 #include <QObject>
 #include <QString>
@@ -67,6 +68,8 @@ class SearchController final : public QObject {
     Q_PROPERTY(QVariantMap evaluationTargetSettings READ
                        evaluationTargetSettings NOTIFY
                        evaluationTargetSettingsChanged)
+    Q_PROPERTY(forevertas::app::CuboidTargetModel* cuboidTargets READ
+                       cuboidTargets CONSTANT)
 
     Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
@@ -113,6 +116,7 @@ public:
     QVariantMap searchAlgorithmSettings() const;
     QVariantList modifierPasses() const;
     QVariantMap evaluationTargetSettings() const;
+    CuboidTargetModel *cuboidTargets();
 
     bool canStart() const;
     bool running() const;
@@ -154,6 +158,7 @@ public slots:
                                             const QString &value);
     Q_INVOKABLE void setEvaluationTargetSetting(const QString &key,
                                                 const QString &value);
+    Q_INVOKABLE void focusSelectedCuboid();
     Q_INVOKABLE void startSearch();
     Q_INVOKABLE void stopSearch();
 
@@ -183,6 +188,8 @@ signals:
     void searchImprovement(
             forevertas::app::SearchImprovementPtr improvement);
     void searchCompleted(forevertas::app::SearchCompletionPtr completion);
+    void cuboidFocusRequested(const QVector3D &center,
+                              const QVector3D &size);
 
 private:
     struct ValidationResult {
@@ -211,6 +218,9 @@ private:
     void clearAutoDetectedPacksDirectory();
     void persist(const char *key, const QString &value);
     void waitForWorker();
+    void synchronizeSelectedCuboid();
+    void synchronizeCuboidSetting(const QString &key,
+                                   const QString &value);
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
@@ -225,6 +235,7 @@ private:
             kDefaultCudaParallelSampleCount);
     bool cudaCalibrationEnabled_ = false;
     SearchConfigurationModel configuration_;
+    CuboidTargetModel cuboidTargets_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString iterationCountText_;

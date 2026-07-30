@@ -37,6 +37,7 @@ public:
     QVariantMap searchAlgorithmSettings() const;
     QVariantList modifierPasses() const;
     QVariantMap evaluationTargetSettings() const;
+    QVariantMap evaluationTargetSettingsFor(const QString &id) const;
 
     bool setSearchAlgorithmId(const QString &value);
     bool setEvaluationTargetId(const QString &value);

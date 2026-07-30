@@ -208,6 +208,14 @@ QVariantMap SearchConfigurationModel::evaluationTargetSettings() const {
     return evaluationTargetSettings_;
 }
 
+QVariantMap SearchConfigurationModel::evaluationTargetSettingsFor(
+        const QString &id) const {
+    const EvaluationTargetRegistration *const registration =
+            FindEvaluationTarget(id.toStdString());
+    if (registration == nullptr) return {};
+    return LoadOptionSettings(QStringLiteral("evaluation"), *registration);
+}
+
 bool SearchConfigurationModel::setSearchAlgorithmId(const QString &value) {
     const SearchAlgorithmRegistration *const registration =
             FindSearchAlgorithm(value.toStdString());

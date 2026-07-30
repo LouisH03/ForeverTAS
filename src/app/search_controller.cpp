@@ -4,6 +4,7 @@
 #include "app/search_worker.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/replay_input_script.h"
+#include "searches/algorithm_registry.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -64,19 +65,27 @@ QString BackendId(PhysicsBackend backend) {
 }  // namespace
 
 SearchController::SearchController(QObject *parent)
-    : QObject(parent) {
+    : QObject(parent),
+      cuboidTargets_(configuration_.evaluationTargetSettingsFor(
+              QString::fromLatin1(kVolumeEntryEvaluationId))) {
     initialize(nullptr);
 }
 
 SearchController::SearchController(const QStringList &packsSearchPatterns,
                                    QObject *parent)
-    : QObject(parent) {
+    : QObject(parent),
+      cuboidTargets_(configuration_.evaluationTargetSettingsFor(
+              QString::fromLatin1(kVolumeEntryEvaluationId))) {
     initialize(&packsSearchPatterns);
 }
 
 void SearchController::initialize(const QStringList *packsSearchPatterns) {
     qRegisterMetaType<SearchCompletionPtr>();
     qRegisterMetaType<SearchImprovementPtr>();
+    connect(&cuboidTargets_,
+            &CuboidTargetModel::selectedTargetChanged,
+            this,
+            &SearchController::synchronizeSelectedCuboid);
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
     baseInputScript_ = StoredValue(kBaseInputScriptKey, {});
@@ -113,6 +122,7 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
                 BackendId(simulationBackend_));
     }
     scheduleAutoDetectPacksDirectory(packsSearchPatterns);
+    synchronizeSelectedCuboid();
     refreshValidation();
 }
 
@@ -250,6 +260,10 @@ QVariantMap SearchController::evaluationTargetSettings() const {
     return configuration_.evaluationTargetSettings();
 }
 
+CuboidTargetModel *SearchController::cuboidTargets() {
+    return &cuboidTargets_;
+}
+
 bool SearchController::canStart() const {
     return valid_ && !running_ && !extractingReplayInputs_;
 }
@@ -384,6 +398,7 @@ void SearchController::setEvaluationTargetId(const QString &value) {
     if (!configuration_.setEvaluationTargetId(value)) return;
     emit evaluationTargetIdChanged();
     emit evaluationTargetSettingsChanged();
+    synchronizeSelectedCuboid();
     refreshValidation();
 }
 
@@ -429,8 +444,61 @@ void SearchController::setModifierPassSetting(int index,
 void SearchController::setEvaluationTargetSetting(const QString &key,
                                                   const QString &value) {
     if (!configuration_.setEvaluationTargetSetting(key, value)) return;
+    if (configuration_.evaluationTargetId() ==
+        QString::fromLatin1(kVolumeEntryEvaluationId)) {
+        synchronizeCuboidSetting(key, value);
+    }
     emit evaluationTargetSettingsChanged();
     refreshValidation();
+}
+
+void SearchController::synchronizeSelectedCuboid() {
+    if (configuration_.evaluationTargetId() !=
+        QString::fromLatin1(kVolumeEntryEvaluationId)) {
+        return;
+    }
+    const QVariantMap target = cuboidTargets_.selectedTarget();
+    bool changed = false;
+    constexpr const char *keys[] = {
+            "centerX", "centerY", "centerZ", "sizeX", "sizeY", "sizeZ"};
+    for (const char *const key : keys) {
+        const QString qKey = QString::fromLatin1(key);
+        changed |= configuration_.setEvaluationTargetSetting(
+                qKey, target.value(qKey).toString());
+    }
+    if (changed) {
+        emit evaluationTargetSettingsChanged();
+        refreshValidation();
+    }
+}
+
+void SearchController::synchronizeCuboidSetting(const QString &key,
+                                                const QString &value) {
+    const int index = cuboidTargets_.selectedIndex();
+    if (key == QStringLiteral("centerX")) {
+        cuboidTargets_.setCenterComponent(index, QStringLiteral("x"), value);
+    } else if (key == QStringLiteral("centerY")) {
+        cuboidTargets_.setCenterComponent(index, QStringLiteral("y"), value);
+    } else if (key == QStringLiteral("centerZ")) {
+        cuboidTargets_.setCenterComponent(index, QStringLiteral("z"), value);
+    } else if (key == QStringLiteral("sizeX")) {
+        cuboidTargets_.setSizeComponent(index, QStringLiteral("x"), value);
+    } else if (key == QStringLiteral("sizeY")) {
+        cuboidTargets_.setSizeComponent(index, QStringLiteral("y"), value);
+    } else if (key == QStringLiteral("sizeZ")) {
+        cuboidTargets_.setSizeComponent(index, QStringLiteral("z"), value);
+    }
+}
+
+void SearchController::focusSelectedCuboid() {
+    const QVariantMap target = cuboidTargets_.selectedTarget();
+    const QVariant center = target.value(QStringLiteral("center"));
+    const QVariant size = target.value(QStringLiteral("size"));
+    if (!center.canConvert<QVector3D>() || !size.canConvert<QVector3D>()) {
+        return;
+    }
+    emit cuboidFocusRequested(
+            center.value<QVector3D>(), size.value<QVector3D>());
 }
 
 void SearchController::setPacksDirectory(const QString &value) {
@@ -784,6 +852,7 @@ void SearchController::setRunning(bool value) {
     }
     const bool oldCanStart = canStart();
     running_ = value;
+    cuboidTargets_.setEditingEnabled(!value);
     emit runningChanged();
     emit replayInputStateChanged();
     if (oldCanStart != canStart()) {

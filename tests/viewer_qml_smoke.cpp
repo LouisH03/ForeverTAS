@@ -15,6 +15,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
+#include <QVector3D>
 #include <QWheelEvent>
 
 #include <array>
@@ -1281,6 +1282,140 @@ int main(int argc, char **argv) {
                                     0.0 &&
                             rotationWeightSlider->property("to").toReal() ==
                                     100.0;
+
+                    dropdownStateUpdates &=
+                            activateCombo(evaluationTargetCombo, 3);
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    QObject *const cuboidEditor =
+                            evaluationTargetSelector
+                                    ->property("settingsItem")
+                                    .value<QObject *>();
+                    QObject *const cuboidSelector =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("cuboidTargetSelector"));
+                    QObject *const addCuboidButton =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("addCuboidButton"));
+                    QObject *const duplicateCuboidButton =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("duplicateCuboidButton"));
+                    QObject *const focusCuboidButton =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("focusCuboidButton"));
+                    QObject *const removeCuboidButton =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("removeCuboidButton"));
+                    QObject *const cuboidNameField =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("cuboidNameField"));
+                    const int placedIndex =
+                            controller.cuboidTargets()->addTarget(
+                                    14.0, 3.0, -2.0);
+                    QCoreApplication::processEvents();
+                    const int initialCuboidModels =
+                            root->findChildren<QObject *>(
+                                        QStringLiteral("cuboidTargetModel"))
+                                    .size();
+                    const double initialCuboidSize =
+                            controller.cuboidTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("sizeX"))
+                                    .toDouble();
+                    QVariant beganResize;
+                    bool cuboidEditorValid =
+                            cuboidEditor != nullptr &&
+                            cuboidSelector != nullptr &&
+                            addCuboidButton != nullptr &&
+                            duplicateCuboidButton != nullptr &&
+                            focusCuboidButton != nullptr &&
+                            removeCuboidButton != nullptr &&
+                            cuboidNameField != nullptr &&
+                            placedIndex == 1 &&
+                            cuboidSelector->property("count").toInt() == 2 &&
+                            cuboidSelector->property("currentIndex").toInt() ==
+                                    1 &&
+                            initialCuboidModels >= 4 &&
+                            removeCuboidButton->property("enabled").toBool();
+                    controller.focusSelectedCuboid();
+                    QCoreApplication::processEvents();
+                    cuboidEditorValid &=
+                            viewport != nullptr &&
+                            viewport->property("cuboidFocused").toBool() &&
+                            viewport->property("cameraTarget")
+                                            .value<QVector3D>() ==
+                                    QVector3D(14.0F, 3.0F, -2.0F) &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "beginCuboidInteraction",
+                                    Q_RETURN_ARG(QVariant, beganResize),
+                                    Q_ARG(QVariant,
+                                          QVariant(QStringLiteral("resize"))),
+                                    Q_ARG(QVariant,
+                                          QVariant(QStringLiteral("x"))),
+                                    Q_ARG(QVariant, QVariant(100.0)),
+                                    Q_ARG(QVariant, QVariant(100.0))) &&
+                            beganResize.toBool() &&
+                            QMetaObject::invokeMethod(
+                                    viewport,
+                                    "updateCuboidInteraction",
+                                    Q_ARG(QVariant, QVariant(140.0)),
+                                    Q_ARG(QVariant, QVariant(100.0))) &&
+                            QMetaObject::invokeMethod(
+                                    viewport, "endCuboidInteraction");
+                    QCoreApplication::processEvents();
+                    cuboidEditorValid &=
+                            controller.cuboidTargets()
+                                            ->selectedTarget()
+                                            .value(QStringLiteral("sizeX"))
+                                            .toDouble() >
+                                    initialCuboidSize &&
+                            controller.evaluationTargetSettings()
+                                            .value(QStringLiteral("sizeX"))
+                                            .toDouble() >
+                                    initialCuboidSize;
+                    if (!cuboidEditorValid) {
+                        std::cerr
+                                << "cuboid editor checks: objects="
+                                << (cuboidEditor != nullptr) << "/"
+                                << (cuboidSelector != nullptr) << "/"
+                                << (addCuboidButton != nullptr) << "/"
+                                << (duplicateCuboidButton != nullptr) << "/"
+                                << (focusCuboidButton != nullptr) << "/"
+                                << (removeCuboidButton != nullptr) << "/"
+                                << (cuboidNameField != nullptr)
+                                << ", placed=" << placedIndex
+                                << ", combo="
+                                << (cuboidSelector == nullptr
+                                            ? -1
+                                            : cuboidSelector
+                                                      ->property("count")
+                                                      .toInt())
+                                << "/"
+                                << (cuboidSelector == nullptr
+                                            ? -1
+                                            : cuboidSelector
+                                                      ->property("currentIndex")
+                                                      .toInt())
+                                << ", models=" << initialCuboidModels
+                                << ", focus="
+                                << (viewport != nullptr &&
+                                    viewport->property("cuboidFocused").toBool())
+                                << ", begin=" << beganResize.toBool()
+                                << ", size="
+                                << controller.cuboidTargets()
+                                           ->selectedTarget()
+                                           .value(QStringLiteral("sizeX"))
+                                           .toDouble()
+                                << "/" << initialCuboidSize << '\n';
+                    }
+                    dropdownStateUpdates &= cuboidEditorValid;
 
                     dropdownStateUpdates &=
                             activateCombo(evaluationTargetCombo, 0);

@@ -394,8 +394,267 @@ ApplicationWindow {
                     property real orbitYaw: 35
                     property real orbitPitch: -20
                     property real orbitDistance: 38
+                    property bool cuboidFocused: false
+                    property vector3d cuboidFocusCenter:
+                        Qt.vector3d(0, 0, 0)
+                    readonly property vector3d cameraTarget:
+                        cuboidFocused ? cuboidFocusCenter
+                                       : window.viewer.carPosition
+                    property bool cuboidDragActive: false
+                    property bool cuboidPointerCaptured: false
+                    property string cuboidDragKind: ""
+                    property string cuboidDragAxis: ""
+                    property real cuboidDragX: 0
+                    property real cuboidDragY: 0
+
+                    function focusCuboid(center, size) {
+                        cuboidFocusCenter = center
+                        cuboidFocused = true
+                        orbitDistance = Math.max(
+                            3,
+                            Math.min(1000,
+                                     Math.max(size.x, size.y, size.z) * 2.4))
+                    }
+
+                    function beginCuboidInteraction(kind, axis, x, y) {
+                        if (window.controller.running)
+                            return false
+                        cuboidDragKind = kind
+                        cuboidDragAxis = axis
+                        cuboidDragX = x
+                        cuboidDragY = y
+                        cuboidDragActive = kind === "move"
+                                           || kind === "resize"
+                        return cuboidDragActive
+                    }
+
+                    function updateCuboidInteraction(x, y) {
+                        if (!cuboidDragActive)
+                            return
+                        const dx = x - cuboidDragX
+                        const dy = y - cuboidDragY
+                        const scale = orbitDistance
+                                      / Math.max(200, Math.min(width, height))
+                        const yaw = orbitYaw * Math.PI / 180
+                        const pitch = orbitPitch * Math.PI / 180
+                        let amount = 0
+                        if (cuboidDragAxis === "x") {
+                            amount = (dx * Math.cos(yaw)
+                                      - dy * Math.sin(yaw)
+                                        * Math.sin(pitch)) * scale
+                        } else if (cuboidDragAxis === "y") {
+                            amount = -dy * Math.cos(pitch) * scale
+                        } else {
+                            amount = (-dx * Math.sin(yaw)
+                                      - dy * Math.cos(yaw)
+                                        * Math.sin(pitch)) * scale
+                        }
+                        if (cuboidDragKind === "resize") {
+                            window.controller.cuboidTargets.resizeSelected(
+                                cuboidDragAxis, amount)
+                        } else if (cuboidDragAxis === "x") {
+                            window.controller.cuboidTargets.translateSelected(
+                                amount, 0, 0)
+                        } else if (cuboidDragAxis === "y") {
+                            window.controller.cuboidTargets.translateSelected(
+                                0, amount, 0)
+                        } else {
+                            window.controller.cuboidTargets.translateSelected(
+                                0, 0, amount)
+                        }
+                        cuboidDragX = x
+                        cuboidDragY = y
+                    }
+
+                    function endCuboidInteraction() {
+                        cuboidDragActive = false
+                        cuboidDragKind = ""
+                        cuboidDragAxis = ""
+                    }
+
+                    component CuboidEditorScene: Node {
+                        id: cuboidScene
+                        property bool interactive: false
+
+                        Repeater3D {
+                            model: window.controller.cuboidTargets.targets
+
+                            delegate: Node {
+                                id: cuboidRoot
+
+                                required property int index
+                                required property var modelData
+                                readonly property int targetIndex: index
+                                readonly property vector3d targetSize:
+                                    modelData.size
+                                readonly property bool targetSelected:
+                                    modelData.selected
+                                position: modelData.center
+
+                                Model {
+                                    objectName: "cuboidTargetModel"
+                                    property int targetIndex:
+                                        cuboidRoot.targetIndex
+                                    property string editorKind: "select"
+                                    property string editorAxis: ""
+                                    source: "#Cube"
+                                    scale: Qt.vector3d(
+                                        cuboidRoot.targetSize.x / 100,
+                                        cuboidRoot.targetSize.y / 100,
+                                        cuboidRoot.targetSize.z / 100)
+                                    pickable: cuboidScene.interactive
+                                    castsShadows: false
+                                    receivesShadows: false
+                                    materials: DefaultMaterial {
+                                        lighting: DefaultMaterial.NoLighting
+                                        diffuseColor:
+                                            cuboidRoot.targetSelected
+                                            ? "#35d978" : "#55a7d8"
+                                        opacity:
+                                            cuboidRoot.targetSelected
+                                            ? 0.27 : 0.13
+                                        cullMode: Material.NoCulling
+                                    }
+                                }
+
+                                Node {
+                                    visible: cuboidRoot.targetSelected
+                                             && !window.controller.running
+                                    readonly property real barLength:
+                                        Math.max(1.6,
+                                                 viewport.orbitDistance * 0.055)
+                                    readonly property real thickness:
+                                        Math.max(0.12,
+                                                 viewport.orbitDistance * 0.005)
+                                    readonly property real handleSize:
+                                        Math.max(0.34,
+                                                 viewport.orbitDistance * 0.014)
+
+                                    Model {
+                                        property int targetIndex:
+                                            cuboidRoot.targetIndex
+                                        property string editorKind: "move"
+                                        property string editorAxis: "x"
+                                        source: "#Cube"
+                                        x: cuboidRoot.targetSize.x / 2
+                                           + parent.barLength / 2
+                                        scale: Qt.vector3d(
+                                            parent.barLength / 100,
+                                            parent.thickness / 100,
+                                            parent.thickness / 100)
+                                        pickable: cuboidScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#e55353"
+                                        }
+                                    }
+                                    Model {
+                                        property int targetIndex:
+                                            cuboidRoot.targetIndex
+                                        property string editorKind: "move"
+                                        property string editorAxis: "y"
+                                        source: "#Cube"
+                                        y: cuboidRoot.targetSize.y / 2
+                                           + parent.barLength / 2
+                                        scale: Qt.vector3d(
+                                            parent.thickness / 100,
+                                            parent.barLength / 100,
+                                            parent.thickness / 100)
+                                        pickable: cuboidScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#62c96b"
+                                        }
+                                    }
+                                    Model {
+                                        property int targetIndex:
+                                            cuboidRoot.targetIndex
+                                        property string editorKind: "move"
+                                        property string editorAxis: "z"
+                                        source: "#Cube"
+                                        z: cuboidRoot.targetSize.z / 2
+                                           + parent.barLength / 2
+                                        scale: Qt.vector3d(
+                                            parent.thickness / 100,
+                                            parent.thickness / 100,
+                                            parent.barLength / 100)
+                                        pickable: cuboidScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#4c86e8"
+                                        }
+                                    }
+
+                                    Model {
+                                        objectName: "cuboidResizeHandleX"
+                                        property int targetIndex:
+                                            cuboidRoot.targetIndex
+                                        property string editorKind: "resize"
+                                        property string editorAxis: "x"
+                                        source: "#Cube"
+                                        x: cuboidRoot.targetSize.x / 2
+                                           + parent.barLength
+                                        scale: Qt.vector3d(
+                                            parent.handleSize / 100,
+                                            parent.handleSize / 100,
+                                            parent.handleSize / 100)
+                                        pickable: cuboidScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#ff7770"
+                                        }
+                                    }
+                                    Model {
+                                        objectName: "cuboidResizeHandleY"
+                                        property int targetIndex:
+                                            cuboidRoot.targetIndex
+                                        property string editorKind: "resize"
+                                        property string editorAxis: "y"
+                                        source: "#Cube"
+                                        y: cuboidRoot.targetSize.y / 2
+                                           + parent.barLength
+                                        scale: Qt.vector3d(
+                                            parent.handleSize / 100,
+                                            parent.handleSize / 100,
+                                            parent.handleSize / 100)
+                                        pickable: cuboidScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#87e58e"
+                                        }
+                                    }
+                                    Model {
+                                        objectName: "cuboidResizeHandleZ"
+                                        property int targetIndex:
+                                            cuboidRoot.targetIndex
+                                        property string editorKind: "resize"
+                                        property string editorAxis: "z"
+                                        source: "#Cube"
+                                        z: cuboidRoot.targetSize.z / 2
+                                           + parent.barLength
+                                        scale: Qt.vector3d(
+                                            parent.handleSize / 100,
+                                            parent.handleSize / 100,
+                                            parent.handleSize / 100)
+                                        pickable: cuboidScene.interactive
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: "#78a6ff"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     View3D {
+                        id: rasterMapView
                         objectName: "rasterMapView"
                         anchors.fill: parent
                         visible: !window.rayTracingEnabled
@@ -419,7 +678,7 @@ ApplicationWindow {
                         }
 
                         Node {
-                            position: window.viewer.carPosition
+                            position: viewport.cameraTarget
                             eulerRotation.x: viewport.orbitPitch
                             eulerRotation.y: viewport.orbitYaw
 
@@ -568,6 +827,11 @@ ApplicationWindow {
                             }
                         }
 
+                        CuboidEditorScene {
+                            objectName: "rasterCuboidEditorScene"
+                            interactive: true
+                        }
+
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
@@ -697,7 +961,7 @@ ApplicationWindow {
                                 && window.viewer.loaded
                         viewer: window.viewer
                         cameraPosition: viewCamera.scenePosition
-                        cameraTarget: window.viewer.carPosition
+                        cameraTarget: viewport.cameraTarget
                         cameraUp: viewCamera.up
                         fieldOfView: viewCamera.fieldOfView
                     }
@@ -708,8 +972,9 @@ ApplicationWindow {
                         anchors.fill: parent
                         z: 1.5
                         visible: window.rayTracingEnabled
-                                 && window.viewer.loaded
-                                 && window.viewer.trajectoryCount > 0
+                                 && (window.viewer.trajectoryCount > 0
+                                     || window.controller.cuboidTargets.count
+                                        > 0)
 
                         environment: SceneEnvironment {
                             backgroundMode: SceneEnvironment.Transparent
@@ -718,7 +983,7 @@ ApplicationWindow {
                         }
 
                         Node {
-                            position: window.viewer.carPosition
+                            position: viewport.cameraTarget
                             eulerRotation.x: viewport.orbitPitch
                             eulerRotation.y: viewport.orbitYaw
 
@@ -753,6 +1018,19 @@ ApplicationWindow {
                                     cullMode: Material.NoCulling
                                 }
                             }
+                        }
+
+                        CuboidEditorScene {
+                            objectName: "rayTracingCuboidEditorScene"
+                            interactive: true
+                        }
+                    }
+
+                    Connections {
+                        target: window.controller
+
+                        function onCuboidFocusRequested(center, size) {
+                            viewport.focusCuboid(center, size)
                         }
                     }
 
@@ -789,9 +1067,37 @@ ApplicationWindow {
                                 manualInputFocus.forceActiveFocus()
                             previousX = mouse.x
                             previousY = mouse.y
+                            const view = window.rayTracingEnabled
+                                         ? rayTracingTrajectoryOverlay
+                                         : rasterMapView
+                            const hit = view.pick(mouse.x, mouse.y).objectHit
+                            if (hit && hit.targetIndex !== undefined
+                                && !window.controller.running) {
+                                viewport.cuboidPointerCaptured = true
+                                window.controller.cuboidTargets.selectTarget(
+                                    hit.targetIndex)
+                                if (hit.editorKind === "move"
+                                    || hit.editorKind === "resize") {
+                                    viewport.beginCuboidInteraction(
+                                        hit.editorKind,
+                                        hit.editorAxis,
+                                        mouse.x,
+                                        mouse.y)
+                                }
+                                return
+                            }
                         }
                         onPositionChanged: mouse => {
                             if (!(mouse.buttons & Qt.LeftButton))
+                                return
+                            if (viewport.cuboidDragActive) {
+                                viewport.updateCuboidInteraction(
+                                    mouse.x, mouse.y)
+                                previousX = mouse.x
+                                previousY = mouse.y
+                                return
+                            }
+                            if (viewport.cuboidPointerCaptured)
                                 return
                             viewport.orbitYaw -= mouse.x - previousX
                             viewport.orbitPitch = Math.max(
@@ -801,6 +1107,14 @@ ApplicationWindow {
                                          - (mouse.y - previousY)))
                             previousX = mouse.x
                             previousY = mouse.y
+                        }
+                        onReleased: {
+                            viewport.endCuboidInteraction()
+                            viewport.cuboidPointerCaptured = false
+                        }
+                        onCanceled: {
+                            viewport.endCuboidInteraction()
+                            viewport.cuboidPointerCaptured = false
                         }
                         onWheel: wheel => {
                             const factor = Math.exp(
@@ -968,6 +1282,7 @@ ApplicationWindow {
                                     viewport.orbitYaw = 35
                                     viewport.orbitPitch = -20
                                     viewport.orbitDistance = 38
+                                    viewport.cuboidFocused = false
                                 }
                             }
                         }
@@ -1649,6 +1964,7 @@ ApplicationWindow {
                             options: window.controller.evaluationTargetOptions
                             selectedId: window.controller.evaluationTargetId
                             controller: window.controller
+                            viewer: window.viewer
                             onSelectionRequested: id =>
                                 window.controller.evaluationTargetId = id
                         }

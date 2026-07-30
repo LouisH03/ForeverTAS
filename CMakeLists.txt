@@ -143,6 +143,8 @@ add_library(forevertas_gui STATIC
     src/viewer/visual_scene_pipeline.h
     src/app/search_configuration_model.cpp
     src/app/search_configuration_model.h
+    src/app/cuboid_target_model.cpp
+    src/app/cuboid_target_model.h
     src/app/search_completion.h
     src/app/search_controller.cpp
     src/app/search_controller.h

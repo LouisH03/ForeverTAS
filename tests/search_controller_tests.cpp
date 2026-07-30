@@ -1,3 +1,4 @@
+#include "app/cuboid_target_model.h"
 #include "app/packs_directory_finder.h"
 #include "app/search_configuration_model.h"
 #include "app/search_controller.h"
@@ -18,11 +19,13 @@
 #include <clocale>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
 
 using forevertas::app::SearchController;
+using forevertas::app::CuboidTargetModel;
 
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
@@ -101,6 +104,155 @@ bool HasBackendOption(const QVariantList &options,
         }
     }
     return false;
+}
+
+bool TestCuboidTargetModel() {
+    QSettings().clear();
+    const QVariantMap legacy{
+            {QStringLiteral("centerX"), QStringLiteral("1.5")},
+            {QStringLiteral("centerY"), QStringLiteral("-2")},
+            {QStringLiteral("centerZ"), QStringLiteral("3")},
+            {QStringLiteral("sizeX"), QStringLiteral("4")},
+            {QStringLiteral("sizeY"), QStringLiteral("5")},
+            {QStringLiteral("sizeZ"), QStringLiteral("6")}};
+    CuboidTargetModel model(legacy);
+    bool okay = Check(model.count() == 1 && model.selectedIndex() == 0,
+                      "cuboid model did not create its legacy target");
+    QVariantMap selected = model.selectedTarget();
+    okay &= Check(selected.value(QStringLiteral("centerX")).toString() ==
+                                  QStringLiteral("1.5") &&
+                          selected.value(QStringLiteral("sizeZ")).toString() ==
+                                  QStringLiteral("6"),
+                  "cuboid model did not migrate legacy dimensions");
+    okay &= Check(model.addTarget(
+                              std::numeric_limits<double>::infinity(),
+                              0.0,
+                              0.0) == -1 &&
+                          !model.setCenterComponent(
+                                  0,
+                                  QStringLiteral("x"),
+                                  QStringLiteral("nan")) &&
+                          !model.setCenterComponent(
+                                  0,
+                                  QStringLiteral("x"),
+                                  QStringLiteral("1e300")) &&
+                          !model.setSizeComponent(
+                                  0,
+                                  QStringLiteral("x"),
+                                  QStringLiteral("0")),
+                  "cuboid model accepted non-finite or non-positive values");
+
+    const int added = model.addTarget(10.0, 20.0, 30.0);
+    okay &= Check(added == 1 && model.selectedIndex() == 1 &&
+                          model.count() == 2,
+                  "cuboid placement did not add and select a target");
+    okay &= Check(model.setName(added, QStringLiteral("  Finish box  ")) &&
+                          model.setCenterComponent(
+                                  added,
+                                  QStringLiteral("y"),
+                                  QStringLiteral("21.25")) &&
+                          model.setSizeComponent(
+                                  added,
+                                  QStringLiteral("z"),
+                                  QStringLiteral("2.5")) &&
+                          model.translateSelected(1.0, -1.0, 2.0) &&
+                          model.resizeSelected(
+                                  QStringLiteral("x"), -9.5),
+                  "cuboid direct or 3D-style edits failed");
+    selected = model.selectedTarget();
+    okay &= Check(selected.value(QStringLiteral("name")).toString() ==
+                                  QStringLiteral("Finish box") &&
+                          selected.value(QStringLiteral("centerX")).toString() ==
+                                  QStringLiteral("11") &&
+                          selected.value(QStringLiteral("centerY")).toString() ==
+                                  QStringLiteral("20.25") &&
+                          selected.value(QStringLiteral("sizeX")).toString() ==
+                                  QStringLiteral("0.5"),
+                  "cuboid edits produced incorrect properties");
+    const int duplicate = model.duplicateSelected();
+    okay &= Check(duplicate == 2 && model.count() == 3 &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("centerX"))
+                                          .toString() ==
+                                  QStringLiteral("12"),
+                  "cuboid duplication did not offset and select the copy");
+    okay &= Check(model.removeTarget(1) && model.count() == 2 &&
+                          model.selectedIndex() == 1,
+                  "cuboid removal did not preserve the selected copy");
+
+    const QString selectedId =
+            model.selectedTarget().value(QStringLiteral("id")).toString();
+    CuboidTargetModel restored;
+    okay &= Check(restored.count() == 2 &&
+                          restored.selectedTarget()
+                                          .value(QStringLiteral("id"))
+                                          .toString() == selectedId,
+                  "cuboid collection or selection did not persist");
+    okay &= Check(restored.removeTarget(0) && restored.count() == 1 &&
+                          !restored.removeTarget(0),
+                  "cuboid model allowed removal of the final target");
+    restored.setEditingEnabled(false);
+    okay &= Check(!restored.editingEnabled() &&
+                          restored.addTarget(0.0, 0.0, 0.0) == -1 &&
+                          !restored.setName(
+                                  0, QStringLiteral("Locked")) &&
+                          !restored.translateSelected(1.0, 0.0, 0.0),
+                  "cuboid edits were not frozen for a running search");
+
+    QSettings().setValue(
+            QStringLiteral("targets/cuboids"),
+            QByteArrayLiteral("{\"version\":1,\"targets\":["
+                              "{\"id\":\"bad\",\"name\":\"Bad\","
+                              "\"center\":[0,0,0],\"size\":[1,0,1]}]}"));
+    CuboidTargetModel recovered(legacy);
+    okay &= Check(recovered.count() == 1 &&
+                          recovered.selectedTarget()
+                                          .value(QStringLiteral("sizeY"))
+                                          .toString() ==
+                                  QStringLiteral("5"),
+                  "corrupt cuboid persistence did not recover safely");
+    return okay;
+}
+
+bool TestCuboidControllerSynchronization() {
+    QSettings().clear();
+    SearchController controller;
+    controller.setEvaluationTargetId(QStringLiteral("volume-entry-time"));
+    CuboidTargetModel *const cuboids = controller.cuboidTargets();
+    bool okay = Check(cuboids != nullptr && cuboids->count() == 1,
+                      "controller did not expose its cuboid collection");
+    const int second = cuboids->addTarget(7.0, 8.0, 9.0);
+    okay &= Check(second == 1 &&
+                          controller.evaluationTargetSettings()
+                                          .value(QStringLiteral("centerX"))
+                                          .toString() ==
+                                  QStringLiteral("7") &&
+                          controller.evaluationTargetSettings()
+                                          .value(QStringLiteral("sizeX"))
+                                          .toString() ==
+                                  QStringLiteral("10"),
+                  "selected cuboid did not become the active search target");
+    okay &= Check(cuboids->setSizeComponent(
+                              second,
+                              QStringLiteral("y"),
+                              QStringLiteral("3.25")) &&
+                          controller.evaluationTargetSettings()
+                                          .value(QStringLiteral("sizeY"))
+                                          .toString() ==
+                                  QStringLiteral("3.25"),
+                  "cuboid property edit did not update evaluation settings");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("centerZ"), QStringLiteral("12.5"));
+    okay &= Check(cuboids->selectedTarget()
+                                  .value(QStringLiteral("centerZ"))
+                                  .toString() == QStringLiteral("12.5"),
+                  "legacy setting edit did not update the selected cuboid");
+    cuboids->selectTarget(0);
+    okay &= Check(controller.evaluationTargetSettings()
+                                  .value(QStringLiteral("centerX"))
+                                  .toString() == QStringLiteral("0"),
+                  "cuboid selection did not switch the active target");
+    return okay;
 }
 
 QVariantMap Pass(const SearchController &controller, int index) {
@@ -1122,7 +1274,9 @@ int main(int argc, char **argv) {
     replay.write("test");
     replay.close();
 
-    bool okay = TestAutomaticPacksDetection() &&
+    bool okay = TestCuboidTargetModel() &&
+            TestCuboidControllerSynchronization() &&
+            TestAutomaticPacksDetection() &&
             TestDescriptiveSearchStageStatuses() &&
             TestIterationBoundaryArbitration() &&
             TestUserTimelineConfigurationBoundary() &&

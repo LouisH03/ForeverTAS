@@ -88,6 +88,12 @@ durations remain user-facing.
 Built-in targets cover precise finish time, stunt points by a chosen deadline,
 cuboid entry time, velocity, point distance, and weighted pose error. The stunt
 target observes only the chosen deadline because the score is monotonic.
+Volume-entry targets are managed as a persistent named cuboid collection. The
+selected cuboid is the active brute-force target; the evaluation panel can add,
+duplicate, remove, rename, and directly edit every cuboid or focus the viewer
+camera on it. Every cuboid is visible in both viewer renderers, and the selected
+one exposes color-coded 3D axis bars for movement plus endpoint handles for
+resizing.
 Precise finish search ranks the inclusive upper bound of ForeverValidator's
 one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering
