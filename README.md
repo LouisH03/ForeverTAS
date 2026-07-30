@@ -107,6 +107,13 @@ active timeline and camera focus between `Best` and future run types, while
 every run remains visible as a separate car in the 3D preview. Car colors are
 baked into separate flat-shaded vertex-color meshes.
 
+After a map is loaded, **Drive** starts a live 100 Hz physics run in the viewer.
+Arrow keys and QWERTY `WASD` control full acceleration, braking, and steering;
+`ZQSD` provides the equivalent bindings on AZERTY layouts. Simultaneous
+digital inputs retain ForeverValidator's in-game priority rules, including
+left steering over right. Losing keyboard focus releases held controls, and a
+completed manual session remains available as the `Manual` viewer run.
+
 The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
 with ShaderTools, the `Textured (RT)` render mode enables the real-time QRhi
 compute renderer with GPU BVH traversal, ray-traced shadows and reflections,

@@ -25,6 +25,8 @@ class QThread;
 
 namespace forevertas::viewer {
 
+class ManualDriveRuntime;
+
 struct RaceViewerFrame {
     std::int64_t timeMs = 0;
     QVector3D position{};
@@ -74,6 +76,7 @@ struct RaceViewerLoadResult {
     std::int64_t duplicateVisualObjectCount = 0;
     std::int64_t materialCount = 0;
     std::int64_t diagnosticCount = 0;
+    std::shared_ptr<ManualDriveRuntime> manualRuntime;
 };
 
 class RaceViewerController final : public QObject {
@@ -110,6 +113,13 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(int tickDurationMs READ tickDurationMs CONSTANT)
     Q_PROPERTY(QString timeText READ timeText NOTIFY timeChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playbackChanged)
+    Q_PROPERTY(bool manualDriving READ manualDriving NOTIFY
+                       manualDrivingChanged)
+    Q_PROPERTY(bool manualLeft READ manualLeft NOTIFY manualInputChanged)
+    Q_PROPERTY(bool manualRight READ manualRight NOTIFY manualInputChanged)
+    Q_PROPERTY(bool manualAccelerate READ manualAccelerate NOTIFY
+                       manualInputChanged)
+    Q_PROPERTY(bool manualBrake READ manualBrake NOTIFY manualInputChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY stateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
@@ -156,6 +166,11 @@ public:
     int tickDurationMs() const;
     QString timeText() const;
     bool playing() const;
+    bool manualDriving() const;
+    bool manualLeft() const;
+    bool manualRight() const;
+    bool manualAccelerate() const;
+    bool manualBrake() const;
     bool loaded() const;
     bool loading() const;
     QString statusText() const;
@@ -192,6 +207,10 @@ public slots:
     Q_INVOKABLE void togglePlayback();
     Q_INVOKABLE void jumpToStart();
     Q_INVOKABLE void jumpToEnd();
+    Q_INVOKABLE void startManualDrive();
+    Q_INVOKABLE void stopManualDrive();
+    Q_INVOKABLE void setManualInput(const QString &input, bool active);
+    Q_INVOKABLE void releaseManualInputs();
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
                             const QString &replayPath);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
@@ -206,6 +225,8 @@ signals:
     void timelineChanged();
     void timeChanged();
     void playbackChanged();
+    void manualDrivingChanged();
+    void manualInputChanged();
     void stateChanged();
     void runsChanged();
     void selectedRunChanged();
@@ -229,7 +250,11 @@ private:
     void waitForWorker();
     void updatePose();
     void advancePlayback();
+    void advanceManualDrive();
     void setPlaying(bool value);
+    void finishManualDrive(const QString &status, bool releaseInputs);
+    bool replaceManualInputs();
+    void resetManualInputState();
 
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
@@ -278,8 +303,16 @@ private:
     bool loaded_ = false;
     bool loading_ = false;
     bool playing_ = false;
+    bool manualDriving_ = false;
+    bool manualLeft_ = false;
+    bool manualRight_ = false;
+    bool manualAccelerate_ = false;
+    bool manualBrake_ = false;
     QTimer playbackTimer_;
     QElapsedTimer playbackClock_;
+    QTimer manualDriveTimer_;
+    QElapsedTimer manualDriveClock_;
+    std::shared_ptr<ManualDriveRuntime> manualRuntime_;
     QThread *workerThread_ = nullptr;
     std::uint64_t loadSerial_ = 0u;
 };

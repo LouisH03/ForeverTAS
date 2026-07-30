@@ -307,6 +307,9 @@ int main(int argc, char **argv) {
                                     root->findChild<QObject *>(
                                             QStringLiteral(
                                                     "resetViewButton")));
+                    auto *const playbackDock = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("playbackDock")));
                     QObject *const playPause = root->findChild<QObject *>(
                             QStringLiteral("playPauseButton"));
                     auto *const playIcon = qobject_cast<QQuickItem *>(
@@ -325,6 +328,19 @@ int main(int argc, char **argv) {
                     auto *const jumpEndIcon = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("jumpEndTransportIcon")));
+                    QObject *const manualDriveButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("manualDriveButton"));
+                    auto *const manualDriveStatus =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "manualDriveStatus")));
+                    auto *const manualInputFocus =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "manualInputFocus")));
                     QObject *const stepBackward = root->findChild<QObject *>(
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
@@ -467,6 +483,85 @@ int main(int argc, char **argv) {
                                     QStringLiteral("Left") &&
                             stepForward->property("sequence").toString() ==
                                     QStringLiteral("Right");
+                    const auto manualMapping =
+                            [root](Qt::Key key) {
+                                QVariant result;
+                                const bool invoked =
+                                        QMetaObject::invokeMethod(
+                                                root,
+                                                "manualControlForKey",
+                                                Q_RETURN_ARG(
+                                                        QVariant, result),
+                                                Q_ARG(
+                                                        QVariant,
+                                                        QVariant::fromValue(
+                                                                static_cast<
+                                                                        int>(
+                                                                        key))));
+                                return invoked
+                                        ? result.toString()
+                                        : QStringLiteral("<invoke failed>");
+                            };
+                    const bool manualDrivingUi =
+                            playbackDock != nullptr &&
+                            playbackDock->width() >= 285.0 &&
+                            manualDriveButton != nullptr &&
+                            manualDriveButton->property("text").toString() ==
+                                    QStringLiteral("Drive") &&
+                            manualDriveButton
+                                    ->property("enabled")
+                                    .toBool() ==
+                                    (viewer.loaded() &&
+                                     !viewer.loading()) &&
+                            manualDriveStatus != nullptr &&
+                            !manualDriveStatus->isVisible() &&
+                            manualInputFocus != nullptr &&
+                            manualMapping(Qt::Key_Left) ==
+                                    QStringLiteral("left") &&
+                            manualMapping(Qt::Key_A) ==
+                                    QStringLiteral("left") &&
+                            manualMapping(Qt::Key_Q) ==
+                                    QStringLiteral("left") &&
+                            manualMapping(Qt::Key_Right) ==
+                                    QStringLiteral("right") &&
+                            manualMapping(Qt::Key_D) ==
+                                    QStringLiteral("right") &&
+                            manualMapping(Qt::Key_Up) ==
+                                    QStringLiteral("accelerate") &&
+                            manualMapping(Qt::Key_W) ==
+                                    QStringLiteral("accelerate") &&
+                            manualMapping(Qt::Key_Z) ==
+                                    QStringLiteral("accelerate") &&
+                            manualMapping(Qt::Key_Down) ==
+                                    QStringLiteral("brake") &&
+                            manualMapping(Qt::Key_S) ==
+                                    QStringLiteral("brake") &&
+                            manualMapping(Qt::Key_Escape).isEmpty();
+                    const qreal originalWindowWidth =
+                            root->property("width").toReal();
+                    root->setProperty("width", 1240);
+                    QCoreApplication::processEvents();
+                    const bool compactViewerHeader =
+                            raceViewerHeader != nullptr &&
+                            headerControlsRow != nullptr &&
+                            runSelector != nullptr &&
+                            renderModeSelector != nullptr &&
+                            resetViewButton != nullptr &&
+                            raceViewerTitleBlock != nullptr &&
+                            raceViewerTitleBlock->x() >= -0.1 &&
+                            runSelector->x() >=
+                                    raceViewerTitleBlock->x() +
+                                            raceViewerTitleBlock->width() &&
+                            renderModeSelector->x() >=
+                                    runSelector->x() + runSelector->width() &&
+                            resetViewButton->x() >=
+                                    renderModeSelector->x() +
+                                            renderModeSelector->width() &&
+                            resetViewButton->x() +
+                                            resetViewButton->width() <=
+                                    headerControlsRow->width() + 0.1;
+                    root->setProperty("width", originalWindowWidth);
+                    QCoreApplication::processEvents();
                     const auto rowCenter =
                             [](const QQuickItem *item) {
                                 return item != nullptr
@@ -1280,7 +1375,8 @@ int main(int argc, char **argv) {
                             !ContainsText(
                                     root,
                                     QStringLiteral("INPUT TIMELINE")) &&
-                            keyboardStepping;
+                            keyboardStepping && manualDrivingUi &&
+                            compactViewerHeader;
                     if (!editorStructure) {
                         std::cerr
                                 << "editor checks: runSelector=" << runSelectorValid
@@ -1303,7 +1399,52 @@ int main(int argc, char **argv) {
                                 << ", velocity=" << velocitySliderValid
                                 << ", focus=" << modifierFocusStable
                                 << ", scrub=" << unboundedFieldsScrubbable
-                                << ", keyboard=" << keyboardStepping << '\n';
+                                << ", keyboard=" << keyboardStepping
+                                << ", manual=" << manualDrivingUi
+                                << ", compactHeader="
+                                << compactViewerHeader
+                                << " (dock="
+                                << (playbackDock != nullptr
+                                            ? playbackDock->width()
+                                            : -1.0)
+                                << ", button="
+                                << (manualDriveButton != nullptr)
+                                << "/"
+                                << (manualDriveButton != nullptr
+                                            ? manualDriveButton
+                                                      ->property("enabled")
+                                                      .toBool()
+                                            : true)
+                                << ", status="
+                                << (manualDriveStatus != nullptr)
+                                << "/"
+                                << (manualDriveStatus != nullptr
+                                            ? manualDriveStatus->isVisible()
+                                            : true)
+                                << ", focus="
+                                << (manualInputFocus != nullptr)
+                                << ", map="
+                                << manualMapping(Qt::Key_Left)
+                                           .toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_A).toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_Q).toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_Right)
+                                           .toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_Up).toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_W).toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_Z).toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_Down).toStdString()
+                                << "/"
+                                << manualMapping(Qt::Key_S).toStdString()
+                                << ")"
+                                << '\n';
                     }
                     if (filled == nullptr || wire == nullptr) {
                         std::cerr << "track models were not created\n";

@@ -122,6 +122,34 @@ ApplicationWindow {
         window.viewer.currentTick = window.viewer.currentTick + delta
     }
 
+    function manualControlForKey(key) {
+        if (key === Qt.Key_Left || key === Qt.Key_A || key === Qt.Key_Q)
+            return "left"
+        if (key === Qt.Key_Right || key === Qt.Key_D)
+            return "right"
+        if (key === Qt.Key_Up || key === Qt.Key_W || key === Qt.Key_Z)
+            return "accelerate"
+        if (key === Qt.Key_Down || key === Qt.Key_S)
+            return "brake"
+        return ""
+    }
+
+    function handleManualKey(event, active) {
+        if (!window.viewer.manualDriving)
+            return
+        const control = manualControlForKey(event.key)
+        if (control.length === 0)
+            return
+        event.accepted = true
+        if (!event.isAutoRepeat)
+            window.viewer.setManualInput(control, active)
+    }
+
+    onActiveChanged: {
+        if (!active)
+            window.viewer.releaseManualInputs()
+    }
+
     Component.onCompleted: Qt.callLater(function() {
         synchronizeRunPoses()
         synchronizeCarEllipsoids()
@@ -187,6 +215,7 @@ ApplicationWindow {
         context: Qt.ApplicationShortcut
         autoRepeat: true
         enabled: window.viewer.runCount > 0
+                 && !window.viewer.manualDriving
         onActivated: window.stepViewerTick(-1)
     }
 
@@ -196,6 +225,7 @@ ApplicationWindow {
         context: Qt.ApplicationShortcut
         autoRepeat: true
         enabled: window.viewer.runCount > 0
+                 && !window.viewer.manualDriving
         onActivated: window.stepViewerTick(1)
     }
 
@@ -269,6 +299,7 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             viewer: window.viewer
                             enabled: window.viewer.runCount > 0
+                                     && !window.viewer.manualDriving
                             pixelsPerTick: 3
                         }
 
@@ -625,6 +656,26 @@ ApplicationWindow {
                         fieldOfView: viewCamera.fieldOfView
                     }
 
+                    FocusScope {
+                        id: manualInputFocus
+                        objectName: "manualInputFocus"
+                        anchors.fill: parent
+                        z: 2
+                        focus: false
+
+                        Keys.priority: Keys.BeforeItem
+                        Keys.onPressed: event =>
+                            window.handleManualKey(event, true)
+                        Keys.onReleased: event =>
+                            window.handleManualKey(event, false)
+                        onActiveFocusChanged: {
+                            if (!activeFocus
+                                && window.viewer.manualDriving) {
+                                window.viewer.releaseManualInputs()
+                            }
+                        }
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         z: 2
@@ -634,6 +685,8 @@ ApplicationWindow {
                         property real previousY: 0
 
                         onPressed: mouse => {
+                            if (window.viewer.manualDriving)
+                                manualInputFocus.forceActiveFocus()
                             previousX = mouse.x
                             previousY = mouse.y
                         }
@@ -681,7 +734,8 @@ ApplicationWindow {
                                 id: raceViewerTitleBlock
                                 objectName: "raceViewerTitleBlock"
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 150
+                                Layout.minimumWidth:
+                                    raceViewerHeader.width < 650 ? 100 : 150
                                 Layout.alignment: Qt.AlignVCenter
                                 spacing: 0
 
@@ -716,12 +770,14 @@ ApplicationWindow {
                                 id: runSelector
 
                                 objectName: "runSelector"
-                                Layout.preferredWidth: 160
+                                Layout.preferredWidth:
+                                    raceViewerHeader.width < 650 ? 118 : 160
                                 Layout.alignment: Qt.AlignVCenter
                                 model: window.viewer.runOptions
                                 textRole: "name"
                                 valueRole: "id"
                                 enabled: count > 0
+                                         && !window.viewer.manualDriving
 
                                 function synchronizeSelection() {
                                     const selected = indexOfValue(
@@ -756,7 +812,8 @@ ApplicationWindow {
                             StyledComboBox {
                                 id: renderModeSelector
                                 objectName: "renderModeSelector"
-                                Layout.preferredWidth: 180
+                                Layout.preferredWidth:
+                                    raceViewerHeader.width < 650 ? 140 : 180
                                 Layout.alignment: Qt.AlignVCenter
                                 enabled: window.viewer.loaded
                                 model: gpuRayTracingView.supported
@@ -803,6 +860,8 @@ ApplicationWindow {
                             Button {
                                 objectName: "resetViewButton"
                                 Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth:
+                                    raceViewerHeader.width < 650 ? 86 : 100
                                 text: qsTr("Reset view")
                                 enabled: window.viewer.loaded
                                 onClicked: {
@@ -821,7 +880,7 @@ ApplicationWindow {
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 20
                         z: 3
-                        width: 190
+                        width: 286
                         height: 58
                         radius: 16
                         color: "#e6111513"
@@ -840,6 +899,7 @@ ApplicationWindow {
                                 implicitHeight: 42
                                 text: ""
                                 enabled: window.viewer.runCount > 0
+                                         && !window.viewer.manualDriving
                                 palette.buttonText: "#e6ebe7"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to start")
@@ -895,6 +955,7 @@ ApplicationWindow {
                                 implicitHeight: 42
                                 text: ""
                                 enabled: window.viewer.runCount > 0
+                                         && !window.viewer.manualDriving
                                 palette.buttonText: "#ffffff"
                                 ToolTip.visible: hovered
                                 ToolTip.text: window.viewer.playing
@@ -966,6 +1027,7 @@ ApplicationWindow {
                                 implicitHeight: 42
                                 text: ""
                                 enabled: window.viewer.runCount > 0
+                                         && !window.viewer.manualDriving
                                 palette.buttonText: "#e6ebe7"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Go to end")
@@ -1009,6 +1071,95 @@ ApplicationWindow {
                                             radius: 1
                                             color: "#e6ebe7"
                                         }
+                                    }
+                                }
+                            }
+
+                            Button {
+                                id: manualDriveButton
+                                objectName: "manualDriveButton"
+                                Layout.preferredWidth: 84
+                                Layout.preferredHeight: 42
+                                text: window.viewer.manualDriving
+                                      ? qsTr("Stop")
+                                      : qsTr("Drive")
+                                enabled: window.viewer.manualDriving
+                                         || (window.viewer.loaded
+                                             && !window.viewer.loading
+                                             && !window.controller.running
+                                             && !window.controller.extractingReplayInputs)
+                                onClicked: {
+                                    if (window.viewer.manualDriving) {
+                                        window.viewer.stopManualDrive()
+                                    } else {
+                                        window.viewer.startManualDrive()
+                                        if (window.viewer.manualDriving)
+                                            manualInputFocus.forceActiveFocus()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        id: manualDriveStatus
+                        objectName: "manualDriveStatus"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: playbackDock.top
+                        anchors.bottomMargin: 8
+                        z: 3
+                        width: 238
+                        height: 36
+                        radius: 6
+                        visible: window.viewer.manualDriving
+                        color: "#e6111513"
+                        border.width: 1
+                        border.color: "#465049"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 8
+                            spacing: 6
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Manual")
+                                color: "#e6ebe7"
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+
+                            Repeater {
+                                model: [
+                                    { "symbol": "←",
+                                      "active": window.viewer.manualLeft },
+                                    { "symbol": "↑",
+                                      "active":
+                                          window.viewer.manualAccelerate },
+                                    { "symbol": "↓",
+                                      "active": window.viewer.manualBrake },
+                                    { "symbol": "→",
+                                      "active": window.viewer.manualRight }
+                                ]
+
+                                delegate: Rectangle {
+                                    required property string symbol
+                                    required property bool active
+                                    Layout.preferredWidth: 26
+                                    Layout.preferredHeight: 24
+                                    radius: 4
+                                    color: active ? "#3dbd73" : "#2b322e"
+                                    border.width: 1
+                                    border.color:
+                                        active ? "#73d99a" : "#465049"
+
+                                    Label {
+                                        anchors.centerIn: parent
+                                        text: symbol
+                                        color: active ? "#0c2014" : "#aeb8b0"
+                                        font.pixelSize: 13
+                                        font.weight: Font.DemiBold
                                     }
                                 }
                             }
@@ -1230,6 +1381,7 @@ ApplicationWindow {
                                       ? qsTr("Loading map...")
                                       : qsTr("Load map")
                                 enabled: !window.viewer.loading
+                                         && !window.viewer.manualDriving
                                          && !window.controller.running
                                          && !window.controller.extractingReplayInputs
                                          && window.controller.packsDirectory.length > 0
@@ -1249,6 +1401,7 @@ ApplicationWindow {
                                       : qsTr("Extract inputs to script")
                                 enabled: window.controller.canExtractReplayInputs
                                          && !window.viewer.loading
+                                         && !window.viewer.manualDriving
                                 onClicked: {
                                     if (window.controller.baseInputScript.trim().length > 0)
                                         replaceBaseInputScriptDialog.open()
@@ -1507,6 +1660,7 @@ ApplicationWindow {
                             text: qsTr("Start")
                             highlighted: true
                             enabled: window.controller.canStart
+                                     && !window.viewer.manualDriving
                             onClicked: window.controller.startSearch()
                         }
 

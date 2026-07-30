@@ -158,6 +158,13 @@ int main(int argc, char **argv) {
 
     QGuiApplication application(argc, argv);
     RaceViewerController viewer;
+    viewer.startManualDrive();
+    if (viewer.manualDriving() ||
+        viewer.statusText() != QStringLiteral(
+                "Load a replay map before starting manual drive.")) {
+        std::cerr << "manual drive started without a loaded map\n";
+        return 1;
+    }
     const QString packsDirectory = QString::fromLocal8Bit(argv[1]);
     const QString replayPath = QString::fromLocal8Bit(argv[2]);
     const std::vector<forevertas::SearchTimelineFrame> searchTimeline =
@@ -166,6 +173,10 @@ int main(int argc, char **argv) {
     bool completed = false;
     bool verificationStarted = false;
     bool mapOnlyStateObserved = false;
+    bool manualVerificationStarted = false;
+    bool manualDriveValid = false;
+    bool manualInitialNeutral = false;
+    QVector3D manualInitialPosition;
     QObject::connect(
             &viewer,
             &forevertas::viewer::RaceViewerController::stateChanged,
@@ -179,6 +190,9 @@ int main(int argc, char **argv) {
                 }
                 if (viewer.loaded()) {
                     if (viewer.runCount() == 0) {
+                        if (manualVerificationStarted) {
+                            return;
+                        }
                         mapOnlyStateObserved = viewer.durationMs() == 0 &&
                                 viewer.tickCount() == 0 &&
                                 viewer.selectedRunId().isEmpty() &&
@@ -190,11 +204,121 @@ int main(int argc, char **argv) {
                             application.quit();
                             return;
                         }
-                        viewer.addSearchRun(
-                                packsDirectory,
-                                replayPath,
-                                searchTimeline,
-                                QStringLiteral("optimized-cpu"));
+                        manualVerificationStarted = true;
+                        viewer.startManualDrive();
+                        if (!viewer.manualDriving() ||
+                            viewer.selectedRunId() !=
+                                    QStringLiteral("manual") ||
+                            viewer.tickCount() != 1) {
+                            completed = true;
+                            std::cerr << "manual drive did not start\n";
+                            application.quit();
+                            return;
+                        }
+                        const auto initialManualInput =
+                                viewer.inputSample(0);
+                        manualInitialNeutral =
+                                initialManualInput.steering == 0.0f &&
+                                initialManualInput.accelerate == 0.0f &&
+                                initialManualInput.brake == 0.0f;
+                        manualInitialPosition = viewer.carPosition();
+                        viewer.setManualInput(
+                                QStringLiteral("left"), true);
+                        viewer.setManualInput(
+                                QStringLiteral("right"), true);
+                        viewer.setManualInput(
+                                QStringLiteral("accelerate"), true);
+                        QTimer::singleShot(
+                                200,
+                                &application,
+                                [&]() {
+                                    const auto bothPressed =
+                                            viewer.inputSample(
+                                                    viewer.currentTick());
+                                    const bool leftPriority =
+                                            viewer.manualDriving() &&
+                                            viewer.currentTick() >= 10 &&
+                                            bothPressed.steering == -1.0f &&
+                                            bothPressed.accelerate == 1.0f &&
+                                            bothPressed.brake == 0.0f;
+                                    const bool physicsAdvanced =
+                                            (viewer.carPosition() -
+                                             manualInitialPosition)
+                                                    .lengthSquared() >
+                                            0.000001f;
+                                    viewer.setManualInput(
+                                            QStringLiteral("left"), false);
+                                    viewer.setManualInput(
+                                            QStringLiteral("accelerate"),
+                                            false);
+                                    viewer.setManualInput(
+                                            QStringLiteral("brake"), true);
+                                    QTimer::singleShot(
+                                            60,
+                                            &application,
+                                            [&, leftPriority,
+                                             physicsAdvanced]() {
+                                                const auto rightPressed =
+                                                        viewer.inputSample(
+                                                                viewer.currentTick());
+                                                const bool rightAfterRelease =
+                                                        rightPressed.steering ==
+                                                                1.0f &&
+                                                        rightPressed.accelerate ==
+                                                                0.0f &&
+                                                        rightPressed.brake ==
+                                                                1.0f;
+                                                viewer.releaseManualInputs();
+                                                viewer.stopManualDrive();
+                                                const bool stoppedCleanly =
+                                                        !viewer.manualDriving() &&
+                                                        !viewer.manualLeft() &&
+                                                        !viewer.manualRight() &&
+                                                        !viewer.manualAccelerate() &&
+                                                        !viewer.manualBrake() &&
+                                                        viewer.tickCount() >=
+                                                                15;
+                                                viewer.startManualDrive();
+                                                const bool restartedCleanly =
+                                                        viewer.manualDriving() &&
+                                                        viewer.tickCount() ==
+                                                                1 &&
+                                                        viewer.timeMs() == 0;
+                                                viewer.stopManualDrive();
+                                                manualDriveValid =
+                                                        manualInitialNeutral &&
+                                                        leftPriority &&
+                                                        physicsAdvanced &&
+                                                        rightAfterRelease &&
+                                                        stoppedCleanly &&
+                                                        restartedCleanly;
+                                                if (!manualDriveValid) {
+                                                    std::cerr
+                                                            << "manual drive checks failed: leftPriority="
+                                                            << leftPriority
+                                                            << ", initialNeutral="
+                                                            << manualInitialNeutral
+                                                            << ", physicsAdvanced="
+                                                            << physicsAdvanced
+                                                            << ", rightAfterRelease="
+                                                            << rightAfterRelease
+                                                            << ", stoppedCleanly="
+                                                            << stoppedCleanly
+                                                            << ", restartedCleanly="
+                                                            << restartedCleanly
+                                                            << '\n';
+                                                }
+                                                viewer.addSearchRun(
+                                                        packsDirectory,
+                                                        replayPath,
+                                                        searchTimeline,
+                                                        QStringLiteral(
+                                                                "optimized-cpu"));
+                                            });
+                                });
+                        return;
+                    }
+                    if (!manualDriveValid) {
                         return;
                     }
                     verificationStarted = true;
@@ -384,6 +508,7 @@ int main(int argc, char **argv) {
                         }
                     }
                     const bool sceneValid = mapOnlyStateObserved &&
+                            manualDriveValid &&
                             viewer.triangleCount() > 0 &&
                             viewer.visualTriangleCount() > 0 &&
                             viewer.visualMeshCount() > 0 &&
