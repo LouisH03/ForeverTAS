@@ -8,6 +8,7 @@
 #include "searches/algorithm_registry.h"
 #include "searches/basic_brute_force_search.h"
 #include "searches/cuda_batch_calibrator.h"
+#include "searches/cuda_calibration_safety.h"
 #include "searches/cuda_search_configuration.h"
 #include "searches/option_settings_utils.h"
 #include "searches/search_runner.h"
@@ -1093,7 +1094,7 @@ bool TestCudaBatchCalibrationStrategy() {
                         std::chrono::duration<double>(
                                 static_cast<double>(batchSize) /
                                 throughput));
-        for (int sample = 0; sample < 5; ++sample) {
+        for (int sample = 0; sample < 7; ++sample) {
             calibrator->Observe(batchSize, elapsed);
         }
     };
@@ -1181,6 +1182,193 @@ bool TestCudaBatchCalibrationStrategy() {
                     capacityLimited.BestBatchSize() > 4096u &&
                     capacityLimited.BestBatchSize() < 8192u,
             "CUDA calibration did not approach its measured capacity");
+
+    const auto slowlyIncreasing = [](std::uint32_t batchSize) {
+        return 1000.0 + std::log2(
+                                static_cast<double>(batchSize));
+    };
+    const auto boundaryMaximizer =
+            calibrate(slowlyIncreasing, 128u);
+    okay &= Check(
+            boundaryMaximizer.Complete() &&
+                    boundaryMaximizer.BestBatchSize() > 120u,
+            "CUDA calibration stopped on a throughput plateau instead "
+            "of maximizing the measured safe range");
+
+    forevertas::CudaBatchCalibrator isolatedFastPass;
+    const auto observeSamples = [](
+                                        forevertas::CudaBatchCalibrator
+                                                *candidate,
+                                        const std::vector<double>
+                                                &throughputs) {
+        const std::uint32_t size =
+                candidate->CurrentBatchSize();
+        for (double throughput : throughputs) {
+            const auto elapsed =
+                    std::chrono::duration_cast<
+                            std::chrono::steady_clock::duration>(
+                            std::chrono::duration<double>(
+                                    static_cast<double>(size) /
+                                    throughput));
+            candidate->Observe(size, elapsed);
+        }
+    };
+    observeSamples(
+            &isolatedFastPass,
+            {100.0, 100.0,
+             100.0, 100.0, 100.0, 100.0, 100.0});
+    observeSamples(
+            &isolatedFastPass,
+            {100.0, 100.0,
+             100.0, 100.0, 100.0, 100.0, 1000.0});
+    okay &= Check(
+            isolatedFastPass.BestBatchSize() == 1u,
+            "CUDA calibration selected an isolated fast pass");
+
+    forevertas::CudaBatchCalibrator unstable;
+    observeSamples(
+            &unstable,
+            {100.0, 100.0,
+             100.0, 1000.0, 100.0, 1000.0, 100.0,
+             1000.0, 100.0, 1000.0, 100.0});
+    okay &= Check(
+            unstable.Complete() &&
+                    !unstable.HasReliableMeasurement(),
+            "CUDA calibration accepted irrepeatable throughput");
+    return okay;
+}
+
+bool TestCudaCalibrationSafety() {
+    using forevertas::CudaCalibrationBatchProfile;
+    using forevertas::CudaCalibrationDeviceLimits;
+    using forevertas::CudaCalibrationSafetyPlanner;
+
+    constexpr std::uint64_t gib = 1024ull * 1024ull * 1024ull;
+    CudaCalibrationDeviceLimits limits;
+    limits.totalMemoryBytes = 8u * gib;
+    limits.freeMemoryBytes = 6u * gib;
+    limits.maximumThreadsPerBlock = 1024u;
+    limits.maximumGridDimensionX = 1000000u;
+    limits.registersPerBlock = 65536u;
+    limits.registersPerMultiprocessor = 65536u;
+    limits.maximumThreadsPerMultiprocessor = 2048u;
+    limits.maximumBlocksPerMultiprocessor = 32u;
+    limits.multiprocessorCount = 32u;
+
+    CudaCalibrationBatchProfile first;
+    first.batchSize = 1u;
+    first.batchCapacity = 1u;
+    first.residentDeviceBytes = 100u * 1024u * 1024u;
+    first.kernelMilliseconds = 1.0;
+    first.simulationThreadsPerBlock = 256u;
+    first.simulationRegistersPerThread = 32u;
+    first.simulationActiveBlocksPerMultiprocessor = 8u;
+    first.simulationTheoreticalOccupancy = 1.0;
+
+    CudaCalibrationSafetyPlanner planner;
+    bool okay = Check(
+            !planner.Evaluate(1u, 1u, limits).safe,
+            "CUDA calibration accepted an unprofiled device");
+    planner.Observe(first);
+    okay &= Check(
+            planner.Evaluate(2u, 1u, limits).safe,
+            "CUDA calibration rejected a safe measured growth step");
+
+    CudaCalibrationBatchProfile second = first;
+    second.batchSize = 2u;
+    second.batchCapacity = 2u;
+    second.residentDeviceBytes = 110u * 1024u * 1024u;
+    second.kernelMilliseconds = 2.0;
+    planner.Observe(second);
+
+    CudaCalibrationDeviceLimits memoryLimited = limits;
+    memoryLimited.freeMemoryBytes = 2u * gib;
+    const auto memoryDecision =
+            planner.Evaluate(100u, 2u, memoryLimited);
+    okay &= Check(
+            !memoryDecision.safe &&
+                    memoryDecision.requiredTransientBytes > 0u &&
+                    memoryDecision.reservedMemoryHeadroomBytes >=
+                            512u * 1024u * 1024u,
+            "CUDA calibration crossed the reserved memory headroom");
+
+    CudaCalibrationDeviceLimits launchLimited = limits;
+    launchLimited.maximumGridDimensionX = 10u;
+    okay &= Check(
+            !planner.Evaluate(2560u, 2u, launchLimited).safe,
+            "CUDA calibration approached the grid launch limit");
+
+    CudaCalibrationDeviceLimits watchdog = limits;
+    watchdog.kernelExecutionTimeoutEnabled = true;
+    okay &= Check(
+            !planner.Evaluate(300u, 2u, watchdog).safe,
+            "CUDA calibration approached the kernel watchdog limit");
+
+    CudaCalibrationDeviceLimits occupancyLimited = limits;
+    occupancyLimited.registersPerMultiprocessor = 32768u;
+    okay &= Check(
+            !planner.Evaluate(2u, 2u, occupancyLimited).safe,
+            "CUDA calibration exceeded multiprocessor occupancy limits");
+
+    CudaCalibrationSafetyPlanner measuredWatchdog;
+    CudaCalibrationBatchProfile nearWatchdog = first;
+    nearWatchdog.batchSize = 32u;
+    nearWatchdog.batchCapacity = 32u;
+    nearWatchdog.kernelMilliseconds = 210.0;
+    measuredWatchdog.Observe(nearWatchdog);
+    watchdog.freeMemoryBytes = limits.freeMemoryBytes;
+    const auto measuredWatchdogDecision =
+            measuredWatchdog.Evaluate(32u, 32u, watchdog);
+    okay &= Check(
+            !measuredWatchdogDecision.safe &&
+                    measuredWatchdogDecision
+                            .predictedKernelMilliseconds > 250.0,
+            "CUDA calibration accepted a measured kernel too close "
+            "to the watchdog limit");
+
+    CudaCalibrationBatchProfile slowerSameBatch = nearWatchdog;
+    slowerSameBatch.batchCapacity = 64u;
+    slowerSameBatch.kernelMilliseconds = 220.0;
+    measuredWatchdog.Observe(slowerSameBatch);
+    const auto duplicateBatchDecision =
+            measuredWatchdog.Evaluate(64u, 64u, watchdog);
+    okay &= Check(
+            !duplicateBatchDecision.safe &&
+                    duplicateBatchDecision
+                            .predictedKernelMilliseconds >= 550.0,
+            "CUDA calibration ignored the slowest profile for a batch "
+            "measured under multiple capacities");
+
+    CudaCalibrationSafetyPlanner decreasingKernel;
+    CudaCalibrationBatchProfile slowerSmall = nearWatchdog;
+    slowerSmall.batchSize = 2u;
+    slowerSmall.batchCapacity = 2u;
+    CudaCalibrationBatchProfile fasterLarge = nearWatchdog;
+    fasterLarge.batchSize = 4u;
+    fasterLarge.batchCapacity = 4u;
+    fasterLarge.kernelMilliseconds = 100.0;
+    decreasingKernel.Observe(slowerSmall);
+    decreasingKernel.Observe(fasterLarge);
+    const auto decreasingKernelDecision =
+            decreasingKernel.Evaluate(3u, 4u, watchdog);
+    okay &= Check(
+            !decreasingKernelDecision.safe &&
+                    decreasingKernelDecision
+                            .predictedKernelMilliseconds >= 262.5,
+            "CUDA calibration underestimated a noisy decreasing kernel "
+            "measurement");
+
+    CudaCalibrationSafetyPlanner localMemory;
+    CudaCalibrationBatchProfile localHeavy = first;
+    localHeavy.simulationLocalBytesPerThread =
+            4u * 1024u * 1024u;
+    localMemory.Observe(localHeavy);
+    CudaCalibrationDeviceLimits localLimited = limits;
+    localLimited.freeMemoryBytes = 1400u * 1024u * 1024u;
+    okay &= Check(
+            !localMemory.Evaluate(512u, 512u, localLimited).safe,
+            "CUDA calibration ignored the kernel local-memory "
+            "working set");
     return okay;
 }
 
@@ -1356,6 +1544,7 @@ int main() {
             TestSearchControl() &&
             TestRollingThroughput() &&
             TestCudaBatchCalibrationStrategy() &&
+            TestCudaCalibrationSafety() &&
             TestCudaConfigurationCoverage() &&
             TestReplayPathRobustness();
     return okay ? 0 : 1;

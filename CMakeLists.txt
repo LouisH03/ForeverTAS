@@ -121,6 +121,8 @@ add_library(forevertas_core STATIC
     src/searches/basic_brute_force_search.h
     src/searches/cuda_batch_calibrator.cpp
     src/searches/cuda_batch_calibrator.h
+    src/searches/cuda_calibration_safety.cpp
+    src/searches/cuda_calibration_safety.h
     src/searches/cuda_search_configuration.cpp
     src/searches/cuda_search_configuration.h
     src/searches/search_runner.cpp
@@ -686,7 +688,7 @@ if(BUILD_TESTING)
             set_tests_properties(forevertas-cuda-calibration PROPERTIES
                 LABELS "cuda;calibration;parity;stadium"
                 RESOURCE_LOCK cuda
-                TIMEOUT 120)
+                TIMEOUT 600)
         endif()
         add_test(NAME forevertas-controller-lifecycle
                  COMMAND forevertas-controller-tests
