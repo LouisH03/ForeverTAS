@@ -29,6 +29,22 @@
 
 namespace {
 
+forevertas::SandboxInputEvent SwitchInput(
+        std::int32_t timeMs,
+        forevertas::SandboxInputAction action,
+        bool pressed) {
+    using forevervalidator::experimental::PhysicsSandboxInputValueKind;
+    using forevervalidator::experimental::PhysicsSandboxSwitchState;
+    forevertas::SandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Switch;
+    event.value.switchState = pressed
+            ? PhysicsSandboxSwitchState::Pressed
+            : PhysicsSandboxSwitchState::Released;
+    return event;
+}
+
 bool ModelsHaveState(const QList<QObject *> &models,
                      int expectedCount,
                      bool visible) {
@@ -436,6 +452,9 @@ int main(int argc, char **argv) {
                     QObject *const baseInputScriptErrorLabel =
                             root->findChild<QObject *>(QStringLiteral(
                                     "baseInputScriptErrorLabel"));
+                    QObject *const copyCurrentRaceInputsButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "copyCurrentRaceInputsButton"));
                     QObject *const loadMapButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("loadMapButton"));
@@ -601,6 +620,9 @@ int main(int argc, char **argv) {
                             baseInputScriptScrollView != nullptr &&
                             baseInputScriptTextArea != nullptr &&
                             baseInputScriptErrorLabel != nullptr &&
+                            copyCurrentRaceInputsButton != nullptr &&
+                            !copyCurrentRaceInputsButton
+                                     ->property("enabled").toBool() &&
                             loadMapButton != nullptr &&
                             extractReplayInputsButton != nullptr &&
                             replaceBaseInputScriptDialog != nullptr &&
@@ -1478,9 +1500,27 @@ int main(int argc, char **argv) {
                         frame.steering = static_cast<float>(timeMs) / 20.0f;
                         bestFrames.push_back(frame);
                     }
+                    const std::vector<forevertas::SandboxInputEvent>
+                            bestInputs{
+                                    SwitchInput(
+                                            0,
+                                            forevertas::SandboxInputAction::
+                                                    RaceRunning,
+                                            true),
+                                    SwitchInput(
+                                            0,
+                                            forevertas::SandboxInputAction::
+                                                    Accelerate,
+                                            true),
+                                    SwitchInput(
+                                            20,
+                                            forevertas::SandboxInputAction::
+                                                    Brake,
+                                            true)};
                     viewer.addSearchRun(QString::fromLocal8Bit(argv[1]),
                                         QString::fromLocal8Bit(argv[2]),
-                                        bestFrames);
+                                        bestFrames,
+                                        bestInputs);
                     QCoreApplication::processEvents();
                     QCoreApplication::processEvents();
 
@@ -1490,7 +1530,9 @@ int main(int argc, char **argv) {
                              renderModeSelector, gpuRayTracingView,
                              rasterMapView, viewCamera,
                              mapEnvironment, daySkyTexture, mainMapLight,
-                             fillMapLight, bestPosition]() {
+                             fillMapLight, bestPosition,
+                             baseInputScriptTextArea,
+                             copyCurrentRaceInputsButton]() {
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1778,6 +1820,33 @@ int main(int argc, char **argv) {
                                                         .toString() ==
                                                 QStringLiteral("Best");
 
+                                viewer.setTimeMs(10);
+                                controller.setBaseInputScript(
+                                        QStringLiteral(
+                                                "0.00 press down"));
+                                QCoreApplication::processEvents();
+                                const bool copyInvoked =
+                                        copyCurrentRaceInputsButton != nullptr &&
+                                        copyCurrentRaceInputsButton
+                                                ->property("enabled").toBool() &&
+                                        QMetaObject::invokeMethod(
+                                                copyCurrentRaceInputsButton,
+                                                "clicked",
+                                                Qt::DirectConnection);
+                                QCoreApplication::processEvents();
+                                const bool copyCurrentRaceInputsValid =
+                                        copyInvoked &&
+                                        controller.baseInputScript() ==
+                                                QStringLiteral(
+                                                        "0.00 press up") &&
+                                        baseInputScriptTextArea != nullptr &&
+                                        baseInputScriptTextArea
+                                                        ->property("text")
+                                                        .toString() ==
+                                                controller.baseInputScript();
+                                viewer.jumpToStart();
+                                QCoreApplication::processEvents();
+
                                 const auto activateRun =
                                         [runSelector](int index) {
                                             return runSelector != nullptr &&
@@ -1889,6 +1958,7 @@ int main(int argc, char **argv) {
                                                         rayTracingModeValid &&
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
+                                                        copyCurrentRaceInputsValid &&
                                                         editorStructure
                                                 ? 0
                                                 : 1;
@@ -1921,6 +1991,20 @@ int main(int argc, char **argv) {
                                             << bestSelectedInitially
                                             << ", onlyBestSelected="
                                             << onlyBestSelected
+                                            << ", copyCurrentRaceInputs="
+                                            << copyCurrentRaceInputsValid
+                                            << "/"
+                                            << (copyCurrentRaceInputsButton !=
+                                                                nullptr
+                                                        ? copyCurrentRaceInputsButton
+                                                                  ->property(
+                                                                          "enabled")
+                                                                  .toBool()
+                                                        : false)
+                                            << " script='"
+                                            << controller.baseInputScript()
+                                                       .toStdString()
+                                            << "'"
                                             << ", collisionMode="
                                             << collisionModeState
                                             << ", neutralMode="

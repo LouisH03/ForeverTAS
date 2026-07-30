@@ -1559,6 +1559,24 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         title: qsTr("Base input script")
 
+                        Button {
+                            id: copyCurrentRaceInputsButton
+                            objectName: "copyCurrentRaceInputsButton"
+                            Layout.alignment: Qt.AlignRight
+                            text: qsTr("Copy current race")
+                            enabled: window.viewer.canCopyCurrentInputs
+                                     && !window.controller.running
+                                     && !window.controller.extractingReplayInputs
+                            onClicked: {
+                                window.controller.baseInputScript =
+                                    window.viewer.currentInputScript()
+                                baseInputScriptArea.forceActiveFocus()
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr(
+                                "Replace the base input with the selected race through its current time")
+                        }
+
                         ScrollView {
                             id: baseInputScriptScroll
 

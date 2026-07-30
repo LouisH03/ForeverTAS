@@ -114,6 +114,11 @@ digital inputs retain ForeverValidator's in-game priority rules, including
 left steering over right. Losing keyboard focus releases held controls, and a
 completed manual session remains available as the `Manual` viewer run.
 
+**Copy current race** in the base-input section replaces the search input with
+the selected viewer run through its current timeline position. Events after
+that position are deliberately excluded, so a partial manual or scripted run
+can become the exact starting point for the next search.
+
 The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
 with ShaderTools, the `Textured (RT)` render mode enables the real-time QRhi
 compute renderer with GPU BVH traversal, ray-traced shadows and reflections,

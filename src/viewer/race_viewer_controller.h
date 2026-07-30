@@ -46,6 +46,7 @@ struct RaceViewerRun {
     QString id;
     QString name;
     std::vector<RaceViewerFrame> frames;
+    std::vector<SandboxInputEvent> inputs;
     QVector3D position{};
     QQuaternion rotation{};
 };
@@ -120,6 +121,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(bool manualAccelerate READ manualAccelerate NOTIFY
                        manualInputChanged)
     Q_PROPERTY(bool manualBrake READ manualBrake NOTIFY manualInputChanged)
+    Q_PROPERTY(bool canCopyCurrentInputs READ canCopyCurrentInputs NOTIFY
+                       timelineChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY stateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
@@ -171,6 +174,7 @@ public:
     bool manualRight() const;
     bool manualAccelerate() const;
     bool manualBrake() const;
+    bool canCopyCurrentInputs() const;
     bool loaded() const;
     bool loading() const;
     QString statusText() const;
@@ -197,6 +201,17 @@ public:
             const QString &replayPath,
             const std::vector<SearchTimelineFrame> &frames,
             const QString &backendId);
+    void addSearchRun(
+            const QString &packsDirectory,
+            const QString &replayPath,
+            const std::vector<SearchTimelineFrame> &frames,
+            const std::vector<SandboxInputEvent> &inputs);
+    void addSearchRun(
+            const QString &packsDirectory,
+            const QString &replayPath,
+            const std::vector<SearchTimelineFrame> &frames,
+            const std::vector<SandboxInputEvent> &inputs,
+            const QString &backendId);
 
 public slots:
     void setTimeMs(qint64 value);
@@ -211,6 +226,7 @@ public slots:
     Q_INVOKABLE void stopManualDrive();
     Q_INVOKABLE void setManualInput(const QString &input, bool active);
     Q_INVOKABLE void releaseManualInputs();
+    Q_INVOKABLE QString currentInputScript() const;
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
                             const QString &replayPath);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
@@ -241,6 +257,7 @@ private:
     void upsertRun(QString id,
                    QString name,
                    std::vector<RaceViewerFrame> frames,
+                   std::vector<SandboxInputEvent> inputs,
                    bool select);
     const RaceViewerRun *selectedRun() const noexcept;
     RaceViewerRun *selectedRun() noexcept;
@@ -273,6 +290,7 @@ private:
         QString replayPath;
         PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
         std::vector<RaceViewerFrame> frames;
+        std::vector<SandboxInputEvent> inputs;
     };
 
     std::vector<RaceViewerRun> runs_;

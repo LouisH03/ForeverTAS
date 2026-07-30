@@ -1,5 +1,6 @@
 #include "viewer/race_viewer_controller.h"
 
+#include "mutations/input_event_formatter.h"
 #include "replay_file_io.h"
 #include "time_format.h"
 #include "viewer/material_classifier.h"
@@ -745,6 +746,16 @@ bool RaceViewerController::manualBrake() const {
     return manualBrake_;
 }
 
+bool RaceViewerController::canCopyCurrentInputs() const {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr) {
+        return false;
+    }
+    return run->id == QStringLiteral("manual")
+            ? manualRuntime_ != nullptr
+            : !run->inputs.empty();
+}
+
 bool RaceViewerController::loaded() const {
     return loaded_;
 }
@@ -834,6 +845,7 @@ void RaceViewerController::addSearchRun(
     addSearchRun(packsDirectory,
                  replayPath,
                  frames,
+                 std::vector<SandboxInputEvent>{},
                  QStringLiteral("optimized-cpu"));
 }
 
@@ -841,6 +853,31 @@ void RaceViewerController::addSearchRun(
         const QString &packsDirectory,
         const QString &replayPath,
         const std::vector<SearchTimelineFrame> &frames,
+        const QString &backendId) {
+    addSearchRun(packsDirectory,
+                 replayPath,
+                 frames,
+                 std::vector<SandboxInputEvent>{},
+                 backendId);
+}
+
+void RaceViewerController::addSearchRun(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const std::vector<SandboxInputEvent> &inputs) {
+    addSearchRun(packsDirectory,
+                 replayPath,
+                 frames,
+                 inputs,
+                 QStringLiteral("optimized-cpu"));
+}
+
+void RaceViewerController::addSearchRun(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const std::vector<SandboxInputEvent> &inputs,
         const QString &backendId) {
     stopManualDrive();
     if (frames.empty()) {
@@ -857,12 +894,14 @@ void RaceViewerController::addSearchRun(
             packsDirectory,
             replayPath,
             *backend,
-            ToViewerFrames(frames)};
+            ToViewerFrames(frames),
+            inputs};
     if (loaded_ && loadedPacksDirectory_ == packsDirectory &&
         loadedReplayPath_ == replayPath) {
         upsertRun(QStringLiteral("best"),
                   QStringLiteral("Best"),
                   std::move(pending.frames),
+                  std::move(pending.inputs),
                   true);
         setStatusText(QStringLiteral("Best run added"));
         return;
@@ -988,6 +1027,7 @@ void RaceViewerController::startManualDrive() {
             QStringLiteral("manual"),
             QStringLiteral("Manual"),
             {ToViewerFrame(manualRuntime_->state)},
+            {},
             true);
     manualDriving_ = true;
     setStatusText(QStringLiteral("Manual drive"));
@@ -1055,6 +1095,52 @@ void RaceViewerController::releaseManualInputs() {
     setManualInput(QStringLiteral("right"), false);
     setManualInput(QStringLiteral("accelerate"), false);
     setManualInput(QStringLiteral("brake"), false);
+}
+
+QString RaceViewerController::currentInputScript() const {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr) {
+        return {};
+    }
+
+    std::vector<SandboxInputEvent> inputs;
+    if (run->id == QStringLiteral("manual")) {
+        if (manualRuntime_ == nullptr) {
+            return {};
+        }
+        inputs = manualRuntime_->fixedInputs;
+        inputs.insert(
+                inputs.end(),
+                manualRuntime_->driverInputs.begin(),
+                manualRuntime_->driverInputs.end());
+    } else {
+        inputs = run->inputs;
+    }
+
+    std::int64_t raceStartTimeMs = 0;
+    bool foundRaceStart = false;
+    for (const SandboxInputEvent &event : inputs) {
+        if (event.action != PhysicsSandboxInputAction::RaceRunning) {
+            continue;
+        }
+        if (!foundRaceStart || event.timeMs < raceStartTimeMs) {
+            raceStartTimeMs = event.timeMs;
+            foundRaceStart = true;
+        }
+    }
+    const std::int64_t cutoffTimeMs = std::clamp<std::int64_t>(
+            raceStartTimeMs + timeMs_,
+            std::numeric_limits<std::int32_t>::min(),
+            std::numeric_limits<std::int32_t>::max());
+    inputs.erase(
+            std::remove_if(
+                    inputs.begin(),
+                    inputs.end(),
+                    [cutoffTimeMs](const SandboxInputEvent &event) {
+                        return event.timeMs > cutoffTimeMs;
+                    }),
+            inputs.end());
+    return QString::fromStdString(FormatInputScript(inputs));
 }
 
 void RaceViewerController::loadMap(const QString &packsDirectory,
@@ -1268,10 +1354,13 @@ void RaceViewerController::applyPendingRunIfReady() {
     }
     std::vector<RaceViewerFrame> frames =
             std::move(pendingRun_->frames);
+    std::vector<SandboxInputEvent> inputs =
+            std::move(pendingRun_->inputs);
     pendingRun_.reset();
     upsertRun(QStringLiteral("best"),
               QStringLiteral("Best"),
               std::move(frames),
+              std::move(inputs),
               true);
 }
 
@@ -1310,6 +1399,7 @@ RaceViewerRun *RaceViewerController::selectedRun() noexcept {
 void RaceViewerController::upsertRun(QString id,
                                      QString name,
                                      std::vector<RaceViewerFrame> frames,
+                                     std::vector<SandboxInputEvent> inputs,
                                      bool select) {
     if (frames.empty()) {
         return;
@@ -1323,11 +1413,13 @@ void RaceViewerController::upsertRun(QString id,
         runs_.push_back({std::move(id),
                          std::move(name),
                          std::move(frames),
+                         std::move(inputs),
                          {},
                          {}});
     } else {
         existing->name = std::move(name);
         existing->frames = std::move(frames);
+        existing->inputs = std::move(inputs);
     }
     emit runsChanged();
 

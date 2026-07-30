@@ -32,6 +32,7 @@ int main(int argc, char **argv) {
                 viewer.addSearchRun(completion->packsDirectory,
                                     completion->replayPath,
                                     completion->bestTimeline,
+                                    completion->bestInputs,
                                     completion->simulationBackendId);
             });
     forevertas::viewer::RegisterRaceViewerQmlTypes();

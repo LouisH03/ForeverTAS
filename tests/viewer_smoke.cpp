@@ -16,6 +16,10 @@ namespace {
 
 using forevertas::viewer::RaceTimelineItem;
 using forevertas::viewer::RaceViewerController;
+using forevervalidator::experimental::PhysicsSandboxInputAction;
+using forevervalidator::experimental::PhysicsSandboxInputEvent;
+using forevervalidator::experimental::PhysicsSandboxInputValueKind;
+using forevervalidator::experimental::PhysicsSandboxSwitchState;
 
 std::vector<forevertas::SearchTimelineFrame> SyntheticSearchTimeline() {
     std::vector<forevertas::SearchTimelineFrame> frames;
@@ -37,6 +41,41 @@ std::vector<forevertas::SearchTimelineFrame> SyntheticSearchTimeline() {
                         : tick >= 300 && tick < 500 ? 0.5f : 0.0f});
     }
     return frames;
+}
+
+PhysicsSandboxInputEvent SwitchInput(
+        std::int32_t timeMs,
+        PhysicsSandboxInputAction action,
+        bool pressed) {
+    PhysicsSandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Switch;
+    event.value.switchState = pressed
+            ? PhysicsSandboxSwitchState::Pressed
+            : PhysicsSandboxSwitchState::Released;
+    return event;
+}
+
+PhysicsSandboxInputEvent AnalogInput(
+        std::int32_t timeMs,
+        PhysicsSandboxInputAction action,
+        forevervalidator::AnalogInputState value) {
+    PhysicsSandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Analog;
+    event.value.analog = value;
+    return event;
+}
+
+std::vector<PhysicsSandboxInputEvent> SyntheticSearchInputs() {
+    return {
+            SwitchInput(0, PhysicsSandboxInputAction::RaceRunning, true),
+            SwitchInput(0, PhysicsSandboxInputAction::Accelerate, true),
+            AnalogInput(500, PhysicsSandboxInputAction::Steer, -32768),
+            SwitchInput(1000, PhysicsSandboxInputAction::Brake, true),
+            SwitchInput(1500, PhysicsSandboxInputAction::SteerRight, true)};
 }
 
 qint64 FindActivityTick(const RaceViewerController &viewer, char channel) {
@@ -270,6 +309,28 @@ int main(int argc, char **argv) {
                                                                 1.0f;
                                                 viewer.releaseManualInputs();
                                                 viewer.stopManualDrive();
+                                                const QString manualScript =
+                                                        viewer.currentInputScript();
+                                                const bool manualCopyValid =
+                                                        viewer.canCopyCurrentInputs() &&
+                                                        manualScript.contains(
+                                                                QStringLiteral(
+                                                                        " press left")) &&
+                                                        manualScript.contains(
+                                                                QStringLiteral(
+                                                                        " press right")) &&
+                                                        manualScript.contains(
+                                                                QStringLiteral(
+                                                                        " press up")) &&
+                                                        manualScript.contains(
+                                                                QStringLiteral(
+                                                                        " press down")) &&
+                                                        manualScript.contains(
+                                                                QStringLiteral(
+                                                                        " rel right")) &&
+                                                        manualScript.contains(
+                                                                QStringLiteral(
+                                                                        " rel down"));
                                                 const bool stoppedCleanly =
                                                         !viewer.manualDriving() &&
                                                         !viewer.manualLeft() &&
@@ -290,6 +351,7 @@ int main(int argc, char **argv) {
                                                         leftPriority &&
                                                         physicsAdvanced &&
                                                         rightAfterRelease &&
+                                                        manualCopyValid &&
                                                         stoppedCleanly &&
                                                         restartedCleanly;
                                                 if (!manualDriveValid) {
@@ -302,6 +364,8 @@ int main(int argc, char **argv) {
                                                             << physicsAdvanced
                                                             << ", rightAfterRelease="
                                                             << rightAfterRelease
+                                                            << ", manualCopy="
+                                                            << manualCopyValid
                                                             << ", stoppedCleanly="
                                                             << stoppedCleanly
                                                             << ", restartedCleanly="
@@ -312,6 +376,7 @@ int main(int argc, char **argv) {
                                                         packsDirectory,
                                                         replayPath,
                                                         searchTimeline,
+                                                        SyntheticSearchInputs(),
                                                         QStringLiteral(
                                                                 "optimized-cpu"));
                                             });
@@ -485,6 +550,19 @@ int main(int argc, char **argv) {
                     const bool timeLabelUnambiguous =
                             viewer.timeText().startsWith(
                                     QStringLiteral("00:00:01 / "));
+                    const QString copiedSearchScript =
+                            viewer.currentInputScript();
+                    const bool searchCopyStopsAtCurrentTime =
+                            viewer.canCopyCurrentInputs() &&
+                            copiedSearchScript.contains(
+                                    QStringLiteral("0.00 press up")) &&
+                            copiedSearchScript.contains(
+                                    QStringLiteral(
+                                            "0.49 steer -32768")) &&
+                            copiedSearchScript.contains(
+                                    QStringLiteral("0.99 press down")) &&
+                            !copiedSearchScript.contains(
+                                    QStringLiteral("1.49 press right"));
                     QSet<QString> visibleMaterialClasses;
                     for (const QVariant &entry : viewer.visualBatches()) {
                         const QVariantMap batch = entry.toMap();
@@ -533,7 +611,8 @@ int main(int argc, char **argv) {
                             timelineInputs && naturalScrubDirection &&
                             leftPressDoesNotSnap && dynamicRulerScale &&
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
-                            timeLabelUnambiguous;
+                            timeLabelUnambiguous &&
+                            searchCopyStopsAtCurrentTime;
                     if (!sceneValid) {
                         std::cerr
                                 << "viewer scene checks failed: "
@@ -564,7 +643,12 @@ int main(int argc, char **argv) {
                                 << ", fineLengthAt12=" << fineLengthAt12
                                 << ", rightDragZoomsIn=" << rightDragZoomsIn
                                 << ", timeLabelUnambiguous="
-                                << timeLabelUnambiguous << ", visualTriangles="
+                                << timeLabelUnambiguous
+                                << ", searchCopy="
+                                << searchCopyStopsAtCurrentTime
+                                << ", copiedScript='"
+                                << copiedSearchScript.toStdString() << "'"
+                                << ", visualTriangles="
                                 << viewer.visualTriangleCount()
                                 << ", visualMeshes=" << viewer.visualMeshCount()
                                 << ", materials=" << viewer.materialCount()
