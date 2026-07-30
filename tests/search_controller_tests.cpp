@@ -844,6 +844,8 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
 
     QSignalSpy completionSpy(
             &controller, &SearchController::searchCompleted);
+    QSignalSpy improvementSpy(
+            &controller, &SearchController::searchImprovement);
     controller.startSearch();
     bool okay = Check(controller.running() && !controller.canStart(),
                       "Start did not enter the running state");
@@ -878,6 +880,44 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
                     30000),
             "live iteration metrics were not shown while running");
     if (!okay) {
+        return false;
+    }
+    okay &= Check(
+            WaitUntil(
+                    [&improvementSpy]() {
+                        return improvementSpy.count() > 0;
+                    },
+                    10000),
+            "search did not publish a best-run improvement trajectory");
+    std::uint64_t searchId = 0u;
+    std::uint64_t improvementNumber = 0u;
+    for (const QList<QVariant> &arguments : improvementSpy) {
+        const auto improvement =
+                qvariant_cast<forevertas::app::SearchImprovementPtr>(
+                        arguments.at(0));
+        const bool complete =
+                improvement != nullptr &&
+                improvement->searchId != 0u &&
+                improvement->improvementNumber > improvementNumber &&
+                improvement->packsDirectory == packsDirectory &&
+                improvement->replayPath == replayPath &&
+                improvement->simulationBackendId ==
+                        QStringLiteral("optimized-cpu") &&
+                !improvement->timeline.empty() &&
+                improvement->timeline.front().timeMs == 0 &&
+                improvement->timeline.back().timeMs > 0;
+        if (improvement != nullptr) {
+            if (searchId == 0u) {
+                searchId = improvement->searchId;
+            }
+            improvementNumber = improvement->improvementNumber;
+        }
+        okay &= Check(complete && improvement->searchId == searchId,
+                      "published improvement trajectory was incomplete");
+    }
+    if (!okay) {
+        controller.stopSearch();
+        WaitUntil([&controller]() { return !controller.running(); }, 30000);
         return false;
     }
     const QString firstElapsed = controller.elapsedText();

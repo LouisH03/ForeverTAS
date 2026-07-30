@@ -124,6 +124,11 @@ adds its exact path to the 3D viewer as a persistent reference for the loaded
 map. Semantically identical scripts are deduplicated, so repeated saves do not
 stack duplicate paths.
 
+While a search is running, every published best-run improvement is sampled
+through the full replay and added to the viewer as an amber trajectory. The
+newest path is emphasized while older improvement paths remain visible at
+reduced opacity.
+
 The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
 with ShaderTools, the `Textured (RT)` render mode enables the real-time QRhi
 compute renderer with GPU BVH traversal, ray-traced shadows and reflections,

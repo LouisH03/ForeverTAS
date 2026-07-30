@@ -75,6 +75,7 @@ SearchController::SearchController(const QStringList &packsSearchPatterns,
 
 void SearchController::initialize(const QStringList *packsSearchPatterns) {
     qRegisterMetaType<SearchCompletionPtr>();
+    qRegisterMetaType<SearchImprovementPtr>();
     packsDirectory_ = StoredValue(kPacksDirectoryKey, {});
     replayPath_ = StoredValue(kReplayPathKey, {});
     baseInputScript_ = StoredValue(kBaseInputScriptKey, {});
@@ -540,6 +541,7 @@ void SearchController::startSearch() {
     QThread *const thread = new QThread(this);
     SearchWorker *const worker = new SearchWorker(
             *validation.request,
+            ++searchSerial_,
             stopRequested_,
             cancellationRequested_,
             iterationPhase_);
@@ -585,6 +587,12 @@ void SearchController::startSearch() {
             [this](const QString &summary, const QString &inputsText) {
                 setResultText(summary);
                 setBestInputsText(inputsText);
+            });
+    connect(worker,
+            &SearchWorker::improvementFound,
+            this,
+            [this](SearchImprovementPtr improvement) {
+                emit searchImprovement(std::move(improvement));
             });
     connect(worker,
             &SearchWorker::succeeded,

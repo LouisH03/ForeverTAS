@@ -28,6 +28,9 @@ bool RunBackend(const char *packsDirectory,
         bool stopRequested = false;
         bool sawLiveBest = false;
         bool sawFinalSampling = false;
+        bool improvementTimelineInvalid = false;
+        std::uint64_t lastSampledImprovement = 0u;
+        std::size_t sampledImprovementCount = 0u;
         std::chrono::steady_clock::duration previousElapsed{};
         std::size_t liveUpdateCount = 0u;
         forevertas::SearchRunControl control;
@@ -40,6 +43,31 @@ bool RunBackend(const char *packsDirectory,
                 return;
             }
             sawLiveBest |= !live.bestInputs.empty();
+            if (!live.bestTimeline.empty()) {
+                const bool completeTimeline =
+                        live.winnerSource ==
+                                forevertas::SearchWinnerSource::Mutation &&
+                        live.mutationImprovementCount >
+                                lastSampledImprovement &&
+                        live.bestTimeline.front().timeMs == 0 &&
+                        live.bestTimeline.back().timeMs ==
+                                static_cast<std::int64_t>(
+                                        live.bestState.durationMs);
+                bool everyTick = true;
+                for (std::size_t index = 1u;
+                     index < live.bestTimeline.size();
+                     ++index) {
+                    everyTick &=
+                            live.bestTimeline[index].timeMs -
+                                    live.bestTimeline[index - 1u].timeMs ==
+                            10;
+                }
+                improvementTimelineInvalid |=
+                        !completeTimeline || !everyTick;
+                lastSampledImprovement =
+                        live.mutationImprovementCount;
+                ++sampledImprovementCount;
+            }
             if (liveUpdateCount != 0u && live.elapsed < previousElapsed) {
                 std::cerr << "live elapsed time moved backwards\n";
             }
@@ -87,6 +115,17 @@ bool RunBackend(const char *packsDirectory,
         }
         if (!sawLiveBest || liveUpdateCount < 2u) {
             std::cerr << "search did not publish live updates while running\n";
+            return false;
+        }
+        if (improvementTimelineInvalid ||
+            (result.mutationImprovementCount > 0u) !=
+                    (sampledImprovementCount > 0u) ||
+            (result.mutationImprovementCount > 0u &&
+             lastSampledImprovement !=
+                     result.mutationImprovementCount)) {
+            std::cerr
+                    << "best-run improvements did not publish complete "
+                       "timelines\n";
             return false;
         }
         if (result.bestInputs.empty()) {

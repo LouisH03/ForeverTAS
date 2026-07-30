@@ -66,6 +66,92 @@ SearchTimelineFrame ToTimelineFrame(
             view.steering};
 }
 
+struct TimelineSamplingRuntime {
+    forevervalidator::experimental::PhysicsSandbox sandbox;
+    forevervalidator::experimental::PhysicsSandboxState initialState;
+    std::uint64_t finalTickCount = 0u;
+};
+
+TimelineSamplingRuntime CreateTimelineSamplingRuntime(
+        const SearchRequest &request,
+        const forevervalidator::AssetBytes &replay,
+        const forevervalidator::ReplayIdentity &identity) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    AssetSource source = Require(
+            OpenInstalledPackDirectory(request.packDirectory),
+            "opening pack directory for timeline sampling");
+    PhysicsSandboxOptions options;
+    options.backend = ToForeverValidatorBackend(request.backend);
+    options.tickDurationMs = kSearchTickDurationMs;
+    PhysicsSandbox sandbox = Require(
+            CreatePhysicsSandbox(std::move(source), options),
+            "creating timeline-sampling sandbox");
+    const PhysicsSandboxStateView state = Require(
+            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading replay for timeline sampling");
+    if (state.durationMs % kSearchTickDurationMs != 0u) {
+        throw std::runtime_error(
+                "replay duration is not aligned to the search tick duration");
+    }
+    PhysicsSandboxState initialState = Require(
+            sandbox.CaptureState(),
+            "capturing timeline-sampling initial state");
+    return {
+            std::move(sandbox),
+            std::move(initialState),
+            state.durationMs / kSearchTickDurationMs};
+}
+
+std::vector<SearchTimelineFrame> SampleTimeline(
+        TimelineSamplingRuntime &runtime,
+        const std::vector<
+                forevervalidator::experimental::PhysicsSandboxInputEvent>
+                &inputs,
+        const SearchRunControl *control,
+        bool reportProgress) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    CheckCancellation(control);
+    PhysicsSandboxStateView state = Require(
+            runtime.sandbox.RestoreState(runtime.initialState),
+            "restoring timeline-sampling initial state");
+    Require(runtime.sandbox.ReplaceInputs(inputs),
+            "replacing inputs for timeline sampling");
+    std::vector<SearchTimelineFrame> frames;
+    if (runtime.finalTickCount >= frames.max_size()) {
+        throw std::length_error("timeline contains too many ticks");
+    }
+    frames.reserve(
+            static_cast<std::size_t>(runtime.finalTickCount) + 1u);
+    frames.push_back(ToTimelineFrame(state));
+    if (reportProgress) {
+        ReportProgress(control,
+                       SearchProgressStage::FinalSampling,
+                       0u,
+                       runtime.finalTickCount);
+    }
+
+    for (std::uint64_t tick = 1u;
+         tick <= runtime.finalTickCount;
+         ++tick) {
+        CheckCancellation(control);
+        state = Require(runtime.sandbox.AdvanceTicks(1u),
+                        "sampling run timeline");
+        frames.push_back(ToTimelineFrame(state));
+        if (reportProgress &&
+            (tick == runtime.finalTickCount || tick % 128u == 0u)) {
+            ReportProgress(control,
+                           SearchProgressStage::FinalSampling,
+                           tick,
+                           runtime.finalTickCount);
+        }
+    }
+    return frames;
+}
+
 std::vector<SearchTimelineFrame> SampleBestTimeline(
         const SearchRequest &request,
         const forevervalidator::AssetBytes &replay,
@@ -74,56 +160,11 @@ std::vector<SearchTimelineFrame> SampleBestTimeline(
                 forevervalidator::experimental::PhysicsSandboxInputEvent>
                 &inputs,
         const SearchRunControl *control) {
-    using namespace forevervalidator;
-    using namespace forevervalidator::experimental;
-
-    CheckCancellation(control);
     ReportProgress(
             control, SearchProgressStage::FinalSamplingSetup, 0u, 0u);
-    AssetSource source = Require(
-            OpenInstalledPackDirectory(request.packDirectory),
-            "opening pack directory for final sampling");
-    PhysicsSandboxOptions options;
-    options.backend = ToForeverValidatorBackend(request.backend);
-    options.tickDurationMs = kSearchTickDurationMs;
-    PhysicsSandbox sandbox = Require(
-            CreatePhysicsSandbox(std::move(source), options),
-            "creating final-sampling sandbox");
-    PhysicsSandboxStateView state = Require(
-            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
-            "loading replay for final sampling");
-    Require(sandbox.ReplaceInputs(inputs),
-            "replacing best inputs for final sampling");
-    state = Require(sandbox.ReadState(),
-                    "reading final-sampling initial state");
-    if (state.durationMs % kSearchTickDurationMs != 0u) {
-        throw std::runtime_error(
-                "replay duration is not aligned to the search tick duration");
-    }
-
-    const std::uint64_t finalTickCount =
-            state.durationMs / kSearchTickDurationMs;
-    std::vector<SearchTimelineFrame> frames;
-    frames.reserve(static_cast<std::size_t>(finalTickCount + 1u));
-    frames.push_back(ToTimelineFrame(state));
-    ReportProgress(control,
-                   SearchProgressStage::FinalSampling,
-                   0u,
-                   finalTickCount);
-
-    for (std::uint64_t tick = 1u; tick <= finalTickCount; ++tick) {
-        CheckCancellation(control);
-        state = Require(sandbox.AdvanceTicks(1u),
-                        "sampling best-run timeline");
-        frames.push_back(ToTimelineFrame(state));
-        if (tick == finalTickCount || tick % 128u == 0u) {
-            ReportProgress(control,
-                           SearchProgressStage::FinalSampling,
-                           tick,
-                           finalTickCount);
-        }
-    }
-    return frames;
+    TimelineSamplingRuntime runtime =
+            CreateTimelineSamplingRuntime(request, replay, identity);
+    return SampleTimeline(runtime, inputs, control, true);
 }
 
 struct CachedSearchSandbox {
@@ -202,12 +243,52 @@ SearchResult RunLoadedSearch(
                 kSearchTickDurationMs);
     }
 #endif
+    const SearchRunControl *executionControl = control;
+    SearchRunControl instrumentedControl;
+    std::unique_ptr<TimelineSamplingRuntime> improvementSampler;
+    std::uint64_t sampledImprovementCount = 0u;
+    if (control != nullptr && control->liveChanged) {
+        instrumentedControl = *control;
+        const auto downstreamLiveChanged = control->liveChanged;
+        instrumentedControl.liveChanged =
+                [&, downstreamLiveChanged](
+                        const SearchLiveUpdate &live) {
+                    const bool improved =
+                            live.winnerSource ==
+                                    SearchWinnerSource::Mutation &&
+                            live.mutationImprovementCount >
+                                    sampledImprovementCount;
+                    if (!improved) {
+                        downstreamLiveChanged(live);
+                        return;
+                    }
+                    if (!improvementSampler) {
+                        improvementSampler =
+                                std::make_unique<TimelineSamplingRuntime>(
+                                        CreateTimelineSamplingRuntime(
+                                                request,
+                                                replay,
+                                                identity));
+                    }
+                    SearchLiveUpdate enriched = live;
+                    enriched.bestTimeline = SampleTimeline(
+                            *improvementSampler,
+                            live.bestInputs,
+                            control,
+                            false);
+                    downstreamLiveChanged(enriched);
+                    sampledImprovementCount =
+                            live.mutationImprovementCount;
+                };
+        executionControl = &instrumentedControl;
+    }
+
     SearchResult result = search->Run({
             sandbox,
             kSearchTickDurationMs,
             mutator,
             *evaluator,
-            control,
+            executionControl,
             request.parallelSampleCount,
             request.calibrateCudaParallelSampleCount,
             cudaModifiers.empty() ? nullptr : &cudaModifiers,

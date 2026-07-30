@@ -216,6 +216,7 @@ int main(int argc, char **argv) {
     bool manualDriveValid = false;
     bool manualInitialNeutral = false;
     bool trajectorySaveValid = false;
+    bool improvementTrajectoriesValid = false;
     QVector3D manualInitialPosition;
     QObject::connect(
             &viewer,
@@ -303,6 +304,103 @@ int main(int argc, char **argv) {
                                     << viewer.trajectoryCount()
                                     << ", runs=" << viewer.runCount()
                                     << '\n';
+                            application.quit();
+                            return;
+                        }
+                        std::vector<forevertas::SearchTimelineFrame>
+                                firstImprovement = searchTimeline;
+                        std::vector<forevertas::SearchTimelineFrame>
+                                secondImprovement = searchTimeline;
+                        for (forevertas::SearchTimelineFrame &frame :
+                             firstImprovement) {
+                            frame.positionX += 3.0f;
+                        }
+                        for (forevertas::SearchTimelineFrame &frame :
+                             secondImprovement) {
+                            frame.positionX += 6.0f;
+                        }
+                        viewer.addSearchImprovement(
+                                packsDirectory,
+                                replayPath,
+                                firstImprovement,
+                                QStringLiteral("optimized-cpu"),
+                                42u,
+                                1u);
+                        viewer.addSearchImprovement(
+                                packsDirectory,
+                                replayPath,
+                                secondImprovement,
+                                QStringLiteral("optimized-cpu"),
+                                42u,
+                                2u);
+                        viewer.addSearchImprovement(
+                                packsDirectory,
+                                replayPath,
+                                firstImprovement,
+                                QStringLiteral("optimized-cpu"),
+                                42u,
+                                1u);
+                        std::vector<forevertas::SearchTimelineFrame>
+                                invalidImprovement = firstImprovement;
+                        invalidImprovement.front().timeMs = 10;
+                        viewer.addSearchImprovement(
+                                packsDirectory,
+                                replayPath,
+                                invalidImprovement,
+                                QStringLiteral("optimized-cpu"),
+                                42u,
+                                3u);
+                        const QVariantList improvedPaths =
+                                viewer.trajectoryPaths();
+                        improvementTrajectoriesValid =
+                                viewer.trajectoryCount() == 3 &&
+                                improvedPaths.size() == 3 &&
+                                improvedPaths.at(1)
+                                                .toMap()
+                                                .value(QStringLiteral("name"))
+                                                .toString() ==
+                                        QStringLiteral("Improvement 1") &&
+                                improvedPaths.at(1)
+                                                .toMap()
+                                                .value(QStringLiteral("kind"))
+                                                .toString() ==
+                                        QStringLiteral("improvement") &&
+                                std::fabs(
+                                        improvedPaths.at(1)
+                                                        .toMap()
+                                                        .value(QStringLiteral(
+                                                                "opacity"))
+                                                        .toDouble() -
+                                        0.3) < 0.001 &&
+                                improvedPaths.at(2)
+                                                .toMap()
+                                                .value(QStringLiteral("name"))
+                                                .toString() ==
+                                        QStringLiteral("Improvement 2") &&
+                                std::fabs(
+                                        improvedPaths.at(2)
+                                                        .toMap()
+                                                        .value(QStringLiteral(
+                                                                "opacity"))
+                                                        .toDouble() -
+                                        0.96) < 0.001 &&
+                                improvedPaths.at(1)
+                                                .toMap()
+                                                .value(QStringLiteral(
+                                                        "geometry"))
+                                                .value<QObject *>() !=
+                                        nullptr &&
+                                improvedPaths.at(2)
+                                                .toMap()
+                                                .value(QStringLiteral(
+                                                        "geometry"))
+                                                .value<QObject *>() !=
+                                        nullptr;
+                        if (!improvementTrajectoriesValid) {
+                            completed = true;
+                            std::cerr
+                                    << "improvement trajectory checks failed: "
+                                    << viewer.trajectoryCount() << '\n';
                             application.quit();
                             return;
                         }
@@ -678,7 +776,8 @@ int main(int argc, char **argv) {
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
                             timeLabelUnambiguous &&
                             searchCopyStopsAtCurrentTime &&
-                            trajectorySaveValid;
+                            trajectorySaveValid &&
+                            improvementTrajectoriesValid;
                     if (!sceneValid) {
                         std::cerr
                                 << "viewer scene checks failed: "

@@ -74,7 +74,8 @@ SearchLiveUpdate ToLiveUpdate(const SearchResult &result) {
             result.mutationImprovementCount,
             result.totalMutationCount,
             result.elapsed,
-            result.lastImprovementElapsed};
+            result.lastImprovementElapsed,
+            {}};
 }
 
 QString FormatResult(const SearchResult &result) {
@@ -187,10 +188,12 @@ bool TryCancelBeforeSearchIteration(
 
 SearchWorker::SearchWorker(
         SearchRequest request,
+        std::uint64_t searchId,
         std::shared_ptr<std::atomic_bool> stopRequested,
         std::shared_ptr<std::atomic_bool> cancellationRequested,
         std::shared_ptr<std::atomic<SearchIterationPhase>> iterationPhase)
     : request_(std::move(request)),
+      searchId_(searchId),
       stopRequested_(std::move(stopRequested)),
       cancellationRequested_(std::move(cancellationRequested)),
       iterationPhase_(std::move(iterationPhase)) {}
@@ -257,6 +260,23 @@ void SearchWorker::run() {
                 IterationsPerSecond(
                         throughput.Observe(live.iterations, live.elapsed)),
                 RoundedDuration(live.elapsed));
+        if (!live.bestTimeline.empty()) {
+            auto improvement = std::make_shared<SearchImprovement>();
+            improvement->searchId = searchId_;
+            improvement->improvementNumber =
+                    live.mutationImprovementCount;
+            improvement->packsDirectory =
+                    FilePathFromUtf8(request_.packDirectory);
+            improvement->replayPath =
+                    FilePathFromUtf8(request_.replayPath);
+            const std::string_view backendId =
+                    PhysicsBackendId(request_.backend);
+            improvement->simulationBackendId = QString::fromLatin1(
+                    backendId.data(),
+                    static_cast<qsizetype>(backendId.size()));
+            improvement->timeline = live.bestTimeline;
+            emit improvementFound(std::move(improvement));
+        }
         emit bestChanged(
                 FormatLive(live, QStringLiteral("Current best")),
                 latestInputsText);

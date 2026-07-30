@@ -23,8 +23,20 @@ struct SearchCompletion {
 
 using SearchCompletionPtr = std::shared_ptr<const SearchCompletion>;
 
+struct SearchImprovement {
+    std::uint64_t searchId = 0u;
+    std::uint64_t improvementNumber = 0u;
+    QString packsDirectory;
+    QString replayPath;
+    QString simulationBackendId;
+    std::vector<SearchTimelineFrame> timeline;
+};
+
+using SearchImprovementPtr = std::shared_ptr<const SearchImprovement>;
+
 }  // namespace forevertas::app
 
 Q_DECLARE_METATYPE(forevertas::app::SearchCompletionPtr)
+Q_DECLARE_METATYPE(forevertas::app::SearchImprovementPtr)
 
 #endif

@@ -271,7 +271,8 @@ void ReportLive(
             mutationImprovementCount,
             totalMutationCount,
             elapsed,
-            lastImprovementElapsed});
+            lastImprovementElapsed,
+            {}});
 }
 
 #if FOREVERVALIDATOR_HAS_CUDA

@@ -330,6 +330,64 @@ RaceViewerMeshBuffers BuildTrajectoryMesh(
     return BuildMeshBuffers(triangles, 2);
 }
 
+RaceViewerMeshBuffers BuildTrajectoryLineMesh(
+        const std::vector<RaceViewerFrame> &frames,
+        float stationaryMarkerRadius) {
+    RaceViewerMeshBuffers result;
+    if (frames.empty()) {
+        return result;
+    }
+    std::vector<WireVertex> vertices;
+    if (frames.size() - 1u > vertices.max_size() / 2u) {
+        throw std::length_error("trajectory line is too large");
+    }
+    vertices.reserve((frames.size() - 1u) * 2u);
+    const auto append = [&vertices](const QVector3D &point) {
+        vertices.push_back({point.x(), point.y(), point.z()});
+    };
+    for (std::size_t index = 1u; index < frames.size(); ++index) {
+        const QVector3D &start = frames[index - 1u].position;
+        const QVector3D &end = frames[index].position;
+        if ((end - start).lengthSquared() < 0.000001f) {
+            continue;
+        }
+        append(start);
+        append(end);
+    }
+    if (vertices.empty()) {
+        const QVector3D center = frames.front().position;
+        const QVector3D x(stationaryMarkerRadius, 0.0f, 0.0f);
+        const QVector3D y(0.0f, stationaryMarkerRadius, 0.0f);
+        const QVector3D z(0.0f, 0.0f, stationaryMarkerRadius);
+        append(center - x);
+        append(center + x);
+        append(center - y);
+        append(center + y);
+        append(center - z);
+        append(center + z);
+    }
+    if (vertices.size() > static_cast<std::size_t>(
+                std::numeric_limits<qsizetype>::max() /
+                sizeof(WireVertex))) {
+        throw std::length_error("trajectory line geometry is too large");
+    }
+    result.boundsMin = QVector3D(
+            vertices.front().x, vertices.front().y, vertices.front().z);
+    result.boundsMax = result.boundsMin;
+    for (const WireVertex &vertex : vertices) {
+        ExpandBounds(
+                QVector3D(vertex.x, vertex.y, vertex.z),
+                result.boundsMin,
+                result.boundsMax);
+    }
+    result.wire.resize(
+            static_cast<qsizetype>(vertices.size() * sizeof(WireVertex)));
+    std::memcpy(result.wire.data(),
+                vertices.data(),
+                static_cast<std::size_t>(result.wire.size()));
+    return result;
+}
+
 QVariantMap MaterialMap(ReplacementMaterialClass materialClass) {
     const ReplacementMaterial replacement = ReplacementFor(materialClass);
     QVariantMap map;
@@ -589,6 +647,24 @@ std::vector<RaceViewerFrame> ToViewerFrames(
                 frame.steering});
     }
     return result;
+}
+
+bool IsViewableTrajectory(
+        const std::vector<RaceViewerFrame> &frames) {
+    if (frames.empty() || frames.front().timeMs != 0) {
+        return false;
+    }
+    std::int64_t previousTime = -1;
+    for (const RaceViewerFrame &frame : frames) {
+        if (frame.timeMs <= previousTime ||
+            !std::isfinite(frame.position.x()) ||
+            !std::isfinite(frame.position.y()) ||
+            !std::isfinite(frame.position.z())) {
+            return false;
+        }
+        previousTime = frame.timeMs;
+    }
+    return true;
 }
 
 RaceViewerFrame ToViewerFrame(const PhysicsSandboxStateView &state) {
@@ -1006,6 +1082,170 @@ void RaceViewerController::addSearchRun(
     if (workerThread_ == nullptr) {
         beginMapLoad(packsDirectory, replayPath, *backend);
     }
+}
+
+void RaceViewerController::addSearchImprovement(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const QString &backendId,
+        std::uint64_t searchId,
+        std::uint64_t improvementNumber) {
+    if (searchId == 0u || improvementNumber == 0u ||
+        frames.empty()) {
+        setStatusText(QStringLiteral(
+                "Search improvement produced no viewable trajectory."));
+        return;
+    }
+    const std::optional<PhysicsBackend> backend =
+            ParsePhysicsBackend(backendId.toStdString());
+    if (!backend) {
+        setStatusText(QStringLiteral("Select a valid physics backend."));
+        return;
+    }
+
+    try {
+        PendingImprovement pending{
+                packsDirectory,
+                replayPath,
+                *backend,
+                searchId,
+                improvementNumber,
+                ToViewerFrames(frames)};
+        if (!IsViewableTrajectory(pending.frames)) {
+            setStatusText(QStringLiteral(
+                    "Search improvement produced an invalid trajectory."));
+            return;
+        }
+        const QString key =
+                QStringLiteral("improvement:%1:%2")
+                        .arg(searchId)
+                        .arg(improvementNumber);
+        if (std::find(trajectoryKeys_.begin(),
+                      trajectoryKeys_.end(),
+                      key) != trajectoryKeys_.end()) {
+            return;
+        }
+        const auto queued = std::find_if(
+                pendingImprovements_.begin(),
+                pendingImprovements_.end(),
+                [searchId, improvementNumber](
+                        const PendingImprovement &entry) {
+                    return entry.searchId == searchId &&
+                            entry.improvementNumber ==
+                                    improvementNumber;
+                });
+        if (queued != pendingImprovements_.end()) {
+            return;
+        }
+        if (loaded_ &&
+            loadedPacksDirectory_ == packsDirectory &&
+            loadedReplayPath_ == replayPath) {
+            appendImprovementTrajectory(
+                    searchId,
+                    improvementNumber,
+                    pending.frames);
+            return;
+        }
+        pendingImprovements_.push_back(std::move(pending));
+        if (workerThread_ == nullptr) {
+            beginMapLoad(packsDirectory, replayPath, *backend);
+        }
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral(
+                        "Adding search improvement trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Adding search improvement trajectory failed unexpectedly."));
+    }
+}
+
+bool RaceViewerController::appendImprovementTrajectory(
+        std::uint64_t searchId,
+        std::uint64_t improvementNumber,
+        const std::vector<RaceViewerFrame> &frames) {
+    const QString key =
+            QStringLiteral("improvement:%1:%2")
+                    .arg(searchId)
+                    .arg(improvementNumber);
+    if (std::find(trajectoryKeys_.begin(),
+                  trajectoryKeys_.end(),
+                  key) != trajectoryKeys_.end()) {
+        return true;
+    }
+
+    try {
+        const float radius = static_cast<float>(
+                std::clamp(sceneRadius_ * 0.0008, 0.03, 0.3));
+        RaceViewerMeshBuffers mesh =
+                BuildTrajectoryLineMesh(frames, radius * 2.0f);
+        if (mesh.wire.isEmpty()) {
+            setStatusText(QStringLiteral(
+                    "Search improvement produced no viewable trajectory."));
+            return false;
+        }
+        auto geometry = std::make_unique<RaceGeometry>();
+        geometry->setMesh(
+                std::move(mesh.wire),
+                static_cast<int>(sizeof(WireVertex)),
+                QQuick3DGeometry::PrimitiveType::Lines,
+                false,
+                mesh.boundsMin,
+                mesh.boundsMax);
+
+        QVariantList paths = trajectoryPaths_;
+        for (QVariant &entry : paths) {
+            QVariantMap path = entry.toMap();
+            if (path.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("improvement")) {
+                path.insert(QStringLiteral("opacity"), 0.3);
+                entry = std::move(path);
+            }
+        }
+        QVariantMap path;
+        path.insert(QStringLiteral("kind"),
+                    QStringLiteral("improvement"));
+        path.insert(
+                QStringLiteral("name"),
+                QStringLiteral("Improvement %1")
+                        .arg(improvementNumber));
+        path.insert(QStringLiteral("color"),
+                    QStringLiteral("#ffb84d"));
+        path.insert(QStringLiteral("opacity"), 0.96);
+        path.insert(QStringLiteral("searchId"),
+                    QVariant::fromValue<qulonglong>(searchId));
+        path.insert(
+                QStringLiteral("improvementNumber"),
+                QVariant::fromValue<qulonglong>(improvementNumber));
+        path.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(
+                        static_cast<QObject *>(geometry.get())));
+        paths.push_back(std::move(path));
+
+        trajectoryGeometries_.reserve(
+                trajectoryGeometries_.size() + 1u);
+        trajectoryKeys_.reserve(trajectoryKeys_.size() + 1u);
+        trajectoryGeometries_.push_back(std::move(geometry));
+        trajectoryKeys_.push_back(key);
+        trajectoryPaths_ = std::move(paths);
+        emit trajectoriesChanged();
+        setStatusText(
+                QStringLiteral("Improvement %1 trajectory added")
+                        .arg(improvementNumber));
+        return true;
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral(
+                        "Adding search improvement trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Adding search improvement trajectory failed unexpectedly."));
+    }
+    return false;
 }
 
 void RaceViewerController::setTimeMs(qint64 value) {
@@ -1462,6 +1702,7 @@ void RaceViewerController::loadMap(const QString &packsDirectory,
         return;
     }
     pendingRun_.reset();
+    pendingImprovements_.clear();
     if (workerThread_ != nullptr) {
         queuedMapLoad_ =
                 MapLoadRequest{packsDirectory, replayPath, *backend};
@@ -1487,6 +1728,7 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
     const QFileInfo replayInfo(replayPath);
     if (!packsInfo.isDir() || !packsInfo.isReadable()) {
         pendingRun_.reset();
+        pendingImprovements_.clear();
         setStatusText(QStringLiteral(
                 "Select a readable installed Packs directory."));
         setLoading(false);
@@ -1494,6 +1736,7 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
     }
     if (!replayInfo.isFile() || !replayInfo.isReadable()) {
         pendingRun_.reset();
+        pendingImprovements_.clear();
         setStatusText(QStringLiteral("Select a readable replay file."));
         setLoading(false);
         return;
@@ -1539,6 +1782,18 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
             beginMapLoad(pendingRun_->packsDirectory,
                          pendingRun_->replayPath,
                          pendingRun_->backend);
+            return;
+        }
+        if (!pendingImprovements_.empty()) {
+            const PendingImprovement &pending =
+                    pendingImprovements_.back();
+            if (!loaded_ ||
+                loadedPacksDirectory_ != pending.packsDirectory ||
+                loadedReplayPath_ != pending.replayPath) {
+                beginMapLoad(pending.packsDirectory,
+                             pending.replayPath,
+                             pending.backend);
+            }
         }
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
@@ -1552,6 +1807,7 @@ void RaceViewerController::applyLoadResult(
     pause();
     if (!result.error.isEmpty()) {
         pendingRun_.reset();
+        pendingImprovements_.clear();
         setStatusText(result.error);
         if (!queuedMapLoad_) setLoading(false);
         return;
@@ -1642,10 +1898,28 @@ void RaceViewerController::applyLoadResult(
             pendingRun_ &&
             pendingRun_->packsDirectory == loadedPacksDirectory_ &&
             pendingRun_->replayPath == loadedReplayPath_;
+    const bool addingPendingImprovements =
+            std::any_of(
+                    pendingImprovements_.begin(),
+                    pendingImprovements_.end(),
+                    [this](const PendingImprovement &pending) {
+                        return pending.packsDirectory ==
+                                        loadedPacksDirectory_ &&
+                                pending.replayPath ==
+                                        loadedReplayPath_;
+                    });
     applyPendingRunIfReady();
-    setStatusText(addingPendingRun
-                          ? QStringLiteral("Best run added")
-                          : QStringLiteral("Map loaded"));
+    const bool pendingImprovementsAdded =
+            applyPendingImprovementsIfReady();
+    if (!addingPendingImprovements ||
+        pendingImprovementsAdded) {
+        setStatusText(addingPendingRun
+                              ? QStringLiteral("Best run added")
+                              : addingPendingImprovements
+                              ? QStringLiteral(
+                                        "Search improvement trajectories added")
+                              : QStringLiteral("Map loaded"));
+    }
     if (!queuedMapLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();
@@ -1667,6 +1941,31 @@ void RaceViewerController::applyPendingRunIfReady() {
               std::move(frames),
               std::move(inputs),
               true);
+}
+
+bool RaceViewerController::applyPendingImprovementsIfReady() {
+    if (!loaded_ || pendingImprovements_.empty()) {
+        return true;
+    }
+    bool succeeded = true;
+    std::vector<PendingImprovement> remaining;
+    remaining.reserve(pendingImprovements_.size());
+    for (PendingImprovement &pending : pendingImprovements_) {
+        if (pending.packsDirectory == loadedPacksDirectory_ &&
+            pending.replayPath == loadedReplayPath_) {
+            if (!appendImprovementTrajectory(
+                        pending.searchId,
+                        pending.improvementNumber,
+                        pending.frames)) {
+                remaining.push_back(std::move(pending));
+                succeeded = false;
+            }
+        } else {
+            remaining.push_back(std::move(pending));
+        }
+    }
+    pendingImprovements_ = std::move(remaining);
+    return succeeded;
 }
 
 void RaceViewerController::setLoading(bool value) {

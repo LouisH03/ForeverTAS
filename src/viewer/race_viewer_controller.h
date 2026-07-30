@@ -218,6 +218,13 @@ public:
             const std::vector<SearchTimelineFrame> &frames,
             const std::vector<SandboxInputEvent> &inputs,
             const QString &backendId);
+    void addSearchImprovement(
+            const QString &packsDirectory,
+            const QString &replayPath,
+            const std::vector<SearchTimelineFrame> &frames,
+            const QString &backendId,
+            std::uint64_t searchId,
+            std::uint64_t improvementNumber);
 
 public slots:
     void setTimeMs(qint64 value);
@@ -262,6 +269,11 @@ private:
                       const QString &replayPath,
                       PhysicsBackend backend);
     void applyPendingRunIfReady();
+    bool applyPendingImprovementsIfReady();
+    bool appendImprovementTrajectory(
+            std::uint64_t searchId,
+            std::uint64_t improvementNumber,
+            const std::vector<RaceViewerFrame> &frames);
     void upsertRun(QString id,
                    QString name,
                    std::vector<RaceViewerFrame> frames,
@@ -300,10 +312,19 @@ private:
         std::vector<RaceViewerFrame> frames;
         std::vector<SandboxInputEvent> inputs;
     };
+    struct PendingImprovement {
+        QString packsDirectory;
+        QString replayPath;
+        PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
+        std::uint64_t searchId = 0u;
+        std::uint64_t improvementNumber = 0u;
+        std::vector<RaceViewerFrame> frames;
+    };
 
     std::vector<RaceViewerRun> runs_;
     std::optional<MapLoadRequest> queuedMapLoad_;
     std::optional<PendingRun> pendingRun_;
+    std::vector<PendingImprovement> pendingImprovements_;
     QVariantList carEllipsoids_;
     QVariantList visualBatches_;
     QVariantList visualMaterials_;

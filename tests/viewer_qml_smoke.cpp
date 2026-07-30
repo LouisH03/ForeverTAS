@@ -1585,8 +1585,57 @@ int main(int argc, char **argv) {
                                         QString::fromLocal8Bit(argv[2]),
                                         bestFrames,
                                         bestInputs);
+                    std::vector<forevertas::SearchTimelineFrame>
+                            firstImprovement = bestFrames;
+                    std::vector<forevertas::SearchTimelineFrame>
+                            secondImprovement = bestFrames;
+                    for (forevertas::SearchTimelineFrame &frame :
+                         firstImprovement) {
+                        frame.positionZ += 2.0f;
+                    }
+                    for (forevertas::SearchTimelineFrame &frame :
+                         secondImprovement) {
+                        frame.positionZ += 4.0f;
+                    }
+                    viewer.addSearchImprovement(
+                            QString::fromLocal8Bit(argv[1]),
+                            QString::fromLocal8Bit(argv[2]),
+                            firstImprovement,
+                            QStringLiteral("optimized-cpu"),
+                            9u,
+                            1u);
+                    viewer.addSearchImprovement(
+                            QString::fromLocal8Bit(argv[1]),
+                            QString::fromLocal8Bit(argv[2]),
+                            secondImprovement,
+                            QStringLiteral("optimized-cpu"),
+                            9u,
+                            2u);
                     QCoreApplication::processEvents();
                     QCoreApplication::processEvents();
+                    const QVariantList improvementPaths =
+                            viewer.trajectoryPaths();
+                    const bool improvementTrajectoryUiValid =
+                            viewer.trajectoryCount() == 3 &&
+                            improvementPaths.size() == 3 &&
+                            improvementPaths.at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("name"))
+                                            .toString() ==
+                                    QStringLiteral("Improvement 1") &&
+                            improvementPaths.at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("opacity"))
+                                            .toDouble() < 0.31 &&
+                            improvementPaths.at(2)
+                                            .toMap()
+                                            .value(QStringLiteral("name"))
+                                            .toString() ==
+                                    QStringLiteral("Improvement 2") &&
+                            improvementPaths.at(2)
+                                            .toMap()
+                                            .value(QStringLiteral("opacity"))
+                                            .toDouble() > 0.95;
 
                     QTimer::singleShot(
                             250, &application,
@@ -1598,7 +1647,10 @@ int main(int argc, char **argv) {
                              baseInputScriptTextArea,
                              copyCurrentRaceInputsButton,
                              rayTracingTrajectoryOverlay,
-                             trajectorySaveUiValid]() {
+                             trajectorySaveUiValid,
+                             improvementTrajectoryUiValid]() {
+                                QCoreApplication::sendPostedEvents(
+                                        nullptr, QEvent::DeferredDelete);
                                 const QList<QObject *> carRoots =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral("runCarRoot"));
@@ -1614,6 +1666,20 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "runCarWireModel"));
+                                const QList<QObject *> allTrajectoryModels =
+                                        root->findChildren<QObject *>(
+                                                QStringLiteral(
+                                                        "trajectoryPathModel"));
+                                const QList<QObject *>
+                                        allRayTracingTrajectoryModels =
+                                                root->findChildren<QObject *>(
+                                                        QStringLiteral(
+                                                                "rayTracingTrajectoryPathModel"));
+                                const bool allTrajectoryModelsRendered =
+                                        allTrajectoryModels.size() ==
+                                                viewer.trajectoryCount() &&
+                                        allRayTracingTrajectoryModels.size() ==
+                                                viewer.trajectoryCount();
                                 const QList<QObject *> visualModels =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
@@ -2034,6 +2100,8 @@ int main(int argc, char **argv) {
                                                         optimizedRenderState &&
                                                         daylightEnvironment &&
                                                         trajectorySaveUiValid &&
+                                                        improvementTrajectoryUiValid &&
+                                                        allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
                                                         editorStructure
                                                 ? 0
@@ -2073,6 +2141,15 @@ int main(int argc, char **argv) {
                                             << trajectorySaveUiValid
                                             << "/"
                                             << viewer.trajectoryCount()
+                                            << "/"
+                                            << improvementTrajectoryUiValid
+                                            << "/"
+                                            << allTrajectoryModelsRendered
+                                            << "/"
+                                            << allTrajectoryModels.size()
+                                            << "/"
+                                            << allRayTracingTrajectoryModels
+                                                       .size()
                                             << "/"
                                             << (copyCurrentRaceInputsButton !=
                                                                 nullptr

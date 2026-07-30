@@ -49,6 +49,20 @@ struct SearchProgress {
     std::uint64_t totalWork = 0u;
 };
 
+struct SearchTimelineFrame {
+    std::int64_t timeMs = 0;
+    float positionX = 0.0f;
+    float positionY = 0.0f;
+    float positionZ = 0.0f;
+    float rotationX = 0.0f;
+    float rotationY = 0.0f;
+    float rotationZ = 0.0f;
+    float rotationW = 1.0f;
+    float accelerate = 0.0f;
+    float brake = 0.0f;
+    float steering = 0.0f;
+};
+
 struct SearchLiveUpdate {
     SearchWinnerSource winnerSource = SearchWinnerSource::Baseline;
     std::optional<std::uint64_t> winningIterationIndex;
@@ -65,6 +79,7 @@ struct SearchLiveUpdate {
     std::chrono::steady_clock::duration elapsed{};
     std::optional<std::chrono::steady_clock::duration>
             lastImprovementElapsed;
+    std::vector<SearchTimelineFrame> bestTimeline;
 };
 
 struct SearchRunControl {
@@ -100,20 +115,6 @@ struct SearchExecutionContext {
             *cudaModifiers = nullptr;
     const forevervalidator::experimental::PhysicsSandboxCudaEvaluator
             *cudaEvaluator = nullptr;
-};
-
-struct SearchTimelineFrame {
-    std::int64_t timeMs = 0;
-    float positionX = 0.0f;
-    float positionY = 0.0f;
-    float positionZ = 0.0f;
-    float rotationX = 0.0f;
-    float rotationY = 0.0f;
-    float rotationZ = 0.0f;
-    float rotationW = 1.0f;
-    float accelerate = 0.0f;
-    float brake = 0.0f;
-    float steering = 0.0f;
 };
 
 struct SearchResult {

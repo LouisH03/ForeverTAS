@@ -175,6 +175,8 @@ signals:
     void statusChanged();
     void metricsChanged();
     void resultChanged();
+    void searchImprovement(
+            forevertas::app::SearchImprovementPtr improvement);
     void searchCompleted(forevertas::app::SearchCompletionPtr completion);
 
 private:
@@ -240,6 +242,7 @@ private:
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
     std::shared_ptr<std::atomic<SearchIterationPhase>> iterationPhase_;
     SearchCompletionPtr lastCompletion_;
+    std::uint64_t searchSerial_ = 0u;
 };
 
 }  // namespace forevertas::app

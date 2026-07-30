@@ -47,6 +47,8 @@ int main(int argc, char **argv) {
                         viewer.tickCount() == 0 &&
                         viewer.durationMs() == 0 &&
                         viewer.selectedRunId().isEmpty() &&
+                        viewer.trajectoryCount() ==
+                                (completedLoads == 0 ? 1 : 0) &&
                         viewer.visualTriangleCount() > 0 &&
                         viewer.visualMeshCount() > 0 &&
                         !viewer.visualMaterials().isEmpty() &&
@@ -97,7 +99,22 @@ int main(int argc, char **argv) {
         std::cerr << "replay reload timed out\n";
         application.quit();
     });
-    viewer.loadMap(packs, replays[0]);
+    std::vector<forevertas::SearchTimelineFrame> improvementFrames(3u);
+    for (std::size_t index = 0u;
+         index < improvementFrames.size();
+         ++index) {
+        improvementFrames[index].timeMs =
+                static_cast<std::int64_t>(index * 10u);
+        improvementFrames[index].positionX =
+                static_cast<float>(index);
+    }
+    viewer.addSearchImprovement(
+            packs,
+            replays[0],
+            improvementFrames,
+            QStringLiteral("optimized-cpu"),
+            1u,
+            1u);
     application.exec();
     return exitCode;
 }
