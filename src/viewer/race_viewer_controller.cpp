@@ -782,6 +782,10 @@ QQuick3DGeometry *RaceViewerController::ellipsoidWireGeometry() {
     return &ellipsoidWireGeometry_;
 }
 
+WhiteboardModel *RaceViewerController::whiteboard() {
+    return &whiteboard_;
+}
+
 QVariantList RaceViewerController::carEllipsoids() const {
     return carEllipsoids_;
 }

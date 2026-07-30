@@ -163,6 +163,13 @@ compute renderer with GPU BVH traversal, ray-traced shadows and reflections,
 and immediate noise-free output. Qt 6.5 and 6.6 keep the full raster renderer
 and omit only that optional mode.
 
+The viewer's **Whiteboard** mode draws directly over either renderer without
+replacing the map, cars, targets, or trajectories. Pen strokes, lines,
+rectangles, ellipses, and editable vector text are independent movable and
+resizable items. Drawing color and stroke size are adjustable, and the eraser
+removes pixels only from the selected item. Leaving whiteboard mode restores
+normal 3D camera interaction while keeping the overlay visible.
+
 ## Portable bundles
 
 ForeverTAS can be packaged natively as a Linux AppImage, Windows portable ZIP,

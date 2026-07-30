@@ -2559,6 +2559,84 @@ int main(int argc, char **argv) {
                                                         expectedCarModels,
                                                         false);
 
+                                auto *const whiteboardOverlay =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "whiteboardOverlay")));
+                                auto *const whiteboardToolbar =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "whiteboardToolbar")));
+                                QObject *const whiteboardModeToggle =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardModeToggle"));
+                                QObject *const whiteboardDrawingInput =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardDrawingInput"));
+                                QObject *const whiteboardDrawingRepeater =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardDrawingRepeater"));
+                                auto *const whiteboard =
+                                        viewer.whiteboard();
+                                whiteboard->setActive(true);
+                                whiteboard->setTool(
+                                        QStringLiteral("line"));
+                                const bool whiteboardLineAdded =
+                                        whiteboard->beginItem(0.15, 0.2) &&
+                                        whiteboard->updateItem(0.7, 0.6) &&
+                                        whiteboard->finishItem();
+                                whiteboard->setTool(
+                                        QStringLiteral("text"));
+                                const bool whiteboardTextAdded =
+                                        whiteboard->addText(
+                                                0.24,
+                                                0.3,
+                                                QStringLiteral(
+                                                        "Apex note")) == 1;
+                                QCoreApplication::processEvents();
+                                const bool whiteboardActiveState =
+                                        whiteboardOverlay != nullptr &&
+                                        whiteboardToolbar != nullptr &&
+                                        whiteboardModeToggle != nullptr &&
+                                        whiteboardModeToggle
+                                                ->property("checked")
+                                                .toBool() &&
+                                        whiteboardDrawingInput != nullptr &&
+                                        whiteboardDrawingInput
+                                                ->property("enabled")
+                                                .toBool() &&
+                                        whiteboardLineAdded &&
+                                        whiteboardTextAdded &&
+                                        whiteboard->count() == 2 &&
+                                        whiteboardDrawingRepeater != nullptr &&
+                                        whiteboardDrawingRepeater
+                                                        ->property("count")
+                                                        .toInt() == 2 &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels;
+                                whiteboard->setActive(false);
+                                QCoreApplication::processEvents();
+                                const bool whiteboardIntegrated =
+                                        whiteboardActiveState &&
+                                        !whiteboardModeToggle
+                                                 ->property("checked")
+                                                 .toBool() &&
+                                        !whiteboardDrawingInput
+                                                 ->property("enabled")
+                                                 .toBool() &&
+                                        whiteboardToolbar->width() <= 116.1 &&
+                                        whiteboard->count() == 2 &&
+                                        whiteboardDrawingRepeater
+                                                        ->property("count")
+                                                        .toInt() == 2 &&
+                                        VisibleModelCount(visualModels) ==
+                                                initialVisibleVisualModels;
+
                                 completed = true;
                                 exitCode =
                                         geometryAttached && rootsVisible &&
@@ -2577,7 +2655,8 @@ int main(int argc, char **argv) {
                                                         improvementTrajectoryUiValid &&
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
-                                                        editorStructure
+                                                        editorStructure &&
+                                                        whiteboardIntegrated
                                                 ? 0
                                                 : 1;
                                 if (exitCode != 0) {
@@ -2644,6 +2723,10 @@ int main(int argc, char **argv) {
                                             << materialDebugState
                                             << ", wireframe=" << wireframeState
                                             << ", restored=" << restoredState
+                                            << ", whiteboard="
+                                            << whiteboardActiveState << "/"
+                                            << whiteboardIntegrated << "/"
+                                            << whiteboard->count()
                                             << ", optimizedRenderState="
                                             << optimizedRenderState
                                             << ", daylightEnvironment="

@@ -2,6 +2,7 @@
 
 #include "app/panel_wheel_redirector.h"
 #include "viewer/gpu_ray_tracing_view.h"
+#include "viewer/whiteboard_canvas_item.h"
 
 #include "time_format.h"
 
@@ -427,9 +428,13 @@ void RegisterRaceViewerQmlTypes() {
     static const int rayTracingTypeId =
             qmlRegisterType<GpuRayTracingView>(
                     "ForeverTAS.Viewer", 1, 0, "GpuRayTracingView");
+    static const int whiteboardCanvasTypeId =
+            qmlRegisterType<WhiteboardCanvasItem>(
+                    "ForeverTAS.Viewer", 1, 0, "WhiteboardCanvasItem");
     Q_UNUSED(timelineTypeId);
     Q_UNUSED(wheelTypeId);
     Q_UNUSED(rayTracingTypeId);
+    Q_UNUSED(whiteboardCanvasTypeId);
 }
 
 }  // namespace forevertas::viewer

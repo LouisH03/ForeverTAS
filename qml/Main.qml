@@ -1840,6 +1840,15 @@ ApplicationWindow {
                         }
                     }
 
+                    WhiteboardOverlay {
+                        id: whiteboardOverlay
+                        objectName: "whiteboardOverlay"
+                        anchors.fill: parent
+                        z: 2.5
+                        model: window.viewer.whiteboard
+                        available: window.viewer.loaded
+                    }
+
                     Rectangle {
                         id: raceViewerHeader
                         objectName: "raceViewerHeader"

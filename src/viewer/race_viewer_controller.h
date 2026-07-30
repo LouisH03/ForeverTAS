@@ -4,6 +4,7 @@
 #include "physics_backend.h"
 #include "searches/search_algorithm.h"
 #include "viewer/race_geometry.h"
+#include "viewer/whiteboard_model.h"
 #include "viewer/ray_tracing_scene.h"
 #include "viewer/visual_scene_pipeline.h"
 
@@ -147,6 +148,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY sceneChanged)
     Q_PROPERTY(QVector3D sceneBoundsMin READ sceneBoundsMin NOTIFY sceneChanged)
     Q_PROPERTY(QVector3D sceneBoundsMax READ sceneBoundsMax NOTIFY sceneChanged)
+    Q_PROPERTY(forevertas::viewer::WhiteboardModel *whiteboard READ
+                       whiteboard CONSTANT)
 
 public:
     explicit RaceViewerController(QObject *parent = nullptr);
@@ -156,6 +159,7 @@ public:
     QQuick3DGeometry *trackWireGeometry();
     QQuick3DGeometry *ellipsoidFilledGeometry();
     QQuick3DGeometry *ellipsoidWireGeometry();
+    WhiteboardModel *whiteboard();
     QVariantList carEllipsoids() const;
     QVariantList visualInstances() const;
     QVariantList visualBatches() const;
@@ -295,6 +299,7 @@ private:
 
     RaceGeometry trackFilledGeometry_;
     RaceGeometry trackWireGeometry_;
+    WhiteboardModel whiteboard_;
     std::vector<std::unique_ptr<RaceGeometry>> visualGeometries_;
     std::shared_ptr<const RayTracingSceneData> rayTracingScene_;
     std::vector<std::unique_ptr<RaceGeometry>>

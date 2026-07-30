@@ -145,6 +145,10 @@ add_library(forevertas_gui STATIC
     src/viewer/race_viewer_controller.h
     src/viewer/visual_scene_pipeline.cpp
     src/viewer/visual_scene_pipeline.h
+    src/viewer/whiteboard_canvas_item.cpp
+    src/viewer/whiteboard_canvas_item.h
+    src/viewer/whiteboard_model.cpp
+    src/viewer/whiteboard_model.h
     src/app/search_configuration_model.cpp
     src/app/search_configuration_model.h
     src/app/cuboid_target_model.cpp
@@ -223,6 +227,7 @@ qt_add_qml_module(forevertas
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/WhiteboardOverlay.qml
         qml/settings/AlgorithmSelector.qml
         qml/settings/BasicBruteForceSearchSettings.qml
         qml/settings/ConfigurationSection.qml
@@ -470,12 +475,25 @@ if(BUILD_TESTING)
         forevertas_gui
         Qt6::Gui)
 
+    add_executable(forevertas-whiteboard-tests
+        tests/whiteboard_tests.cpp)
+    target_compile_definitions(forevertas-whiteboard-tests PRIVATE
+        FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(forevertas-whiteboard-tests PRIVATE
+        forevertas_gui
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2)
+
     if(FOREVERTAS_WARNING_OPTIONS)
         target_compile_options(forevertas-strategy-tests PRIVATE
             ${FOREVERTAS_WARNING_OPTIONS})
         target_compile_options(forevertas-controller-tests PRIVATE
             ${FOREVERTAS_WARNING_OPTIONS})
         target_compile_options(forevertas-renderer-tests PRIVATE
+            ${FOREVERTAS_WARNING_OPTIONS})
+        target_compile_options(forevertas-whiteboard-tests PRIVATE
             ${FOREVERTAS_WARNING_OPTIONS})
     endif()
 
@@ -485,7 +503,11 @@ if(BUILD_TESTING)
              COMMAND forevertas-controller-tests)
     add_test(NAME forevertas-renderer
              COMMAND forevertas-renderer-tests)
+    add_test(NAME forevertas-whiteboard
+             COMMAND forevertas-whiteboard-tests)
     set_tests_properties(forevertas-renderer PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    set_tests_properties(forevertas-whiteboard PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME forevertas-qml-smoke
              COMMAND forevertas --qml-smoke-test)
