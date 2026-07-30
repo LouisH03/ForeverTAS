@@ -1,6 +1,7 @@
 #include "viewer/race_viewer_controller.h"
 
 #include "mutations/input_event_formatter.h"
+#include "mutations/input_event_utils.h"
 #include "replay_file_io.h"
 #include "time_format.h"
 #include "viewer/material_classifier.h"
@@ -137,6 +138,53 @@ bool IsDriverInput(PhysicsSandboxInputAction action) {
             action == PhysicsSandboxInputAction::SteerRight;
 }
 
+bool IsSteeringInput(PhysicsSandboxInputAction action) {
+    return action == PhysicsSandboxInputAction::Steer ||
+            action == PhysicsSandboxInputAction::SteerLeft ||
+            action == PhysicsSandboxInputAction::SteerRight;
+}
+
+bool IsLongitudinalInput(PhysicsSandboxInputAction action) {
+    return action == PhysicsSandboxInputAction::Accelerate ||
+            action == PhysicsSandboxInputAction::Gas ||
+            action == PhysicsSandboxInputAction::Brake;
+}
+
+bool SwitchInputActiveAt(
+        const std::vector<PhysicsSandboxInputEvent> &events,
+        PhysicsSandboxInputAction action,
+        std::int32_t timeMs) {
+    bool active = false;
+    for (const PhysicsSandboxInputEvent &event : events) {
+        if (event.timeMs > timeMs) {
+            break;
+        }
+        if (event.action == action &&
+            event.value.kind == PhysicsSandboxInputValueKind::Switch) {
+            active = event.value.switchState !=
+                    PhysicsSandboxSwitchState::Released;
+        }
+    }
+    return active;
+}
+
+forevervalidator::AnalogInputState AnalogInputAt(
+        const std::vector<PhysicsSandboxInputEvent> &events,
+        PhysicsSandboxInputAction action,
+        std::int32_t timeMs) {
+    forevervalidator::AnalogInputState value = 0;
+    for (const PhysicsSandboxInputEvent &event : events) {
+        if (event.timeMs > timeMs) {
+            break;
+        }
+        if (event.action == action &&
+            event.value.kind == PhysicsSandboxInputValueKind::Analog) {
+            value = event.value.analog;
+        }
+    }
+    return value;
+}
+
 PhysicsSandboxInputEvent ManualSwitchEvent(
         std::int32_t timeMs,
         PhysicsSandboxInputAction action,
@@ -148,6 +196,18 @@ PhysicsSandboxInputEvent ManualSwitchEvent(
     event.value.switchState = active
             ? PhysicsSandboxSwitchState::Pressed
             : PhysicsSandboxSwitchState::Released;
+    return event;
+}
+
+PhysicsSandboxInputEvent ManualAnalogInputEvent(
+        std::int32_t timeMs,
+        PhysicsSandboxInputAction action,
+        forevervalidator::AnalogInputState value) {
+    PhysicsSandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Analog;
+    event.value.analog = value;
     return event;
 }
 
@@ -984,8 +1044,20 @@ bool RaceViewerController::playing() const {
     return playing_;
 }
 
+bool RaceViewerController::takeOverOnInput() const {
+    return takeOverOnInput_;
+}
+
 bool RaceViewerController::manualDriving() const {
     return manualDriving_;
+}
+
+bool RaceViewerController::manualSteeringTakenOver() const {
+    return manualTakeover_ && steeringTakeoverTimeMs_.has_value();
+}
+
+bool RaceViewerController::manualLongitudinalTakenOver() const {
+    return manualTakeover_ && longitudinalTakeoverTimeMs_.has_value();
 }
 
 bool RaceViewerController::manualLeft() const {
@@ -1392,6 +1464,14 @@ void RaceViewerController::setPreviewInputScript(const QString &value) {
     }
 }
 
+void RaceViewerController::setTakeOverOnInput(bool value) {
+    if (takeOverOnInput_ == value) {
+        return;
+    }
+    takeOverOnInput_ = value;
+    emit takeOverOnInputChanged();
+}
+
 void RaceViewerController::play() {
     if (simulationDebugger_.active()) {
         RaceViewerRun *const debugRun = selectedRun();
@@ -1471,6 +1551,7 @@ void RaceViewerController::startManualDrive() {
         return;
     }
     manualRuntime_->state = restored.Value();
+    resetManualTakeoverState();
     manualRuntime_->driverInputs.clear();
     resetManualInputState();
     if (!replaceManualInputs()) {
@@ -1484,6 +1565,8 @@ void RaceViewerController::startManualDrive() {
             {},
             true);
     manualDriving_ = true;
+    manualDriveStartTick_ =
+            static_cast<qint64>(manualRuntime_->state.tick);
     setStatusText(QStringLiteral("Manual drive"));
     manualDriveClock_.restart();
     manualDriveTimer_.start();
@@ -1536,19 +1619,228 @@ void RaceViewerController::stopSimulationDebugger() {
 
 void RaceViewerController::setManualInput(const QString &input,
                                          bool active) {
-    if (!manualDriving_ || manualRuntime_ == nullptr) {
+    if (manualRuntime_ == nullptr) {
         return;
     }
+    if (!manualDriving_) {
+        if (takeOverOnInput_ && playing_) {
+            beginManualTakeover(input, active);
+        }
+        return;
+    }
+    if (!applyManualInput(input, active)) {
+        finishManualDrive(statusText_, false);
+        return;
+    }
+    emit manualInputChanged();
+}
 
+bool RaceViewerController::beginManualTakeover(const QString &input,
+                                               bool active) {
+    if (!takeOverOnInput_ || !playing_ || manualRuntime_ == nullptr ||
+        !loaded_ || loading_) {
+        return false;
+    }
+    const RaceViewerRun *const sourceRun = selectedRun();
+    if (sourceRun == nullptr || sourceRun->frames.empty()) {
+        return false;
+    }
+    if (input != QStringLiteral("left") &&
+        input != QStringLiteral("right") &&
+        input != QStringLiteral("accelerate") &&
+        input != QStringLiteral("brake")) {
+        return false;
+    }
+
+    const qint64 sourceTick = currentTick();
+    const std::size_t prefixCount = static_cast<std::size_t>(
+            std::clamp<qint64>(
+                    sourceTick + 1,
+                    1,
+                    static_cast<qint64>(sourceRun->frames.size())));
+    std::vector<RaceViewerFrame> prefix(
+            sourceRun->frames.begin(),
+            sourceRun->frames.begin() +
+                    static_cast<std::ptrdiff_t>(prefixCount));
+    std::vector<SandboxInputEvent> sourceInputs =
+            inputHistoryForRun(*sourceRun);
+
+    auto captured = manualRuntime_->sandbox.CaptureState();
+    auto previousInputsResult = manualRuntime_->sandbox.ReadInputs();
+    if (!captured || !previousInputsResult) {
+        setStatusText(QStringLiteral(
+                "Manual takeover failed while saving the current simulation."));
+        return false;
+    }
+    PhysicsSandboxState previousState =
+            std::move(captured).Value();
+    std::vector<SandboxInputEvent> previousInputs =
+            std::move(previousInputsResult).Value();
+    const bool resumePlayback = playing_;
+    pause();
+
+    const auto restorePreviousRuntime = [this,
+                                         &previousState,
+                                         &previousInputs]() {
+        auto restored =
+                manualRuntime_->sandbox.RestoreState(previousState);
+        if (!restored) {
+            setStatusText(
+                    QStringLiteral("Restoring playback after a failed "
+                                   "takeover failed: %1")
+                            .arg(SandboxErrorText(restored.Error())));
+            return false;
+        }
+        auto replaced =
+                manualRuntime_->sandbox.ReplaceInputs(previousInputs);
+        if (!replaced) {
+            setStatusText(
+                    QStringLiteral("Restoring playback inputs after a failed "
+                                   "takeover failed: %1")
+                            .arg(SandboxErrorText(replaced.Error())));
+            return false;
+        }
+        auto state = manualRuntime_->sandbox.ReadState();
+        if (!state) {
+            setStatusText(
+                    QStringLiteral("Reading restored playback after a failed "
+                                   "takeover failed: %1")
+                            .arg(SandboxErrorText(state.Error())));
+            return false;
+        }
+        manualRuntime_->state = state.Value();
+        return true;
+    };
+    const auto fail = [this,
+                       resumePlayback,
+                       &restorePreviousRuntime](
+                              const QString &message) {
+        setStatusText(message);
+        if (restorePreviousRuntime() && resumePlayback) {
+            play();
+        }
+        return false;
+    };
+
+    auto restored = manualRuntime_->sandbox.RestoreState(
+            manualRuntime_->initialState);
+    if (!restored) {
+        return fail(
+                QStringLiteral("Manual takeover failed: %1")
+                        .arg(SandboxErrorText(restored.Error())));
+    }
+    manualRuntime_->state = restored.Value();
+    auto replaced = manualRuntime_->sandbox.ReplaceInputs(sourceInputs);
+    if (!replaced) {
+        return fail(
+                QStringLiteral("Manual takeover failed: %1")
+                        .arg(SandboxErrorText(replaced.Error())));
+    }
+    const std::uint64_t targetTick =
+            static_cast<std::uint64_t>(std::max<qint64>(0, sourceTick));
+    if (targetTick > manualRuntime_->state.tick) {
+        const std::uint64_t remaining =
+                targetTick - manualRuntime_->state.tick;
+        if (remaining >
+            static_cast<std::uint64_t>(
+                    std::numeric_limits<std::uint32_t>::max())) {
+            return fail(QStringLiteral(
+                    "Manual takeover failed because the selected time is "
+                    "outside the supported race range."));
+        }
+        auto advanced = manualRuntime_->sandbox.AdvanceTicks(
+                static_cast<std::uint32_t>(remaining));
+        if (!advanced) {
+            return fail(
+                    QStringLiteral("Manual takeover failed: %1")
+                            .arg(SandboxErrorText(advanced.Error())));
+        }
+        manualRuntime_->state = advanced.Value();
+    }
+
+    std::vector<SandboxInputEvent> previousTakeoverSource =
+            std::move(takeoverSourceInputs_);
+    std::vector<SandboxInputEvent> previousDriverInputs =
+            std::move(manualRuntime_->driverInputs);
+    const std::optional<std::int32_t> previousSteeringTakeover =
+            steeringTakeoverTimeMs_;
+    const std::optional<std::int32_t> previousLongitudinalTakeover =
+            longitudinalTakeoverTimeMs_;
+    const bool previousManualTakeover = manualTakeover_;
+    const bool previousLeft = manualLeft_;
+    const bool previousRight = manualRight_;
+    const bool previousAccelerate = manualAccelerate_;
+    const bool previousBrake = manualBrake_;
+
+    takeoverSourceInputs_ = std::move(sourceInputs);
+    manualRuntime_->driverInputs.clear();
+    steeringTakeoverTimeMs_.reset();
+    longitudinalTakeoverTimeMs_.reset();
+    manualTakeover_ = true;
+    manualLeft_ = false;
+    manualRight_ = false;
+    manualAccelerate_ = false;
+    manualBrake_ = false;
+    if (!applyManualInput(input, active)) {
+        takeoverSourceInputs_ = std::move(previousTakeoverSource);
+        manualRuntime_->driverInputs =
+                std::move(previousDriverInputs);
+        steeringTakeoverTimeMs_ = previousSteeringTakeover;
+        longitudinalTakeoverTimeMs_ =
+                previousLongitudinalTakeover;
+        manualTakeover_ = previousManualTakeover;
+        manualLeft_ = previousLeft;
+        manualRight_ = previousRight;
+        manualAccelerate_ = previousAccelerate;
+        manualBrake_ = previousBrake;
+        if (restorePreviousRuntime() && resumePlayback) {
+            play();
+        }
+        return false;
+    }
+
+    if (simulationDebugger_.active()) {
+        simulationDebugger_.stopSession();
+    }
+    const RaceViewerFrame takeoverFrame =
+            ToViewerFrame(manualRuntime_->state);
+    if (!prefix.empty() &&
+        prefix.back().timeMs == takeoverFrame.timeMs) {
+        prefix.back() = takeoverFrame;
+    } else {
+        prefix.push_back(takeoverFrame);
+    }
+    upsertRun(
+            QStringLiteral("manual"),
+            QStringLiteral("Manual"),
+            std::move(prefix),
+            {},
+            true);
+    manualDriving_ = true;
+    manualDriveStartTick_ =
+            static_cast<qint64>(manualRuntime_->state.tick);
+    setStatusText(QStringLiteral("Manual takeover"));
+    manualDriveClock_.restart();
+    manualDriveTimer_.start();
+    emit manualDrivingChanged();
+    emit manualInputChanged();
+    return true;
+}
+
+bool RaceViewerController::applyManualInput(const QString &input,
+                                            bool active) {
     bool *state = nullptr;
     PhysicsSandboxInputAction action =
             PhysicsSandboxInputAction::Unmapped;
+    bool steering = false;
     if (input == QStringLiteral("left")) {
         state = &manualLeft_;
         action = PhysicsSandboxInputAction::SteerLeft;
+        steering = true;
     } else if (input == QStringLiteral("right")) {
         state = &manualRight_;
         action = PhysicsSandboxInputAction::SteerRight;
+        steering = true;
     } else if (input == QStringLiteral("accelerate")) {
         state = &manualAccelerate_;
         action = PhysicsSandboxInputAction::Accelerate;
@@ -1556,28 +1848,108 @@ void RaceViewerController::setManualInput(const QString &input,
         state = &manualBrake_;
         action = PhysicsSandboxInputAction::Brake;
     } else {
-        return;
-    }
-    if (*state == active) {
-        return;
+        return true;
     }
 
-    *state = active;
+    std::optional<std::int32_t> &takeoverTime = steering
+            ? steeringTakeoverTimeMs_
+            : longitudinalTakeoverTimeMs_;
+    const bool firstInterference = manualTakeover_ &&
+            !takeoverTime.has_value();
+    if (!firstInterference && *state == active) {
+        return true;
+    }
+
     const std::uint64_t time = manualRuntime_->state.timeMs;
     const std::int32_t eventTime = static_cast<std::int32_t>(
             std::min<std::uint64_t>(
                     time,
                     static_cast<std::uint64_t>(
                             std::numeric_limits<std::int32_t>::max())));
-    manualRuntime_->driverInputs.push_back(
-            ManualSwitchEvent(eventTime, action, active));
-    if (!replaceManualInputs()) {
-        manualRuntime_->driverInputs.pop_back();
-        *state = !active;
-        finishManualDrive(statusText_, false);
-        return;
+    const std::size_t previousEventCount =
+            manualRuntime_->driverInputs.size();
+    const bool previousLeft = manualLeft_;
+    const bool previousRight = manualRight_;
+    const bool previousAccelerate = manualAccelerate_;
+    const bool previousBrake = manualBrake_;
+    const std::optional<std::int32_t> previousTakeoverTime =
+            takeoverTime;
+
+    if (firstInterference) {
+        takeoverTime = eventTime;
+        if (steering) {
+            manualLeft_ = false;
+            manualRight_ = false;
+            manualRuntime_->driverInputs.push_back(
+                    ManualAnalogInputEvent(
+                            eventTime,
+                            PhysicsSandboxInputAction::Steer,
+                            0));
+            if (SwitchInputActiveAt(
+                        takeoverSourceInputs_,
+                        PhysicsSandboxInputAction::SteerLeft,
+                        eventTime)) {
+                manualRuntime_->driverInputs.push_back(
+                        ManualSwitchEvent(
+                                eventTime,
+                                PhysicsSandboxInputAction::SteerLeft,
+                                false));
+            }
+            if (SwitchInputActiveAt(
+                        takeoverSourceInputs_,
+                        PhysicsSandboxInputAction::SteerRight,
+                        eventTime)) {
+                manualRuntime_->driverInputs.push_back(
+                        ManualSwitchEvent(
+                                eventTime,
+                                PhysicsSandboxInputAction::SteerRight,
+                                false));
+            }
+        } else {
+            manualAccelerate_ = false;
+            manualBrake_ = false;
+            if (AnalogInputAt(
+                        takeoverSourceInputs_,
+                        PhysicsSandboxInputAction::Gas,
+                        eventTime) != 0) {
+                manualRuntime_->driverInputs.push_back(
+                        ManualAnalogInputEvent(
+                                eventTime,
+                                PhysicsSandboxInputAction::Gas,
+                                0));
+            }
+            for (const PhysicsSandboxInputAction sourceAction :
+                 {PhysicsSandboxInputAction::Accelerate,
+                  PhysicsSandboxInputAction::Gas,
+                  PhysicsSandboxInputAction::Brake}) {
+                if (SwitchInputActiveAt(
+                            takeoverSourceInputs_,
+                            sourceAction,
+                            eventTime)) {
+                    manualRuntime_->driverInputs.push_back(
+                            ManualSwitchEvent(
+                                    eventTime,
+                                    sourceAction,
+                                    false));
+                }
+            }
+        }
     }
-    emit manualInputChanged();
+    if (*state != active) {
+        *state = active;
+        manualRuntime_->driverInputs.push_back(
+                ManualSwitchEvent(eventTime, action, active));
+    }
+    if (!replaceManualInputs()) {
+        manualRuntime_->driverInputs.resize(previousEventCount);
+        manualLeft_ = previousLeft;
+        manualRight_ = previousRight;
+        manualAccelerate_ = previousAccelerate;
+        manualBrake_ = previousBrake;
+        takeoverTime = previousTakeoverTime;
+        return false;
+    }
+    return true;
 }
 
 void RaceViewerController::releaseManualInputs() {
@@ -1585,10 +1957,142 @@ void RaceViewerController::releaseManualInputs() {
         resetManualInputState();
         return;
     }
+    if (manualTakeover_) {
+        if (manualLeft_) {
+            setManualInput(QStringLiteral("left"), false);
+        }
+        if (manualRight_) {
+            setManualInput(QStringLiteral("right"), false);
+        }
+        if (manualAccelerate_) {
+            setManualInput(QStringLiteral("accelerate"), false);
+        }
+        if (manualBrake_) {
+            setManualInput(QStringLiteral("brake"), false);
+        }
+        return;
+    }
     setManualInput(QStringLiteral("left"), false);
     setManualInput(QStringLiteral("right"), false);
     setManualInput(QStringLiteral("accelerate"), false);
     setManualInput(QStringLiteral("brake"), false);
+}
+
+std::vector<SandboxInputEvent>
+RaceViewerController::inputHistoryForRun(
+        const RaceViewerRun &run) const {
+    if (manualRuntime_ == nullptr) {
+        return {};
+    }
+
+    std::vector<SandboxInputEvent> source;
+    if (run.id == QStringLiteral("manual")) {
+        source = effectiveManualInputs();
+    } else {
+        source = run.inputs;
+    }
+    if (source.empty()) {
+        bool accelerate = false;
+        bool brake = false;
+        forevervalidator::AnalogInputState steering = 0;
+        for (const RaceViewerFrame &frame : run.frames) {
+            const std::int32_t eventTime = static_cast<std::int32_t>(
+                    std::clamp<std::int64_t>(
+                            frame.timeMs,
+                            std::numeric_limits<std::int32_t>::min(),
+                            std::numeric_limits<std::int32_t>::max()));
+            const bool nextAccelerate = frame.accelerate > 0.5f;
+            const bool nextBrake = frame.brake > 0.5f;
+            const forevervalidator::AnalogInputState nextSteering =
+                    SaturateAnalogInputState(
+                            static_cast<std::int64_t>(std::llround(
+                                    static_cast<double>(frame.steering) *
+                                    static_cast<double>(
+                                            kAnalogInputScale))));
+            if (nextAccelerate != accelerate) {
+                accelerate = nextAccelerate;
+                source.push_back(ManualSwitchEvent(
+                        eventTime,
+                        PhysicsSandboxInputAction::Accelerate,
+                        accelerate));
+            }
+            if (nextBrake != brake) {
+                brake = nextBrake;
+                source.push_back(ManualSwitchEvent(
+                        eventTime,
+                        PhysicsSandboxInputAction::Brake,
+                        brake));
+            }
+            if (nextSteering != steering) {
+                steering = nextSteering;
+                source.push_back(ManualAnalogInputEvent(
+                        eventTime,
+                        PhysicsSandboxInputAction::Steer,
+                        steering));
+            }
+        }
+    }
+
+    std::vector<SandboxInputEvent> result =
+            manualRuntime_->fixedInputs;
+    result.reserve(result.size() + source.size());
+    for (const SandboxInputEvent &event : source) {
+        if (std::none_of(
+                    result.begin(),
+                    result.end(),
+                    [&event](const SandboxInputEvent &existing) {
+                        return SameInputEvent(existing, event);
+                    })) {
+            result.push_back(event);
+        }
+    }
+    std::stable_sort(
+            result.begin(),
+            result.end(),
+            [](const SandboxInputEvent &left,
+               const SandboxInputEvent &right) {
+                return left.timeMs < right.timeMs;
+            });
+    return result;
+}
+
+std::vector<SandboxInputEvent>
+RaceViewerController::effectiveManualInputs() const {
+    if (manualRuntime_ == nullptr) {
+        return {};
+    }
+    std::vector<SandboxInputEvent> inputs = manualTakeover_
+            ? takeoverSourceInputs_
+            : manualRuntime_->fixedInputs;
+    if (manualTakeover_) {
+        inputs.erase(
+                std::remove_if(
+                        inputs.begin(),
+                        inputs.end(),
+                        [this](const SandboxInputEvent &event) {
+                            return (steeringTakeoverTimeMs_ &&
+                                    IsSteeringInput(event.action) &&
+                                    event.timeMs >
+                                            *steeringTakeoverTimeMs_) ||
+                                    (longitudinalTakeoverTimeMs_ &&
+                                     IsLongitudinalInput(event.action) &&
+                                     event.timeMs >
+                                             *longitudinalTakeoverTimeMs_);
+                        }),
+                inputs.end());
+    }
+    inputs.insert(
+            inputs.end(),
+            manualRuntime_->driverInputs.begin(),
+            manualRuntime_->driverInputs.end());
+    std::stable_sort(
+            inputs.begin(),
+            inputs.end(),
+            [](const SandboxInputEvent &left,
+               const SandboxInputEvent &right) {
+                return left.timeMs < right.timeMs;
+            });
+    return inputs;
 }
 
 QString RaceViewerController::currentInputScript() const {
@@ -1602,11 +2106,7 @@ QString RaceViewerController::currentInputScript() const {
         if (manualRuntime_ == nullptr) {
             return {};
         }
-        inputs = manualRuntime_->fixedInputs;
-        inputs.insert(
-                inputs.end(),
-                manualRuntime_->driverInputs.begin(),
-                manualRuntime_->driverInputs.end());
+        inputs = effectiveManualInputs();
     } else {
         inputs = run->inputs;
     }
@@ -1676,11 +2176,7 @@ bool RaceViewerController::rebuildInputPreview() {
     }
     PhysicsSandboxState previousState = std::move(captured).Value();
     std::vector<PhysicsSandboxInputEvent> previousInputs =
-            manualRuntime_->fixedInputs;
-    previousInputs.insert(
-            previousInputs.end(),
-            manualRuntime_->driverInputs.begin(),
-            manualRuntime_->driverInputs.end());
+            effectiveManualInputs();
     const auto restoreManualRuntime = [&]() {
         auto restored = manualRuntime_->sandbox.RestoreState(previousState);
         if (!restored) {
@@ -2092,6 +2588,7 @@ void RaceViewerController::applyLoadResult(
     loadedReplayPath_ = result.replayPath;
     whiteboard_.setMapKey(result.mapKey);
     manualRuntime_ = std::move(result.manualRuntime);
+    resetManualTakeoverState();
     simulationDebugger_.configure(QStringLiteral("Reference"));
     loaded_ = true;
     runs_.clear();
@@ -2392,10 +2889,11 @@ void RaceViewerController::advanceManualDrive() {
         return;
     }
 
-    const qint64 targetTick = manualDriveClock_.elapsed() /
-            static_cast<qint64>(kViewerTickDurationMs);
+    const qint64 targetTick = manualDriveStartTick_ +
+            manualDriveClock_.elapsed() /
+                    static_cast<qint64>(kViewerTickDurationMs);
     const qint64 currentTick =
-            static_cast<qint64>(run->frames.size()) - 1;
+            static_cast<qint64>(manualRuntime_->state.tick);
     const qint64 steps = std::min<qint64>(
             std::max<qint64>(0, targetTick - currentTick), 32);
     bool changed = false;
@@ -2438,18 +2936,7 @@ bool RaceViewerController::replaceManualInputs() {
         return false;
     }
     std::vector<PhysicsSandboxInputEvent> inputs =
-            manualRuntime_->fixedInputs;
-    inputs.insert(
-            inputs.end(),
-            manualRuntime_->driverInputs.begin(),
-            manualRuntime_->driverInputs.end());
-    std::stable_sort(
-            inputs.begin(),
-            inputs.end(),
-            [](const PhysicsSandboxInputEvent &left,
-               const PhysicsSandboxInputEvent &right) {
-                return left.timeMs < right.timeMs;
-            });
+            effectiveManualInputs();
     auto replaced =
             manualRuntime_->sandbox.ReplaceInputs(std::move(inputs));
     if (!replaced) {
@@ -2488,6 +2975,20 @@ void RaceViewerController::resetManualInputState() {
     manualRight_ = false;
     manualAccelerate_ = false;
     manualBrake_ = false;
+    if (changed) {
+        emit manualInputChanged();
+    }
+}
+
+void RaceViewerController::resetManualTakeoverState() {
+    const bool changed = manualTakeover_ ||
+            steeringTakeoverTimeMs_.has_value() ||
+            longitudinalTakeoverTimeMs_.has_value();
+    manualTakeover_ = false;
+    takeoverSourceInputs_.clear();
+    steeringTakeoverTimeMs_.reset();
+    longitudinalTakeoverTimeMs_.reset();
+    manualDriveStartTick_ = 0;
     if (changed) {
         emit manualInputChanged();
     }

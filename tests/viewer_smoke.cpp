@@ -218,6 +218,8 @@ int main(int argc, char **argv) {
     bool mapOnlyStateObserved = false;
     bool manualVerificationStarted = false;
     bool manualDriveValid = false;
+    bool takeoverVerificationStarted = false;
+    bool manualTakeoverValid = false;
     bool manualInitialNeutral = false;
     bool trajectoryPreviewValid = false;
     bool improvementTrajectoriesValid = false;
@@ -614,6 +616,239 @@ int main(int argc, char **argv) {
                     if (!manualDriveValid) {
                         return;
                     }
+                    if (!takeoverVerificationStarted) {
+                        takeoverVerificationStarted = true;
+                        viewer.setPreviewInputScript(
+                                QStringLiteral(
+                                        "0.00 press up\n"
+                                        "0.00 gas 32768\n"
+                                        "0.00 steer 65536\n"
+                                        "0.01 steer 32768\n"
+                                        "1.00 steer 0\n"
+                                        "2.00 rel up"));
+                        viewer.setSelectedRunId(
+                                QStringLiteral("preview"));
+                        viewer.setCurrentTick(1);
+                        viewer.setTakeOverOnInput(false);
+                        viewer.play();
+                        viewer.setManualInput(
+                                QStringLiteral("left"), false);
+                        const bool disabledTakeoverIgnored =
+                                viewer.playing() &&
+                                !viewer.manualDriving() &&
+                                !viewer.manualSteeringTakenOver() &&
+                                !viewer.manualLongitudinalTakenOver() &&
+                                viewer.selectedRunId() ==
+                                        QStringLiteral("preview");
+                        viewer.pause();
+                        viewer.setTakeOverOnInput(true);
+                        viewer.play();
+                        viewer.setManualInput(
+                                QStringLiteral("left"), false);
+                        const bool releaseStartedSteeringTakeover =
+                                viewer.manualDriving() &&
+                                !viewer.playing() &&
+                                viewer.manualSteeringTakenOver() &&
+                                !viewer.manualLongitudinalTakenOver() &&
+                                !viewer.manualLeft() &&
+                                !viewer.manualRight() &&
+                                viewer.selectedRunId() ==
+                                        QStringLiteral("manual");
+                        QTimer::singleShot(
+                                80,
+                                &application,
+                                [&, disabledTakeoverIgnored,
+                                 releaseStartedSteeringTakeover]() {
+                                    const auto steeringOnlySample =
+                                            viewer.inputSample(
+                                                    viewer.currentTick());
+                                    const bool longitudinalStayedAutomatic =
+                                            viewer.manualDriving() &&
+                                            steeringOnlySample.accelerate >
+                                                    0.99f &&
+                                            steeringOnlySample.brake <
+                                                    0.01f &&
+                                            std::fabs(
+                                                    steeringOnlySample.steering) <
+                                                    0.01f;
+                                    viewer.releaseManualInputs();
+                                    const bool focusReleasePreservedUnclaimed =
+                                            viewer.manualDriving() &&
+                                            viewer.manualSteeringTakenOver() &&
+                                            !viewer.manualLongitudinalTakenOver();
+                                    viewer.setManualInput(
+                                            QStringLiteral("brake"), false);
+                                    const bool releaseStartedLongitudinalTakeover =
+                                            viewer.manualDriving() &&
+                                            viewer.manualSteeringTakenOver() &&
+                                            viewer.manualLongitudinalTakenOver();
+                                    QTimer::singleShot(
+                                            80,
+                                            &application,
+                                            [&, disabledTakeoverIgnored,
+                                             releaseStartedSteeringTakeover,
+                                             longitudinalStayedAutomatic,
+                                             focusReleasePreservedUnclaimed,
+                                             releaseStartedLongitudinalTakeover]() {
+                                                const auto bothTakenOverSample =
+                                                        viewer.inputSample(
+                                                                viewer.currentTick());
+                                                const bool automaticLongitudinalStopped =
+                                                        bothTakenOverSample.accelerate <
+                                                                0.01f &&
+                                                        bothTakenOverSample.brake <
+                                                                0.01f;
+                                                viewer.setManualInput(
+                                                        QStringLiteral("left"),
+                                                        true);
+                                                viewer.setManualInput(
+                                                        QStringLiteral("brake"),
+                                                        true);
+                                                QTimer::singleShot(
+                                                        80,
+                                                        &application,
+                                                        [&, disabledTakeoverIgnored,
+                                                         releaseStartedSteeringTakeover,
+                                                         longitudinalStayedAutomatic,
+                                                         focusReleasePreservedUnclaimed,
+                                                         releaseStartedLongitudinalTakeover,
+                                                         automaticLongitudinalStopped]() {
+                                                            const auto manualSample =
+                                                                    viewer.inputSample(
+                                                                            viewer.currentTick());
+                                                            const bool manualChannelsApplied =
+                                                                    manualSample.steering <
+                                                                            -0.99f &&
+                                                                    manualSample.brake >
+                                                                            0.99f &&
+                                                                    manualSample.accelerate <
+                                                                            0.01f;
+                                                            viewer.releaseManualInputs();
+                                                            viewer.stopManualDrive();
+                                                            const QString
+                                                                    takeoverScript =
+                                                                            viewer.currentInputScript();
+                                                            const bool mixedHistoryCopied =
+                                                                    viewer.canCopyCurrentInputs() &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " press up")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " gas 32768")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    "0.00 steer 65536\n"
+                                                                                    "0.00 steer 0")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " gas 0")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " press left")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " press down")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " rel left")) &&
+                                                                    takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    " rel down")) &&
+                                                                    !takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    "1.00 steer 0")) &&
+                                                                    !takeoverScript.contains(
+                                                                            QStringLiteral(
+                                                                                    "2.00 rel up"));
+                                                            viewer.addSearchRun(
+                                                                    packsDirectory,
+                                                                    replayPath,
+                                                                    searchTimeline,
+                                                                    {AnalogInput(
+                                                                            0,
+                                                                            PhysicsSandboxInputAction::Accelerate,
+                                                                            0)},
+                                                                    QStringLiteral(
+                                                                            "optimized-cpu"));
+                                                            viewer.setCurrentTick(1);
+                                                            viewer.setTakeOverOnInput(
+                                                                    true);
+                                                            viewer.play();
+                                                            viewer.setManualInput(
+                                                                    QStringLiteral(
+                                                                            "left"),
+                                                                    true);
+                                                            const bool failedTakeoverRecovered =
+                                                                    viewer.playing() &&
+                                                                    !viewer.manualDriving() &&
+                                                                    viewer.selectedRunId() ==
+                                                                            QStringLiteral(
+                                                                                    "best") &&
+                                                                    viewer.statusText().contains(
+                                                                            QStringLiteral(
+                                                                                    "Manual takeover failed"));
+                                                            viewer.pause();
+                                                            manualTakeoverValid =
+                                                                    disabledTakeoverIgnored &&
+                                                                    releaseStartedSteeringTakeover &&
+                                                                    longitudinalStayedAutomatic &&
+                                                                    focusReleasePreservedUnclaimed &&
+                                                                    releaseStartedLongitudinalTakeover &&
+                                                                    automaticLongitudinalStopped &&
+                                                                    manualChannelsApplied &&
+                                                                    mixedHistoryCopied &&
+                                                                    failedTakeoverRecovered;
+                                                            if (!manualTakeoverValid) {
+                                                                std::cerr
+                                                                        << "manual takeover checks failed: releaseSteering="
+                                                                        << releaseStartedSteeringTakeover
+                                                                        << ", disabledIgnored="
+                                                                        << disabledTakeoverIgnored
+                                                                        << ", automaticLongitudinal="
+                                                                        << longitudinalStayedAutomatic
+                                                                        << ", focusReleasePreserved="
+                                                                        << focusReleasePreservedUnclaimed
+                                                                        << ", releaseLongitudinal="
+                                                                        << releaseStartedLongitudinalTakeover
+                                                                        << ", stoppedLongitudinal="
+                                                                        << automaticLongitudinalStopped
+                                                                        << ", manualChannels="
+                                                                        << manualChannelsApplied
+                                                                        << ", mixedHistory="
+                                                                        << mixedHistoryCopied
+                                                                        << ", failureRecovered="
+                                                                        << failedTakeoverRecovered
+                                                                        << " (playing="
+                                                                        << viewer.playing()
+                                                                        << ", manual="
+                                                                        << viewer.manualDriving()
+                                                                        << ", selected="
+                                                                        << viewer.selectedRunId().toStdString()
+                                                                        << ", status="
+                                                                        << viewer.statusText().toStdString()
+                                                                        << ")"
+                                                                        << ", script="
+                                                                        << takeoverScript.toStdString()
+                                                                        << '\n';
+                                                            }
+                                                            viewer.setTakeOverOnInput(
+                                                                    false);
+                                                            viewer.addSearchRun(
+                                                                    packsDirectory,
+                                                                    replayPath,
+                                                                    searchTimeline,
+                                                                    SyntheticSearchInputs(),
+                                                                    QStringLiteral(
+                                                                            "optimized-cpu"));
+                                                        });
+                                            });
+                                });
+                        return;
+                    }
+                    if (!manualTakeoverValid) {
+                        return;
+                    }
                     verificationStarted = true;
                     const QVector2D clipPlanes = viewer.cameraClipPlanes(
                             viewer.carPosition() + QVector3D(0.0f, 0.0f, 38.0f),
@@ -845,7 +1080,8 @@ int main(int argc, char **argv) {
                             timeLabelUnambiguous &&
                             searchCopyStopsAtCurrentTime &&
                             trajectoryPreviewValid &&
-                            improvementTrajectoriesValid;
+                            improvementTrajectoriesValid &&
+                            manualTakeoverValid;
                     if (!sceneValid) {
                         std::cerr
                                 << "viewer scene checks failed: "

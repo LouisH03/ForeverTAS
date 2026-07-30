@@ -124,8 +124,14 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(int tickDurationMs READ tickDurationMs CONSTANT)
     Q_PROPERTY(QString timeText READ timeText NOTIFY timeChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playbackChanged)
+    Q_PROPERTY(bool takeOverOnInput READ takeOverOnInput WRITE
+                       setTakeOverOnInput NOTIFY takeOverOnInputChanged)
     Q_PROPERTY(bool manualDriving READ manualDriving NOTIFY
                        manualDrivingChanged)
+    Q_PROPERTY(bool manualSteeringTakenOver READ manualSteeringTakenOver NOTIFY
+                       manualInputChanged)
+    Q_PROPERTY(bool manualLongitudinalTakenOver READ
+                       manualLongitudinalTakenOver NOTIFY manualInputChanged)
     Q_PROPERTY(bool manualLeft READ manualLeft NOTIFY manualInputChanged)
     Q_PROPERTY(bool manualRight READ manualRight NOTIFY manualInputChanged)
     Q_PROPERTY(bool manualAccelerate READ manualAccelerate NOTIFY
@@ -188,7 +194,10 @@ public:
     int tickDurationMs() const;
     QString timeText() const;
     bool playing() const;
+    bool takeOverOnInput() const;
     bool manualDriving() const;
+    bool manualSteeringTakenOver() const;
+    bool manualLongitudinalTakenOver() const;
     bool manualLeft() const;
     bool manualRight() const;
     bool manualAccelerate() const;
@@ -244,6 +253,7 @@ public slots:
     void setCurrentTick(qint64 tick);
     void setSelectedRunId(const QString &value);
     void setPreviewInputScript(const QString &value);
+    void setTakeOverOnInput(bool value);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void togglePlayback();
@@ -270,6 +280,7 @@ signals:
     void timelineChanged();
     void timeChanged();
     void playbackChanged();
+    void takeOverOnInputChanged();
     void manualDrivingChanged();
     void manualInputChanged();
     void stateChanged();
@@ -292,6 +303,12 @@ private:
             const std::vector<RaceViewerFrame> &frames);
     bool rebuildInputPreview();
     void clearInputPreview();
+    bool beginManualTakeover(const QString &input, bool active);
+    bool applyManualInput(const QString &input, bool active);
+    std::vector<SandboxInputEvent> inputHistoryForRun(
+            const RaceViewerRun &run) const;
+    std::vector<SandboxInputEvent> effectiveManualInputs() const;
+    void resetManualTakeoverState();
     void upsertRun(QString id,
                    QString name,
                    std::vector<RaceViewerFrame> frames,
@@ -359,6 +376,9 @@ private:
     QString loadedPacksDirectory_;
     QString loadedReplayPath_;
     QString previewInputScript_;
+    std::vector<SandboxInputEvent> takeoverSourceInputs_;
+    std::optional<std::int32_t> steeringTakeoverTimeMs_;
+    std::optional<std::int32_t> longitudinalTakeoverTimeMs_;
     qint64 durationMs_ = 0;
     qint64 timeMs_ = 0;
     qint64 triangleCount_ = 0;
@@ -372,10 +392,13 @@ private:
     QVector3D sceneBoundsMin_{};
     QVector3D sceneBoundsMax_{};
     qint64 playbackStartTick_ = 0;
+    qint64 manualDriveStartTick_ = 0;
     bool loaded_ = false;
     bool loading_ = false;
     bool playing_ = false;
+    bool takeOverOnInput_ = false;
     bool manualDriving_ = false;
+    bool manualTakeover_ = false;
     bool inputPreviewVisible_ = false;
     bool manualLeft_ = false;
     bool manualRight_ = false;

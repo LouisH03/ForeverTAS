@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QInputDevice>
+#include <QMouseEvent>
 #include <QPalette>
 #include <QPointer>
 #include <QQmlApplicationEngine>
@@ -501,6 +502,11 @@ int main(int argc, char **argv) {
                     QObject *const manualDriveButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("manualDriveButton"));
+                    auto *const takeOverOnInputCheckBox =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "takeOverOnInputCheckBox")));
                     auto *const manualDriveStatus =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(
@@ -717,9 +723,110 @@ int main(int argc, char **argv) {
                                         ? result.toString()
                                         : QStringLiteral("<invoke failed>");
                             };
+                    const auto sendMouseClick =
+                            [root](QQuickItem *item) {
+                                auto *const quickWindow =
+                                        qobject_cast<QQuickWindow *>(root);
+                                if (quickWindow == nullptr ||
+                                    item == nullptr) {
+                                    return false;
+                                }
+                                const QPointF position = item->mapToScene(
+                                        QPointF(item->width() * 0.5,
+                                                item->height() * 0.5));
+                                const QPointF global =
+                                        quickWindow->mapToGlobal(
+                                                position.toPoint());
+                                QMouseEvent press(
+                                        QEvent::MouseButtonPress,
+                                        position,
+                                        position,
+                                        global,
+                                        Qt::LeftButton,
+                                        Qt::LeftButton,
+                                        Qt::NoModifier);
+                                QCoreApplication::sendEvent(
+                                        quickWindow, &press);
+                                QMouseEvent release(
+                                        QEvent::MouseButtonRelease,
+                                        position,
+                                        position,
+                                        global,
+                                        Qt::LeftButton,
+                                        Qt::NoButton,
+                                        Qt::NoModifier);
+                                QCoreApplication::sendEvent(
+                                        quickWindow, &release);
+                                QCoreApplication::processEvents();
+                                return press.isAccepted() &&
+                                        release.isAccepted();
+                            };
+                    auto *const manualDriveItem =
+                            qobject_cast<QQuickItem *>(manualDriveButton);
+                    bool takeoverControlValid =
+                            takeOverOnInputCheckBox != nullptr &&
+                            manualDriveItem != nullptr &&
+                            playbackDock != nullptr &&
+                            playbackDock->width() >= 429.0 &&
+                            takeOverOnInputCheckBox->parentItem() ==
+                                    manualDriveItem->parentItem() &&
+                            takeOverOnInputCheckBox->x() >=
+                                    manualDriveItem->x() +
+                                            manualDriveItem->width() &&
+                            takeOverOnInputCheckBox
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Take Over on Input") &&
+                            takeOverOnInputCheckBox
+                                    ->property("enabled")
+                                    .toBool() &&
+                            !takeOverOnInputCheckBox
+                                     ->property("checked")
+                                     .toBool() &&
+                            !viewer.takeOverOnInput();
+                    if (takeoverControlValid) {
+                        takeoverControlValid &=
+                                sendMouseClick(
+                                        takeOverOnInputCheckBox);
+                        takeoverControlValid &=
+                                viewer.takeOverOnInput() &&
+                                takeOverOnInputCheckBox
+                                        ->property("checked")
+                                        .toBool();
+                        viewer.play();
+                        QCoreApplication::processEvents();
+                        takeoverControlValid &=
+                                viewer.playing() &&
+                                !stepBackward
+                                         ->property("enabled")
+                                         .toBool() &&
+                                !stepForward
+                                         ->property("enabled")
+                                         .toBool();
+                        takeoverControlValid &=
+                                sendMouseClick(manualInputFocus) &&
+                                manualInputFocus
+                                        ->property("activeFocus")
+                                        .toBool();
+                        viewer.pause();
+                        viewer.setTakeOverOnInput(false);
+                        QCoreApplication::processEvents();
+                        takeoverControlValid &=
+                                !viewer.takeOverOnInput() &&
+                                !takeOverOnInputCheckBox
+                                         ->property("checked")
+                                         .toBool() &&
+                                stepBackward
+                                        ->property("enabled")
+                                        .toBool() &&
+                                stepForward
+                                        ->property("enabled")
+                                        .toBool();
+                    }
                     const bool manualDrivingUi =
                             playbackDock != nullptr &&
                             playbackDock->width() >= 285.0 &&
+                            takeoverControlValid &&
                             manualDriveButton != nullptr &&
                             manualDriveButton->property("text").toString() ==
                                     QStringLiteral("Drive") &&

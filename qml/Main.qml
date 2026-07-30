@@ -147,7 +147,9 @@ ApplicationWindow {
     }
 
     function handleManualKey(event, active) {
-        if (!window.viewer.manualDriving)
+        if (!window.viewer.manualDriving
+            && !(window.viewer.takeOverOnInput
+                 && window.viewer.playing))
             return
         const control = manualControlForKey(event.key)
         if (control.length === 0)
@@ -245,6 +247,8 @@ ApplicationWindow {
         autoRepeat: true
         enabled: window.viewer.runCount > 0
                  && !window.viewer.manualDriving
+                 && !(window.viewer.takeOverOnInput
+                      && window.viewer.playing)
         onActivated: window.stepViewerTick(-1)
     }
 
@@ -255,6 +259,8 @@ ApplicationWindow {
         autoRepeat: true
         enabled: window.viewer.runCount > 0
                  && !window.viewer.manualDriving
+                 && !(window.viewer.takeOverOnInput
+                      && window.viewer.playing)
         onActivated: window.stepViewerTick(1)
     }
 
@@ -1827,12 +1833,20 @@ ApplicationWindow {
                         }
                     }
 
-                    FocusScope {
+                    MouseArea {
                         id: manualInputFocus
                         objectName: "manualInputFocus"
                         anchors.fill: parent
                         z: 2
                         focus: false
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Canvas
+                        Accessible.name: qsTr("Race preview")
+                        Accessible.focusable: true
+                        acceptedButtons: Qt.LeftButton
+                        hoverEnabled: true
+                        property real previousX: 0
+                        property real previousY: 0
 
                         Keys.priority: Keys.BeforeItem
                         Keys.onPressed: event =>
@@ -1845,18 +1859,10 @@ ApplicationWindow {
                                 window.viewer.releaseManualInputs()
                             }
                         }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        z: 2
-                        acceptedButtons: Qt.LeftButton
-                        hoverEnabled: true
-                        property real previousX: 0
-                        property real previousY: 0
 
                         onPressed: mouse => {
-                            if (window.viewer.manualDriving)
+                            if (window.viewer.manualDriving
+                                || window.viewer.takeOverOnInput)
                                 manualInputFocus.forceActiveFocus()
                             previousX = mouse.x
                             previousY = mouse.y
@@ -1978,6 +1984,9 @@ ApplicationWindow {
                             viewport.endCustomInteraction()
                             viewport.endPoseInteraction()
                             viewport.cuboidPointerCaptured = false
+                            if (window.viewer.manualDriving
+                                || window.viewer.takeOverOnInput)
+                                manualInputFocus.forceActiveFocus()
                         }
                         onCanceled: {
                             viewport.endCuboidInteraction()
@@ -2188,7 +2197,7 @@ ApplicationWindow {
                         anchors.bottomMargin: 20
                         z: 3
                         visible: !viewport.exportingWhiteboardImage
-                        width: 286
+                        width: 430
                         height: 58
                         radius: 16
                         color: AppTheme.viewerOverlay
@@ -2416,6 +2425,61 @@ ApplicationWindow {
                                            ? AppTheme.text
                                            : AppTheme.disabledText
                                     horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+
+                            CheckBox {
+                                id: takeOverOnInputCheckBox
+                                objectName: "takeOverOnInputCheckBox"
+                                Layout.preferredWidth: 156
+                                Layout.preferredHeight: 42
+                                text: qsTr("Take Over on Input")
+                                checked: window.viewer.takeOverOnInput
+                                enabled: window.viewer.loaded
+                                         && !window.viewer.loading
+                                         && !window.viewer.manualDriving
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                onToggled:
+                                    window.viewer.takeOverOnInput = checked
+
+                                indicator: Rectangle {
+                                    implicitWidth: 20
+                                    implicitHeight: 20
+                                    x: takeOverOnInputCheckBox.leftPadding
+                                    y: (takeOverOnInputCheckBox.height -
+                                        height) / 2
+                                    radius: 4
+                                    color: takeOverOnInputCheckBox.checked
+                                           ? "#3dbd73"
+                                           : AppTheme.viewerOverlayControl
+                                    border.width: 1
+                                    border.color:
+                                        takeOverOnInputCheckBox.checked
+                                        ? "#73d99a"
+                                        : AppTheme.viewerOverlayBorder
+
+                                    Label {
+                                        anchors.centerIn: parent
+                                        text: "✓"
+                                        visible:
+                                            takeOverOnInputCheckBox.checked
+                                        color: "#0c2014"
+                                        font.pixelSize: 14
+                                        font.weight: Font.Bold
+                                    }
+                                }
+
+                                contentItem: Label {
+                                    leftPadding:
+                                        takeOverOnInputCheckBox.indicator.width
+                                        + takeOverOnInputCheckBox.spacing
+                                    text: takeOverOnInputCheckBox.text
+                                    color: takeOverOnInputCheckBox.enabled
+                                           ? AppTheme.viewerOverlayText
+                                           : AppTheme.viewerOverlayMuted
+                                    font.pixelSize: 11
                                     verticalAlignment: Text.AlignVCenter
                                 }
                             }
