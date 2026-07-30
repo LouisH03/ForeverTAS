@@ -2532,6 +2532,7 @@ ApplicationWindow {
                     objectName: "settingsWheelRedirector"
                     parent: settingsScroll.parent
                     anchors.fill: parent
+                    enabled: toolTabs.currentIndex === 0
                     flickable: settingsScroll.contentItem
                 }
 
@@ -2542,14 +2543,6 @@ ApplicationWindow {
                     Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 12
-                    }
-
-                    Label {
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: qsTr("Search Settings")
-                        font.pixelSize: 20
-                        font.weight: Font.DemiBold
                     }
 
                     ColumnLayout {
@@ -2642,6 +2635,41 @@ ApplicationWindow {
                         }
 
                     }
+
+                    TabBar {
+                        id: toolTabs
+
+                        objectName: "toolTabs"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        onCurrentIndexChanged: {
+                            if (currentIndex === 1) {
+                                if (window.viewer.loaded)
+                                    window.viewer.startSimulationDebugger()
+                            } else {
+                                window.viewer.stopSimulationDebugger()
+                            }
+                        }
+
+                        TabButton {
+                            objectName: "bruteforceTab"
+                            text: qsTr("Bruteforce")
+                        }
+
+                        TabButton {
+                            objectName: "codeDebuggerTab"
+                            text: qsTr("Code")
+                        }
+                    }
+
+                    ColumnLayout {
+                        id: bruteforceTabContent
+
+                        objectName: "bruteforceTabContent"
+                        Layout.fillWidth: true
+                        visible: toolTabs.currentIndex === 0
+                        spacing: 14
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -3273,6 +3301,20 @@ ApplicationWindow {
                                 }
                             }
                         }
+                    }
+
+                    }
+
+                    SimulationDebuggerPanel {
+                        objectName: "simulationDebuggerPanel"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        Layout.preferredHeight: Math.max(
+                                                    650,
+                                                    settingsScroll.height - 185)
+                        visible: toolTabs.currentIndex === 1
+                        viewer: window.viewer
                     }
 
                     Item {

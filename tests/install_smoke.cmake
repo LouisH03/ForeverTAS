@@ -23,14 +23,20 @@ endif()
 
 if(WIN32)
     set(executable "${FOREVERTAS_STAGE_DIR}/ForeverTAS.exe")
+    set(debug_worker
+        "${FOREVERTAS_STAGE_DIR}/forevertas-simulation-debug-worker.exe")
     set(license "${FOREVERTAS_STAGE_DIR}/licenses/LICENSE")
 elseif(APPLE)
     set(executable
         "${FOREVERTAS_STAGE_DIR}/ForeverTAS.app/Contents/MacOS/ForeverTAS")
+    set(debug_worker
+        "${FOREVERTAS_STAGE_DIR}/ForeverTAS.app/Contents/MacOS/forevertas-simulation-debug-worker")
     set(license
         "${FOREVERTAS_STAGE_DIR}/ForeverTAS.app/Contents/Resources/licenses/LICENSE")
 else()
     set(executable "${FOREVERTAS_STAGE_DIR}/bin/ForeverTAS")
+    set(debug_worker
+        "${FOREVERTAS_STAGE_DIR}/bin/forevertas-simulation-debug-worker")
     set(license
         "${FOREVERTAS_STAGE_DIR}/share/doc/ForeverTAS/licenses/LICENSE")
     foreach(required_file IN ITEMS
@@ -43,7 +49,7 @@ else()
     endforeach()
 endif()
 
-foreach(required_file IN ITEMS "${executable}" "${license}")
+foreach(required_file IN ITEMS "${executable}" "${debug_worker}" "${license}")
     if(NOT EXISTS "${required_file}")
         message(FATAL_ERROR "Missing installed file: ${required_file}")
     endif()

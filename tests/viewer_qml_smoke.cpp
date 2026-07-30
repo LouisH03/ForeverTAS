@@ -408,6 +408,33 @@ int main(int argc, char **argv) {
                     QObject *const settingsWheelRedirector =
                             root->property("settingsWheelRedirectorObject")
                                     .value<QObject *>();
+                    QObject *const toolTabs = root->findChild<QObject *>(
+                            QStringLiteral("toolTabs"));
+                    auto *const bruteforceTabContent =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "bruteforceTabContent")));
+                    auto *const simulationDebuggerPanel =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "simulationDebuggerPanel")));
+                    QObject *const simulationSourceTree =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("simulationSourceTree"));
+                    QObject *const simulationCodeViewer =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("simulationCodeViewer"));
+                    QObject *const simulationVariables =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("simulationVariables"));
+                    QObject *const restartLiveSimulationButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "restartLiveSimulationButton"));
+                    QObject *const resetLiveEditsButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("resetLiveEditsButton"));
                     auto *const evaluationSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationSection")));
@@ -947,6 +974,20 @@ int main(int argc, char **argv) {
                             modifierComposition
                                     ->property("firstPassHeaderLayoutValid")
                                     .toBool();
+                    const bool debuggerUiValid =
+                            toolTabs != nullptr &&
+                            toolTabs->property("count").toInt() == 2 &&
+                            toolTabs->property("currentIndex").toInt() == 0 &&
+                            bruteforceTabContent != nullptr &&
+                            bruteforceTabContent->isVisible() &&
+                            simulationDebuggerPanel != nullptr &&
+                            !simulationDebuggerPanel->isVisible() &&
+                            simulationDebuggerPanel->height() >= 650.0 &&
+                            simulationSourceTree != nullptr &&
+                            simulationCodeViewer != nullptr &&
+                            simulationVariables != nullptr &&
+                            restartLiveSimulationButton != nullptr &&
+                            resetLiveEditsButton != nullptr;
 
                     bool wheelScrollingValid =
                             settingsScroll != nullptr &&
@@ -1857,7 +1898,7 @@ int main(int argc, char **argv) {
                             everyOwnedPanelLoaded && stuntPointsFieldValid &&
                             configurationSectionsValid &&
                             comboSlotsStyled && settingComboTextValid &&
-                            modifierPassLayoutValid &&
+                            modifierPassLayoutValid && debuggerUiValid &&
                             wheelScrollingValid &&
                             dropdownStateUpdates && insertionSlidersValid &&
                             poseSliderValid && velocitySliderValid &&
@@ -1904,6 +1945,7 @@ int main(int argc, char **argv) {
                                 << ", comboStyle=" << comboSlotsStyled
                                 << ", comboText=" << settingComboTextValid
                                 << ", passLayout=" << modifierPassLayoutValid
+                                << ", debugger=" << debuggerUiValid
                                 << ", wheel=" << wheelScrollingValid
                                 << ", dropdown=" << dropdownStateUpdates
                                 << ", insertion=" << insertionSlidersValid

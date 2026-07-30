@@ -1,0 +1,16 @@
+#ifndef FOREVERTAS_GENERATED_SIMULATION_DEBUG_SOURCES_H
+#define FOREVERTAS_GENERATED_SIMULATION_DEBUG_SOURCES_H
+
+#include <array>
+#include <string_view>
+
+namespace forevertas::viewer {
+
+inline constexpr std::array<std::string_view,
+                            @FOREVERTAS_SIMULATION_DEBUG_SOURCE_COUNT@>
+        kSimulationDebugSourcePaths{{
+@FOREVERTAS_SIMULATION_DEBUG_SOURCE_ENTRIES@}};
+
+}  // namespace forevertas::viewer
+
+#endif

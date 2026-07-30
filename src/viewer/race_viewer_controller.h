@@ -4,6 +4,7 @@
 #include "physics_backend.h"
 #include "searches/search_algorithm.h"
 #include "viewer/race_geometry.h"
+#include "viewer/simulation_debugger_model.h"
 #include "viewer/whiteboard_model.h"
 #include "viewer/ray_tracing_scene.h"
 #include "viewer/visual_scene_pipeline.h"
@@ -80,6 +81,7 @@ struct RaceViewerLoadResult {
     std::int64_t materialCount = 0;
     std::int64_t diagnosticCount = 0;
     std::shared_ptr<ManualDriveRuntime> manualRuntime;
+    PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
 };
 
 class RaceViewerController final : public QObject {
@@ -151,6 +153,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(QVector3D sceneBoundsMax READ sceneBoundsMax NOTIFY sceneChanged)
     Q_PROPERTY(forevertas::viewer::WhiteboardModel *whiteboard READ
                        whiteboard CONSTANT)
+    Q_PROPERTY(forevertas::viewer::SimulationDebuggerModel *simulationDebugger READ
+                       simulationDebugger CONSTANT)
 
 public:
     explicit RaceViewerController(QObject *parent = nullptr);
@@ -161,6 +165,7 @@ public:
     QQuick3DGeometry *ellipsoidFilledGeometry();
     QQuick3DGeometry *ellipsoidWireGeometry();
     WhiteboardModel *whiteboard();
+    SimulationDebuggerModel *simulationDebugger();
     QVariantList carEllipsoids() const;
     QVariantList visualInstances() const;
     QVariantList visualBatches() const;
@@ -242,6 +247,8 @@ public slots:
     Q_INVOKABLE void jumpToEnd();
     Q_INVOKABLE void startManualDrive();
     Q_INVOKABLE void stopManualDrive();
+    Q_INVOKABLE bool startSimulationDebugger();
+    Q_INVOKABLE void stopSimulationDebugger();
     Q_INVOKABLE void setManualInput(const QString &input, bool active);
     Q_INVOKABLE void releaseManualInputs();
     Q_INVOKABLE QString currentInputScript() const;
@@ -293,6 +300,7 @@ private:
     void updatePose();
     void advancePlayback();
     void advanceManualDrive();
+    void appendSimulationDebuggerFrame(const QVariantMap &frame);
     void setPlaying(bool value);
     void finishManualDrive(const QString &status, bool releaseInputs);
     bool replaceManualInputs();
@@ -368,6 +376,7 @@ private:
     QElapsedTimer playbackClock_;
     QTimer manualDriveTimer_;
     QElapsedTimer manualDriveClock_;
+    SimulationDebuggerModel simulationDebugger_;
     std::shared_ptr<ManualDriveRuntime> manualRuntime_;
     QThread *workerThread_ = nullptr;
     std::uint64_t loadSerial_ = 0u;

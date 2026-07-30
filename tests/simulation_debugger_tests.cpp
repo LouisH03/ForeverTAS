@@ -1,0 +1,367 @@
+#include "viewer/race_viewer_controller.h"
+#include "viewer/simulation_debugger_model.h"
+
+#include <QGuiApplication>
+#include <QHash>
+#include <QTimer>
+#include <QVariantMap>
+
+#include <cmath>
+#include <iostream>
+
+namespace {
+
+constexpr auto kVehicleSource =
+        "src/simulation/runtime/replay_vehicle_simulation.cpp";
+constexpr int kApplyControlsLine = 31;
+constexpr int kPreparedBodyLine = 200;
+
+bool Check(bool condition, const char *message) {
+    if (!condition) {
+        std::cerr << message << '\n';
+    }
+    return condition;
+}
+
+QString SourceLine(
+        forevertas::viewer::SimulationDebuggerModel &model,
+        const QString &path,
+        int line) {
+    if (!model.selectFile(path)) {
+        return {};
+    }
+    const QVariantList lines = model.lines();
+    return line > 0 && line <= lines.size()
+                   ? lines[line - 1]
+                             .toMap()
+                             .value(QStringLiteral("text"))
+                             .toString()
+                   : QString();
+}
+
+double
+VectorComponent(const QVariantMap &frame, const QString &name, int component) {
+    const QVariantList values = frame.value(name).toList();
+    return component >= 0 && component < values.size()
+                   ? values[component].toDouble()
+                   : 0.0;
+}
+
+bool HasRealEngineTree(forevertas::viewer::SimulationDebuggerModel &model) {
+    const bool physics = model.selectFile(
+            QStringLiteral("src/engine/physics/world/physics_step.cpp"));
+    const bool runtime = model.selectFile(QStringLiteral(
+            "src/simulation/runtime/replay_simulation_runtime.cpp"));
+    bool synthetic = false;
+    for (const QVariant &value : model.fileEntries()) {
+        const QString path =
+                value.toMap().value(QStringLiteral("path")).toString();
+        synthetic |=
+                path.contains(QStringLiteral("adapter"), Qt::CaseInsensitive);
+    }
+    return physics && runtime && !synthetic;
+}
+
+bool HasModifiedEntry(
+        forevertas::viewer::SimulationDebuggerModel &model,
+        const QString &path) {
+    for (const QVariant &entry : model.fileEntries()) {
+        const QVariantMap data = entry.toMap();
+        if (data.value(QStringLiteral("path")).toString() == path) {
+            return data.value(QStringLiteral("modified")).toBool();
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        std::cerr << "usage: forevertas-simulation-debugger-tests <Packs> "
+                     "<replay>\n";
+        return 2;
+    }
+
+    QGuiApplication application(argc, argv);
+    forevertas::viewer::RaceViewerController viewer;
+    auto *const model = viewer.simulationDebugger();
+    bool okay = true;
+    okay &=
+            Check(!viewer.startSimulationDebugger(),
+                  "debugger started without a loaded replay");
+
+    enum class Phase {
+        Loading,
+        WaitingInitialFrame,
+        WaitingApplyControls,
+        WaitingEditedTick,
+        WaitingPastLine,
+        WaitingDeferredTick,
+        WaitingRestoredTick,
+        WaitingInvalidLine,
+        WaitingRepeatedBreakpoint,
+        WaitingCompileFailure,
+        WaitingPauseStop,
+        Finished,
+    };
+    Phase phase = Phase::Loading;
+    QString originalApplyLine;
+    QHash<qint64, QVariantMap> frames;
+    qint64 frameCountBeforeInvalid = 0;
+    qint64 firstBreakpointTick = -1;
+
+    QObject::connect(
+            model,
+            &forevertas::viewer::SimulationDebuggerModel::frameProduced,
+            &application,
+            [&](const QVariantMap &frame) {
+                const qint64 tick =
+                        frame.value(QStringLiteral("tick")).toLongLong();
+                frames.insert(tick, frame);
+                if (phase == Phase::WaitingInitialFrame && tick == 0) {
+                    okay &= Check(
+                            model->active() && viewer.selectedRunId() ==
+                                                       QStringLiteral("debug"),
+                            "native debugger did not initialize its viewer "
+                            "run");
+                    okay &= Check(
+                            viewer.durationMs() ==
+                                    frame.value(QStringLiteral("durationMs"))
+                                            .toLongLong(),
+                            "live viewer did not retain the replay duration");
+                    phase = Phase::WaitingApplyControls;
+                    viewer.play();
+                } else if (phase == Phase::WaitingEditedTick && tick == 1) {
+                    const double forward = VectorComponent(
+                            frame, QStringLiteral("linearSpeed"), 2);
+                    okay &= Check(
+                            std::abs(forward) < 0.02,
+                            "edited real ApplyControls statement did not alter "
+                            "reference physics");
+                    okay &=
+                            Check(model->toggleBreakpoint(
+                                          QString::fromLatin1(kVehicleSource),
+                                          kPreparedBodyLine),
+                                  "future real-source breakpoint was rejected");
+                    phase = Phase::WaitingPastLine;
+                } else if (phase == Phase::WaitingDeferredTick && tick == 2) {
+                    const double forward = VectorComponent(
+                            frame, QStringLiteral("linearSpeed"), 2);
+                    okay &= Check(
+                            std::abs(forward) < 0.03,
+                            "restoring an already executed line changed the "
+                            "current tick");
+                    phase = Phase::WaitingRestoredTick;
+                } else if (phase == Phase::WaitingRestoredTick && tick == 3) {
+                    const double previous = VectorComponent(
+                            frames.value(2), QStringLiteral("linearSpeed"), 2);
+                    const double restored = VectorComponent(
+                            frame, QStringLiteral("linearSpeed"), 2);
+                    okay &= Check(
+                            restored > previous + 0.05,
+                            "past-line restoration did not take effect on the "
+                            "next tick");
+                    okay &=
+                            Check(VectorComponent(
+                                          frames.value(1),
+                                          QStringLiteral("linearSpeed"),
+                                          2) < 0.02,
+                                  "a later source edit changed a past "
+                                  "simulated tick");
+                    okay &=
+                            Check(model->toggleBreakpoint(
+                                          QString::fromLatin1(kVehicleSource),
+                                          kApplyControlsLine),
+                                  "invalid-edit breakpoint was rejected");
+                    phase = Phase::WaitingInvalidLine;
+                }
+            });
+
+    QTimer poll;
+    poll.setInterval(2);
+    QObject::connect(&poll, &QTimer::timeout, &application, [&]() {
+        if (phase == Phase::WaitingApplyControls && !model->running() &&
+            model->activeFilePath() == QString::fromLatin1(kVehicleSource) &&
+            model->activeLine() == kApplyControlsLine) {
+            model->toggleBreakpoint(
+                    QString::fromLatin1(kVehicleSource), kApplyControlsLine);
+            phase = Phase::WaitingEditedTick;
+            viewer.play();
+        } else if (
+                phase == Phase::WaitingPastLine && !model->running() &&
+                model->activeFilePath() ==
+                        QString::fromLatin1(kVehicleSource) &&
+                model->activeLine() == kPreparedBodyLine &&
+                !model->variables().isEmpty()) {
+            QString pinName;
+            for (const QVariant &value : model->variables()) {
+                const QString name =
+                        value.toMap().value(QStringLiteral("name")).toString();
+                if (!name.isEmpty()) {
+                    pinName = name;
+                    break;
+                }
+            }
+            okay &=
+                    Check(!pinName.isEmpty() && model->togglePinned(pinName) &&
+                                  !model->pinnedVariables().isEmpty(),
+                          "native variable pinning failed");
+            okay &= Check(
+                    model->selectFile(QString::fromLatin1(kVehicleSource)) &&
+                            !model->lines()
+                                     .at(kPreparedBodyLine - 1)
+                                     .toMap()
+                                     .value(QStringLiteral("inlineValue"))
+                                     .toString()
+                                     .isEmpty(),
+                    "in-scope variable value was not shown beside code");
+            okay &= Check(
+                    model->updateLine(kApplyControlsLine, originalApplyLine) &&
+                            !model->hasEdits(),
+                    "restoring a past line failed");
+            model->toggleBreakpoint(
+                    QString::fromLatin1(kVehicleSource), kPreparedBodyLine);
+            phase = Phase::WaitingDeferredTick;
+            viewer.play();
+        } else if (
+                phase == Phase::WaitingInvalidLine && !model->running() &&
+                model->activeFilePath() ==
+                        QString::fromLatin1(kVehicleSource) &&
+                model->activeLine() == kApplyControlsLine) {
+            firstBreakpointTick = model->executionTick();
+            phase = Phase::WaitingRepeatedBreakpoint;
+            viewer.play();
+        } else if (
+                phase == Phase::WaitingRepeatedBreakpoint &&
+                !model->running() &&
+                model->activeFilePath() ==
+                        QString::fromLatin1(kVehicleSource) &&
+                model->activeLine() == kApplyControlsLine &&
+                model->executionTick() > firstBreakpointTick) {
+            okay &=
+                    Check(model->executionTick() > firstBreakpointTick,
+                          "breakpoint did not stop again on the next tick");
+            model->toggleBreakpoint(
+                    QString::fromLatin1(kVehicleSource), kApplyControlsLine);
+            okay &= Check(
+                    model->selectFile(QString::fromLatin1(kVehicleSource)) &&
+                            model->updateLine(
+                                    kApplyControlsLine,
+                                    QStringLiteral("this is not valid C++;")),
+                    "invalid native edit could not be staged");
+            frameCountBeforeInvalid = viewer.tickCount();
+            phase = Phase::WaitingCompileFailure;
+            viewer.play();
+        } else if (
+                phase == Phase::WaitingCompileFailure && !model->running() &&
+                !model->editError().isEmpty()) {
+            okay &=
+                    Check(viewer.tickCount() == frameCountBeforeInvalid,
+                          "invalid native C++ advanced the simulation");
+            model->resetEdits();
+            okay &=
+                    Check(!model->hasEdits() && model->editError().isEmpty(),
+                          "in-memory source edit reset failed");
+            phase = Phase::WaitingPauseStop;
+            viewer.play();
+            QTimer::singleShot(2, &application, [&viewer]() {
+                viewer.pause();
+            });
+        } else if (
+                phase == Phase::WaitingPauseStop && !model->running() &&
+                model->activeLine() > 0 && !model->variables().isEmpty() &&
+                model->statusText().startsWith(QStringLiteral("Paused"))) {
+            okay &= Check(
+                    !model->activeFilePath().isEmpty(),
+                    "normal pause did not settle at a real source line");
+            viewer.stopSimulationDebugger();
+            phase = Phase::Finished;
+            poll.stop();
+            application.exit(okay ? 0 : 1);
+        }
+    });
+
+    QObject::connect(
+            &viewer,
+            &forevertas::viewer::RaceViewerController::stateChanged,
+            &application,
+            [&]() {
+                if (phase != Phase::Loading || viewer.loading() ||
+                    !viewer.loaded()) {
+                    return;
+                }
+                okay &=
+                        Check(model->available() && HasRealEngineTree(*model),
+                              "source tree is not the real adaptive reference "
+                              "engine");
+                originalApplyLine = SourceLine(
+                        *model,
+                        QString::fromLatin1(kVehicleSource),
+                        kApplyControlsLine);
+                okay &= Check(
+                        !model->updateLine(
+                                kApplyControlsLine,
+                                originalApplyLine +
+                                        QStringLiteral("\ninvalid")) &&
+                                SourceLine(
+                                        *model,
+                                        QString::fromLatin1(kVehicleSource),
+                                        kApplyControlsLine) ==
+                                        originalApplyLine,
+                        "multi-line input escaped the source-line edit "
+                        "boundary");
+                const QVariantMap functionLine = model->lines().at(28).toMap();
+                okay &= Check(
+                        !originalApplyLine.isEmpty() &&
+                                functionLine
+                                        .value(QStringLiteral("highlighted"))
+                                        .toString()
+                                        .contains(QStringLiteral("<span")) &&
+                                model->toggleBreakpoint(
+                                        QString::fromLatin1(kVehicleSource),
+                                        kApplyControlsLine) &&
+                                model->updateLine(
+                                        kApplyControlsLine,
+                                        QStringLiteral(
+                                                "  car_.ApplyControlInput("
+                                                "CSceneVehicleCar::"
+                                                "SControlInput{0.0f, 0.0f, "
+                                                "0.0f});")),
+                        "future real-engine source edit setup failed");
+                const QVariantMap editedLine =
+                        model->lines().at(kApplyControlsLine - 1).toMap();
+                okay &= Check(
+                        editedLine.value(QStringLiteral("modified")).toBool() &&
+                                editedLine.value(QStringLiteral("original"))
+                                                .toString() ==
+                                        originalApplyLine &&
+                                HasModifiedEntry(
+                                        *model,
+                                        QString::fromLatin1(kVehicleSource)),
+                        "non-persistent line and file edit tracking failed");
+                phase = Phase::WaitingInitialFrame;
+                okay &= Check(
+                        model->hasEdits() && viewer.startSimulationDebugger(),
+                        "native reference debugger did not start");
+                poll.start();
+            });
+
+    QTimer::singleShot(120000, &application, [&]() {
+        std::cerr << "native simulation debugger test timed out; phase="
+                  << static_cast<int>(phase)
+                  << ", status=" << model->statusText().toStdString()
+                  << ", error=" << model->editError().toStdString()
+                  << ", file=" << model->activeFilePath().toStdString()
+                  << ", line=" << model->activeLine()
+                  << ", tick=" << model->executionTick()
+                  << ", frames=" << viewer.tickCount() << '\n';
+        application.exit(1);
+    });
+
+    viewer.loadMap(
+            QString::fromLocal8Bit(argv[1]),
+            QString::fromLocal8Bit(argv[2]),
+            QStringLiteral("reference"));
+    return application.exec();
+}

@@ -521,6 +521,7 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
     RaceViewerLoadResult result;
     result.packsDirectory = packsDirectory;
     result.replayPath = replayPath;
+    result.backend = backend;
     try {
         const std::string replayPathUtf8 =
                 replayPath.toUtf8().toStdString();
@@ -770,7 +771,7 @@ void UpdateRunPose(RaceViewerRun &run, qint64 timeMs) {
 }  // namespace
 
 RaceViewerController::RaceViewerController(QObject *parent)
-    : QObject(parent) {
+    : QObject(parent), simulationDebugger_(this) {
     playbackTimer_.setInterval(5);
     playbackTimer_.setTimerType(Qt::PreciseTimer);
     connect(&playbackTimer_,
@@ -783,6 +784,27 @@ RaceViewerController::RaceViewerController(QObject *parent)
             &QTimer::timeout,
             this,
             &RaceViewerController::advanceManualDrive);
+    connect(&simulationDebugger_,
+            &SimulationDebuggerModel::frameProduced,
+            this,
+            &RaceViewerController::appendSimulationDebuggerFrame);
+    connect(&simulationDebugger_,
+            &SimulationDebuggerModel::stateChanged,
+            this,
+            [this]() {
+                if (simulationDebugger_.active()) {
+                    setPlaying(simulationDebugger_.running());
+                } else if (selectedRunId_ == QStringLiteral("debug")) {
+                    setPlaying(false);
+                }
+            });
+    connect(&simulationDebugger_,
+            &SimulationDebuggerModel::sessionFinished,
+            this,
+            [this]() {
+                setPlaying(false);
+                setStatusText(simulationDebugger_.statusText());
+            });
 
     const std::vector<ViewerTriangle> ellipsoidTriangles =
             UnitEllipsoidTriangles();
@@ -814,6 +836,7 @@ RaceViewerController::RaceViewerController(QObject *parent)
 RaceViewerController::~RaceViewerController() {
     playbackTimer_.stop();
     manualDriveTimer_.stop();
+    simulationDebugger_.stopSession();
     waitForWorker();
 }
 
@@ -835,6 +858,10 @@ QQuick3DGeometry *RaceViewerController::ellipsoidWireGeometry() {
 
 WhiteboardModel *RaceViewerController::whiteboard() {
     return &whiteboard_;
+}
+
+SimulationDebuggerModel *RaceViewerController::simulationDebugger() {
+    return &simulationDebugger_;
 }
 
 QVariantList RaceViewerController::carEllipsoids() const {
@@ -1332,6 +1359,9 @@ void RaceViewerController::setSelectedRunId(const QString &value) {
     if (manualDriving_) {
         return;
     }
+    if (simulationDebugger_.active() && value != QStringLiteral("debug")) {
+        stopSimulationDebugger();
+    }
     const auto selected = std::find_if(
             runs_.begin(), runs_.end(), [&value](const RaceViewerRun &run) {
                 return run.id == value;
@@ -1348,6 +1378,18 @@ void RaceViewerController::setSelectedRunId(const QString &value) {
 }
 
 void RaceViewerController::play() {
+    if (simulationDebugger_.active()) {
+        RaceViewerRun *const debugRun = selectedRun();
+        if (!loaded_ || manualDriving_ || playing_ || debugRun == nullptr ||
+            debugRun->id != QStringLiteral("debug")) {
+            return;
+        }
+        timeMs_ = debugRun->frames.empty() ? 0 : debugRun->frames.back().timeMs;
+        updatePose();
+        emit timeChanged();
+        simulationDebugger_.play();
+        return;
+    }
     const RaceViewerRun *const run = selectedRun();
     if (!loaded_ || manualDriving_ || run == nullptr ||
         run->frames.empty() || playing_) {
@@ -1366,6 +1408,9 @@ void RaceViewerController::play() {
 
 void RaceViewerController::pause() {
     playbackTimer_.stop();
+    if (simulationDebugger_.active()) {
+        simulationDebugger_.pause();
+    }
     setPlaying(false);
 }
 
@@ -1397,6 +1442,9 @@ void RaceViewerController::startManualDrive() {
         return;
     }
 
+    if (simulationDebugger_.active()) {
+        stopSimulationDebugger();
+    }
     pause();
     auto restored =
             manualRuntime_->sandbox.RestoreState(
@@ -1429,6 +1477,46 @@ void RaceViewerController::startManualDrive() {
 
 void RaceViewerController::stopManualDrive() {
     finishManualDrive(QStringLiteral("Manual drive stopped"), true);
+}
+
+bool RaceViewerController::startSimulationDebugger() {
+    if (!loaded_ || loading_ || manualRuntime_ == nullptr ||
+        !simulationDebugger_.available()) {
+        setStatusText(QStringLiteral(
+                "Load a replay map before starting native source debugging."));
+        return false;
+    }
+
+    pause();
+    if (manualDriving_) {
+        stopManualDrive();
+    }
+    upsertRun(
+            QStringLiteral("debug"),
+            QStringLiteral("Reference source"),
+            {ToViewerFrame(manualRuntime_->state)},
+            {},
+            true);
+    RaceViewerRun *const run = selectedRun();
+    if (run != nullptr && run->id == QStringLiteral("debug")) {
+        run->frames.clear();
+        refreshSelectedRun();
+        emit timelineChanged();
+        emit timeChanged();
+    }
+    const bool started = simulationDebugger_.startSession(
+            loadedPacksDirectory_, loadedReplayPath_);
+    setStatusText(simulationDebugger_.statusText());
+    return started;
+}
+
+void RaceViewerController::stopSimulationDebugger() {
+    if (!simulationDebugger_.active()) {
+        return;
+    }
+    pause();
+    simulationDebugger_.stopSession();
+    setStatusText(QStringLiteral("Native source debugging stopped"));
 }
 
 void RaceViewerController::setManualInput(const QString &input,
@@ -1749,6 +1837,7 @@ void RaceViewerController::loadMap(const QString &packsDirectory,
 void RaceViewerController::loadMap(const QString &packsDirectory,
                                    const QString &replayPath,
                                    const QString &backendId) {
+    stopSimulationDebugger();
     stopManualDrive();
     const std::optional<PhysicsBackend> backend =
             ParsePhysicsBackend(backendId.toStdString());
@@ -1937,6 +2026,7 @@ void RaceViewerController::applyLoadResult(
     loadedReplayPath_ = result.replayPath;
     whiteboard_.setMapKey(result.mapKey);
     manualRuntime_ = std::move(result.manualRuntime);
+    simulationDebugger_.configure(QStringLiteral("Reference"));
     loaded_ = true;
     runs_.clear();
     selectedRunId_.clear();
@@ -2145,6 +2235,79 @@ void RaceViewerController::advancePlayback() {
         return;
     }
     setCurrentTick(targetTick);
+}
+
+void RaceViewerController::appendSimulationDebuggerFrame(
+        const QVariantMap &frame) {
+    const QVariantList position =
+            frame.value(QStringLiteral("position")).toList();
+    const QVariantList rotation =
+            frame.value(QStringLiteral("rotation")).toList();
+    if (position.size() != 3 || rotation.size() != 4) {
+        setStatusText(QStringLiteral(
+                "Native debugger returned an invalid car pose."));
+        simulationDebugger_.pause();
+        return;
+    }
+
+    const RaceViewerFrame viewerFrame{
+            frame.value(QStringLiteral("timeMs")).toLongLong(),
+            QVector3D(
+                    position[0].toFloat(),
+                    position[1].toFloat(),
+                    position[2].toFloat()),
+            QQuaternion(
+                    rotation[3].toFloat(),
+                    rotation[0].toFloat(),
+                    rotation[1].toFloat(),
+                    rotation[2].toFloat())
+                    .normalized(),
+            frame.value(QStringLiteral("accelerate")).toFloat(),
+            frame.value(QStringLiteral("brake")).toFloat(),
+            frame.value(QStringLiteral("steering")).toFloat()};
+
+    auto found = std::find_if(
+            runs_.begin(), runs_.end(), [](const RaceViewerRun &run) {
+                return run.id == QStringLiteral("debug");
+            });
+    if (found == runs_.end()) {
+        runs_.push_back(
+                {QStringLiteral("debug"),
+                 QStringLiteral("Reference source"),
+                 {viewerFrame},
+                 {},
+                 {},
+                 {}});
+        found = std::prev(runs_.end());
+        emit runsChanged();
+    } else if (
+            !found->frames.empty() &&
+            found->frames.back().timeMs == viewerFrame.timeMs) {
+        found->frames.back() = viewerFrame;
+    } else if (
+            found->frames.empty() ||
+            found->frames.back().timeMs < viewerFrame.timeMs) {
+        found->frames.push_back(viewerFrame);
+    } else {
+        setStatusText(QStringLiteral(
+                "Native debugger returned a non-monotonic "
+                "simulation frame."));
+        simulationDebugger_.pause();
+        return;
+    }
+
+    if (selectedRunId_ != QStringLiteral("debug")) {
+        selectedRunId_ = QStringLiteral("debug");
+        emit selectedRunChanged();
+    }
+    durationMs_ = std::max<qint64>(
+            static_cast<qint64>(found->frames.back().timeMs),
+            frame.value(QStringLiteral("durationMs")).toLongLong());
+    timeMs_ = found->frames.back().timeMs;
+    updatePose();
+    setStatusText(simulationDebugger_.statusText());
+    emit timelineChanged();
+    emit timeChanged();
 }
 
 void RaceViewerController::advanceManualDrive() {
