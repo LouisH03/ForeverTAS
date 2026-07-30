@@ -1,5 +1,6 @@
 #include "viewer/race_viewer_controller.h"
 
+#include "replay_file_io.h"
 #include "time_format.h"
 #include "viewer/material_classifier.h"
 
@@ -262,12 +263,15 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
     result.packsDirectory = packsDirectory;
     result.replayPath = replayPath;
     try {
-        const ReplayIdentity identity{replayPath.toStdString()};
+        const std::string replayPathUtf8 =
+                replayPath.toUtf8().toStdString();
+        const ReplayIdentity identity{replayPathUtf8};
         AssetSource source = Require(
-                OpenInstalledPackDirectory(packsDirectory.toStdString()),
+                OpenInstalledPackDirectory(
+                        packsDirectory.toUtf8().toStdString()),
                 "opening Packs directory failed");
         AssetBytes bytes = Require(
-                ReadNativeReplayFile(replayPath.toStdString(), identity),
+                ReadReplayFileUtf8(replayPathUtf8, identity),
                 "reading replay failed");
         PhysicsSandboxOptions options;
         options.backend = ToForeverValidatorBackend(backend);

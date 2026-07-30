@@ -4,6 +4,7 @@
 #include "mutations/composite_input_mutator.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/input_event_utils.h"
+#include "replay_file_io.h"
 #include "searches/algorithm_registry.h"
 #include "searches/basic_brute_force_search.h"
 #include "searches/cuda_batch_calibrator.h"
@@ -12,9 +13,15 @@
 #include "searches/search_runner.h"
 #include "time_format.h"
 
+#include <algorithm>
+#include <array>
 #include <clocale>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <iostream>
 #include <memory>
@@ -1043,6 +1050,92 @@ bool TestCudaConfigurationCoverage() {
     return okay;
 }
 
+bool TestReplayPathRobustness() {
+    namespace fs = std::filesystem;
+
+    const auto nonce = std::chrono::steady_clock::now()
+                               .time_since_epoch()
+                               .count();
+    const fs::path directory =
+            fs::temp_directory_path() /
+            fs::u8path("ForeverTAS replay paths #[]&' " +
+                       std::to_string(nonce));
+    struct DirectoryCleanup final {
+        fs::path path;
+        ~DirectoryCleanup() {
+            std::error_code ignored;
+            fs::remove_all(path, ignored);
+        }
+    } cleanup{directory};
+
+    std::error_code error;
+    fs::create_directories(directory, error);
+    bool okay = Check(
+            !error, "special-character replay directory creation failed");
+    if (error) {
+        return false;
+    }
+
+    const std::string fileName =
+            "run with spaces #[]&' - "
+            "\xE6\xB5\x8B\xE8\xAF\x95 - "
+            "\xF0\x9F\x8F\x81.Replay.Gbx";
+    const fs::path replayPath = directory / fs::u8path(fileName);
+    constexpr std::array<std::byte, 8> payload{
+            std::byte{0u},
+            std::byte{1u},
+            std::byte{2u},
+            std::byte{127u},
+            std::byte{128u},
+            std::byte{200u},
+            std::byte{254u},
+            std::byte{255u}};
+    {
+        std::ofstream replay(replayPath, std::ios::binary);
+        replay.write(
+                reinterpret_cast<const char *>(payload.data()),
+                static_cast<std::streamsize>(payload.size()));
+        okay &= Check(
+                replay.good(),
+                "special-character replay file creation failed");
+    }
+
+    const std::string replayPathUtf8 = replayPath.u8string();
+    const forevervalidator::ReplayIdentity identity{replayPathUtf8};
+    auto result =
+            forevertas::ReadReplayFileUtf8(replayPathUtf8, identity);
+    okay &= Check(
+            result &&
+                    result.Value().size() == payload.size() &&
+                    std::equal(
+                            result.Value().begin(),
+                            result.Value().end(),
+                            payload.begin()),
+            "UTF-8 replay path did not preserve the file contents");
+
+    auto empty = forevertas::ReadReplayFileUtf8({}, {});
+    okay &= Check(
+            !empty &&
+                    empty.Error().reason ==
+                            forevervalidator::ValidationFailureReason::
+                                    EmptyReplayPath,
+            "empty replay path did not retain its validation error");
+
+    const std::string missingPath =
+            (directory / fs::u8path("missing # \xE2\x98\x83.Gbx"))
+                    .u8string();
+    auto missing = forevertas::ReadReplayFileUtf8(
+            missingPath, {missingPath});
+    okay &= Check(
+            !missing &&
+                    missing.Error().reason ==
+                            forevervalidator::ValidationFailureReason::
+                                    ReplayFileOpenFailed &&
+                    missing.Error().relatedAsset == missingPath,
+            "failed UTF-8 replay path did not retain its diagnostic path");
+    return okay;
+}
+
 }  // namespace
 
 int main() {
@@ -1061,6 +1154,7 @@ int main() {
             TestSearchControl() &&
             TestRollingThroughput() &&
             TestCudaBatchCalibrationStrategy() &&
-            TestCudaConfigurationCoverage();
+            TestCudaConfigurationCoverage() &&
+            TestReplayPathRobustness();
     return okay ? 0 : 1;
 }

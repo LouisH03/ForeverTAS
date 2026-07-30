@@ -64,6 +64,8 @@ FetchContent_MakeAvailable(ForeverValidator)
 add_library(forevertas_core STATIC
     src/input_timeline_time.h
     src/physics_backend.h
+    src/replay_file_io.cpp
+    src/replay_file_io.h
     src/evaluators/iteration_evaluator.h
     src/evaluators/evaluator_utils.h
     src/evaluators/precise_finish_time_evaluator.cpp

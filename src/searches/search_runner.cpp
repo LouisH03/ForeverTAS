@@ -1,6 +1,7 @@
 #include "searches/search_runner.h"
 
 #include "mutations/composite_input_mutator.h"
+#include "replay_file_io.h"
 #include "searches/algorithm_registry.h"
 #include "searches/cuda_search_configuration.h"
 
@@ -301,7 +302,7 @@ SearchResult RunSearch(const SearchRequest &request,
             ReportProgress(
                     control, SearchProgressStage::ReadingReplay, 0u, 0u);
             cached->replay = Require(
-                    ReadNativeReplayFile(request.replayPath, identity),
+                    ReadReplayFileUtf8(request.replayPath, identity),
                     "reading cached replay");
             ReportProgress(
                     control,
@@ -374,7 +375,7 @@ SearchResult RunSearch(const SearchRequest &request,
     CheckCancellation(control);
     ReportProgress(control, SearchProgressStage::ReadingReplay, 0u, 0u);
     AssetBytes replay = Require(
-            ReadNativeReplayFile(request.replayPath, identity),
+            ReadReplayFileUtf8(request.replayPath, identity),
             "reading replay");
     CheckCancellation(control);
     ReportProgress(

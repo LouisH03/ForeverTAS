@@ -81,6 +81,11 @@ QString FormatResult(const SearchResult &result) {
     return FormatLive(ToLiveUpdate(result), QStringLiteral("Best"));
 }
 
+QString FilePathFromUtf8(const std::string &path) {
+    return QString::fromUtf8(
+            path.data(), static_cast<qsizetype>(path.size()));
+}
+
 }  // namespace
 
 QString SearchStageStatus(SearchProgressStage stage,
@@ -264,8 +269,8 @@ void SearchWorker::run() {
         completion->inputsText = QString::fromStdString(
                 FormatInputScript(result.bestInputs));
         completion->packsDirectory =
-                QString::fromStdString(request_.packDirectory);
-        completion->replayPath = QString::fromStdString(request_.replayPath);
+                FilePathFromUtf8(request_.packDirectory);
+        completion->replayPath = FilePathFromUtf8(request_.replayPath);
         const std::string_view backendId = PhysicsBackendId(request_.backend);
         completion->simulationBackendId = QString::fromLatin1(
                 backendId.data(), static_cast<qsizetype>(backendId.size()));

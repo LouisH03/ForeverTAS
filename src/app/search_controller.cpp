@@ -40,8 +40,8 @@ ReplayInputExtractionResult ExtractReplayInputScript(
     try {
         result.script = QString::fromStdString(
                 forevertas::ExtractReplayInputScript(
-                        packsDirectory.toStdString(),
-                        replayPath.toStdString()));
+                        packsDirectory.toUtf8().toStdString(),
+                        replayPath.toUtf8().toStdString()));
     } catch (const std::exception &exception) {
         result.error = QString::fromUtf8(exception.what());
     } catch (...) {
@@ -701,8 +701,8 @@ SearchController::ValidationResult SearchController::validate() const {
 
     return {
             SearchRequest{
-                    packsInfo.absoluteFilePath().toStdString(),
-                    replayInfo.absoluteFilePath().toStdString(),
+                    packsInfo.absoluteFilePath().toUtf8().toStdString(),
+                    replayInfo.absoluteFilePath().toUtf8().toStdString(),
                     simulationBackend_,
                     parallelSampleCount,
                     calibrateCudaParallelSampleCount,
