@@ -201,8 +201,39 @@ Item {
             }
         }
 
-        Label {
+        Rectangle {
+            id: referenceLoadingWarning
+
+            objectName: "referenceLoadingWarning"
             Layout.fillWidth: true
+            Layout.preferredHeight: referenceLoadingWarningText.implicitHeight
+                                    + 24
+            visible: root.debuggerModel.loadingReplay
+            color: AppTheme.errorSoft
+            border.width: 2
+            border.color: AppTheme.error
+            radius: 4
+
+            Label {
+                id: referenceLoadingWarningText
+
+                objectName: "referenceLoadingWarningText"
+                anchors.fill: parent
+                anchors.margins: 12
+                text: root.debuggerModel.statusText
+                color: AppTheme.error
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                font.pixelSize: 19
+                font.weight: Font.Bold
+            }
+        }
+
+        Label {
+            objectName: "simulationDebuggerStatusText"
+            Layout.fillWidth: true
+            visible: !root.debuggerModel.loadingReplay
             text: root.debuggerModel.statusText
             color: root.debuggerModel.editError.length > 0
                    ? AppTheme.error : AppTheme.textMuted

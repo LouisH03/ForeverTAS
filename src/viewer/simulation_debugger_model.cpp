@@ -188,6 +188,12 @@ bool SimulationDebuggerModel::available() const {
 bool SimulationDebuggerModel::preparing() const {
     return preparing_;
 }
+
+bool SimulationDebuggerModel::loadingReplay() const {
+    return active_ &&
+           statusText_ == QStringLiteral(
+                                  "Loading replay in the Reference engine...");
+}
 bool SimulationDebuggerModel::active() const {
     return active_;
 }
@@ -1794,7 +1800,7 @@ void SimulationDebuggerModel::consumeDebuggerPrompts() {
                         QStringLiteral("breakpoint set --method AdvanceTicks"));
                 queueCommand(CommandKind::Run, QStringLiteral("run"));
                 setStatus(QStringLiteral(
-                        "Loading replay in the reference engine..."));
+                        "Loading replay in the Reference engine..."));
             }
         } else if (hasCurrentCommand_) {
             const DebuggerCommand completed = currentCommand_;

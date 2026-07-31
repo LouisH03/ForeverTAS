@@ -23,6 +23,7 @@ class SimulationDebuggerModel final : public QObject {
     Q_PROPERTY(bool running READ running NOTIFY stateChanged)
     Q_PROPERTY(bool stepping READ stepping NOTIFY stateChanged)
     Q_PROPERTY(bool compiling READ compiling NOTIFY stateChanged)
+    Q_PROPERTY(bool loadingReplay READ loadingReplay NOTIFY stateChanged)
     Q_PROPERTY(bool canStepSource READ canStepSource NOTIFY stateChanged)
     Q_PROPERTY(bool canStepTick READ canStepTick NOTIFY stateChanged)
     Q_PROPERTY(QString backendName READ backendName NOTIFY stateChanged)
@@ -52,6 +53,7 @@ class SimulationDebuggerModel final : public QObject {
     bool running() const;
     bool stepping() const;
     bool compiling() const;
+    bool loadingReplay() const;
     bool canStepSource() const;
     bool canStepTick() const;
     QString backendName() const;

@@ -287,6 +287,8 @@ int main(int argc, char **argv) {
     int timelineSeekTimeChanges = 0;
     int timelineSeekPoseChanges = 0;
     bool countingTimelineSeekSignals = false;
+    bool loadingReplaySeen = false;
+    QStringList startupStatuses;
     QElapsedTimer timelineSeekClock;
     QElapsedTimer resolvedBreakpointClock;
     QElapsedTimer responsivenessClock;
@@ -331,6 +333,17 @@ int main(int argc, char **argv) {
             &forevertas::viewer::SimulationDebuggerModel::stateChanged,
             &application,
             [&]() {
+                if (phase == Phase::WaitingInitialFrame &&
+                    (startupStatuses.isEmpty() ||
+                     startupStatuses.back() != model->statusText())) {
+                    startupStatuses.push_back(model->statusText());
+                }
+                if (model->loadingReplay()) {
+                    loadingReplaySeen =
+                            model->statusText() ==
+                            QStringLiteral(
+                                    "Loading replay in the Reference engine...");
+                }
                 if (countingTimelineSeekSignals) {
                     ++timelineSeekStateChanges;
                 }
@@ -376,11 +389,18 @@ int main(int argc, char **argv) {
                         frame.value(QStringLiteral("tick")).toLongLong();
                 frames.insert(tick, frame);
                 if (phase == Phase::WaitingInitialFrame && tick == 0) {
+                    if (!loadingReplaySeen) {
+                        std::cerr << "startup statuses: "
+                                  << startupStatuses.join(
+                                             QStringLiteral(" | "))
+                                             .toStdString()
+                                  << '\n';
+                    }
                     okay &= Check(
-                            model->active() && viewer.selectedRunId() ==
-                                                       QStringLiteral("debug"),
+                            loadingReplaySeen && model->active() &&
+                            viewer.selectedRunId() == QStringLiteral("debug"),
                             "native debugger did not initialize its viewer "
-                            "run");
+                            "run or expose the Reference loading state");
                     okay &= Check(
                             viewer.durationMs() ==
                                     frame.value(QStringLiteral("durationMs"))
@@ -438,6 +458,10 @@ int main(int argc, char **argv) {
                     QStringLiteral("Breakpoint moved to executable line")) &&
             model->statusText().contains(
                     QStringLiteral("replay_simulation_runtime.cpp"))) {
+            okay &= Check(
+                    !model->loadingReplay(),
+                    "Reference loading state remained active after the native "
+                    "engine reached its first source boundary");
             okay &= Check(
                     model->selectFile(QString::fromLatin1(kRuntimeSource)),
                     "resolved runtime breakpoint source could not be selected");

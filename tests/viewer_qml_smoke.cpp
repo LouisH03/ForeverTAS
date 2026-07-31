@@ -8,6 +8,7 @@
 #include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QImage>
 #include <QInputDevice>
 #include <QMouseEvent>
@@ -813,6 +814,16 @@ int main(int argc, char **argv) {
                                     root->findChild<QObject *>(
                                             QStringLiteral(
                                                     "simulationDebuggerPanel")));
+                    auto *const referenceLoadingWarning =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "referenceLoadingWarning")));
+                    QObject *const referenceLoadingWarningText =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "referenceLoadingWarningText"));
+                    QObject *const simulationDebuggerStatusText =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "simulationDebuggerStatusText"));
                     QObject *const simulationSourceTree =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationSourceTree"));
@@ -1564,6 +1575,43 @@ int main(int argc, char **argv) {
                             simulationDebuggerPanel != nullptr &&
                             !simulationDebuggerPanel->isVisible() &&
                             simulationDebuggerPanel->height() >= 650.0 &&
+                            referenceLoadingWarning != nullptr &&
+                            !referenceLoadingWarning->isVisible() &&
+                            referenceLoadingWarning
+                                            ->property("color")
+                                            .value<QColor>()
+                                            .red() >
+                                    referenceLoadingWarning
+                                            ->property("color")
+                                            .value<QColor>()
+                                            .green() &&
+                            referenceLoadingWarning
+                                            ->property("radius")
+                                            .toReal() <= 8.0 &&
+                            referenceLoadingWarningText != nullptr &&
+                            simulationDebuggerStatusText != nullptr &&
+                            referenceLoadingWarningText
+                                            ->property("font")
+                                            .value<QFont>()
+                                            .pixelSize() >= 18 &&
+                            referenceLoadingWarningText
+                                            ->property("font")
+                                            .value<QFont>()
+                                            .weight() >= QFont::Bold &&
+                            referenceLoadingWarningText
+                                            ->property("color")
+                                            .value<QColor>()
+                                            .red() >
+                                    referenceLoadingWarningText
+                                            ->property("color")
+                                            .value<QColor>()
+                                            .green() &&
+                            referenceLoadingWarningText
+                                            ->property("color")
+                                            .value<QColor>() !=
+                                    simulationDebuggerStatusText
+                                            ->property("color")
+                                            .value<QColor>() &&
                             simulationSourceTree != nullptr &&
                             debuggerSourceTreeScrollable &&
                             simulationCodeViewer != nullptr &&
