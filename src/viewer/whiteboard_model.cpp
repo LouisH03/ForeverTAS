@@ -33,7 +33,12 @@ constexpr double kMaximumSize = 24.0;
 constexpr int kMaximumMapNameLength = 512;
 constexpr char kPersistedBoardsKey[] = "whiteboards/boardsV2";
 constexpr char kFileFormat[] = "ForeverTAS whiteboard set";
-constexpr int kFileVersion = 2;
+constexpr int kFileVersion = 3;
+constexpr int kLegacyFileVersion = 2;
+constexpr int kProjectionVersion = 1;
+constexpr char kPerspectiveVerticalProjection[] =
+        "perspective-vertical";
+constexpr double kMaximumProjectionCanvasDimension = 8192.0;
 constexpr int kExportImageLongEdge = 2048;
 
 bool IsDrawingTool(const QString &tool) {
@@ -619,6 +624,9 @@ int WhiteboardModel::captureCurrentBoard(
     double planeX = 0.0;
     double planeY = 0.0;
     double planeZ = 0.0;
+    board.projectionVersion = kProjectionVersion;
+    board.projection =
+            QString::fromLatin1(kPerspectiveVerticalProjection);
     if (!number(QStringLiteral("targetX"), &targetX) ||
         !number(QStringLiteral("targetY"), &targetY) ||
         !number(QStringLiteral("targetZ"), &targetZ) ||
@@ -630,6 +638,23 @@ int WhiteboardModel::captureCurrentBoard(
         !number(QStringLiteral("planeZ"), &planeZ) ||
         !number(QStringLiteral("planeWidth"), &board.planeWidth) ||
         !number(QStringLiteral("planeHeight"), &board.planeHeight) ||
+        !number(QStringLiteral("fieldOfView"), &board.fieldOfView) ||
+        !number(QStringLiteral("planeDistance"),
+                &board.planeDistance) ||
+        !number(QStringLiteral("viewportWidth"),
+                &board.viewportWidth) ||
+        !number(QStringLiteral("viewportHeight"),
+                &board.viewportHeight) ||
+        !number(QStringLiteral("contentX"), &board.contentX) ||
+        !number(QStringLiteral("contentY"), &board.contentY) ||
+        !number(QStringLiteral("contentWidth"),
+                &board.contentWidth) ||
+        !number(QStringLiteral("contentHeight"),
+                &board.contentHeight) ||
+        !number(QStringLiteral("canvasWidth"), &board.canvasWidth) ||
+        !number(QStringLiteral("canvasHeight"), &board.canvasHeight) ||
+        capture.value(QStringLiteral("projection")).toString() !=
+                board.projection ||
         std::abs(targetX) > 10000000.0 ||
         std::abs(targetY) > 10000000.0 ||
         std::abs(targetZ) > 10000000.0 ||
@@ -638,6 +663,23 @@ int WhiteboardModel::captureCurrentBoard(
         std::abs(planeZ) > 10000000.0 ||
         board.pitch < -89.0 || board.pitch > 89.0 ||
         board.distance < 0.01 || board.distance > 1000000.0 ||
+        board.fieldOfView < 1.0 || board.fieldOfView > 179.0 ||
+        board.planeDistance < 0.01 ||
+        board.planeDistance > 1000000.0 ||
+        board.viewportWidth < 1.0 ||
+        board.viewportWidth > kMaximumProjectionCanvasDimension ||
+        board.viewportHeight < 1.0 ||
+        board.viewportHeight > kMaximumProjectionCanvasDimension ||
+        board.contentX < 0.0 || board.contentX > 1.0 ||
+        board.contentY < 0.0 || board.contentY > 1.0 ||
+        board.contentWidth <= 0.0 ||
+        board.contentHeight <= 0.0 ||
+        board.contentX + board.contentWidth > 1.000001 ||
+        board.contentY + board.contentHeight > 1.000001 ||
+        board.canvasWidth < 1.0 ||
+        board.canvasWidth > kMaximumProjectionCanvasDimension ||
+        board.canvasHeight < 1.0 ||
+        board.canvasHeight > kMaximumProjectionCanvasDimension ||
         board.planeWidth < 0.01 || board.planeWidth > 1000000.0 ||
         board.planeHeight < 0.01 ||
         board.planeHeight > 1000000.0) {
@@ -857,7 +899,8 @@ bool WhiteboardModel::exportBoardContentImage(
     }
     const double strokeScale = std::max(
             0.01,
-            std::min(width / 1024.0, height / 576.0));
+            std::min(width / board.canvasWidth,
+                     height / board.canvasHeight));
     for (const Item &item : board.items) {
         const QRectF pixelBounds(
                 item.bounds.x() * width,
@@ -990,6 +1033,24 @@ QVariantMap WhiteboardModel::boardToVariantMap(
             {QStringLiteral("boardIndex"), index},
             {QStringLiteral("selected"),
              index == selectedBoardIndex_},
+            {QStringLiteral("projectionVersion"),
+             board.projectionVersion},
+            {QStringLiteral("projection"), board.projection},
+            {QStringLiteral("fieldOfView"), board.fieldOfView},
+            {QStringLiteral("planeDistance"),
+             board.planeDistance},
+            {QStringLiteral("viewportWidth"),
+             board.viewportWidth},
+            {QStringLiteral("viewportHeight"),
+             board.viewportHeight},
+            {QStringLiteral("contentX"), board.contentX},
+            {QStringLiteral("contentY"), board.contentY},
+            {QStringLiteral("contentWidth"),
+             board.contentWidth},
+            {QStringLiteral("contentHeight"),
+             board.contentHeight},
+            {QStringLiteral("canvasWidth"), board.canvasWidth},
+            {QStringLiteral("canvasHeight"), board.canvasHeight},
             {QStringLiteral("targetX"), board.target.x()},
             {QStringLiteral("targetY"), board.target.y()},
             {QStringLiteral("targetZ"), board.target.z()},
@@ -1073,6 +1134,27 @@ QByteArray WhiteboardModel::serializeBoards(
                 {QStringLiteral("mapKey"), board.mapKey},
                 {QStringLiteral("mapName"), board.mapName},
                 {QStringLiteral("visible"), board.visible},
+                {QStringLiteral("projectionVersion"),
+                 board.projectionVersion},
+                {QStringLiteral("projection"), board.projection},
+                {QStringLiteral("fieldOfView"),
+                 board.fieldOfView},
+                {QStringLiteral("planeDistance"),
+                 board.planeDistance},
+                {QStringLiteral("viewportWidth"),
+                 board.viewportWidth},
+                {QStringLiteral("viewportHeight"),
+                 board.viewportHeight},
+                {QStringLiteral("contentX"), board.contentX},
+                {QStringLiteral("contentY"), board.contentY},
+                {QStringLiteral("contentWidth"),
+                 board.contentWidth},
+                {QStringLiteral("contentHeight"),
+                 board.contentHeight},
+                {QStringLiteral("canvasWidth"),
+                 board.canvasWidth},
+                {QStringLiteral("canvasHeight"),
+                 board.canvasHeight},
                 {QStringLiteral("target"),
                  QJsonArray{board.target.x(),
                             board.target.y(),
@@ -1115,10 +1197,12 @@ bool WhiteboardModel::deserializeBoards(
         return false;
     }
     const QJsonObject root = document.object();
+    const int fileVersion =
+            root.value(QStringLiteral("version")).toInt(-1);
     if (root.value(QStringLiteral("format")).toString() !=
                 QString::fromLatin1(kFileFormat) ||
-        root.value(QStringLiteral("version")).toInt(-1) !=
-                kFileVersion ||
+        (fileVersion != kFileVersion &&
+         fileVersion != kLegacyFileVersion) ||
         !root.value(QStringLiteral("boards")).isArray()) {
         *error = QStringLiteral(
                 "The selected file is not a supported whiteboard set.");
@@ -1199,6 +1283,87 @@ bool WhiteboardModel::deserializeBoards(
             *error = QStringLiteral(
                     "A drawing has invalid identity or map data.");
             return false;
+        }
+        if (fileVersion == kFileVersion) {
+            board.projectionVersion =
+                    object.value(
+                              QStringLiteral("projectionVersion"))
+                            .toInt(-1);
+            board.projection =
+                    object.value(QStringLiteral("projection"))
+                            .toString();
+            if (!object.value(
+                        QStringLiteral("projectionVersion")).isDouble() ||
+                (board.projectionVersion != 0 &&
+                 board.projectionVersion != kProjectionVersion) ||
+                !object.value(
+                        QStringLiteral("projection")).isString() ||
+                board.projection !=
+                        QString::fromLatin1(
+                                kPerspectiveVerticalProjection) ||
+                !finiteNumber(object,
+                              QStringLiteral("fieldOfView"),
+                              &board.fieldOfView) ||
+                !finiteNumber(object,
+                              QStringLiteral("planeDistance"),
+                              &board.planeDistance) ||
+                !finiteNumber(object,
+                              QStringLiteral("viewportWidth"),
+                              &board.viewportWidth) ||
+                !finiteNumber(object,
+                              QStringLiteral("viewportHeight"),
+                              &board.viewportHeight) ||
+                !finiteNumber(object,
+                              QStringLiteral("contentX"),
+                              &board.contentX) ||
+                !finiteNumber(object,
+                              QStringLiteral("contentY"),
+                              &board.contentY) ||
+                !finiteNumber(object,
+                              QStringLiteral("contentWidth"),
+                              &board.contentWidth) ||
+                !finiteNumber(object,
+                              QStringLiteral("contentHeight"),
+                              &board.contentHeight) ||
+                !finiteNumber(object,
+                              QStringLiteral("canvasWidth"),
+                              &board.canvasWidth) ||
+                !finiteNumber(object,
+                              QStringLiteral("canvasHeight"),
+                              &board.canvasHeight) ||
+                board.fieldOfView < 1.0 ||
+                board.fieldOfView > 179.0 ||
+                board.planeDistance < 0.01 ||
+                board.planeDistance > 1000000.0 ||
+                board.viewportWidth < 1.0 ||
+                board.viewportWidth >
+                        kMaximumProjectionCanvasDimension ||
+                board.viewportHeight < 1.0 ||
+                board.viewportHeight >
+                        kMaximumProjectionCanvasDimension ||
+                board.contentX < 0.0 ||
+                board.contentX > 1.0 ||
+                board.contentY < 0.0 ||
+                board.contentY > 1.0 ||
+                board.contentWidth <= 0.0 ||
+                board.contentHeight <= 0.0 ||
+                board.contentX + board.contentWidth > 1.000001 ||
+                board.contentY + board.contentHeight > 1.000001 ||
+                board.canvasWidth < 1.0 ||
+                board.canvasWidth >
+                        kMaximumProjectionCanvasDimension ||
+                board.canvasHeight < 1.0 ||
+                board.canvasHeight >
+                        kMaximumProjectionCanvasDimension) {
+                *error = QStringLiteral(
+                        "A drawing has invalid projection data.");
+                return false;
+            }
+        } else {
+            board.projectionVersion = 0;
+            board.projection =
+                    QString::fromLatin1(
+                            kPerspectiveVerticalProjection);
         }
         if (!vector(object.value(QStringLiteral("target")),
                     &board.target) ||

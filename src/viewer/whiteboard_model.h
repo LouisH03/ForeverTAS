@@ -144,6 +144,18 @@ private:
         QString mapKey;
         QString mapName;
         bool visible = true;
+        int projectionVersion = 0;
+        QString projection = QStringLiteral("perspective-vertical");
+        double fieldOfView = 55.0;
+        double planeDistance = 1.0;
+        double viewportWidth = 1024.0;
+        double viewportHeight = 576.0;
+        double contentX = 0.0;
+        double contentY = 0.0;
+        double contentWidth = 1.0;
+        double contentHeight = 1.0;
+        double canvasWidth = 1024.0;
+        double canvasHeight = 576.0;
         QVector3D target;
         double yaw = 0.0;
         double pitch = 0.0;

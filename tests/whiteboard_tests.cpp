@@ -343,7 +343,44 @@ int main(int argc, char **argv) {
             {QStringLiteral("planeY"), 4.0},
             {QStringLiteral("planeZ"), 8.0},
             {QStringLiteral("planeWidth"), 12.0},
-            {QStringLiteral("planeHeight"), 7.0}};
+            {QStringLiteral("planeHeight"), 7.0},
+            {QStringLiteral("projection"),
+             QStringLiteral("perspective-vertical")},
+            {QStringLiteral("fieldOfView"), 63.0},
+            {QStringLiteral("planeDistance"), 11.0},
+            {QStringLiteral("viewportWidth"), 1420.0},
+            {QStringLiteral("viewportHeight"), 820.0},
+            {QStringLiteral("contentX"), 0.0},
+            {QStringLiteral("contentY"), 52.0 / 820.0},
+            {QStringLiteral("contentWidth"), 1.0},
+            {QStringLiteral("contentHeight"), 768.0 / 820.0},
+            {QStringLiteral("canvasWidth"), 1420.0},
+            {QStringLiteral("canvasHeight"), 768.0}};
+    QVariantMap invalidProjectionCapture = firstCapture;
+    invalidProjectionCapture[QStringLiteral("projection")] =
+            QStringLiteral("orthographic");
+    expect(repositoryModel.captureCurrentBoard(
+                   QStringLiteral("Invalid projection"),
+                   invalidProjectionCapture) == -1 &&
+                   repositoryModel.count() == 1 &&
+                   repositoryModel.boardCount() == 0,
+           "capture rejects unsupported projections without consuming items");
+    invalidProjectionCapture = firstCapture;
+    invalidProjectionCapture[QStringLiteral("contentHeight")] = 1.0;
+    expect(repositoryModel.captureCurrentBoard(
+                   QStringLiteral("Invalid content rectangle"),
+                   invalidProjectionCapture) == -1 &&
+                   repositoryModel.count() == 1 &&
+                   repositoryModel.boardCount() == 0,
+           "capture rejects content rectangles outside the saved viewport");
+    invalidProjectionCapture = firstCapture;
+    invalidProjectionCapture[QStringLiteral("canvasWidth")] = 8193.0;
+    expect(repositoryModel.captureCurrentBoard(
+                   QStringLiteral("Oversized canvas"),
+                   invalidProjectionCapture) == -1 &&
+                   repositoryModel.count() == 1 &&
+                   repositoryModel.boardCount() == 0,
+           "capture rejects canvas sizes that could exhaust texture memory");
     expect(repositoryModel.captureCurrentBoard(
                    QStringLiteral("Entry line"), firstCapture) == 0 &&
                    repositoryModel.count() == 0 &&
@@ -365,10 +402,33 @@ int main(int argc, char **argv) {
                                    QStringLiteral("planeWidth"))
                                 .toDouble(),
                         12.0) &&
+                   firstBoard.value(
+                                     QStringLiteral("projectionVersion"))
+                                   .toInt() == 1 &&
+                   firstBoard.value(
+                                     QStringLiteral("projection"))
+                                   .toString() ==
+                           QStringLiteral("perspective-vertical") &&
+                   Near(firstBoard.value(
+                                   QStringLiteral("fieldOfView"))
+                                .toDouble(),
+                        63.0) &&
+                   Near(firstBoard.value(
+                                   QStringLiteral("planeDistance"))
+                                .toDouble(),
+                        11.0) &&
+                   Near(firstBoard.value(
+                                   QStringLiteral("canvasWidth"))
+                                .toDouble(),
+                        1420.0) &&
+                   Near(firstBoard.value(
+                                   QStringLiteral("canvasHeight"))
+                                .toDouble(),
+                        768.0) &&
                    firstBoard.value(QStringLiteral("items"))
                                    .toList()
                                    .size() == 1,
-           "placed drawing retains vector items and its saved viewpoint");
+           "placed drawing retains vector items and its exact projection");
 
     repositoryModel.setTool(QStringLiteral("text"));
     expect(repositoryModel.addText(
@@ -442,11 +502,109 @@ int main(int argc, char **argv) {
     authoritativeSetFile.close();
     expect(authoritativeSet.contains(
                    "\"mapName\": \"Stadium Training\"") &&
+                   authoritativeSet.contains("\"version\": 3") &&
+                   authoritativeSet.contains(
+                           "\"projection\": \"perspective-vertical\"") &&
+                   authoritativeSet.contains(
+                           "\"projectionVersion\": 1") &&
+                   authoritativeSet.contains(
+                           "\"fieldOfView\": 63") &&
+                   authoritativeSet.contains(
+                           "\"canvasHeight\": 768") &&
                    !authoritativeSet.contains(
                            "\"mapName\": \"Stadium notes\"") &&
                    !authoritativeSet.contains(
                            "\"mapName\": \"Entry line\""),
            "exports persist challenge data rather than filenames or drawing labels");
+
+    QJsonDocument versionTwoDocument =
+            QJsonDocument::fromJson(authoritativeSet);
+    QJsonObject versionTwoRoot = versionTwoDocument.object();
+    versionTwoRoot[QStringLiteral("version")] = 2;
+    QJsonArray versionTwoBoards =
+            versionTwoRoot.value(QStringLiteral("boards")).toArray();
+    const QStringList projectionFields{
+            QStringLiteral("projectionVersion"),
+            QStringLiteral("projection"),
+            QStringLiteral("fieldOfView"),
+            QStringLiteral("planeDistance"),
+            QStringLiteral("viewportWidth"),
+            QStringLiteral("viewportHeight"),
+            QStringLiteral("contentX"),
+            QStringLiteral("contentY"),
+            QStringLiteral("contentWidth"),
+            QStringLiteral("contentHeight"),
+            QStringLiteral("canvasWidth"),
+            QStringLiteral("canvasHeight")};
+    for (qsizetype index = 0; index < versionTwoBoards.size(); ++index) {
+        QJsonObject board = versionTwoBoards.at(index).toObject();
+        for (const QString &field : projectionFields) {
+            board.remove(field);
+        }
+        versionTwoBoards[index] = board;
+    }
+    versionTwoRoot[QStringLiteral("boards")] = versionTwoBoards;
+    const QString versionTwoSetPath = setDirectory.filePath(
+            QStringLiteral("version-two.json"));
+    QFile versionTwoSetFile(versionTwoSetPath);
+    const QByteArray versionTwoSet =
+            QJsonDocument(versionTwoRoot).toJson();
+    expect(versionTwoSetFile.open(QIODevice::WriteOnly) &&
+                   versionTwoSetFile.write(versionTwoSet) ==
+                           versionTwoSet.size(),
+           "version-two migration fixture is written");
+    versionTwoSetFile.close();
+    QSettings().clear();
+    WhiteboardModel versionTwoRepository;
+    versionTwoRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
+    expect(versionTwoRepository.importBoardSet(
+                   QUrl::fromLocalFile(versionTwoSetPath)) &&
+                   versionTwoRepository.boardCount() == 2 &&
+                   versionTwoRepository.boards()
+                                   .front()
+                                   .toMap()
+                                   .value(QStringLiteral(
+                                           "projectionVersion"))
+                                   .toInt() == 0 &&
+                   Near(versionTwoRepository.boards()
+                                .front()
+                                .toMap()
+                                .value(QStringLiteral("canvasWidth"))
+                                .toDouble(),
+                        1024.0) &&
+                   Near(versionTwoRepository.boards()
+                                .front()
+                                .toMap()
+                                .value(QStringLiteral("canvasHeight"))
+                                .toDouble(),
+                        576.0),
+           "version-two drawings migrate with their legacy framing intact");
+    WhiteboardModel persistedVersionTwoRepository;
+    persistedVersionTwoRepository.setMapIdentity(
+            QStringLiteral("collision-sha256:stadium"),
+            QStringLiteral("Stadium Training"));
+    expect(persistedVersionTwoRepository.boardCount() == 2 &&
+                   persistedVersionTwoRepository.boards()
+                                   .front()
+                                   .toMap()
+                                   .value(QStringLiteral(
+                                           "projectionVersion"))
+                                   .toInt() == 0 &&
+                   Near(persistedVersionTwoRepository.boards()
+                                .front()
+                                .toMap()
+                                .value(QStringLiteral("canvasWidth"))
+                                .toDouble(),
+                        1024.0) &&
+                   Near(persistedVersionTwoRepository.boards()
+                                .front()
+                                .toMap()
+                                .value(QStringLiteral("canvasHeight"))
+                                .toDouble(),
+                        576.0),
+           "migrated version-two drawings survive version-three persistence");
 
     QJsonDocument legacyDocument =
             QJsonDocument::fromJson(authoritativeSet);
@@ -589,6 +747,61 @@ int main(int argc, char **argv) {
                    importedRepository.boardCount() ==
                            beforeInvalidImport,
            "schema type errors are rejected atomically");
+
+    QJsonObject invalidProjectionRoot =
+            QJsonDocument::fromJson(authoritativeSet).object();
+    QJsonArray invalidProjectionBoards =
+            invalidProjectionRoot.value(
+                                     QStringLiteral("boards"))
+                    .toArray();
+    QJsonObject invalidProjectionBoard =
+            invalidProjectionBoards.at(0).toObject();
+    invalidProjectionBoard[QStringLiteral("fieldOfView")] = 180.0;
+    invalidProjectionBoards[0] = invalidProjectionBoard;
+    invalidProjectionRoot[QStringLiteral("boards")] =
+            invalidProjectionBoards;
+    const QString invalidProjectionPath = setDirectory.filePath(
+            QStringLiteral("invalid-projection.json"));
+    QFile invalidProjectionFile(invalidProjectionPath);
+    const QByteArray invalidProjectionSet =
+            QJsonDocument(invalidProjectionRoot).toJson();
+    expect(invalidProjectionFile.open(QIODevice::WriteOnly) &&
+                   invalidProjectionFile.write(invalidProjectionSet) ==
+                           invalidProjectionSet.size(),
+           "invalid projection fixture is written");
+    invalidProjectionFile.close();
+    expect(!importedRepository.importBoardSet(
+                   QUrl::fromLocalFile(invalidProjectionPath)) &&
+                   importedRepository.boardCount() ==
+                           beforeInvalidImport &&
+                   importedRepository.operationMessage().contains(
+                           QStringLiteral("projection data")),
+           "invalid projection metadata is rejected atomically");
+
+    invalidProjectionBoard =
+            invalidProjectionBoards.at(0).toObject();
+    invalidProjectionBoard[QStringLiteral("fieldOfView")] = 63.0;
+    invalidProjectionBoard[QStringLiteral("canvasWidth")] = 8193.0;
+    invalidProjectionBoards[0] = invalidProjectionBoard;
+    invalidProjectionRoot[QStringLiteral("boards")] =
+            invalidProjectionBoards;
+    const QString oversizedCanvasPath = setDirectory.filePath(
+            QStringLiteral("oversized-canvas.json"));
+    QFile oversizedCanvasFile(oversizedCanvasPath);
+    const QByteArray oversizedCanvasSet =
+            QJsonDocument(invalidProjectionRoot).toJson();
+    expect(oversizedCanvasFile.open(QIODevice::WriteOnly) &&
+                   oversizedCanvasFile.write(oversizedCanvasSet) ==
+                           oversizedCanvasSet.size(),
+           "oversized projection canvas fixture is written");
+    oversizedCanvasFile.close();
+    expect(!importedRepository.importBoardSet(
+                   QUrl::fromLocalFile(oversizedCanvasPath)) &&
+                   importedRepository.boardCount() ==
+                           beforeInvalidImport &&
+                   importedRepository.operationMessage().contains(
+                           QStringLiteral("projection data")),
+           "oversized projection canvases are rejected atomically");
 
     QByteArray mapNeutralSet = invalidVisibility;
     mapNeutralSet.replace(
@@ -1011,13 +1224,93 @@ int main(int argc, char **argv) {
     expect(planes != nullptr,
            "persistent whiteboard plane view instantiates");
     if (planes != nullptr) {
+        planes->setProperty("width", 1420.0);
+        planes->setProperty("height", 820.0);
+        planes->setProperty("fieldOfView", 63.0);
+        planes->setProperty("contentTop", 52.0);
+        planes->setProperty("exactBoardIndex", 0);
         QCoreApplication::processEvents();
         QObject *const planeRepeater = planes->findChild<QObject *>(
                 QStringLiteral("whiteboardPlaneRepeater"));
+        const QVariantMap exactBoard =
+                importedRepository.boards().front().toMap();
+        QObject *const exactPlane = planes->findChild<QObject *>(
+                QStringLiteral("whiteboardPlane_") +
+                exactBoard.value(QStringLiteral("id")).toString());
+        const double fullHeight =
+                2.0 * std::tan(
+                              63.0 * std::acos(-1.0) / 360.0) *
+                11.0;
+        const double expectedWideHeight =
+                fullHeight * (820.0 - 52.0) / 820.0;
+        const double expectedWideWidth =
+                fullHeight * 1420.0 / 820.0;
         expect(planeRepeater != nullptr &&
                        planeRepeater->property("count").toInt() ==
                                importedRepository.boardCount(),
                "every listed drawing has an independent 3D plane delegate");
+        expect(exactPlane != nullptr &&
+                       exactPlane
+                               ->property("exactProjectionActive")
+                               .toBool() &&
+                       Near(exactPlane
+                                    ->property("effectivePlaneWidth")
+                                    .toDouble(),
+                            expectedWideWidth) &&
+                       Near(exactPlane
+                                    ->property("effectivePlaneHeight")
+                                    .toDouble(),
+                            expectedWideHeight) &&
+                       Near(exactPlane
+                                    ->property("sourceCanvasWidth")
+                                    .toDouble(),
+                            1420.0) &&
+                       Near(exactPlane
+                                    ->property("sourceCanvasHeight")
+                                    .toDouble(),
+                            768.0),
+               "exact focus reconstructs the saved vertical projection and "
+               "native drawing canvas");
+        planes->setProperty("width", 1240.0);
+        planes->setProperty("height", 620.0);
+        QCoreApplication::processEvents();
+        const double expectedCompactHeight =
+                fullHeight * (620.0 - 52.0) / 620.0;
+        const double expectedCompactWidth =
+                fullHeight * 1240.0 / 620.0;
+        expect(exactPlane != nullptr &&
+                       Near(exactPlane
+                                    ->property("effectivePlaneWidth")
+                                    .toDouble(),
+                            expectedCompactWidth) &&
+                       Near(exactPlane
+                                    ->property("effectivePlaneHeight")
+                                    .toDouble(),
+                            expectedCompactHeight) &&
+                       !Near(expectedWideWidth, expectedCompactWidth) &&
+                       !Near(expectedWideHeight, expectedCompactHeight),
+               "exact focused plane follows compact viewport aspect and "
+               "header conversion instead of retaining stale framing");
+        planes->setProperty("exactBoardIndex", -1);
+        QCoreApplication::processEvents();
+        expect(exactPlane != nullptr &&
+                       !exactPlane
+                                ->property("exactProjectionActive")
+                                .toBool() &&
+                       Near(exactPlane
+                                    ->property("effectivePlaneWidth")
+                                    .toDouble(),
+                            exactBoard
+                                    .value(QStringLiteral("planeWidth"))
+                                    .toDouble()) &&
+                       Near(exactPlane
+                                    ->property("effectivePlaneHeight")
+                                    .toDouble(),
+                            exactBoard
+                                    .value(QStringLiteral("planeHeight"))
+                                    .toDouble()),
+               "leaving exact focus restores the drawing's persisted world "
+               "plane without altering it");
         importedRepository.setBoardVisible(0, false);
         planes->setProperty("forcedBoardIndex", 0);
         planes->setProperty("exportMode", true);

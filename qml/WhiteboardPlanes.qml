@@ -14,6 +14,8 @@ View3D {
     required property real orbitDistance
     property real fieldOfView: 55
     property int forcedBoardIndex: -1
+    property int exactBoardIndex: -1
+    property real contentTop: 52
     property bool exportMode: false
     readonly property var renderedBoards: {
         const visible = model.visibleBoards.slice()
@@ -88,6 +90,108 @@ View3D {
         return -1
     }
 
+    function projectedPlaneBounds(boardIndex) {
+        for (let index = 0; index < planeRepeater.count; ++index) {
+            const plane = planeRepeater.objectAt(index)
+            if (!plane || plane.boardIndex !== boardIndex)
+                continue
+            const corners = [
+                Qt.vector3d(-50, -50, 0),
+                Qt.vector3d(50, -50, 0),
+                Qt.vector3d(50, 50, 0),
+                Qt.vector3d(-50, 50, 0)
+            ]
+            let left = Number.POSITIVE_INFINITY
+            let top = Number.POSITIVE_INFINITY
+            let right = Number.NEGATIVE_INFINITY
+            let bottom = Number.NEGATIVE_INFINITY
+            for (let cornerIndex = 0;
+                 cornerIndex < corners.length; ++cornerIndex) {
+                const scenePoint = plane.mapPositionToScene(
+                    corners[cornerIndex])
+                const viewPoint = root.mapFrom3DScene(scenePoint)
+                if (!Number.isFinite(viewPoint.x)
+                        || !Number.isFinite(viewPoint.y)
+                        || !Number.isFinite(viewPoint.z)
+                        || viewPoint.z <= 0) {
+                    return { "valid": false }
+                }
+                left = Math.min(left, viewPoint.x)
+                top = Math.min(top, viewPoint.y)
+                right = Math.max(right, viewPoint.x)
+                bottom = Math.max(bottom, viewPoint.y)
+            }
+            return {
+                "valid": true,
+                "left": left,
+                "top": top,
+                "right": right,
+                "bottom": bottom
+            }
+        }
+        return { "valid": false }
+    }
+
+    function exactPlaneGeometry(board) {
+        const viewportWidth = Math.max(1, root.width)
+        const viewportHeight = Math.max(1, root.height)
+        const top = Math.max(
+            0, Math.min(viewportHeight - 1, root.contentTop))
+        const contentHeight = viewportHeight - top
+        const yaw = board.yaw * Math.PI / 180
+        const pitch = board.pitch * Math.PI / 180
+        const pitchCos = Math.cos(pitch)
+        const forward = Qt.vector3d(
+            -Math.sin(yaw) * pitchCos,
+            Math.sin(pitch),
+            -Math.cos(yaw) * pitchCos)
+        const right = Qt.vector3d(
+            Math.cos(yaw), 0, -Math.sin(yaw))
+        const up = Qt.vector3d(
+            Math.sin(yaw) * Math.sin(pitch),
+            Math.cos(pitch),
+            Math.cos(yaw) * Math.sin(pitch))
+        const camera = Qt.vector3d(
+            board.targetX - forward.x * board.distance,
+            board.targetY - forward.y * board.distance,
+            board.targetZ - forward.z * board.distance)
+        const fullHeight = 2 * Math.tan(
+            board.fieldOfView * Math.PI / 360)
+            * board.planeDistance
+        const fullWidth =
+            fullHeight * viewportWidth / viewportHeight
+        const centerY = (top + contentHeight * 0.5)
+                        / viewportHeight
+        const rightOffset = 0
+        const upOffset = fullHeight * (0.5 - centerY)
+        return {
+            "position": Qt.vector3d(
+                camera.x + forward.x * board.planeDistance
+                    + right.x * rightOffset + up.x * upOffset,
+                camera.y + forward.y * board.planeDistance
+                    + right.y * rightOffset + up.y * upOffset,
+                camera.z + forward.z * board.planeDistance
+                    + right.z * rightOffset + up.z * upOffset),
+            "width": fullWidth,
+            "height": fullHeight
+                      * contentHeight / viewportHeight
+        }
+    }
+
+    function planeGeometry(board) {
+        if (board.boardIndex === root.exactBoardIndex
+                && board.projectionVersion >= 1
+                && board.projection === "perspective-vertical") {
+            return exactPlaneGeometry(board)
+        }
+        return {
+            "position": Qt.vector3d(
+                board.planeX, board.planeY, board.planeZ),
+            "width": board.planeWidth,
+            "height": board.planeHeight
+        }
+    }
+
     environment: SceneEnvironment {
         backgroundMode: SceneEnvironment.Transparent
         antialiasingMode: SceneEnvironment.MSAA
@@ -106,6 +210,7 @@ View3D {
             clipNear: 0.01
             clipFar: 1000000
             fieldOfView: root.fieldOfView
+            fieldOfViewOrientation: PerspectiveCamera.Vertical
         }
     }
 
@@ -118,18 +223,30 @@ View3D {
             id: plane
             required property var modelData
             readonly property int boardIndex: modelData.boardIndex
+            readonly property bool exactProjectionActive:
+                boardIndex === root.exactBoardIndex
+                && modelData.projectionVersion >= 1
+            readonly property var effectiveGeometry:
+                root.planeGeometry(modelData)
+            readonly property real effectivePlaneWidth:
+                effectiveGeometry.width
+            readonly property real effectivePlaneHeight:
+                effectiveGeometry.height
+            readonly property real sourceCanvasWidth:
+                modelData.projectionVersion >= 1
+                ? modelData.canvasWidth : 1024
+            readonly property real sourceCanvasHeight:
+                modelData.projectionVersion >= 1
+                ? modelData.canvasHeight : 576
 
             objectName: "whiteboardPlane_" + modelData.id
             source: "#Rectangle"
-            position: Qt.vector3d(
-                          modelData.planeX,
-                          modelData.planeY,
-                          modelData.planeZ)
+            position: effectiveGeometry.position
             eulerRotation.x: modelData.pitch
             eulerRotation.y: modelData.yaw
             scale: Qt.vector3d(
-                       modelData.planeWidth / 100,
-                       modelData.planeHeight / 100,
+                       effectivePlaneWidth / 100,
+                       effectivePlaneHeight / 100,
                        1)
             pickable: true
             castsShadows: false
@@ -140,8 +257,10 @@ View3D {
                 cullMode: Material.NoCulling
                 diffuseMap: Texture {
                     sourceItem: Rectangle {
-                        width: 1024
-                        height: 576
+                        width: Math.max(
+                            1, Math.min(8192, plane.sourceCanvasWidth))
+                        height: Math.max(
+                            1, Math.min(8192, plane.sourceCanvasHeight))
                         color: "#b8111513"
                         border.width: root.exportMode ? 0 : 3
                         border.color: plane.modelData.selected

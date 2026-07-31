@@ -4859,46 +4859,6 @@ int main(int argc, char **argv) {
                                                         .toInt() == 2 &&
                                         VisibleModelCount(visualModels) ==
                                                 initialVisibleVisualModels;
-                                const QVector3D whiteboardTarget =
-                                        whiteboardViewport != nullptr
-                                        ? whiteboardViewport
-                                                  ->property("cameraTarget")
-                                                  .value<QVector3D>()
-                                        : QVector3D();
-                                const QVariantMap whiteboardCapture{
-                                        {QStringLiteral("targetX"),
-                                         whiteboardTarget.x()},
-                                        {QStringLiteral("targetY"),
-                                         whiteboardTarget.y()},
-                                        {QStringLiteral("targetZ"),
-                                         whiteboardTarget.z()},
-                                        {QStringLiteral("yaw"),
-                                         whiteboardViewport != nullptr
-                                         ? whiteboardViewport
-                                                 ->property("orbitYaw")
-                                                 .toDouble()
-                                         : 0.0},
-                                        {QStringLiteral("pitch"),
-                                         whiteboardViewport != nullptr
-                                         ? whiteboardViewport
-                                                 ->property("orbitPitch")
-                                                 .toDouble()
-                                         : 0.0},
-                                        {QStringLiteral("distance"),
-                                         whiteboardViewport != nullptr
-                                         ? whiteboardViewport
-                                                 ->property(
-                                                         "orbitDistance")
-                                                 .toDouble()
-                                         : 0.0},
-                                        {QStringLiteral("planeX"),
-                                         whiteboardTarget.x()},
-                                        {QStringLiteral("planeY"),
-                                         whiteboardTarget.y()},
-                                        {QStringLiteral("planeZ"),
-                                         whiteboardTarget.z()},
-                                        {QStringLiteral("planeWidth"), 12.0},
-                                        {QStringLiteral("planeHeight"), 7.0}};
                                 auto *const compactCameraFocusToolbar =
                                         qobject_cast<QQuickItem *>(
                                                 root->findChild<QObject *>(
@@ -5007,8 +4967,19 @@ int main(int argc, char **argv) {
                                                 compactDrawingListLeft &&
                                         compactCameraOpenY >=
                                                 compactToolbarBottom + 7.9;
-                                const bool whiteboardPlaced =
+                                QVariant whiteboardCaptureValue;
+                                const bool whiteboardViewCaptured =
                                         whiteboardViewport != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "captureWhiteboardView",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        whiteboardCaptureValue));
+                                const QVariantMap whiteboardCapture =
+                                        whiteboardCaptureValue.toMap();
+                                const bool whiteboardPlaced =
+                                        whiteboardViewCaptured &&
                                         whiteboard->captureCurrentBoard(
                                                 QStringLiteral(
                                                         "Smoke drawing"),
@@ -5050,8 +5021,241 @@ int main(int argc, char **argv) {
                                 QObject *const placedPlane =
                                         root->findChild<QObject *>(
                                                 planeObjectName);
+                                const double savedYaw =
+                                        placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "yaw"))
+                                                .toDouble();
+                                const double savedPitch =
+                                        placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "pitch"))
+                                                .toDouble();
+                                const double savedDistance =
+                                        placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "distance"))
+                                                .toDouble();
+                                const double savedFieldOfView =
+                                        placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "fieldOfView"))
+                                                .toDouble();
+                                if (whiteboardViewport != nullptr) {
+                                    whiteboardViewport->setProperty(
+                                            "orbitYaw", savedYaw + 19.0);
+                                    whiteboardViewport->setProperty(
+                                            "orbitPitch", savedPitch + 11.0);
+                                    whiteboardViewport->setProperty(
+                                            "orbitDistance",
+                                            savedDistance + 7.0);
+                                    whiteboardViewport->setProperty(
+                                            "cameraFieldOfView", 71.0);
+                                }
+                                const bool whiteboardViewRestored =
+                                        whiteboardViewport != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "restoreWhiteboardView",
+                                                Q_ARG(
+                                                        QVariant,
+                                                        QVariant(
+                                                                placedBoard)));
+                                QCoreApplication::processEvents();
+                                const auto projectedBounds =
+                                        [whiteboardPlaneView]() {
+                                            QVariant result;
+                                            if (whiteboardPlaneView == nullptr ||
+                                                !QMetaObject::invokeMethod(
+                                                        whiteboardPlaneView,
+                                                        "projectedPlaneBounds",
+                                                        Q_RETURN_ARG(
+                                                                QVariant,
+                                                                result),
+                                                        Q_ARG(
+                                                                QVariant,
+                                                                QVariant(0)))) {
+                                                return QVariantMap{};
+                                            }
+                                            return result.toMap();
+                                        };
+                                const QVariantMap wideProjection =
+                                        projectedBounds();
+                                const double projectionTolerance = 2.0;
+                                const bool exactWideProjection =
+                                        wideProjection.value(
+                                                              QStringLiteral(
+                                                                      "valid"))
+                                                .toBool() &&
+                                        std::abs(
+                                                wideProjection.value(
+                                                                      QStringLiteral(
+                                                                              "left"))
+                                                                .toDouble()) <=
+                                                projectionTolerance &&
+                                        std::abs(
+                                                wideProjection.value(
+                                                                      QStringLiteral(
+                                                                              "top"))
+                                                                .toDouble() -
+                                                52.0) <=
+                                                projectionTolerance &&
+                                        std::abs(
+                                                wideProjection.value(
+                                                                      QStringLiteral(
+                                                                              "right"))
+                                                                .toDouble() -
+                                                whiteboardPlaneView->width()) <=
+                                                projectionTolerance &&
+                                        std::abs(
+                                                wideProjection.value(
+                                                                      QStringLiteral(
+                                                                              "bottom"))
+                                                                .toDouble() -
+                                                whiteboardPlaneView->height()) <=
+                                                projectionTolerance;
+                                auto *const viewerWindow =
+                                        qobject_cast<QQuickWindow *>(root);
+                                const int originalWindowWidth =
+                                        viewerWindow != nullptr
+                                        ? viewerWindow->width() : 0;
+                                const int originalWindowHeight =
+                                        viewerWindow != nullptr
+                                        ? viewerWindow->height() : 0;
+                                if (viewerWindow != nullptr) {
+                                    viewerWindow->setWidth(1240);
+                                    viewerWindow->setHeight(620);
+                                    QCoreApplication::processEvents();
+                                    QCoreApplication::processEvents();
+                                }
+                                const QVariantMap compactProjection =
+                                        projectedBounds();
+                                const bool exactCompactProjection =
+                                        compactProjection.value(
+                                                                 QStringLiteral(
+                                                                         "valid"))
+                                                .toBool() &&
+                                        std::abs(
+                                                compactProjection.value(
+                                                                         QStringLiteral(
+                                                                                 "left"))
+                                                        .toDouble()) <=
+                                                projectionTolerance &&
+                                        std::abs(
+                                                compactProjection.value(
+                                                                         QStringLiteral(
+                                                                                 "top"))
+                                                        .toDouble() -
+                                                52.0) <=
+                                                projectionTolerance &&
+                                        std::abs(
+                                                compactProjection.value(
+                                                                         QStringLiteral(
+                                                                                 "right"))
+                                                        .toDouble() -
+                                                whiteboardPlaneView->width()) <=
+                                                projectionTolerance &&
+                                        std::abs(
+                                                compactProjection.value(
+                                                                         QStringLiteral(
+                                                                                 "bottom"))
+                                                        .toDouble() -
+                                                whiteboardPlaneView->height()) <=
+                                                projectionTolerance;
+                                if (viewerWindow != nullptr) {
+                                    viewerWindow->setWidth(
+                                            originalWindowWidth);
+                                    viewerWindow->setHeight(
+                                            originalWindowHeight);
+                                    QCoreApplication::processEvents();
+                                    QCoreApplication::processEvents();
+                                }
+                                const bool whiteboardFreeMode =
+                                        whiteboardViewport != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "enableFreeCamera");
+                                QCoreApplication::processEvents();
+                                const bool whiteboardDetached =
+                                        whiteboardFreeMode &&
+                                        whiteboardViewport
+                                                        ->property(
+                                                                "exactWhiteboardBoardIndex")
+                                                        .toInt() == -1 &&
+                                        whiteboardViewport
+                                                        ->property(
+                                                                "cameraFieldOfView")
+                                                        .toDouble() == 55.0;
+                                QVariant whiteboardPlaneFocusEnabled;
+                                const bool whiteboardFreePlaneDetached =
+                                        whiteboardDetached &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "whiteboardPlaneFocusEnabled",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        whiteboardPlaneFocusEnabled)) &&
+                                        !whiteboardPlaneFocusEnabled.toBool();
+                                const bool whiteboardTargetRefocused =
+                                        whiteboardViewport != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "focusLastObject");
+                                QCoreApplication::processEvents();
+                                const bool whiteboardExactProjection =
+                                        whiteboardViewRestored &&
+                                        placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "projectionVersion"))
+                                                        .toInt() == 1 &&
+                                        placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "projection"))
+                                                        .toString() ==
+                                                QStringLiteral(
+                                                        "perspective-vertical") &&
+                                        whiteboardViewport
+                                                        ->property(
+                                                                "exactWhiteboardBoardIndex")
+                                                        .toInt() == 0 &&
+                                        whiteboardViewport
+                                                        ->property(
+                                                                "exactWhiteboardBoardId")
+                                                        .toString() ==
+                                                placedBoard.value(
+                                                           QStringLiteral(
+                                                                   "id"))
+                                                        .toString() &&
+                                        whiteboardDetached &&
+                                        whiteboardTargetRefocused &&
+                                        std::abs(
+                                                whiteboardViewport
+                                                        ->property("orbitYaw")
+                                                        .toDouble() -
+                                                savedYaw) <= 0.0001 &&
+                                        std::abs(
+                                                whiteboardViewport
+                                                        ->property("orbitPitch")
+                                                        .toDouble() -
+                                                savedPitch) <= 0.0001 &&
+                                        std::abs(
+                                                whiteboardViewport
+                                                        ->property(
+                                                                "orbitDistance")
+                                                        .toDouble() -
+                                                savedDistance) <= 0.0001 &&
+                                        std::abs(
+                                                whiteboardViewport
+                                                        ->property(
+                                                                "cameraFieldOfView")
+                                                        .toDouble() -
+                                                savedFieldOfView) <= 0.0001 &&
+                                        whiteboardFreePlaneDetached &&
+                                        exactWideProjection &&
+                                        exactCompactProjection;
                                 const bool whiteboardPlaneState =
                                         whiteboardPlaced &&
+                                        whiteboardExactProjection &&
                                         whiteboardWorldPick &&
                                         whiteboard->count() == 0 &&
                                         whiteboard->boardCount() == 1 &&

@@ -467,6 +467,7 @@ ApplicationWindow {
                     property real orbitYaw: 35
                     property real orbitPitch: -20
                     property real orbitDistance: 38
+                    property real cameraFieldOfView: 55
                     property bool freeCamera: false
                     property vector3d freeCameraPosition:
                         Qt.vector3d(0, 0, 0)
@@ -489,6 +490,10 @@ ApplicationWindow {
                                 + cameraForward.z * orbitDistance)
                     property bool hasObjectFocus: false
                     property bool cuboidFocused: false
+                    property int exactWhiteboardBoardIndex: -1
+                    property string exactWhiteboardBoardId: ""
+                    property int lastFocusedWhiteboardIndex: -1
+                    property string lastFocusedWhiteboardId: ""
                     property vector3d cuboidFocusCenter:
                         Qt.vector3d(0, 0, 0)
                     readonly property vector3d cameraTarget:
@@ -676,12 +681,26 @@ ApplicationWindow {
                         const position = viewCamera.scenePosition
                         freeCameraPosition = Qt.vector3d(
                             position.x, position.y, position.z)
+                        exactWhiteboardBoardIndex = -1
+                        exactWhiteboardBoardId = ""
+                        cameraFieldOfView = 55
                         freeCamera = true
                         cuboidFocused = false
                     }
 
+                    function leaveExactWhiteboardView() {
+                        if (exactWhiteboardBoardIndex < 0)
+                            return
+                        exactWhiteboardBoardIndex = -1
+                        exactWhiteboardBoardId = ""
+                        cameraFieldOfView = 55
+                    }
+
                     function focusCurrentCar() {
                         releaseFreeMovement()
+                        exactWhiteboardBoardIndex = -1
+                        exactWhiteboardBoardId = ""
+                        cameraFieldOfView = 55
                         freeCamera = false
                         cuboidFocused = false
                     }
@@ -689,19 +708,78 @@ ApplicationWindow {
                     function resetCameraFocus() {
                         focusCurrentCar()
                         hasObjectFocus = false
+                        lastFocusedWhiteboardIndex = -1
+                        lastFocusedWhiteboardId = ""
                         cuboidFocusCenter = Qt.vector3d(0, 0, 0)
+                    }
+
+                    function whiteboardIndexForId(id) {
+                        if (id.length === 0)
+                            return -1
+                        const boards = window.viewer.whiteboard.boards
+                        for (let index = 0; index < boards.length; ++index) {
+                            if (boards[index].id === id)
+                                return index
+                        }
+                        return -1
+                    }
+
+                    function synchronizeWhiteboardFocus() {
+                        if (lastFocusedWhiteboardId.length === 0)
+                            return
+                        const index = whiteboardIndexForId(
+                            lastFocusedWhiteboardId)
+                        const board = index >= 0
+                            ? window.viewer.whiteboard.boards[index] : null
+                        if (!board || !board.isCurrentMap) {
+                            if (exactWhiteboardBoardId ===
+                                    lastFocusedWhiteboardId) {
+                                exactWhiteboardBoardIndex = -1
+                                exactWhiteboardBoardId = ""
+                                cameraFieldOfView = 55
+                                freeCamera = false
+                                cuboidFocused = false
+                            }
+                            lastFocusedWhiteboardIndex = -1
+                            lastFocusedWhiteboardId = ""
+                            hasObjectFocus = false
+                            return
+                        }
+                        lastFocusedWhiteboardIndex = index
+                        if (exactWhiteboardBoardId ===
+                                lastFocusedWhiteboardId) {
+                            exactWhiteboardBoardIndex = index
+                        }
                     }
 
                     function focusLastObject() {
                         if (!hasObjectFocus)
                             return
+                        const whiteboardIndex = whiteboardIndexForId(
+                            lastFocusedWhiteboardId)
+                        if (whiteboardIndex >= 0) {
+                            const board = window.viewer.whiteboard.boards[
+                                whiteboardIndex]
+                            if (board && board.isCurrentMap) {
+                                restoreWhiteboardView(board)
+                                return
+                            }
+                        }
                         releaseFreeMovement()
+                        exactWhiteboardBoardIndex = -1
+                        exactWhiteboardBoardId = ""
+                        cameraFieldOfView = 55
                         freeCamera = false
                         cuboidFocused = true
                     }
 
                     function focusCuboid(center, size) {
                         releaseFreeMovement()
+                        exactWhiteboardBoardIndex = -1
+                        exactWhiteboardBoardId = ""
+                        lastFocusedWhiteboardIndex = -1
+                        lastFocusedWhiteboardId = ""
+                        cameraFieldOfView = 55
                         cuboidFocusCenter = center
                         hasObjectFocus = true
                         freeCamera = false
@@ -715,27 +793,58 @@ ApplicationWindow {
                     function captureWhiteboardView() {
                         const camera = viewCamera.scenePosition
                         const target = cameraTarget
-                        const deltaX = target.x - camera.x
-                        const deltaY = target.y - camera.y
-                        const deltaZ = target.z - camera.z
-                        const length = Math.max(
-                            0.001,
-                            Math.sqrt(deltaX * deltaX
-                                      + deltaY * deltaY
-                                      + deltaZ * deltaZ))
+                        const viewportWidth = Math.max(1, width)
+                        const viewportHeight = Math.max(1, height)
+                        const contentX = 0
+                        const contentY = Math.min(
+                            1, whiteboardOverlay.boardTop / viewportHeight)
+                        const contentWidth = 1
+                        const contentHeight = Math.max(
+                            0.000001, 1 - contentY)
                         const planeDistance = Math.max(
-                            0.001,
-                            Math.min(length - 0.001,
-                                     length * 0.32))
-                        const planeHeight = 2 * Math.tan(
-                            viewCamera.fieldOfView * Math.PI / 360)
-                            * planeDistance * 0.72
-                        const aspect = whiteboardOverlay.width
-                            / Math.max(
+                            viewCamera.clipNear * 2,
+                            Math.min(
+                                Math.max(0.05, orbitDistance - 0.01),
+                                Math.max(0.05, orbitDistance * 0.32)))
+                        const fullHeight = 2 * Math.tan(
+                            cameraFieldOfView * Math.PI / 360)
+                            * planeDistance
+                        const fullWidth = fullHeight
+                            * viewportWidth / viewportHeight
+                        const planeWidth = fullWidth * contentWidth
+                        const planeHeight = fullHeight * contentHeight
+                        const contentCenterX =
+                            contentX + contentWidth * 0.5
+                        const contentCenterY =
+                            contentY + contentHeight * 0.5
+                        const rightOffset =
+                            fullWidth * (contentCenterX - 0.5)
+                        const upOffset =
+                            fullHeight * (0.5 - contentCenterY)
+                        const yaw = orbitYaw * Math.PI / 180
+                        const pitch = orbitPitch * Math.PI / 180
+                        const right = Qt.vector3d(
+                            Math.cos(yaw), 0, -Math.sin(yaw))
+                        const up = Qt.vector3d(
+                            Math.sin(yaw) * Math.sin(pitch),
+                            Math.cos(pitch),
+                            Math.cos(yaw) * Math.sin(pitch))
+                        return {
+                            "projection": "perspective-vertical",
+                            "fieldOfView": cameraFieldOfView,
+                            "planeDistance": planeDistance,
+                            "viewportWidth": viewportWidth,
+                            "viewportHeight": viewportHeight,
+                            "contentX": contentX,
+                            "contentY": contentY,
+                            "contentWidth": contentWidth,
+                            "contentHeight": contentHeight,
+                            "canvasWidth": Math.max(
+                                1, whiteboardOverlay.width),
+                            "canvasHeight": Math.max(
                                 1,
                                 whiteboardOverlay.height
-                                - whiteboardOverlay.boardTop)
-                        return {
+                                - whiteboardOverlay.boardTop),
                             "targetX": target.x,
                             "targetY": target.y,
                             "targetZ": target.z,
@@ -743,12 +852,18 @@ ApplicationWindow {
                             "pitch": orbitPitch,
                             "distance": orbitDistance,
                             "planeX": camera.x
-                                      + deltaX / length * planeDistance,
+                                      + cameraForward.x * planeDistance
+                                      + right.x * rightOffset
+                                      + up.x * upOffset,
                             "planeY": camera.y
-                                      + deltaY / length * planeDistance,
+                                      + cameraForward.y * planeDistance
+                                      + right.y * rightOffset
+                                      + up.y * upOffset,
                             "planeZ": camera.z
-                                      + deltaZ / length * planeDistance,
-                            "planeWidth": planeHeight * aspect,
+                                      + cameraForward.z * planeDistance
+                                      + right.z * rightOffset
+                                      + up.z * upOffset,
+                            "planeWidth": planeWidth,
                             "planeHeight": planeHeight
                         }
                     }
@@ -765,6 +880,22 @@ ApplicationWindow {
                         orbitYaw = board.yaw
                         orbitPitch = board.pitch
                         orbitDistance = board.distance
+                        cameraFieldOfView =
+                            board.projectionVersion >= 1
+                            ? board.fieldOfView : 55
+                        exactWhiteboardBoardIndex =
+                            board.projectionVersion >= 1
+                            ? board.boardIndex : -1
+                        exactWhiteboardBoardId =
+                            board.projectionVersion >= 1
+                            ? board.id : ""
+                        lastFocusedWhiteboardIndex = board.boardIndex
+                        lastFocusedWhiteboardId = board.id
+                    }
+
+                    function whiteboardPlaneFocusEnabled() {
+                        return !window.viewer.whiteboard.active
+                            && !freeCamera
                     }
 
                     Timer {
@@ -1741,7 +1872,10 @@ ApplicationWindow {
                                    ? 0 : viewport.orbitDistance
                                 clipNear: dynamicClipPlanes.x
                                 clipFar: dynamicClipPlanes.y
-                                fieldOfView: 55
+                                fieldOfView:
+                                    viewport.cameraFieldOfView
+                                fieldOfViewOrientation:
+                                    PerspectiveCamera.Vertical
                             }
                         }
 
@@ -2040,6 +2174,8 @@ ApplicationWindow {
                                 clipNear: dynamicClipPlanes.x
                                 clipFar: dynamicClipPlanes.y
                                 fieldOfView: viewCamera.fieldOfView
+                                fieldOfViewOrientation:
+                                    PerspectiveCamera.Vertical
                             }
                         }
 
@@ -2091,6 +2227,17 @@ ApplicationWindow {
                         orbitPitch: viewport.orbitPitch
                         orbitDistance: viewport.orbitDistance
                         fieldOfView: viewCamera.fieldOfView
+                        exactBoardIndex:
+                            viewport.exactWhiteboardBoardIndex
+                        contentTop: whiteboardOverlay.boardTop
+                    }
+
+                    Connections {
+                        target: window.viewer.whiteboard
+
+                        function onBoardsChanged() {
+                            viewport.synchronizeWhiteboardFocus()
+                        }
                     }
 
                     Connections {
@@ -2158,7 +2305,7 @@ ApplicationWindow {
                                 viewport.cuboidPointerCaptured = true
                                 return
                             }
-                            if (!window.viewer.whiteboard.active) {
+                            if (viewport.whiteboardPlaneFocusEnabled()) {
                                 const boardIndex =
                                     whiteboardPlaneView.pickBoard(
                                         mouse.x, mouse.y)
@@ -2253,6 +2400,7 @@ ApplicationWindow {
                             }
                             if (viewport.cuboidPointerCaptured)
                                 return
+                            viewport.leaveExactWhiteboardView()
                             viewport.orbitYaw -= mouse.x - previousX
                             viewport.orbitPitch = Math.max(
                                 -85,
@@ -2279,6 +2427,7 @@ ApplicationWindow {
                             viewport.cuboidPointerCaptured = false
                         }
                         onWheel: wheel => {
+                            viewport.leaveExactWhiteboardView()
                             const factor = Math.exp(
                                 -wheel.angleDelta.y / 1200)
                             viewport.orbitDistance = Math.max(
