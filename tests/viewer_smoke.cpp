@@ -30,16 +30,22 @@ using forevervalidator::experimental::PhysicsSandboxSwitchState;
 std::vector<forevertas::SearchTimelineFrame> SyntheticSearchTimeline() {
     std::vector<forevertas::SearchTimelineFrame> frames;
     frames.reserve(1001u);
+    const QQuaternion rotation =
+            (QQuaternion::fromAxisAndAngle(
+                     0.0f, 1.0f, 0.0f, 35.0f) *
+             QQuaternion::fromAxisAndAngle(
+                     1.0f, 0.0f, 0.0f, 20.0f))
+                    .normalized();
     for (std::int64_t tick = 0; tick <= 1000; ++tick) {
         frames.push_back({
                 tick * 10,
                 static_cast<float>(tick) * 0.01f,
                 0.0f,
                 0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
+                rotation.x(),
+                rotation.y(),
+                rotation.z(),
+                rotation.scalar(),
                 tick >= 10 && tick < 700 ? 1.0f : 0.0f,
                 tick >= 700 && tick < 800 ? 1.0f : 0.0f,
                 tick >= 100 && tick < 300
@@ -901,6 +907,45 @@ int main(int argc, char **argv) {
                         return;
                     }
                     if (!takeoverVerificationStarted) {
+                        viewer.setCurrentTick(500);
+                        viewer.setCameraPreset(3);
+                        const QVector3D carForward =
+                                viewer.carRotation().rotatedVector(
+                                        QVector3D(0.0f, 0.0f, 1.0f));
+                        const QVector3D internalForward =
+                                viewer.carCameraTarget() -
+                                viewer.carCameraPosition();
+                        const float internalAlignment =
+                                QVector3D::dotProduct(
+                                        carForward.normalized(),
+                                        internalForward.normalized());
+                        const bool internalOrientationValid =
+                                viewer.carCameraAvailable() &&
+                                viewer.hideSelectedCar() &&
+                                carForward.x() > 0.1f &&
+                                carForward.y() < -0.05f &&
+                                internalForward.lengthSquared() >
+                                        0.000001f &&
+                                internalAlignment > 0.999f;
+                        cameraPresetsValid &= internalOrientationValid;
+                        viewer.setCameraPreset(1);
+                        if (!internalOrientationValid) {
+                            completed = true;
+                            std::cerr
+                                    << "internal camera did not follow the "
+                                       "vehicle orientation: carForward="
+                                    << carForward.x() << ','
+                                    << carForward.y() << ','
+                                    << carForward.z()
+                                    << " cameraForward="
+                                    << internalForward.x() << ','
+                                    << internalForward.y() << ','
+                                    << internalForward.z()
+                                    << " alignment="
+                                    << internalAlignment << '\n';
+                            application.quit();
+                            return;
+                        }
                         takeoverVerificationStarted = true;
                         bool takeoverPreviewPublished = false;
                         const QMetaObject::Connection previewConnection =

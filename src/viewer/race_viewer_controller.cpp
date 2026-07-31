@@ -87,11 +87,11 @@ public:
                 run.frames.back().timeMs);
         const RaceViewerFrame sampled = SampleFrame(run.frames, clampedTime);
         if (preset == 3) {
-            // The game exposes the vehicle-facing axes through GmIso4 rows.
-            // Qt scene nodes expect local-to-world axes as columns, so transpose
-            // the orthonormal basis by conjugating its quaternion.
-            const QQuaternion vehicleRotation =
-                    sampled.rotation.conjugated().normalized();
+            // RaceViewerFrame::rotation is already the Qt local-to-world
+            // rotation used by the rendered car. A Qt camera looks down its
+            // local -Z axis while the car faces local +Z, so the only required
+            // adjustment is the fixed 180-degree camera-axis rotation.
+            const QQuaternion vehicleRotation = sampled.rotation.normalized();
             *position = sampled.position +
                     vehicleRotation.rotatedVector(
                             resources_->hoodLocalPosition);
