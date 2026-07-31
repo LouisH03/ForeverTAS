@@ -26,13 +26,6 @@ if(WIN32)
     set(debug_worker
         "${FOREVERTAS_STAGE_DIR}/forevertas-simulation-debug-worker.exe")
     set(license "${FOREVERTAS_STAGE_DIR}/licenses/LICENSE")
-elseif(APPLE)
-    set(executable
-        "${FOREVERTAS_STAGE_DIR}/ForeverTAS.app/Contents/MacOS/ForeverTAS")
-    set(debug_worker
-        "${FOREVERTAS_STAGE_DIR}/ForeverTAS.app/Contents/MacOS/forevertas-simulation-debug-worker")
-    set(license
-        "${FOREVERTAS_STAGE_DIR}/ForeverTAS.app/Contents/Resources/licenses/LICENSE")
 else()
     set(executable "${FOREVERTAS_STAGE_DIR}/bin/ForeverTAS")
     set(debug_worker

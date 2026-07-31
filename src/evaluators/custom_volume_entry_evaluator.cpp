@@ -263,17 +263,18 @@ std::optional<Prism> ParsePrism(const OptionSettings &settings) {
     const auto origin = ReadVector3Settings(
             settings, "originX", "originY", "originZ");
     const auto depthSetting = settings.find("depth");
-    const auto depth = depthSetting == settings.end()
-            ? std::optional<double>{}
-            : ParseFiniteDouble(depthSetting->second);
     const auto polygonSetting = settings.find("polygon");
     const auto planeSetting = settings.find("plane");
-    if (!origin || !depth || *depth <= 0.0 ||
+    if (!origin || depthSetting == settings.end() ||
+        polygonSetting == settings.end() || planeSetting == settings.end()) {
+        return std::nullopt;
+    }
+    const auto depth = ParseFiniteDouble(depthSetting->second);
+    if (!depth || *depth <= 0.0 ||
         *depth > kMaximumCoordinate ||
         std::abs(origin->x) > kMaximumCoordinate ||
         std::abs(origin->y) > kMaximumCoordinate ||
-        std::abs(origin->z) > kMaximumCoordinate ||
-        polygonSetting == settings.end() || planeSetting == settings.end()) {
+        std::abs(origin->z) > kMaximumCoordinate) {
         return std::nullopt;
     }
     const auto polygon = ParsePolygon(polygonSetting->second);

@@ -10,11 +10,12 @@ native Qt runtime, and wrap it in the expected portable format.
 | --- | --- | --- |
 | Linux | `ForeverTAS-<version>-linux-<arch>.AppImage` | Mark executable and run |
 | Windows | `ForeverTAS-<version>-windows-<arch>.zip` | Extract and run `ForeverTAS.exe` |
-| macOS | `ForeverTAS-<version>-macos-<arch>.dmg` | Open and drag `ForeverTAS.app` |
 
 Each artifact is native to its operating system. The search and physics code is
 compiled directly for the target platform; Wine or another compatibility layer
 is not part of the release runtime.
+
+macOS is not supported, and CMake rejects attempts to configure a macOS build.
 
 ## Canonical install tree
 
@@ -35,15 +36,14 @@ launches that installed application using the QML smoke mode.
 
 `packaging/icons/dev.skycrafter.forevertas.svg` is the canonical application
 icon used by the running Qt application and Linux desktops. Regenerate the
-committed Linux PNG, Windows ICO, and macOS ICNS assets after changing it:
+committed Linux PNG and Windows ICO assets after changing it:
 
 ```sh
 ./packaging/icons/generate-icons.sh
 ```
 
-The generator requires Inkscape, ImageMagick, Python 3, and Pillow. Run it with
-`--check` to verify that all platform assets match the canonical SVG without
-modifying them.
+The generator requires Inkscape and ImageMagick. Run it with `--check` to verify
+that all platform assets match the canonical SVG without modifying them.
 
 ## Linux AppImage
 
@@ -94,36 +94,20 @@ CMake's Qt QML deployment script invokes the native Windows deployment tooling
 during installation. CPack then creates a ZIP containing the executable,
 compiler runtime, Qt DLLs, QML modules, plugins, icons, and licenses. No
 installer or registry write is required to launch it.
-
-## macOS application and DMG
-
-Run on a native macOS host with Qt and Ninja available:
-
-```sh
-./packaging/macos/build-dmg.sh
-```
-
-The application is built as `ForeverTAS.app`. Qt's deployment script embeds the
-frameworks, plugins, and QML modules inside the bundle, and CPack's DragNDrop
-generator produces the DMG.
-
-The default output is unsigned. A public macOS release should be signed with a
-Developer ID certificate and notarized after the bundle has been assembled.
-Windows code signing is also recommended for public downloads, but is separate
-from the portable layout.
+Code signing is recommended for public downloads but remains separate from the
+portable layout.
 
 ## GitHub Actions
 
 `.github/workflows/package.yml` runs on version tags and manual dispatch. It
-builds and tests the same revision natively on Linux, Windows, and macOS, then
-uploads each portable artifact and its checksum.
+builds and tests the same revision natively on Linux and Windows, then uploads
+each portable artifact and its checksum.
 
 ## Settings and writable data
 
 The executable bundle is portable in the no-installation sense. ForeverTAS
 settings continue to use Qt's platform-native per-user settings location. They
-are deliberately not stored inside the bundle: an AppImage is mounted
-read-only, and installed macOS application bundles should also be treated as
+are deliberately not stored inside the bundle because an AppImage is mounted
 read-only. A future USB-style data mode should use an explicit writable data
 directory outside the application artifact.
 
