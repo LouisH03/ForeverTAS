@@ -93,12 +93,15 @@ ColumnLayout {
                          || root.controller.customVolumeTargets.count
                             < root.controller.customVolumeTargets.maximumCount)
             Layout.preferredWidth: 38
-            onClicked: addShapeMenu.open()
+            onClicked: addShapeMenu.popup(
+                           addShapeButton, 0, addShapeButton.height)
             ToolTip.visible: hovered
             ToolTip.text: qsTr("Add shape target")
 
             Menu {
                 id: addShapeMenu
+
+                objectName: "addShapeTargetMenu"
 
                 ThemeControls.ThemedMenuItem {
                     text: qsTr("Cuboid")
@@ -201,6 +204,7 @@ ColumnLayout {
         Vector3Settings {
             objectName: "cuboidCenterSettings"
             title: qsTr("Center")
+            decimals: 2
             settings: root.selected
             running: root.controller.running
             xKey: "centerX"
@@ -217,6 +221,7 @@ ColumnLayout {
         Vector3Settings {
             objectName: "cuboidSizeSettings"
             title: qsTr("Size")
+            decimals: 2
             settings: root.selected
             running: root.controller.running
             xKey: "sizeX"
@@ -257,6 +262,7 @@ ColumnLayout {
         Vector3Settings {
             objectName: "customVolumeOriginSettings"
             title: qsTr("Plane origin")
+            decimals: 2
             settings: root.selected
             running: root.controller.running
                      || root.controller.customVolumeDrawing
@@ -281,7 +287,7 @@ ColumnLayout {
             running: root.controller.running
                      || root.controller.customVolumeDrawing
             integer: false
-            decimals: 3
+            decimals: 2
             dragStep: 0.1
             minimum: 0.001
             maximum: 10000000
@@ -356,13 +362,15 @@ ColumnLayout {
                     horizontalAlignment: Text.AlignHCenter
                 }
                 ScrubNumberField {
+                    objectName: "customVolumeVertexUField_" + modelData.index
                     Layout.fillWidth: true
                     scrubLabel: "U"
+                    liveScrub: false
                     value: modelData.u
                     enabled: !root.controller.running
                              && !root.controller.customVolumeDrawing
                     integer: false
-                    decimals: 3
+                    decimals: 2
                     dragStep: 0.1
                     minimum: -10000000
                     maximum: 10000000
@@ -374,13 +382,15 @@ ColumnLayout {
                             value)
                 }
                 ScrubNumberField {
+                    objectName: "customVolumeVertexVField_" + modelData.index
                     Layout.fillWidth: true
                     scrubLabel: "V"
+                    liveScrub: false
                     value: modelData.v
                     enabled: !root.controller.running
                              && !root.controller.customVolumeDrawing
                     integer: false
-                    decimals: 3
+                    decimals: 2
                     dragStep: 0.1
                     minimum: -10000000
                     maximum: 10000000

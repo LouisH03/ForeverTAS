@@ -92,6 +92,8 @@ private:
         float depth = 5.0F;
         std::vector<QPointF> vertices;
         std::unique_ptr<forevertas::viewer::CustomVolumeGeometry> geometry;
+        std::unique_ptr<forevertas::viewer::CustomVolumeGeometry>
+                stagingGeometry;
     };
 
     QVariantMap toVariantMap(const Target &target, bool selected) const;

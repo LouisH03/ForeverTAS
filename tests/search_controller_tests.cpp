@@ -262,6 +262,10 @@ bool TestCuboidControllerSynchronization() {
 bool TestCustomVolumeTargets() {
     QSettings().clear();
     CustomVolumeTargetModel model;
+    QObject *const initialGeometry =
+            model.selectedTarget()
+                    .value(QStringLiteral("geometry"))
+                    .value<QObject *>();
     bool okay = Check(model.count() == 1 &&
                               model.selectedTarget()
                                       .value(QStringLiteral("valid"))
@@ -283,12 +287,19 @@ bool TestCustomVolumeTargets() {
             model.selectedTarget()
                     .value(QStringLiteral("polygon"))
                     .toString();
+    QObject *const editedGeometry =
+            model.selectedTarget()
+                    .value(QStringLiteral("geometry"))
+                    .value<QObject *>();
     okay &= Check(editedPolygon != originalPolygon &&
+                          initialGeometry != nullptr &&
+                          editedGeometry != nullptr &&
+                          editedGeometry != initialGeometry &&
                           model.selectedTarget()
                                           .value(QStringLiteral("depth"))
                                           .toString() ==
                                   QStringLiteral("7.5"),
-                  "polygon and extrusion properties did not update");
+                  "polygon and extrusion geometry did not update");
     okay &= Check(model.beginDrawing() && model.drawing() &&
                           model.selectedTarget()
                                           .value(QStringLiteral("vertexCount"))

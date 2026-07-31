@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSet>
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
@@ -87,6 +88,17 @@ std::vector<PhysicsSandboxInputEvent> SyntheticSearchInputs() {
             AnalogInput(500, PhysicsSandboxInputAction::Steer, -32768),
             SwitchInput(1000, PhysicsSandboxInputAction::Brake, true),
             SwitchInput(1500, PhysicsSandboxInputAction::SteerRight, true)};
+}
+
+template <typename Predicate>
+bool WaitUntil(Predicate predicate, int timeoutMs = 60000) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    return predicate();
 }
 
 qint64 FindActivityTick(const RaceViewerController &viewer, char channel) {
@@ -275,7 +287,7 @@ int main(int argc, char **argv) {
                                         .toMap()
                                         .value(QStringLiteral("name"))
                                         .toString() ==
-                                        QStringLiteral("Manual") &&
+                                        QStringLiteral("Inputs") &&
                                 trajectoryPaths.front()
                                                 .toMap()
                                                 .value(QStringLiteral("kind"))
@@ -298,10 +310,16 @@ int main(int argc, char **argv) {
                                 QStringLiteral(
                                         "0.00 press up\n"
                                         "0.20 rel up"));
+                        const bool valuePreviewReady = WaitUntil([&]() {
+                            return viewer.runCount() == 1 &&
+                                    viewer.currentInputScript().contains(
+                                            QStringLiteral("0.20 rel up"));
+                        });
                         viewer.jumpToEnd();
                         const QVector3D valueEditedPosition =
                                 viewer.carPosition();
                         const bool valueEditApplied =
+                                valuePreviewReady &&
                                 viewer.trajectoryCount() == 1 &&
                                 viewer.runCount() == 1 &&
                                 viewer.currentInputScript().contains(
@@ -316,8 +334,13 @@ int main(int argc, char **argv) {
                                         "0.00 press left\n"
                                         "0.20 rel left\n"
                                         "0.20 rel up"));
+                        const bool eventPreviewReady = WaitUntil([&]() {
+                            return viewer.runCount() == 1 &&
+                                    FindActivityTick(viewer, 'l') >= 0;
+                        });
                         viewer.jumpToEnd();
                         const bool eventEditApplied =
+                                eventPreviewReady &&
                                 viewer.trajectoryCount() == 1 &&
                                 viewer.runCount() == 1 &&
                                 viewer.trajectoryPaths()
@@ -338,14 +361,23 @@ int main(int argc, char **argv) {
                                         "0.00 press left\n"
                                         "0.30 rel left\n"
                                         "0.30 rel up"));
+                        const bool playbackPreviewReady = WaitUntil([&]() {
+                            return viewer.currentInputScript().contains(
+                                    QStringLiteral("0.30 rel up"));
+                        });
                         const bool playbackContinuedAfterEdit =
+                                playbackPreviewReady &&
                                 viewer.playing() &&
                                 viewer.selectedRunId() ==
                                         QStringLiteral("preview");
                         viewer.pause();
                         viewer.setPreviewInputScript(
                                 QStringLiteral("not a command"));
-                        const bool invalidEditCleared =
+                        const bool invalidEditCleared = WaitUntil([&]() {
+                            return viewer.trajectoryCount() == 0 &&
+                                    viewer.runCount() == 0 &&
+                                    viewer.selectedRunId().isEmpty();
+                        }) &&
                                 viewer.trajectoryCount() == 0 &&
                                 viewer.runCount() == 0 &&
                                 viewer.selectedRunId().isEmpty();
@@ -355,12 +387,17 @@ int main(int argc, char **argv) {
                                         "0.00 press left\n"
                                         "0.20 rel left\n"
                                         "0.20 rel up"));
+                        const bool finalPreviewReady = WaitUntil([&]() {
+                            return viewer.runCount() == 1 &&
+                                    FindActivityTick(viewer, 'l') >= 0;
+                        });
                         trajectoryPreviewValid =
                                 trajectoryGeometryValid &&
                                 valueEditApplied &&
                                 eventEditApplied &&
                                 playbackContinuedAfterEdit &&
                                 invalidEditCleared &&
+                                finalPreviewReady &&
                                 viewer.previewInputScript().contains(
                                         QStringLiteral("press left")) &&
                                 viewer.trajectoryCount() == 1 &&
@@ -596,10 +633,6 @@ int main(int argc, char **argv) {
                                                         &accelerationLoop,
                                                         &QEventLoop::quit);
                                                 accelerationLoop.exec();
-                                                viewer.setManualInput(
-                                                        QStringLiteral(
-                                                                "accelerate"),
-                                                        false);
                                                 const float distanceBeforeRespawn =
                                                         (viewer.carPosition() -
                                                          manualInitialPosition)
@@ -618,6 +651,11 @@ int main(int argc, char **argv) {
                                                         viewer.manualDriving() &&
                                                         viewer.currentTick() >
                                                                 tickBeforeRespawn &&
+                                                        viewer.manualAccelerate() &&
+                                                        viewer.inputSample(
+                                                                      viewer.currentTick())
+                                                                        .accelerate >
+                                                                0.99f &&
                                                         viewer.currentInputScript()
                                                                 .contains(
                                                                         QStringLiteral(
@@ -638,6 +676,7 @@ int main(int argc, char **argv) {
                                                         viewer.tickCount() ==
                                                                 1 &&
                                                         viewer.timeMs() == 0 &&
+                                                        viewer.manualAccelerate() &&
                                                         !viewer.currentInputScript()
                                                                  .contains(
                                                                          QStringLiteral(
@@ -651,6 +690,11 @@ int main(int argc, char **argv) {
                                                         &QEventLoop::quit);
                                                 respawnAfterGiveUpLoop.exec();
                                                 const bool respawnAfterGiveUpExecuted =
+                                                        viewer.manualAccelerate() &&
+                                                        viewer.inputSample(
+                                                                      viewer.currentTick())
+                                                                        .accelerate >
+                                                                0.99f &&
                                                         viewer.currentInputScript()
                                                                 .contains(
                                                                         QStringLiteral(
@@ -727,6 +771,17 @@ int main(int argc, char **argv) {
                     }
                     if (!takeoverVerificationStarted) {
                         takeoverVerificationStarted = true;
+                        bool takeoverPreviewPublished = false;
+                        const QMetaObject::Connection previewConnection =
+                                QObject::connect(
+                                        &viewer,
+                                        &forevertas::viewer::
+                                                RaceViewerController::
+                                                        stateChanged,
+                                        &application,
+                                        [&]() {
+                                            takeoverPreviewPublished = true;
+                                        });
                         viewer.setPreviewInputScript(
                                 QStringLiteral(
                                         "0.00 press up\n"
@@ -735,6 +790,10 @@ int main(int argc, char **argv) {
                                         "0.01 steer 32768\n"
                                         "1.00 steer 0\n"
                                         "2.00 rel up"));
+                        const bool takeoverPreviewReady = WaitUntil([&]() {
+                            return takeoverPreviewPublished;
+                        });
+                        QObject::disconnect(previewConnection);
                         viewer.setSelectedRunId(
                                 QStringLiteral("preview"));
                         viewer.setCurrentTick(1);
@@ -743,6 +802,7 @@ int main(int argc, char **argv) {
                         viewer.setManualInput(
                                 QStringLiteral("left"), false);
                         const bool disabledTakeoverIgnored =
+                                takeoverPreviewReady &&
                                 viewer.playing() &&
                                 !viewer.manualDriving() &&
                                 !viewer.manualSteeringTakenOver() &&

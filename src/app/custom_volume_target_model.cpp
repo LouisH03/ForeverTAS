@@ -153,6 +153,7 @@ int CustomVolumeTargetModel::addTarget(const QString &plane,
             {QPointF(-5.0, -5.0),
              QPointF(5.0, -5.0),
              QPointF(0.0, 5.0)},
+            NewGeometry(),
             NewGeometry()};
     rebuildGeometry(&target);
     targets_.push_back(std::move(target));
@@ -187,6 +188,7 @@ int CustomVolumeTargetModel::duplicateSelected() {
             duplicateOrigin,
             source.depth,
             source.vertices,
+            NewGeometry(),
             NewGeometry()};
     rebuildGeometry(&target);
     targets_.push_back(std::move(target));
@@ -742,11 +744,12 @@ QString CustomVolumeTargetModel::nextDefaultName() const {
 }
 
 void CustomVolumeTargetModel::rebuildGeometry(Target *target) {
-    target->geometry->setVolume(
+    target->stagingGeometry->setVolume(
             target->plane,
             target->origin,
             target->depth,
             target->vertices);
+    std::swap(target->geometry, target->stagingGeometry);
 }
 
 void CustomVolumeTargetModel::load(const QVariantMap &legacySettings) {
@@ -828,6 +831,7 @@ void CustomVolumeTargetModel::load(const QVariantMap &legacySettings) {
                         origin,
                         static_cast<float>(depth),
                         std::move(vertices),
+                        NewGeometry(),
                         NewGeometry()};
                 rebuildGeometry(&target);
                 targets_.push_back(std::move(target));
@@ -873,6 +877,7 @@ void CustomVolumeTargetModel::load(const QVariantMap &legacySettings) {
                                   QPointF(-5.0, -5.0),
                                   QPointF(5.0, -5.0),
                                   QPointF(0.0, 5.0)},
+                NewGeometry(),
                 NewGeometry()};
         rebuildGeometry(&target);
         targets_.push_back(std::move(target));

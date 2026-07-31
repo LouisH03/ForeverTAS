@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -23,6 +24,7 @@
 #include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -41,6 +43,17 @@
 #endif
 
 namespace {
+
+template <typename Predicate>
+bool WaitUntil(Predicate predicate, int timeoutMs = 60000) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    return predicate();
+}
 
 forevertas::SandboxInputEvent SwitchInput(
         std::int32_t timeMs,
@@ -753,7 +766,7 @@ int main(int argc, char **argv) {
             &application,
             [&]() {
                 if (completed || verificationScheduled || viewer.loading() ||
-                    !viewer.loaded()) {
+                    !viewer.loaded() || viewer.runCount() == 0) {
                     return;
                 }
                 verificationScheduled = true;
@@ -1076,6 +1089,9 @@ int main(int argc, char **argv) {
                     QObject *const baseInputScriptErrorLabel =
                             root->findChild<QObject *>(QStringLiteral(
                                     "baseInputScriptErrorLabel"));
+                    QObject *const saveBaseInputScriptShortcut =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "saveBaseInputScriptShortcut"));
                     QObject *const copyCurrentRaceInputsButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "copyCurrentRaceInputsButton"));
@@ -1272,11 +1288,13 @@ int main(int argc, char **argv) {
                             freeCameraButton != nullptr &&
                             focusCarButton != nullptr &&
                             focusObjectButton != nullptr &&
-                            !viewport->property("freeCamera").toBool() &&
+                            viewport->property("freeCamera").toBool() &&
                             viewport->property("cameraFocusMode")
                                             .toString() ==
-                                    QStringLiteral("car") &&
-                            focusCarButton->property("highlighted").toBool() &&
+                                    QStringLiteral("free") &&
+                            freeCameraButton->property("highlighted").toBool() &&
+                            focusCarButton->property("enabled").toBool() &&
+                            !focusCarButton->property("highlighted").toBool() &&
                             !focusObjectButton->property("enabled").toBool();
                     if (freeCameraUiValid) {
                         const QVector3D carTargetBeforeFree =
@@ -1323,6 +1341,53 @@ int main(int argc, char **argv) {
                         viewport->setProperty(
                                 "orbitYaw", yawBeforeFreeLook);
                         QCoreApplication::processEvents();
+                        const double pitchBeforeFreeLook =
+                                viewport->property("orbitPitch").toDouble();
+                        QVariant rotationUpdated;
+                        QVariant rotationStepped;
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport, "beginViewRotation") &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "updateViewRotation",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                rotationUpdated),
+                                        Q_ARG(QVariant, QVariant(20.0)),
+                                        Q_ARG(QVariant, QVariant(10.0))) &&
+                                std::abs(
+                                        viewport
+                                                        ->property(
+                                                                "viewRotationTargetYaw")
+                                                        .toDouble() -
+                                        (yawBeforeFreeLook - 10.0)) < 0.001 &&
+                                std::abs(
+                                        viewport
+                                                        ->property(
+                                                                "viewRotationTargetPitch")
+                                                        .toDouble() -
+                                        (pitchBeforeFreeLook - 5.0)) < 0.001 &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "stepViewRotation",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                rotationStepped),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(1.0 / 60.0))) &&
+                                rotationStepped.toBool() &&
+                                viewport->property("orbitYaw").toDouble() <
+                                        yawBeforeFreeLook &&
+                                viewport->property("orbitYaw").toDouble() >
+                                        yawBeforeFreeLook - 10.0;
+                        viewport->setProperty(
+                                "orbitYaw", yawBeforeFreeLook);
+                        viewport->setProperty(
+                                "orbitPitch", pitchBeforeFreeLook);
+                        QMetaObject::invokeMethod(
+                                viewport, "beginViewRotation");
                         QVariant movementAccepted;
                         freeCameraUiValid &=
                                 QMetaObject::invokeMethod(
@@ -1368,7 +1433,7 @@ int main(int argc, char **argv) {
                                 viewport->property("freeCameraTarget")
                                         .value<QVector3D>();
                         freeCameraUiValid &=
-                                firstMovementSpeed >= 12.9 &&
+                                firstMovementSpeed >= 38.9 &&
                                 (movedTarget - movementTarget)
                                                 .lengthSquared() >
                                         0.000001f;
@@ -2153,7 +2218,9 @@ int main(int argc, char **argv) {
                             bruteforceTabContent->isVisible() &&
                             simulationDebuggerPanel != nullptr &&
                             !simulationDebuggerPanel->isVisible() &&
-                            simulationDebuggerPanel->height() >= 650.0 &&
+                            simulationDebuggerPanel->height() + 0.5 >=
+                                    simulationDebuggerPanel
+                                            ->implicitHeight() &&
                             referenceLoadingWarning != nullptr &&
                             !referenceLoadingWarning->isVisible() &&
                             referenceLoadingWarning
@@ -2549,7 +2616,8 @@ int main(int argc, char **argv) {
                                         std::abs(
                                                 afterOuter - beforeOuter) <
                                                 0.1 &&
-                                        afterNested > 0.1;
+                                        afterNested >= std::min(
+                                                nestedMaximum, 119.0);
                                 if (!moved) {
                                     std::cerr
                                             << "nested wheel "
@@ -3194,6 +3262,10 @@ int main(int argc, char **argv) {
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
                                     QStringLiteral("addShapeTargetButton"));
+                    QObject *const addShapeMenu =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                    QStringLiteral("addShapeTargetMenu"));
                     QObject *const duplicateCuboidButton =
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
@@ -3226,11 +3298,38 @@ int main(int argc, char **argv) {
                                     ->selectedTarget()
                                     .value(QStringLiteral("sizeX"))
                                     .toDouble();
+                    const bool addMenuOpened =
+                            addCuboidButton != nullptr &&
+                            QMetaObject::invokeMethod(
+                                    addCuboidButton, "clicked");
+                    QCoreApplication::processEvents();
+                    auto *const addButtonItem =
+                            qobject_cast<QQuickItem *>(addCuboidButton);
+                    auto *const addMenuContent = addShapeMenu == nullptr
+                            ? nullptr
+                            : qobject_cast<QQuickItem *>(
+                                      addShapeMenu->property("contentItem")
+                                              .value<QObject *>());
+                    const bool addMenuBelowButton =
+                            addMenuOpened && addShapeMenu != nullptr &&
+                            addButtonItem != nullptr &&
+                            addMenuContent != nullptr &&
+                            addShapeMenu->property("visible").toBool() &&
+                            addMenuContent->mapToScene(QPointF()).y() + 0.5 >=
+                                    addButtonItem
+                                            ->mapToScene(QPointF(
+                                                    0,
+                                                    addButtonItem->height()))
+                                            .y();
+                    if (addShapeMenu != nullptr)
+                        QMetaObject::invokeMethod(addShapeMenu, "close");
                     QVariant beganResize;
                     bool cuboidEditorValid =
                             cuboidEditor != nullptr &&
                             cuboidSelector != nullptr &&
                             addCuboidButton != nullptr &&
+                            addShapeMenu != nullptr &&
+                            addMenuBelowButton &&
                             duplicateCuboidButton != nullptr &&
                             focusCuboidButton != nullptr &&
                             removeCuboidButton != nullptr &&
@@ -3810,11 +3909,43 @@ int main(int argc, char **argv) {
                         return;
                     }
 
-                    controller.setBaseInputScript(
-                            QStringLiteral(
-                                    "0.00 press up\n"
-                                    "0.10 rel up"));
+                    const QString shortInputScript = QStringLiteral(
+                            "0.00 press up\n"
+                            "0.11 rel up");
+                    const QString previousInputScript =
+                            controller.baseInputScript();
+                    const bool editorFocusedForSave =
+                            baseInputScriptTextArea != nullptr &&
+                            QMetaObject::invokeMethod(
+                                    baseInputScriptTextArea,
+                                    "forceActiveFocus");
+                    baseInputScriptTextArea->setProperty(
+                            "text", shortInputScript);
                     QCoreApplication::processEvents();
+                    const bool editWaitedForCommit =
+                            controller.baseInputScript() ==
+                                    previousInputScript;
+                    const bool ctrlSaveCommitted =
+                            editorFocusedForSave &&
+                            saveBaseInputScriptShortcut != nullptr &&
+                            saveBaseInputScriptShortcut
+                                    ->property("enabled")
+                                    .toBool() &&
+                            QMetaObject::invokeMethod(
+                                    saveBaseInputScriptShortcut,
+                                    "activated");
+                    const bool ctrlSavePreviewReady = WaitUntil([&]() {
+                        return viewer.runCount() == 1 &&
+                                viewer.inputSample(5).accelerate > 0.99f &&
+                                viewer.inputSample(20).accelerate < 0.01f;
+                    });
+                    const bool ctrlSaveUpdatedPreview =
+                            editWaitedForCommit &&
+                            ctrlSaveCommitted &&
+                            ctrlSavePreviewReady &&
+                            controller.baseInputScript() == shortInputScript &&
+                            viewer.previewInputScript() == shortInputScript &&
+                            viewer.trajectoryCount() == 1;
                     const QVariantList initialPreviewPaths =
                             viewer.trajectoryPaths();
                     QObject *const previewGeometry =
@@ -3827,19 +3958,35 @@ int main(int argc, char **argv) {
                     viewer.jumpToEnd();
                     const QVector3D shortAccelerationPosition =
                             viewer.carPosition();
-                    controller.setBaseInputScript(
-                            QStringLiteral(
-                                    "0.00 press up\n"
-                                    "0.20 rel up"));
+                    const QString longerInputScript = QStringLiteral(
+                            "0.00 press up\n"
+                            "0.21 rel up");
+                    baseInputScriptTextArea->setProperty(
+                            "text", longerInputScript);
                     QCoreApplication::processEvents();
+                    const bool secondEditWaitedForCommit =
+                            controller.baseInputScript() == shortInputScript;
+                    QMetaObject::invokeMethod(
+                            manualInputFocus, "forceActiveFocus");
+                    const bool focusLossPreviewReady = WaitUntil([&]() {
+                        return viewer.runCount() == 1 &&
+                                viewer.inputSample(15).accelerate > 0.99f &&
+                                viewer.inputSample(30).accelerate < 0.01f;
+                    });
                     viewer.jumpToEnd();
                     const QVector3D valueEditedPosition =
                             viewer.carPosition();
                     const bool valueEditUpdatedPreview =
+                            ctrlSaveUpdatedPreview &&
+                            secondEditWaitedForCommit &&
+                            focusLossPreviewReady &&
+                            controller.baseInputScript() ==
+                                    longerInputScript &&
+                            viewer.previewInputScript() == longerInputScript &&
                             viewer.trajectoryCount() == 1 &&
                             viewer.runCount() == 1 &&
                             viewer.currentInputScript().contains(
-                                    QStringLiteral("0.20 rel up")) &&
+                                    QStringLiteral("0.21 rel up")) &&
                             (valueEditedPosition -
                              shortAccelerationPosition)
                                             .lengthSquared() >
@@ -3850,9 +3997,13 @@ int main(int argc, char **argv) {
                                     "0.00 press left\n"
                                     "0.20 rel left\n"
                                     "0.20 rel up"));
-                    QCoreApplication::processEvents();
+                    const bool eventPreviewReady = WaitUntil([&]() {
+                        return viewer.runCount() == 1 &&
+                                viewer.inputSample(1).steering < -0.99f;
+                    });
                     viewer.jumpToEnd();
                     const bool eventEditUpdatedPreview =
+                            eventPreviewReady &&
                             viewer.trajectoryCount() == 1 &&
                             viewer.runCount() == 1 &&
                             viewer.trajectoryPaths()
@@ -3866,23 +4017,33 @@ int main(int argc, char **argv) {
                             viewer.inputSample(1).steering < -0.99f;
                     controller.setBaseInputScript(
                             QStringLiteral("not a command"));
-                    QCoreApplication::processEvents();
+                    const bool invalidPreviewReady = WaitUntil([&]() {
+                        return viewer.trajectoryCount() == 0 &&
+                                viewer.runCount() == 0;
+                    });
                     QCoreApplication::sendPostedEvents(
                             nullptr, QEvent::DeferredDelete);
                     const bool invalidEditRemovedStalePreview =
+                            invalidPreviewReady &&
                             viewer.trajectoryCount() == 0 &&
                             viewer.runCount() == 0 &&
                             root->findChildren<QObject *>(
                                         QStringLiteral(
                                                 "trajectoryPathModel"))
                                     .isEmpty();
+                    const bool carFocusUnavailableWithoutRun =
+                            focusCarButton != nullptr &&
+                            !focusCarButton->property("enabled").toBool();
                     controller.setBaseInputScript(
                             QStringLiteral(
                                     "0.00 press up\n"
                                     "0.00 press left\n"
                                     "0.20 rel left\n"
                                     "0.20 rel up"));
-                    QCoreApplication::processEvents();
+                    const bool finalPreviewReady = WaitUntil([&]() {
+                        return viewer.runCount() == 1 &&
+                                viewer.inputSample(1).steering < -0.99f;
+                    });
                     QCoreApplication::sendPostedEvents(
                             nullptr, QEvent::DeferredDelete);
                     const QList<QObject *> trajectoryModels =
@@ -3902,6 +4063,8 @@ int main(int argc, char **argv) {
                             valueEditUpdatedPreview &&
                             eventEditUpdatedPreview &&
                             invalidEditRemovedStalePreview &&
+                            carFocusUnavailableWithoutRun &&
+                            finalPreviewReady &&
                             root->findChild<QObject *>(
                                     QStringLiteral(
                                             "saveInputTrajectoryButton")) ==
@@ -3929,7 +4092,7 @@ int main(int argc, char **argv) {
                                             .toMap()
                                             .value(QStringLiteral("name"))
                                             .toString() ==
-                                    QStringLiteral("Manual") &&
+                                    QStringLiteral("Inputs") &&
                             trajectoryModels.size() == 1 &&
                             rayTracingTrajectoryModels.size() == 1 &&
                             rayTracingTrajectoryOverlay != nullptr &&
@@ -3951,6 +4114,18 @@ int main(int argc, char **argv) {
                                 << ", event=" << eventEditUpdatedPreview
                                 << ", invalid="
                                 << invalidEditRemovedStalePreview
+                                << ", ready=" << ctrlSavePreviewReady
+                                << "/" << focusLossPreviewReady
+                                << "/" << eventPreviewReady
+                                << "/" << invalidPreviewReady
+                                << "/" << finalPreviewReady
+                                << ", commit=" << ctrlSaveCommitted
+                                << "/" << secondEditWaitedForCommit
+                                << ", base='"
+                                << controller.baseInputScript().toStdString()
+                                << "', current='"
+                                << viewer.currentInputScript().toStdString()
+                                << "'"
                                 << ", paths=" << finalPreviewPaths.size()
                                 << ", runs=" << viewer.runCount()
                                 << ", selected="
@@ -5608,8 +5783,34 @@ int main(int argc, char **argv) {
                                                 return invoked &&
                                                         handled.toBool();
                                             };
-                                    viewer.startManualDrive();
+                                    QObject *const currentManualDriveButton =
+                                            currentRoot->findChild<QObject *>(
+                                                    QStringLiteral(
+                                                            "manualDriveButton"));
+                                    const bool driveClicked =
+                                            currentManualDriveButton != nullptr &&
+                                            QMetaObject::invokeMethod(
+                                                    currentManualDriveButton,
+                                                    "clicked");
                                     QCoreApplication::processEvents();
+                                    QObject *const currentViewport =
+                                            currentRoot->findChild<QObject *>(
+                                                    QStringLiteral(
+                                                            "raceViewport"));
+                                    const bool driveFocusedRealCar =
+                                            driveClicked &&
+                                            viewer.manualDriving() &&
+                                            viewer.selectedRunId() ==
+                                                    QStringLiteral("manual") &&
+                                            currentViewport != nullptr &&
+                                            !currentViewport
+                                                     ->property("freeCamera")
+                                                     .toBool() &&
+                                            currentViewport
+                                                            ->property(
+                                                                    "cameraFocusMode")
+                                                            .toString() ==
+                                                    QStringLiteral("car");
                                     const bool enterRespawn =
                                             invokeCurrentManualKey(
                                                     Qt::Key_Enter, true);
@@ -5668,6 +5869,7 @@ int main(int argc, char **argv) {
                                     viewer.stopManualDrive();
                                     QCoreApplication::processEvents();
                                     manualActionKeysValid =
+                                            driveFocusedRealCar &&
                                             enterRespawn &&
                                             enterRespawnExecuted &&
                                             releaseDidNotRepeat &&

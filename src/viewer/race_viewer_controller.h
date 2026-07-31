@@ -98,6 +98,15 @@ struct RaceViewerLoadResult {
     PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
 };
 
+struct RaceViewerInputPreviewResult {
+    QString error;
+    std::shared_ptr<ManualDriveRuntime> runtime;
+    std::vector<RaceViewerFrame> frames;
+    std::vector<SandboxInputEvent> inputs;
+    RaceViewerMeshBuffers mesh;
+    bool canceled = false;
+};
+
 class RaceViewerController final : public QObject {
     Q_OBJECT
 
@@ -321,7 +330,14 @@ private:
             std::uint64_t searchId,
             std::uint64_t improvementNumber,
             const std::vector<RaceViewerFrame> &frames);
-    bool rebuildInputPreview();
+    void scheduleInputPreviewRebuild();
+    void startInputPreviewBuild();
+    void applyInputPreviewResult(
+            std::uint64_t previewSerial,
+            std::uint64_t loadSerial,
+            RaceViewerInputPreviewResult result);
+    void cancelInputPreviewBuild();
+    void waitForInputPreviewWorker();
     void clearInputPreview();
     bool beginManualTakeover(const QString &input, bool active);
     bool applyManualInput(const QString &input, bool active);
@@ -345,9 +361,11 @@ private:
     void advanceManualDrive();
     void appendSimulationDebuggerFrame(const QVariantMap &frame);
     void setPlaying(bool value);
-    bool resetManualDriveSession(const QString &status);
+    bool resetManualDriveSession(const QString &status,
+                                 bool preserveHeldInputs = false);
     void finishManualDrive(const QString &status, bool releaseInputs);
     bool replaceManualInputs();
+    void appendHeldManualInputs(std::int32_t timeMs);
     void resetManualInputState();
 
     RaceGeometry trackFilledGeometry_;
@@ -431,8 +449,13 @@ private:
     QElapsedTimer manualDriveClock_;
     SimulationDebuggerModel simulationDebugger_;
     std::shared_ptr<ManualDriveRuntime> manualRuntime_;
+    std::shared_ptr<ManualDriveRuntime> inputPreviewRuntime_;
     QThread *workerThread_ = nullptr;
+    QThread *inputPreviewThread_ = nullptr;
     std::uint64_t loadSerial_ = 0u;
+    std::uint64_t inputPreviewSerial_ = 0u;
+    PhysicsBackend loadedBackend_ = PhysicsBackend::OptimizedCpu;
+    bool inputPreviewBuildPending_ = false;
 };
 
 }  // namespace forevertas::viewer

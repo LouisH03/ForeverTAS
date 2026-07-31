@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
                     if (completedLoads > 0) {
                         const bool preserved = viewer.loaded() &&
                                 viewer.ellipsoidCount() > 0 &&
-                                viewer.runCount() == 1;
+                                viewer.visualBatchCount() > 0;
                         preservedSceneDuringReload &= preserved;
                         if (!preserved) {
                             std::cerr
@@ -48,7 +48,10 @@ int main(int argc, char **argv) {
                     }
                     return;
                 }
-                if (!loadInProgress || !viewer.loaded()) return;
+                if (!loadInProgress || !viewer.loaded() ||
+                    viewer.runCount() == 0) {
+                    return;
+                }
                 loadInProgress = false;
 
                 const bool sceneValid =

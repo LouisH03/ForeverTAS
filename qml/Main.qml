@@ -189,6 +189,11 @@ ApplicationWindow {
             window.viewer.setManualInput(control, active)
     }
 
+    function commitBaseInputScript() {
+        if (window.controller.baseInputScript !== baseInputScriptArea.text)
+            window.controller.baseInputScript = baseInputScriptArea.text
+    }
+
     onActiveChanged: {
         if (!active) {
             window.viewer.releaseManualInputs()
@@ -199,6 +204,8 @@ ApplicationWindow {
     Component.onCompleted: Qt.callLater(function() {
         synchronizeRunPoses()
         synchronizeCarEllipsoids()
+        if (window.viewer.loaded)
+            viewport.enableFreeCamera()
     })
 
     Connections {
@@ -209,16 +216,16 @@ ApplicationWindow {
         }
         function onSceneChanged() {
             window.synchronizeCarEllipsoids()
+            viewport.resetCameraFocus()
+            Qt.callLater(function() {
+                viewport.enableFreeCamera()
+            })
         }
         function onPoseChanged() {
             window.synchronizeRunPoses()
         }
         function onSelectedRunChanged() {
             window.synchronizeRunPoses()
-        }
-        function onLoadedChanged() {
-            if (!window.viewer.loaded)
-                viewport.resetCameraFocus()
         }
     }
 
@@ -321,6 +328,14 @@ ApplicationWindow {
                  && !(window.viewer.takeOverOnInput
                       && window.viewer.playing)
         onActivated: window.stepViewerTick(1)
+    }
+
+    Shortcut {
+        objectName: "saveBaseInputScriptShortcut"
+        sequences: [StandardKey.Save]
+        context: Qt.ApplicationShortcut
+        enabled: baseInputScriptArea.activeFocus
+        onActivated: window.commitBaseInputScript()
     }
 
     SplitView {
@@ -512,6 +527,12 @@ ApplicationWindow {
                     property real freeMoveSpeed: 0
                     property real freeMoveStartedAt: 0
                     property real freeMoveLastStepAt: 0
+                    readonly property real freeMoveInitialSpeed: 9
+                    readonly property real freeMoveAcceleration: 30
+                    readonly property real freeMoveMaximumSpeed: 360
+                    property real viewRotationTargetYaw: orbitYaw
+                    property real viewRotationTargetPitch: orbitPitch
+                    property bool viewRotationSmoothing: false
                     property bool cuboidDragActive: false
                     property bool cuboidPointerCaptured: false
                     property string cuboidDragKind: ""
@@ -568,7 +589,7 @@ ApplicationWindow {
                             const now = Date.now()
                             freeMoveStartedAt = now
                             freeMoveLastStepAt = now
-                            freeMoveSpeed = 3
+                            freeMoveSpeed = freeMoveInitialSpeed
                             freeCameraMovementTimer.start()
                         } else if (!hasMovement) {
                             releaseFreeMovement()
@@ -628,7 +649,10 @@ ApplicationWindow {
                             Math.min(0.05,
                                      (now - freeMoveLastStepAt) / 1000))
                         freeMoveLastStepAt = now
-                        freeMoveSpeed = Math.min(120, 3 + elapsed * 10)
+                        freeMoveSpeed = Math.min(
+                            freeMoveMaximumSpeed,
+                            freeMoveInitialSpeed
+                                + elapsed * freeMoveAcceleration)
                         if (delta <= 0)
                             return true
 
@@ -677,7 +701,54 @@ ApplicationWindow {
                         return true
                     }
 
+                    function beginViewRotation() {
+                        viewRotationTargetYaw = orbitYaw
+                        viewRotationTargetPitch = orbitPitch
+                        viewRotationSmoothing = false
+                    }
+
+                    function updateViewRotation(deltaX, deltaY) {
+                        if (!freeCamera) {
+                            orbitYaw -= deltaX
+                            orbitPitch = Math.max(
+                                -85, Math.min(85, orbitPitch - deltaY))
+                            viewRotationTargetYaw = orbitYaw
+                            viewRotationTargetPitch = orbitPitch
+                            viewRotationSmoothing = false
+                            return
+                        }
+                        viewRotationTargetYaw -= deltaX * 0.5
+                        viewRotationTargetPitch = Math.max(
+                            -85,
+                            Math.min(85,
+                                     viewRotationTargetPitch - deltaY * 0.5))
+                        viewRotationSmoothing = true
+                    }
+
+                    function stepViewRotation(frameTime) {
+                        if (!viewRotationSmoothing)
+                            return false
+                        const seconds = Math.max(
+                            0,
+                            Math.min(0.05,
+                                     Number.isFinite(frameTime)
+                                     ? frameTime : 1 / 60))
+                        const blend = 1 - Math.exp(-24 * seconds)
+                        orbitYaw += (viewRotationTargetYaw - orbitYaw) * blend
+                        orbitPitch += (viewRotationTargetPitch - orbitPitch)
+                            * blend
+                        if (Math.abs(viewRotationTargetYaw - orbitYaw) < 0.001
+                                && Math.abs(viewRotationTargetPitch
+                                            - orbitPitch) < 0.001) {
+                            orbitYaw = viewRotationTargetYaw
+                            orbitPitch = viewRotationTargetPitch
+                            viewRotationSmoothing = false
+                        }
+                        return true
+                    }
+
                     function enableFreeCamera() {
+                        beginViewRotation()
                         const position = viewCamera.scenePosition
                         freeCameraPosition = Qt.vector3d(
                             position.x, position.y, position.z)
@@ -698,6 +769,7 @@ ApplicationWindow {
 
                     function focusCurrentCar() {
                         releaseFreeMovement()
+                        beginViewRotation()
                         exactWhiteboardBoardIndex = -1
                         exactWhiteboardBoardId = ""
                         cameraFieldOfView = 55
@@ -766,6 +838,7 @@ ApplicationWindow {
                             }
                         }
                         releaseFreeMovement()
+                        beginViewRotation()
                         exactWhiteboardBoardIndex = -1
                         exactWhiteboardBoardId = ""
                         cameraFieldOfView = 55
@@ -775,6 +848,7 @@ ApplicationWindow {
 
                     function focusCuboid(center, size) {
                         releaseFreeMovement()
+                        beginViewRotation()
                         exactWhiteboardBoardIndex = -1
                         exactWhiteboardBoardId = ""
                         lastFocusedWhiteboardIndex = -1
@@ -879,6 +953,7 @@ ApplicationWindow {
                         cuboidFocused = true
                         orbitYaw = board.yaw
                         orbitPitch = board.pitch
+                        beginViewRotation()
                         orbitDistance = board.distance
                         cameraFieldOfView =
                             board.projectionVersion >= 1
@@ -904,6 +979,13 @@ ApplicationWindow {
                         repeat: true
                         onTriggered:
                             viewport.stepFreeCameraMovement(Date.now())
+                    }
+
+                    FrameAnimation {
+                        running: viewport.viewRotationSmoothing
+                                 && window.visible
+                        onTriggered:
+                            viewport.stepViewRotation(frameTime)
                     }
 
                     function finishWhiteboardImageExport(success) {
@@ -2296,6 +2378,7 @@ ApplicationWindow {
                                 manualInputFocus.forceActiveFocus()
                             previousX = mouse.x
                             previousY = mouse.y
+                            viewport.beginViewRotation()
                             if (window.controller.customVolumeDrawing) {
                                 const point = viewport.customPlanePoint(
                                     mouse.x, mouse.y)
@@ -2401,12 +2484,9 @@ ApplicationWindow {
                             if (viewport.cuboidPointerCaptured)
                                 return
                             viewport.leaveExactWhiteboardView()
-                            viewport.orbitYaw -= mouse.x - previousX
-                            viewport.orbitPitch = Math.max(
-                                -85,
-                                Math.min(85,
-                                         viewport.orbitPitch
-                                         - (mouse.y - previousY)))
+                            viewport.updateViewRotation(
+                                mouse.x - previousX,
+                                mouse.y - previousY)
                             previousX = mouse.x
                             previousY = mouse.y
                         }
@@ -2523,7 +2603,8 @@ ApplicationWindow {
                                 Layout.preferredWidth: 52
                                 Layout.preferredHeight: 32
                                 text: qsTr("Car")
-                                highlighted: !viewport.freeCamera
+                                enabled: window.viewer.runCount > 0
+                                highlighted: enabled && !viewport.freeCamera
                                              && !viewport.cuboidFocused
                                 Accessible.name: qsTr("Focus current car")
                                 onClicked: {
@@ -2950,8 +3031,10 @@ ApplicationWindow {
                                         window.viewer.stopManualDrive()
                                     } else {
                                         window.viewer.startManualDrive()
-                                        if (window.viewer.manualDriving)
+                                        if (window.viewer.manualDriving) {
+                                            viewport.focusCurrentCar()
                                             manualInputFocus.forceActiveFocus()
+                                        }
                                     }
                                 }
 
@@ -3508,12 +3591,9 @@ ApplicationWindow {
                                 color: enabled ? AppTheme.text
                                                : AppTheme.disabledText
                                 placeholderText: qsTr("0.00 press up")
-                                onTextChanged: {
-                                    if (activeFocus
-                                        && window.controller.baseInputScript
-                                           !== text) {
-                                        window.controller.baseInputScript = text
-                                    }
+                                onActiveFocusChanged: {
+                                    if (!activeFocus)
+                                        window.commitBaseInputScript()
                                 }
                                 background: Rectangle {
                                     color: enabled ? AppTheme.surface
@@ -4057,7 +4137,7 @@ ApplicationWindow {
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
                         Layout.preferredHeight: Math.max(
-                                                    650,
+                                                    simulationDebuggerPanel.implicitHeight,
                                                     settingsScroll.height - 185)
                         visible: toolTabs.currentIndex === 1
                                  && !window.codeEditorExpanded

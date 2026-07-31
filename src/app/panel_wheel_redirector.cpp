@@ -30,11 +30,18 @@ bool ScenePointIsVisibleInItem(QQuickItem *item,
     return true;
 }
 
-bool ContainsScrollableFlickable(QQuickItem *item,
-                                 QQuickItem *outerFlickable,
-                                 const QPointF &scenePosition) {
+QQuickItem *ScrollableFlickableAt(QQuickItem *item,
+                                  QQuickItem *outerFlickable,
+                                  const QPointF &scenePosition) {
     if (item == nullptr || !item->isVisible() || !item->isEnabled()) {
-        return false;
+        return nullptr;
+    }
+
+    for (QQuickItem *child : item->childItems()) {
+        if (QQuickItem *const nested = ScrollableFlickableAt(
+                    child, outerFlickable, scenePosition)) {
+            return nested;
+        }
     }
 
     const QMetaObject *const metaObject = item->metaObject();
@@ -46,16 +53,9 @@ bool ContainsScrollableFlickable(QQuickItem *item,
         item->property("interactive").toBool() &&
         item->property("contentHeight").toDouble() > item->height() + 0.5 &&
         ScenePointIsVisibleInItem(item, scenePosition)) {
-        return true;
+        return item;
     }
-
-    for (QQuickItem *child : item->childItems()) {
-        if (ContainsScrollableFlickable(
-                    child, outerFlickable, scenePosition)) {
-            return true;
-        }
-    }
-    return false;
+    return nullptr;
 }
 
 }  // namespace
@@ -101,24 +101,23 @@ bool PanelWheelRedirector::eventFilter(QObject *watched, QEvent *event) {
     const QPointF local = mapFromScene(wheel->position());
     if (!contains(local)) return false;
 
-    double deltaY = static_cast<double>(wheel->pixelDelta().y());
+    double deltaY = static_cast<double>(wheel->pixelDelta().y()) * 2.5;
     if (deltaY == 0.0) {
-        deltaY = static_cast<double>(wheel->angleDelta().y()) * 2.0;
+        deltaY = static_cast<double>(wheel->angleDelta().y());
     }
     if (deltaY == 0.0) return false;
 
-    if (ContainsScrollableFlickable(
-                parentItem(), flickable_, wheel->position())) {
-        return false;
-    }
+    QQuickItem *const nested = ScrollableFlickableAt(
+            parentItem(), flickable_, wheel->position());
+    QQuickItem *const target = nested != nullptr ? nested : flickable_.data();
 
     const double contentHeight =
-            flickable_->property("contentHeight").toDouble();
-    const double viewportHeight = flickable_->height();
+            target->property("contentHeight").toDouble();
+    const double viewportHeight = target->height();
     const double maximum = std::max(0.0, contentHeight - viewportHeight);
-    const double current = flickable_->property("contentY").toDouble();
+    const double current = target->property("contentY").toDouble();
     const double next = std::clamp(current - deltaY, 0.0, maximum);
-    flickable_->setProperty("contentY", next);
+    target->setProperty("contentY", next);
     wheel->accept();
     return true;
 }

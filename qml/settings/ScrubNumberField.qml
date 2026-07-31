@@ -13,6 +13,7 @@ TextField {
     property real minimum: -Number.MAX_VALUE
     property real maximum: Number.MAX_VALUE
     property real pixelsPerStep: 4
+    property bool liveScrub: true
     readonly property bool scrubbable: true
     readonly property bool scrubbing: scrubArea.pressed
 
@@ -39,10 +40,19 @@ TextField {
         return formatted === "-0" ? "0" : formatted
     }
 
+    function displayValue() {
+        const raw = control.value.toString()
+        if (raw.trim().length === 0)
+            return raw
+        const numeric = Number(raw)
+        return Number.isFinite(numeric) ? control.formatNumber(numeric) : raw
+    }
+
     function synchronizeText() {
+        const displayed = control.displayValue()
         if (!control.activeFocus && !control.scrubbing
-                && control.text !== control.value) {
-            control.text = control.value
+                && control.text !== displayed) {
+            control.text = displayed
         }
     }
 
@@ -60,7 +70,16 @@ TextField {
         if (formatted === control.text)
             return
         control.text = formatted
-        control.edited(formatted)
+        if (control.liveScrub)
+            control.edited(formatted)
+    }
+
+    function finishScrub() {
+        if (!control.liveScrub && control.text !== control.value) {
+            control.edited(control.text)
+            return
+        }
+        control.synchronizeText()
     }
 
     onValueChanged: synchronizeText()
@@ -68,8 +87,10 @@ TextField {
     Component.onCompleted: synchronizeText()
 
     onEditingFinished: {
-        if (text !== value)
+        if (text !== displayValue())
             edited(text)
+        else
+            synchronizeText()
     }
 
     Label {
@@ -116,7 +137,7 @@ TextField {
             control.scrubBySteps(steps, mouse.modifiers)
         }
 
-        onReleased: control.synchronizeText()
+        onReleased: control.finishScrub()
         onCanceled: control.synchronizeText()
 
         ToolTip.visible: containsMouse && !pressed

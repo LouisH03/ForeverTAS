@@ -61,6 +61,8 @@ Item {
 
     function restoreEditorPositions(sourcePosition, codePosition) {
         Qt.callLater(function() {
+            sourceTree.forceLayout()
+            codeList.forceLayout()
             sourceTree.contentY = Math.max(
                 0, Math.min(sourcePosition,
                             sourceTree.contentHeight - sourceTree.height))
