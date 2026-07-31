@@ -1131,6 +1131,25 @@ int main(int argc, char **argv) {
                                         ? result.toString()
                                         : QStringLiteral("<invoke failed>");
                             };
+                    const auto manualActionMapping =
+                            [root](Qt::Key key) {
+                                QVariant result;
+                                const bool invoked =
+                                        QMetaObject::invokeMethod(
+                                                root,
+                                                "manualActionForKey",
+                                                Q_RETURN_ARG(
+                                                        QVariant, result),
+                                                Q_ARG(
+                                                        QVariant,
+                                                        QVariant::fromValue(
+                                                                static_cast<
+                                                                        int>(
+                                                                        key))));
+                                return invoked
+                                        ? result.toString()
+                                        : QStringLiteral("<invoke failed>");
+                            };
                     const auto sendMouseClick =
                             [root](QQuickItem *item) {
                                 auto *const quickWindow =
@@ -1231,6 +1250,7 @@ int main(int argc, char **argv) {
                                         ->property("enabled")
                                         .toBool();
                     }
+                    bool manualActionKeysValid = false;
                     const bool manualDrivingUi =
                             playbackDock != nullptr &&
                             playbackDock->width() >= 285.0 &&
@@ -1266,7 +1286,16 @@ int main(int argc, char **argv) {
                                     QStringLiteral("brake") &&
                             manualMapping(Qt::Key_S) ==
                                     QStringLiteral("brake") &&
-                            manualMapping(Qt::Key_Escape).isEmpty();
+                            manualMapping(Qt::Key_Escape).isEmpty() &&
+                            manualActionMapping(Qt::Key_Delete) ==
+                                    QStringLiteral("give-up") &&
+                            manualActionMapping(Qt::Key_Return) ==
+                                    QStringLiteral("respawn") &&
+                            manualActionMapping(Qt::Key_Enter) ==
+                                    QStringLiteral("respawn") &&
+                            manualActionMapping(Qt::Key_Backspace) ==
+                                    QStringLiteral("respawn") &&
+                            manualActionMapping(Qt::Key_Escape).isEmpty();
                     const qreal originalWindowWidth =
                             root->property("width").toReal();
                     root->setProperty("width", 1240);
@@ -4834,6 +4863,114 @@ int main(int argc, char **argv) {
                                 const bool whiteboardVisibilityRestored =
                                         whiteboard->setBoardVisible(0, true);
 
+                                if (viewer.loaded() &&
+                                    !viewer.loading()) {
+                                    QObject *const currentRoot =
+                                            engine.rootObjects().isEmpty()
+                                            ? nullptr
+                                            : engine.rootObjects().front();
+                                    const auto invokeCurrentManualKey =
+                                            [currentRoot](
+                                                    Qt::Key key,
+                                                    bool active,
+                                                    bool autoRepeat = false) {
+                                                if (currentRoot == nullptr) {
+                                                    return false;
+                                                }
+                                                QVariant handled;
+                                                const bool invoked =
+                                                        QMetaObject::invokeMethod(
+                                                                currentRoot,
+                                                                "handleManualActionKey",
+                                                                Q_RETURN_ARG(
+                                                                        QVariant,
+                                                                        handled),
+                                                                Q_ARG(
+                                                                        QVariant,
+                                                                        QVariant::fromValue(
+                                                                                static_cast<int>(
+                                                                                        key))),
+                                                                Q_ARG(
+                                                                        QVariant,
+                                                                        QVariant::fromValue(
+                                                                                active)),
+                                                                Q_ARG(
+                                                                        QVariant,
+                                                                        QVariant::fromValue(
+                                                                                autoRepeat)));
+                                                return invoked &&
+                                                        handled.toBool();
+                                            };
+                                    viewer.startManualDrive();
+                                    QCoreApplication::processEvents();
+                                    const bool enterRespawn =
+                                            invokeCurrentManualKey(
+                                                    Qt::Key_Enter, true);
+                                    QEventLoop enterRespawnLoop;
+                                    QTimer::singleShot(
+                                            30,
+                                            &enterRespawnLoop,
+                                            &QEventLoop::quit);
+                                    enterRespawnLoop.exec();
+                                    const bool enterRespawnExecuted =
+                                            viewer.currentInputScript().count(
+                                                    QStringLiteral(
+                                                            "press enter")) ==
+                                                    1;
+                                    const bool releaseDidNotRepeat =
+                                            invokeCurrentManualKey(
+                                                    Qt::Key_Enter, false) &&
+                                            viewer.currentInputScript().count(
+                                                    QStringLiteral(
+                                                            "press enter")) ==
+                                                    1;
+                                    const bool autoRepeatIgnored =
+                                            invokeCurrentManualKey(
+                                                    Qt::Key_Enter,
+                                                    true,
+                                                    true) &&
+                                            viewer.currentInputScript().count(
+                                                    QStringLiteral(
+                                                            "press enter")) ==
+                                                    1;
+                                    const bool deleteGaveUp =
+                                            invokeCurrentManualKey(
+                                                    Qt::Key_Delete, true) &&
+                                            viewer.manualDriving() &&
+                                            viewer.tickCount() == 1 &&
+                                            viewer.timeMs() == 0 &&
+                                            !viewer.currentInputScript()
+                                                     .contains(
+                                                             QStringLiteral(
+                                                                     "press enter"));
+                                    const bool backspaceRespawn =
+                                            invokeCurrentManualKey(
+                                                    Qt::Key_Backspace,
+                                                    true);
+                                    QEventLoop backspaceRespawnLoop;
+                                    QTimer::singleShot(
+                                            30,
+                                            &backspaceRespawnLoop,
+                                            &QEventLoop::quit);
+                                    backspaceRespawnLoop.exec();
+                                    const bool backspaceRespawnExecuted =
+                                            viewer.currentInputScript().count(
+                                                    QStringLiteral(
+                                                            "press enter")) ==
+                                                    1;
+                                    viewer.stopManualDrive();
+                                    QCoreApplication::processEvents();
+                                    manualActionKeysValid =
+                                            enterRespawn &&
+                                            enterRespawnExecuted &&
+                                            releaseDidNotRepeat &&
+                                            autoRepeatIgnored &&
+                                            deleteGaveUp &&
+                                            backspaceRespawn &&
+                                            backspaceRespawnExecuted &&
+                                            !viewer.manualDriving();
+                                }
+
                                 completed = true;
                                 exitCode =
                                         geometryAttached && rootsVisible &&
@@ -4855,6 +4992,7 @@ int main(int argc, char **argv) {
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
                                                         editorStructure &&
+                                                        manualActionKeysValid &&
                                                         whiteboardIntegrated &&
                                                         fullBackgroundExportValid &&
                                                         whiteboardVisibilityRestored
@@ -5038,7 +5176,9 @@ int main(int argc, char **argv) {
                                                                 "castsShadow")
                                                         .toBool())
                                             << ", editorStructure="
-                                            << editorStructure << '\n';
+                                            << editorStructure
+                                            << ", manualActionKeys="
+                                            << manualActionKeysValid << '\n';
                                 }
                                 static_cast<void>(quickWindow);
                                 application.quit();

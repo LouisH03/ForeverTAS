@@ -279,6 +279,8 @@ public slots:
     Q_INVOKABLE void jumpToEnd();
     Q_INVOKABLE void startManualDrive();
     Q_INVOKABLE void stopManualDrive();
+    Q_INVOKABLE bool giveUpManualDrive();
+    Q_INVOKABLE bool respawnManualDrive();
     Q_INVOKABLE bool startSimulationDebugger();
     Q_INVOKABLE void stopSimulationDebugger();
     Q_INVOKABLE void setManualInput(const QString &input, bool active);
@@ -343,6 +345,7 @@ private:
     void advanceManualDrive();
     void appendSimulationDebuggerFrame(const QVariantMap &frame);
     void setPlaying(bool value);
+    bool resetManualDriveSession(const QString &status);
     void finishManualDrive(const QString &status, bool releaseInputs);
     bool replaceManualInputs();
     void resetManualInputState();

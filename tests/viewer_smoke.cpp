@@ -2,6 +2,7 @@
 #include "viewer/race_viewer_controller.h"
 
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QFileInfo>
 #include <QImage>
@@ -585,7 +586,79 @@ int main(int argc, char **argv) {
                                                         viewer.tickCount() ==
                                                                 1 &&
                                                         viewer.timeMs() == 0;
+                                                viewer.setManualInput(
+                                                        QStringLiteral(
+                                                                "accelerate"),
+                                                        true);
+                                                QEventLoop accelerationLoop;
+                                                QTimer::singleShot(
+                                                        160,
+                                                        &accelerationLoop,
+                                                        &QEventLoop::quit);
+                                                accelerationLoop.exec();
+                                                viewer.setManualInput(
+                                                        QStringLiteral(
+                                                                "accelerate"),
+                                                        false);
+                                                const float distanceBeforeRespawn =
+                                                        (viewer.carPosition() -
+                                                         manualInitialPosition)
+                                                                .lengthSquared();
+                                                const bool respawnQueued =
+                                                        viewer.respawnManualDrive();
+                                                const qint64 tickBeforeRespawn =
+                                                        viewer.currentTick();
+                                                QEventLoop respawnLoop;
+                                                QTimer::singleShot(
+                                                        80,
+                                                        &respawnLoop,
+                                                        &QEventLoop::quit);
+                                                respawnLoop.exec();
+                                                const bool respawnExecuted =
+                                                        viewer.manualDriving() &&
+                                                        viewer.currentTick() >
+                                                                tickBeforeRespawn &&
+                                                        viewer.currentInputScript()
+                                                                .contains(
+                                                                        QStringLiteral(
+                                                                                "press enter"));
+                                                const float distanceAfterRespawn =
+                                                        (viewer.carPosition() -
+                                                         manualInitialPosition)
+                                                                .lengthSquared();
+                                                const bool respawnResetVehicle =
+                                                        distanceBeforeRespawn >
+                                                                0.000001f &&
+                                                        distanceAfterRespawn <
+                                                                distanceBeforeRespawn *
+                                                                        0.25f;
+                                                const bool giveUpRestarted =
+                                                        viewer.giveUpManualDrive() &&
+                                                        viewer.manualDriving() &&
+                                                        viewer.tickCount() ==
+                                                                1 &&
+                                                        viewer.timeMs() == 0 &&
+                                                        !viewer.currentInputScript()
+                                                                 .contains(
+                                                                         QStringLiteral(
+                                                                                 "press enter"));
+                                                const bool respawnAfterGiveUp =
+                                                        viewer.respawnManualDrive();
+                                                QEventLoop respawnAfterGiveUpLoop;
+                                                QTimer::singleShot(
+                                                        30,
+                                                        &respawnAfterGiveUpLoop,
+                                                        &QEventLoop::quit);
+                                                respawnAfterGiveUpLoop.exec();
+                                                const bool respawnAfterGiveUpExecuted =
+                                                        viewer.currentInputScript()
+                                                                .contains(
+                                                                        QStringLiteral(
+                                                                                "press enter"));
                                                 viewer.stopManualDrive();
+                                                const bool actionsRejectedWhenStopped =
+                                                        !viewer.respawnManualDrive() &&
+                                                        !viewer.giveUpManualDrive();
                                                 manualDriveValid =
                                                         manualInitialNeutral &&
                                                         leftPriority &&
@@ -593,7 +666,14 @@ int main(int argc, char **argv) {
                                                         rightAfterRelease &&
                                                         manualCopyValid &&
                                                         stoppedCleanly &&
-                                                        restartedCleanly;
+                                                        restartedCleanly &&
+                                                        respawnQueued &&
+                                                        respawnExecuted &&
+                                                        respawnResetVehicle &&
+                                                        giveUpRestarted &&
+                                                        respawnAfterGiveUp &&
+                                                        respawnAfterGiveUpExecuted &&
+                                                        actionsRejectedWhenStopped;
                                                 if (!manualDriveValid) {
                                                     std::cerr
                                                             << "manual drive checks failed: leftPriority="
@@ -610,6 +690,25 @@ int main(int argc, char **argv) {
                                                             << stoppedCleanly
                                                             << ", restartedCleanly="
                                                             << restartedCleanly
+                                                            << ", respawnQueued="
+                                                            << respawnQueued
+                                                            << ", respawnExecuted="
+                                                            << respawnExecuted
+                                                            << ", respawnReset="
+                                                            << respawnResetVehicle
+                                                            << " (distance "
+                                                            << distanceBeforeRespawn
+                                                            << " -> "
+                                                            << distanceAfterRespawn
+                                                            << ")"
+                                                            << ", giveUpRestarted="
+                                                            << giveUpRestarted
+                                                            << ", respawnAfterGiveUp="
+                                                            << respawnAfterGiveUp
+                                                            << "/"
+                                                            << respawnAfterGiveUpExecuted
+                                                            << ", stoppedActionsRejected="
+                                                            << actionsRejectedWhenStopped
                                                             << '\n';
                                                 }
                                                 viewer.addSearchRun(
@@ -733,6 +832,19 @@ int main(int argc, char **argv) {
                                                                             0.99f &&
                                                                     manualSample.accelerate <
                                                                             0.01f;
+                                                            const bool takeoverRespawnQueued =
+                                                                    viewer.respawnManualDrive();
+                                                            QEventLoop takeoverRespawnLoop;
+                                                            QTimer::singleShot(
+                                                                    30,
+                                                                    &takeoverRespawnLoop,
+                                                                    &QEventLoop::quit);
+                                                            takeoverRespawnLoop.exec();
+                                                            const bool takeoverRespawnExecuted =
+                                                                    viewer.currentInputScript()
+                                                                            .contains(
+                                                                                    QStringLiteral(
+                                                                                            "press enter"));
                                                             viewer.releaseManualInputs();
                                                             viewer.stopManualDrive();
                                                             const QString
@@ -807,6 +919,8 @@ int main(int argc, char **argv) {
                                                                     releaseStartedLongitudinalTakeover &&
                                                                     automaticLongitudinalStopped &&
                                                                     manualChannelsApplied &&
+                                                                    takeoverRespawnQueued &&
+                                                                    takeoverRespawnExecuted &&
                                                                     mixedHistoryCopied &&
                                                                     failedTakeoverRecovered;
                                                             if (!manualTakeoverValid) {
@@ -825,6 +939,10 @@ int main(int argc, char **argv) {
                                                                         << automaticLongitudinalStopped
                                                                         << ", manualChannels="
                                                                         << manualChannelsApplied
+                                                                        << ", takeoverRespawn="
+                                                                        << takeoverRespawnQueued
+                                                                        << "/"
+                                                                        << takeoverRespawnExecuted
                                                                         << ", mixedHistory="
                                                                         << mixedHistoryCopied
                                                                         << ", failureRecovered="

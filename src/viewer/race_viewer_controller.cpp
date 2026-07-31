@@ -135,7 +135,8 @@ bool IsDriverInput(PhysicsSandboxInputAction action) {
             action == PhysicsSandboxInputAction::Brake ||
             action == PhysicsSandboxInputAction::Steer ||
             action == PhysicsSandboxInputAction::SteerLeft ||
-            action == PhysicsSandboxInputAction::SteerRight;
+            action == PhysicsSandboxInputAction::SteerRight ||
+            action == PhysicsSandboxInputAction::Respawn;
 }
 
 bool IsSteeringInput(PhysicsSandboxInputAction action) {
@@ -1635,6 +1636,20 @@ void RaceViewerController::startManualDrive() {
         stopSimulationDebugger();
     }
     pause();
+    if (!resetManualDriveSession(QStringLiteral("Manual drive"))) {
+        return;
+    }
+    manualDriving_ = true;
+    emit manualDrivingChanged();
+}
+
+bool RaceViewerController::resetManualDriveSession(
+        const QString &status) {
+    if (manualRuntime_ == nullptr) {
+        setStatusText(QStringLiteral(
+                "Manual drive failed: physics runtime is unavailable."));
+        return false;
+    }
     auto restored =
             manualRuntime_->sandbox.RestoreState(
                     manualRuntime_->initialState);
@@ -1642,14 +1657,14 @@ void RaceViewerController::startManualDrive() {
         setStatusText(
                 QStringLiteral("Manual drive failed: %1")
                         .arg(SandboxErrorText(restored.Error())));
-        return;
+        return false;
     }
     manualRuntime_->state = restored.Value();
     resetManualTakeoverState();
     manualRuntime_->driverInputs.clear();
     resetManualInputState();
     if (!replaceManualInputs()) {
-        return;
+        return false;
     }
 
     upsertRun(
@@ -1658,17 +1673,60 @@ void RaceViewerController::startManualDrive() {
             {ToViewerFrame(manualRuntime_->state)},
             {},
             true);
-    manualDriving_ = true;
     manualDriveStartTick_ =
             static_cast<qint64>(manualRuntime_->state.tick);
-    setStatusText(QStringLiteral("Manual drive"));
+    setStatusText(status);
     manualDriveClock_.restart();
     manualDriveTimer_.start();
-    emit manualDrivingChanged();
+    return true;
 }
 
 void RaceViewerController::stopManualDrive() {
     finishManualDrive(QStringLiteral("Manual drive stopped"), true);
+}
+
+bool RaceViewerController::giveUpManualDrive() {
+    if (!manualDriving_ || manualRuntime_ == nullptr) {
+        return false;
+    }
+    manualDriveTimer_.stop();
+    if (!resetManualDriveSession(
+                QStringLiteral("Manual drive restarted"))) {
+        finishManualDrive(statusText_, false);
+        return false;
+    }
+    return true;
+}
+
+bool RaceViewerController::respawnManualDrive() {
+    if (!manualDriving_ || manualRuntime_ == nullptr) {
+        return false;
+    }
+    const std::uint64_t maximumEventTime =
+            static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int32_t>::max());
+    if (manualRuntime_->state.timeMs >
+        maximumEventTime - kViewerTickDurationMs) {
+        setStatusText(QStringLiteral(
+                "Manual drive failed: respawn time is outside the "
+                "supported race range."));
+        return false;
+    }
+    const std::int32_t eventTime = static_cast<std::int32_t>(
+            manualRuntime_->state.timeMs + kViewerTickDurationMs);
+    const std::size_t previousEventCount =
+            manualRuntime_->driverInputs.size();
+    manualRuntime_->driverInputs.push_back(
+            ManualSwitchEvent(
+                    eventTime,
+                    PhysicsSandboxInputAction::Respawn,
+                    true));
+    if (!replaceManualInputs()) {
+        manualRuntime_->driverInputs.resize(previousEventCount);
+        return false;
+    }
+    setStatusText(QStringLiteral("Manual drive: respawn queued"));
+    return true;
 }
 
 bool RaceViewerController::startSimulationDebugger() {

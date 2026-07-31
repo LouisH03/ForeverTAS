@@ -147,11 +147,40 @@ ApplicationWindow {
         return ""
     }
 
+    function manualActionForKey(key) {
+        if (key === Qt.Key_Delete)
+            return "give-up"
+        if (key === Qt.Key_Return || key === Qt.Key_Enter
+                || key === Qt.Key_Backspace)
+            return "respawn"
+        return ""
+    }
+
+    function handleManualActionKey(key, active, autoRepeat) {
+        if (!window.viewer.manualDriving)
+            return false
+        const action = manualActionForKey(key)
+        if (action.length === 0)
+            return false
+        if (active && !autoRepeat) {
+            if (action === "give-up")
+                window.viewer.giveUpManualDrive()
+            else
+                window.viewer.respawnManualDrive()
+        }
+        return true
+    }
+
     function handleManualKey(event, active) {
         if (!window.viewer.manualDriving
             && !(window.viewer.takeOverOnInput
                  && window.viewer.playing))
             return
+        if (handleManualActionKey(
+                    event.key, active, event.isAutoRepeat)) {
+            event.accepted = true
+            return
+        }
         const control = manualControlForKey(event.key)
         if (control.length === 0)
             return
