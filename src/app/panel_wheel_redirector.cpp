@@ -9,6 +9,56 @@
 #include <cmath>
 
 namespace forevertas::app {
+namespace {
+
+bool ScenePointIsVisibleInItem(QQuickItem *item,
+                               const QPointF &scenePosition) {
+    if (item == nullptr || !item->isVisible() || !item->isEnabled() ||
+        !item->contains(item->mapFromScene(scenePosition))) {
+        return false;
+    }
+    for (QQuickItem *ancestor = item->parentItem(); ancestor != nullptr;
+         ancestor = ancestor->parentItem()) {
+        if (!ancestor->isVisible() || !ancestor->isEnabled()) {
+            return false;
+        }
+        if (ancestor->clip() &&
+            !ancestor->contains(ancestor->mapFromScene(scenePosition))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ContainsScrollableFlickable(QQuickItem *item,
+                                 QQuickItem *outerFlickable,
+                                 const QPointF &scenePosition) {
+    if (item == nullptr || !item->isVisible() || !item->isEnabled()) {
+        return false;
+    }
+
+    const QMetaObject *const metaObject = item->metaObject();
+    const bool flickable =
+            metaObject->indexOfProperty("contentY") >= 0 &&
+            metaObject->indexOfProperty("contentHeight") >= 0 &&
+            metaObject->indexOfProperty("interactive") >= 0;
+    if (flickable && item != outerFlickable &&
+        item->property("interactive").toBool() &&
+        item->property("contentHeight").toDouble() > item->height() + 0.5 &&
+        ScenePointIsVisibleInItem(item, scenePosition)) {
+        return true;
+    }
+
+    for (QQuickItem *child : item->childItems()) {
+        if (ContainsScrollableFlickable(
+                    child, outerFlickable, scenePosition)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
 
 PanelWheelRedirector::PanelWheelRedirector(QQuickItem *parent)
     : QQuickItem(parent) {
@@ -56,6 +106,11 @@ bool PanelWheelRedirector::eventFilter(QObject *watched, QEvent *event) {
         deltaY = static_cast<double>(wheel->angleDelta().y()) * 2.0;
     }
     if (deltaY == 0.0) return false;
+
+    if (ContainsScrollableFlickable(
+                parentItem(), flickable_, wheel->position())) {
+        return false;
+    }
 
     const double contentHeight =
             flickable_->property("contentHeight").toDouble();

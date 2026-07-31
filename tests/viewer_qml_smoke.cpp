@@ -1750,6 +1750,12 @@ int main(int argc, char **argv) {
                                     QStringLiteral("Tick Step") &&
                             debuggerCombinedNameValid;
 
+                    bool globalComboWheelValid = false;
+                    bool globalSliderWheelValid = false;
+                    bool baseInputWheelValid = false;
+                    bool bestInputsWheelValid = false;
+                    bool sourceTreeWheelValid = false;
+                    bool codeViewerWheelValid = false;
                     bool wheelScrollingValid =
                             settingsScroll != nullptr &&
                             settingsWheelRedirector != nullptr &&
@@ -1759,10 +1765,16 @@ int main(int argc, char **argv) {
                         QObject *const flickable =
                                 settingsScroll->property("contentItem")
                                         .value<QObject *>();
-                        QObject *const nestedFlickable =
+                        QObject *const bestInputsFlickable =
                                 bestInputsScrollView == nullptr
                                 ? nullptr
                                 : bestInputsScrollView
+                                          ->property("contentItem")
+                                          .value<QObject *>();
+                        QObject *const baseInputFlickable =
+                                baseInputScriptScrollView == nullptr
+                                ? nullptr
+                                : baseInputScriptScrollView
                                           ->property("contentItem")
                                           .value<QObject *>();
                         auto *const scrollItem =
@@ -1773,17 +1785,30 @@ int main(int argc, char **argv) {
                         auto *const comboItem =
                                 qobject_cast<QQuickItem *>(
                                         evaluationTargetCombo);
-                        auto *const scriptItem =
+                        auto *const bestInputsItem =
                                 qobject_cast<QQuickItem *>(
                                         bestInputsScrollView);
+                        auto *const baseInputItem =
+                                qobject_cast<QQuickItem *>(
+                                        baseInputScriptScrollView);
+                        auto *const sourceTreeItem =
+                                qobject_cast<QQuickItem *>(
+                                        simulationSourceTree);
+                        auto *const codeViewerItem =
+                                qobject_cast<QQuickItem *>(
+                                        simulationCodeViewer);
                         auto *const quickWindow =
                                 qobject_cast<QQuickWindow *>(root);
                         wheelScrollingValid &= flickable != nullptr &&
-                                nestedFlickable != nullptr &&
+                                bestInputsFlickable != nullptr &&
+                                baseInputFlickable != nullptr &&
                                 scrollItem != nullptr &&
                                 redirectorItem != nullptr &&
                                 comboItem != nullptr &&
-                                scriptItem != nullptr &&
+                                bestInputsItem != nullptr &&
+                                baseInputItem != nullptr &&
+                                sourceTreeItem != nullptr &&
+                                codeViewerItem != nullptr &&
                                 quickWindow != nullptr;
                         const auto sendWheel = [quickWindow](
                                                        QQuickItem *item,
@@ -1801,7 +1826,10 @@ int main(int argc, char **argv) {
                                               Qt::ScrollUpdate,
                                               false);
                             QCoreApplication::sendEvent(quickWindow, &event);
-                            QCoreApplication::processEvents();
+                            QEventLoop settle;
+                            QTimer::singleShot(
+                                    60, &settle, &QEventLoop::quit);
+                            settle.exec();
                             return event.isAccepted();
                         };
                         if (wheelScrollingValid) {
@@ -1831,15 +1859,22 @@ int main(int argc, char **argv) {
                             QCoreApplication::processEvents();
                             const double beforeCombo =
                                     flickable->property("contentY").toDouble();
+                            const bool comboScrollsDown =
+                                    beforeCombo < comboMaximum - 1.0;
                             const bool comboAccepted = sendWheel(
                                     comboItem,
                                     QPointF(comboItem->width() * 0.5,
                                             comboItem->height() * 0.5),
-                                    -120);
+                                    comboScrollsDown ? -120 : 120);
                             const double afterCombo =
                                     flickable->property("contentY").toDouble();
-                            wheelScrollingValid &= comboAccepted &&
-                                    afterCombo > beforeCombo;
+                            globalComboWheelValid =
+                                    comboAccepted &&
+                                    (comboScrollsDown
+                                     ? afterCombo > beforeCombo
+                                     : afterCombo < beforeCombo);
+                            wheelScrollingValid &=
+                                    globalComboWheelValid;
 
                             controller.setModifierPassId(
                                     0,
@@ -1897,6 +1932,9 @@ int main(int argc, char **argv) {
                                 const double beforeSlider =
                                         flickable->property("contentY")
                                                 .toDouble();
+                                const bool sliderScrollsDown =
+                                        beforeSlider <
+                                        sliderMaximum - 1.0;
                                 const bool sliderAccepted = sendWheel(
                                         absoluteMinimumSlider,
                                         QPointF(
@@ -1904,51 +1942,203 @@ int main(int argc, char **argv) {
                                                         0.5,
                                                 absoluteMinimumSlider->height() *
                                                         0.5),
-                                        -120);
+                                        sliderScrollsDown ? -120 : 120);
                                 const double afterSlider =
                                         flickable->property("contentY")
                                                 .toDouble();
-                                wheelScrollingValid &= sliderAccepted &&
-                                        afterSlider > beforeSlider;
+                                globalSliderWheelValid =
+                                        sliderAccepted &&
+                                        (sliderScrollsDown
+                                         ? afterSlider > beforeSlider
+                                         : afterSlider < beforeSlider);
+                                wheelScrollingValid &=
+                                        globalSliderWheelValid;
                             }
                             controller.setModifierPassId(
                                     0, QStringLiteral("random-steering"));
                             QCoreApplication::processEvents();
                             QCoreApplication::processEvents();
 
-                            const double contentHeight =
-                                    flickable->property("contentHeight")
-                                            .toDouble();
-                            const double maximum = std::max(
-                                    0.0,
-                                    contentHeight - scrollItem->height());
-                            flickable->setProperty("contentY", maximum);
-                            nestedFlickable->setProperty("contentY", 0.0);
+                            const auto positionOuterForItem =
+                                    [&](QQuickItem *item) {
+                                const QPointF localPoint(
+                                        item->width() * 0.5,
+                                        std::min(
+                                                10.0,
+                                                item->height() * 0.5));
+                                const double contentHeight =
+                                        flickable
+                                                ->property("contentHeight")
+                                                .toDouble();
+                                const double maximum = std::max(
+                                        0.0,
+                                        contentHeight - scrollItem->height());
+                                const QPointF panelCenter =
+                                        redirectorItem->mapToScene(
+                                                QPointF(
+                                                        redirectorItem->width() *
+                                                                0.5,
+                                                        redirectorItem->height() *
+                                                                0.5));
+                                const QPointF itemCenter =
+                                        item->mapToScene(
+                                                localPoint);
+                                const double current =
+                                        flickable->property("contentY")
+                                                .toDouble();
+                                flickable->setProperty(
+                                        "contentY",
+                                        std::clamp(
+                                                current + itemCenter.y() -
+                                                        panelCenter.y(),
+                                                0.0,
+                                                maximum));
+                                QCoreApplication::processEvents();
+                            };
+                            const auto nestedWheelMoves =
+                                    [&](QQuickItem *item,
+                                        QObject *nested) {
+                                positionOuterForItem(item);
+                                auto *const nestedItem =
+                                        qobject_cast<QQuickItem *>(nested);
+                                if (nestedItem == nullptr) {
+                                    return false;
+                                }
+                                const double nestedMaximum = std::max(
+                                        0.0,
+                                        nested->property("contentHeight")
+                                                        .toDouble() -
+                                                nestedItem->height());
+                                nested->setProperty("contentY", 0.0);
+                                QCoreApplication::processEvents();
+                                const double beforeOuter =
+                                        flickable->property("contentY")
+                                                .toDouble();
+                                const bool accepted = sendWheel(
+                                        item,
+                                        QPointF(
+                                                item->width() * 0.5,
+                                                std::min(
+                                                        10.0,
+                                                        item->height() * 0.5)),
+                                        -120);
+                                const double afterOuter =
+                                        flickable->property("contentY")
+                                                .toDouble();
+                                const double afterNested =
+                                        nested->property("contentY")
+                                                .toDouble();
+                                const bool moved =
+                                        nestedMaximum > 1.0 && accepted &&
+                                        std::abs(
+                                                afterOuter - beforeOuter) <
+                                                0.1 &&
+                                        afterNested > 0.1;
+                                if (!moved) {
+                                    std::cerr
+                                            << "nested wheel "
+                                            << item->objectName().toStdString()
+                                            << ": class="
+                                            << nested->metaObject()->className()
+                                            << ", max=" << nestedMaximum
+                                            << ", accepted=" << accepted
+                                            << ", outer=" << beforeOuter
+                                            << "->" << afterOuter
+                                            << ", inner=0->" << afterNested
+                                            << ", scene="
+                                            << item
+                                                       ->mapToScene(QPointF(
+                                                               item->width() *
+                                                                       0.5,
+                                                               item->height() *
+                                                                       0.5))
+                                                       .x()
+                                            << ","
+                                            << item
+                                                       ->mapToScene(QPointF(
+                                                               item->width() *
+                                                                       0.5,
+                                                               item->height() *
+                                                                       0.5))
+                                                       .y()
+                                            << '\n';
+                                }
+                                return moved;
+                            };
+
+                            QStringList longInputLines;
+                            for (int line = 0; line < 80; ++line) {
+                                longInputLines.push_back(
+                                        QStringLiteral("%1 steer 0")
+                                                .arg(
+                                                        line,
+                                                        2,
+                                                        10,
+                                                        QLatin1Char('0')));
+                            }
+                            const QString originalBaseInput =
+                                    controller.baseInputScript();
+                            const QString originalBestInputs =
+                                    bestInputsTextArea
+                                            ->property("text")
+                                            .toString();
+                            const QString longInput =
+                                    longInputLines.join(QLatin1Char('\n'));
+                            controller.setBaseInputScript(longInput);
+                            bestInputsTextArea->setProperty("text", longInput);
                             QCoreApplication::processEvents();
-                            const QPointF scriptLocal(
-                                    scriptItem->width() * 0.5,
-                                    std::min(10.0,
-                                             scriptItem->height() * 0.5));
-                            const QPointF scriptScene =
-                                    scriptItem->mapToScene(scriptLocal);
-                            const bool scriptInsidePanel =
-                                    redirectorItem->contains(
-                                            redirectorItem->mapFromScene(
-                                                    scriptScene));
-                            const double beforeOuter =
-                                    flickable->property("contentY").toDouble();
-                            const double beforeNested = nestedFlickable
-                                    ->property("contentY").toDouble();
-                            const bool scriptAccepted =
-                                    sendWheel(scriptItem, scriptLocal, 120);
-                            const double afterOuter =
-                                    flickable->property("contentY").toDouble();
-                            const double afterNested = nestedFlickable
-                                    ->property("contentY").toDouble();
-                            wheelScrollingValid &= scriptInsidePanel &&
-                                    scriptAccepted &&
-                                    afterOuter < beforeOuter &&
-                                    afterNested == beforeNested;
+                            QCoreApplication::processEvents();
+                            baseInputWheelValid = nestedWheelMoves(
+                                    baseInputItem, baseInputFlickable);
+                            positionOuterForItem(bestInputsItem);
+                            bestInputsFlickable->setProperty(
+                                    "contentY", 0.0);
+                            QCoreApplication::processEvents();
+                            const double bestOuterBefore =
+                                    flickable->property("contentY")
+                                            .toDouble();
+                            const bool bestAccepted = sendWheel(
+                                    bestInputsItem,
+                                    QPointF(
+                                            bestInputsItem->width() * 0.5,
+                                            std::min(
+                                                    10.0,
+                                                    bestInputsItem->height() *
+                                                            0.5)),
+                                    -120);
+                            const double bestOuterAfter =
+                                    flickable->property("contentY")
+                                            .toDouble();
+                            bestInputsWheelValid =
+                                    bestAccepted &&
+                                    std::abs(
+                                            bestOuterAfter -
+                                            bestOuterBefore) < 0.1;
+                            wheelScrollingValid &=
+                                    baseInputWheelValid &&
+                                    bestInputsWheelValid;
+                            controller.setBaseInputScript(originalBaseInput);
+                            bestInputsTextArea->setProperty(
+                                    "text", originalBestInputs);
+                            QCoreApplication::processEvents();
+
+                            simulationDebuggerPanel->setVisible(true);
+                            bruteforceTabContent->setVisible(false);
+                            QCoreApplication::processEvents();
+                            QCoreApplication::processEvents();
+                            sourceTreeWheelValid = nestedWheelMoves(
+                                    sourceTreeItem, simulationSourceTree);
+                            codeViewerWheelValid = nestedWheelMoves(
+                                    codeViewerItem, simulationCodeViewer);
+                            wheelScrollingValid &=
+                                    settingsWheelRedirector
+                                            ->property("enabled")
+                                            .toBool() &&
+                                    sourceTreeWheelValid &&
+                                    codeViewerWheelValid;
+                            simulationDebuggerPanel->setVisible(false);
+                            bruteforceTabContent->setVisible(true);
+                            QCoreApplication::processEvents();
                         }
                     }
                     bool everyOwnedPanelLoaded =
@@ -2828,6 +3018,12 @@ int main(int argc, char **argv) {
                                 << ", passLayout=" << modifierPassLayoutValid
                                 << ", debugger=" << debuggerUiValid
                                 << ", wheel=" << wheelScrollingValid
+                                << "/" << globalComboWheelValid
+                                << "/" << globalSliderWheelValid
+                                << "/" << baseInputWheelValid
+                                << "/" << bestInputsWheelValid
+                                << "/" << sourceTreeWheelValid
+                                << "/" << codeViewerWheelValid
                                 << ", dropdown=" << dropdownStateUpdates
                                 << ", insertion=" << insertionSlidersValid
                                 << ", pose=" << poseSliderValid

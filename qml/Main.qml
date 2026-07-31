@@ -2711,7 +2711,6 @@ ApplicationWindow {
                     objectName: "settingsWheelRedirector"
                     parent: settingsScroll.parent
                     anchors.fill: parent
-                    enabled: toolTabs.currentIndex === 0
                     flickable: settingsScroll.contentItem
                 }
 
