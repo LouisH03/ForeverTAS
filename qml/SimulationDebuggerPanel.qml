@@ -229,8 +229,19 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 3
                 model: root.debuggerModel.fileEntries
+                clip: true
+                flickableDirection: Flickable.VerticalFlick
+                interactive: contentHeight > height
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {}
+                rightMargin: sourceScrollBar.visible
+                             ? sourceScrollBar.width + 3 : 0
+                ScrollBar.vertical: ScrollBar {
+                    id: sourceScrollBar
+
+                    objectName: "simulationSourceTreeScrollBar"
+                    policy: ScrollBar.AsNeeded
+                    interactive: true
+                }
 
                 delegate: ThemedItemDelegate {
                     id: sourceRow
@@ -238,6 +249,8 @@ Item {
                     required property var modelData
 
                     width: sourceTree.width
+                           - (sourceScrollBar.visible
+                              ? sourceScrollBar.width + 3 : 0)
                     height: 25
                     leftPadding: 7 + sourceRow.modelData.depth * 13
                     rightPadding: 6

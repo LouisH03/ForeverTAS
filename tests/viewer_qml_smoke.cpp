@@ -28,6 +28,7 @@
 #include <QVector3D>
 #include <QWheelEvent>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -815,6 +816,9 @@ int main(int argc, char **argv) {
                     QObject *const simulationSourceTree =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationSourceTree"));
+                    QObject *const simulationSourceTreeScrollBar =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "simulationSourceTreeScrollBar"));
                     QObject *const simulationCodeViewer =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationCodeViewer"));
@@ -1501,6 +1505,39 @@ int main(int argc, char **argv) {
                             modifierComposition
                                     ->property("firstPassHeaderLayoutValid")
                                     .toBool();
+                    const bool debuggerSourceTreeScrollable = [&]() {
+                        if (simulationSourceTree == nullptr ||
+                            simulationSourceTreeScrollBar == nullptr) {
+                            return false;
+                        }
+                        const qreal height =
+                                simulationSourceTree->property("height")
+                                        .toReal();
+                        const qreal contentHeight =
+                                simulationSourceTree
+                                        ->property("contentHeight")
+                                        .toReal();
+                        const qreal maximumContentY =
+                                std::max<qreal>(0.0, contentHeight - height);
+                        const bool overflowState =
+                                maximumContentY > 1.0 &&
+                                simulationSourceTree
+                                        ->property("interactive")
+                                        .toBool() &&
+                                simulationSourceTreeScrollBar
+                                                ->property("size")
+                                                .toReal() < 0.999;
+                        simulationSourceTree->setProperty(
+                                "contentY", maximumContentY);
+                        QCoreApplication::processEvents();
+                        const bool movedToEnd =
+                                simulationSourceTree
+                                        ->property("contentY")
+                                        .toReal() > 1.0;
+                        simulationSourceTree->setProperty("contentY", 0.0);
+                        QCoreApplication::processEvents();
+                        return overflowState && movedToEnd;
+                    }();
                     const bool debuggerUiValid =
                             toolTabs != nullptr &&
                             toolTabs->property("count").toInt() == 2 &&
@@ -1511,6 +1548,7 @@ int main(int argc, char **argv) {
                             !simulationDebuggerPanel->isVisible() &&
                             simulationDebuggerPanel->height() >= 650.0 &&
                             simulationSourceTree != nullptr &&
+                            debuggerSourceTreeScrollable &&
                             simulationCodeViewer != nullptr &&
                             simulationVariables != nullptr &&
                             restartLiveSimulationButton != nullptr &&
