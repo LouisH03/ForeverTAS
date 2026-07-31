@@ -857,6 +857,20 @@ int main(int argc, char **argv) {
                                     root->findChild<QObject *>(
                                             QStringLiteral(
                                                     "manualInputFocus")));
+                    auto *const cameraFocusToolbar =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "cameraFocusToolbar")));
+                    QObject *const freeCameraButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("freeCameraButton"));
+                    QObject *const focusCarButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("focusCarButton"));
+                    QObject *const focusObjectButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("focusObjectButton"));
                     QObject *const stepBackward = root->findChild<QObject *>(
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
@@ -1250,6 +1264,285 @@ int main(int argc, char **argv) {
                                         ->property("enabled")
                                         .toBool();
                     }
+                    bool freeCameraUiValid =
+                            viewer.loaded() &&
+                            viewport != nullptr &&
+                            cameraFocusToolbar != nullptr &&
+                            cameraFocusToolbar->isVisible() &&
+                            freeCameraButton != nullptr &&
+                            focusCarButton != nullptr &&
+                            focusObjectButton != nullptr &&
+                            !viewport->property("freeCamera").toBool() &&
+                            viewport->property("cameraFocusMode")
+                                            .toString() ==
+                                    QStringLiteral("car") &&
+                            focusCarButton->property("highlighted").toBool() &&
+                            !focusObjectButton->property("enabled").toBool();
+                    if (freeCameraUiValid) {
+                        const QVector3D carTargetBeforeFree =
+                                viewport->property("cameraTarget")
+                                        .value<QVector3D>();
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "enableFreeCamera") &&
+                                viewport->property("freeCamera").toBool() &&
+                                viewport->property("cameraFocusMode")
+                                                .toString() ==
+                                        QStringLiteral("free") &&
+                                (viewport->property("cameraTarget")
+                                         .value<QVector3D>() -
+                                 carTargetBeforeFree)
+                                                .lengthSquared() <
+                                        0.0001f;
+                        const QVector3D freePositionBeforeLook =
+                                viewport->property("freeCameraPosition")
+                                        .value<QVector3D>();
+                        const QVector3D freeTargetBeforeLook =
+                                viewport->property("cameraTarget")
+                                        .value<QVector3D>();
+                        const double yawBeforeFreeLook =
+                                viewport->property("orbitYaw").toDouble();
+                        viewport->setProperty(
+                                "orbitYaw", yawBeforeFreeLook + 20.0);
+                        QCoreApplication::processEvents();
+                        freeCameraUiValid &=
+                                viewport->property("freeCameraPosition")
+                                                .value<QVector3D>() ==
+                                        freePositionBeforeLook &&
+                                (viewCamera->property("scenePosition")
+                                         .value<QVector3D>() -
+                                 freePositionBeforeLook)
+                                                .lengthSquared() <
+                                        0.0001f &&
+                                (viewport->property("cameraTarget")
+                                         .value<QVector3D>() -
+                                 freeTargetBeforeLook)
+                                                .lengthSquared() >
+                                        0.0001f;
+                        viewport->setProperty(
+                                "orbitYaw", yawBeforeFreeLook);
+                        QCoreApplication::processEvents();
+                        QVariant movementAccepted;
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "setFreeMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementAccepted),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        QStringLiteral(
+                                                                "forward"))),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(true))) &&
+                                movementAccepted.toBool();
+                        const double movementStart =
+                                viewport->property("freeMoveStartedAt")
+                                        .toDouble();
+                        const QVector3D movementTarget =
+                                viewport->property("freeCameraTarget")
+                                        .value<QVector3D>();
+                        QVariant movementStepped;
+                        freeCameraUiValid &=
+                                movementStart > 0.0 &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "stepFreeCameraMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementStepped),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        movementStart +
+                                                        1000.0))) &&
+                                movementStepped.toBool();
+                        const double firstMovementSpeed =
+                                viewport->property("freeMoveSpeed")
+                                        .toDouble();
+                        const QVector3D movedTarget =
+                                viewport->property("freeCameraTarget")
+                                        .value<QVector3D>();
+                        freeCameraUiValid &=
+                                firstMovementSpeed >= 12.9 &&
+                                (movedTarget - movementTarget)
+                                                .lengthSquared() >
+                                        0.000001f;
+                        QVariant movementChanged;
+                        QVariant movementReleased;
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "setFreeMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementChanged),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        QStringLiteral(
+                                                                "right"))),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(true))) &&
+                                movementChanged.toBool() &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "setFreeMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementReleased),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        QStringLiteral(
+                                                                "forward"))),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(false))) &&
+                                movementReleased.toBool() &&
+                                viewport->property("freeMoveSpeed")
+                                                .toDouble() ==
+                                        firstMovementSpeed &&
+                                viewport->property("freeMoveStartedAt")
+                                                .toDouble() ==
+                                        movementStart;
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "stepFreeCameraMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementStepped),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        movementStart +
+                                                        2000.0))) &&
+                                viewport->property("freeMoveSpeed")
+                                                .toDouble() >
+                                        firstMovementSpeed;
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "setFreeMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementReleased),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        QStringLiteral(
+                                                                "right"))),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(false))) &&
+                                !viewport->property("freeMoveRight")
+                                         .toBool() &&
+                                viewport->property("freeMoveSpeed")
+                                                .toDouble() == 0.0;
+
+                        const QVector3D objectCenter(
+                                17.0f, 9.0f, -6.0f);
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "focusCuboid",
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant::fromValue(
+                                                        objectCenter)),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant::fromValue(
+                                                        QVector3D(
+                                                                4.0f,
+                                                                5.0f,
+                                                                6.0f)))) &&
+                                viewport->property("cuboidFocused")
+                                        .toBool() &&
+                                viewport->property("hasObjectFocus")
+                                        .toBool() &&
+                                viewport->property("cameraTarget")
+                                                .value<QVector3D>() ==
+                                        objectCenter &&
+                                focusObjectButton->property("enabled")
+                                        .toBool();
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "enableFreeCamera") &&
+                                (viewport->property("cameraTarget")
+                                         .value<QVector3D>() -
+                                 objectCenter)
+                                                .lengthSquared() <
+                                        0.0001f;
+                        const QVector3D independentFreeTarget =
+                                viewport->property("cameraTarget")
+                                        .value<QVector3D>();
+                        const qint64 tickBeforeFreeCameraCheck =
+                                viewer.currentTick();
+                        if (viewer.tickCount() > 1) {
+                            viewer.setCurrentTick(
+                                    tickBeforeFreeCameraCheck == 0 ? 1 : 0);
+                            QCoreApplication::processEvents();
+                            freeCameraUiValid &=
+                                    (viewport->property("cameraTarget")
+                                             .value<QVector3D>() -
+                                     independentFreeTarget)
+                                                    .lengthSquared() <
+                                            0.0001f;
+                            viewer.setCurrentTick(
+                                    tickBeforeFreeCameraCheck);
+                            QCoreApplication::processEvents();
+                        }
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "setFreeMovement",
+                                        Q_RETURN_ARG(
+                                                QVariant,
+                                                movementChanged),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(
+                                                        QStringLiteral(
+                                                                "up"))),
+                                        Q_ARG(
+                                                QVariant,
+                                                QVariant(true))) &&
+                                movementChanged.toBool() &&
+                                viewport->property("freeMoveUp").toBool() &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "focusLastObject") &&
+                                !viewport->property("freeMoveForward")
+                                         .toBool() &&
+                                !viewport->property("freeMoveBackward")
+                                         .toBool() &&
+                                !viewport->property("freeMoveLeft").toBool() &&
+                                !viewport->property("freeMoveRight").toBool() &&
+                                !viewport->property("freeMoveUp").toBool() &&
+                                !viewport->property("freeMoveDown").toBool() &&
+                                viewport->property("freeMoveSpeed")
+                                                .toDouble() == 0.0 &&
+                                viewport->property("cameraTarget")
+                                                .value<QVector3D>() ==
+                                        objectCenter &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "focusCurrentCar") &&
+                                !viewport->property("freeCamera").toBool() &&
+                                !viewport->property("cuboidFocused")
+                                         .toBool() &&
+                                viewport->property("cameraTarget")
+                                                .value<QVector3D>() ==
+                                        viewer.carPosition();
+                    }
                     bool manualActionKeysValid = false;
                     const bool manualDrivingUi =
                             playbackDock != nullptr &&
@@ -1295,7 +1588,8 @@ int main(int argc, char **argv) {
                                     QStringLiteral("respawn") &&
                             manualActionMapping(Qt::Key_Backspace) ==
                                     QStringLiteral("respawn") &&
-                            manualActionMapping(Qt::Key_Escape).isEmpty();
+                            manualActionMapping(Qt::Key_Escape).isEmpty() &&
+                            freeCameraUiValid;
                     const qreal originalWindowWidth =
                             root->property("width").toReal();
                     root->setProperty("width", 1240);
@@ -4605,6 +4899,114 @@ int main(int argc, char **argv) {
                                          whiteboardTarget.z()},
                                         {QStringLiteral("planeWidth"), 12.0},
                                         {QStringLiteral("planeHeight"), 7.0}};
+                                auto *const compactCameraFocusToolbar =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "cameraFocusToolbar")));
+                                auto *const compactRaceViewerHeader =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "raceViewerHeader")));
+                                auto *const compactWhiteboardToolbar =
+                                        qobject_cast<QQuickItem *>(
+                                                root->findChild<QObject *>(
+                                                        QStringLiteral(
+                                                                "whiteboardToolbar")));
+                                QVariant compactClosedX;
+                                QVariant compactClosedTopMargin;
+                                QVariant compactOpenX;
+                                QVariant compactOpenTopMargin;
+                                const bool compactLayoutInvoked =
+                                        compactCameraFocusToolbar != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                compactCameraFocusToolbar,
+                                                "layoutX",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        compactClosedX),
+                                                Q_ARG(QVariant,
+                                                      QVariant(591.0)),
+                                                Q_ARG(QVariant,
+                                                      QVariant(false))) &&
+                                        QMetaObject::invokeMethod(
+                                                compactCameraFocusToolbar,
+                                                "layoutTopMargin",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        compactClosedTopMargin),
+                                                Q_ARG(QVariant,
+                                                      QVariant(591.0)),
+                                                Q_ARG(QVariant,
+                                                      QVariant(false))) &&
+                                        QMetaObject::invokeMethod(
+                                                compactCameraFocusToolbar,
+                                                "layoutX",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        compactOpenX),
+                                                Q_ARG(QVariant,
+                                                      QVariant(591.0)),
+                                                Q_ARG(QVariant,
+                                                      QVariant(true))) &&
+                                        QMetaObject::invokeMethod(
+                                                compactCameraFocusToolbar,
+                                                "layoutTopMargin",
+                                                Q_RETURN_ARG(
+                                                        QVariant,
+                                                        compactOpenTopMargin),
+                                                Q_ARG(QVariant,
+                                                      QVariant(591.0)),
+                                                Q_ARG(QVariant,
+                                                      QVariant(true)));
+                                const qreal compactToolbarBottom =
+                                        compactWhiteboardToolbar != nullptr
+                                        ? compactWhiteboardToolbar->y() +
+                                                  compactWhiteboardToolbar
+                                                          ->height()
+                                        : 0;
+                                const qreal compactCameraClosedY =
+                                        compactRaceViewerHeader != nullptr
+                                        ? compactRaceViewerHeader->y() +
+                                                  compactRaceViewerHeader
+                                                          ->height() +
+                                                  compactClosedTopMargin
+                                                          .toReal()
+                                        : 0;
+                                const qreal compactCameraOpenY =
+                                        compactRaceViewerHeader != nullptr
+                                        ? compactRaceViewerHeader->y() +
+                                                  compactRaceViewerHeader
+                                                          ->height() +
+                                                  compactOpenTopMargin.toReal()
+                                        : 0;
+                                const bool compactWhiteboardToolbarsSeparated =
+                                        compactLayoutInvoked &&
+                                        compactWhiteboardToolbar != nullptr &&
+                                        compactCameraFocusToolbar != nullptr &&
+                                        compactRaceViewerHeader != nullptr &&
+                                        qAbs(compactClosedX.toReal() -
+                                             (591.0 -
+                                              compactCameraFocusToolbar
+                                                      ->width() -
+                                              12.0)) < 0.1 &&
+                                        compactCameraClosedY >=
+                                                compactToolbarBottom + 7.9;
+                                const qreal compactDrawingListLeft =
+                                        591.0 -
+                                        std::min(310.0, 591.0 - 28.0) -
+                                        14.0;
+                                const bool compactWhiteboardListSeparated =
+                                        compactLayoutInvoked &&
+                                        compactCameraFocusToolbar != nullptr &&
+                                        compactOpenX.toReal() +
+                                                        compactCameraFocusToolbar
+                                                                ->width() +
+                                                        7.9 <=
+                                                compactDrawingListLeft &&
+                                        compactCameraOpenY >=
+                                                compactToolbarBottom + 7.9;
                                 const bool whiteboardPlaced =
                                         whiteboardViewport != nullptr &&
                                         whiteboard->captureCurrentBoard(
@@ -4719,6 +5121,8 @@ int main(int argc, char **argv) {
                                                 lightWhiteboardModeText;
                                 const bool whiteboardIntegrated =
                                         whiteboardActiveState &&
+                                        compactWhiteboardToolbarsSeparated &&
+                                        compactWhiteboardListSeparated &&
                                         whiteboardToolThemeContrast &&
                                         whiteboardModeThemeContrast &&
                                         whiteboardHiddenState &&

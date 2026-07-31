@@ -10,6 +10,8 @@ Item {
     required property var model
     property bool available: false
     readonly property real boardTop: 52
+    readonly property real toolbarRight: toolbar.x + toolbar.width
+    readonly property real toolbarBottom: toolbar.y + toolbar.height
     property int editingIndex: -2
     property real pendingTextX: 0
     property real pendingTextY: 0

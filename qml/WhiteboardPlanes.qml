@@ -7,6 +7,8 @@ View3D {
 
     required property var model
     required property vector3d cameraTarget
+    required property vector3d cameraPosition
+    required property bool freeCamera
     required property real orbitYaw
     required property real orbitPitch
     required property real orbitDistance
@@ -93,13 +95,14 @@ View3D {
     }
 
     Node {
-        position: root.cameraTarget
+        position: root.freeCamera
+                  ? root.cameraPosition : root.cameraTarget
         eulerRotation.x: root.orbitPitch
         eulerRotation.y: root.orbitYaw
 
         PerspectiveCamera {
             id: planeCamera
-            z: root.orbitDistance
+            z: root.freeCamera ? 0 : root.orbitDistance
             clipNear: 0.01
             clipFar: 1000000
             fieldOfView: root.fieldOfView

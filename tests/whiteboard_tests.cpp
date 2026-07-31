@@ -1002,6 +1002,9 @@ int main(int argc, char **argv) {
                              &importedRepository))},
                     {QStringLiteral("cameraTarget"),
                      QVariant::fromValue(QVector3D())},
+                    {QStringLiteral("cameraPosition"),
+                     QVariant::fromValue(QVector3D())},
+                    {QStringLiteral("freeCamera"), false},
                     {QStringLiteral("orbitYaw"), 35.0},
                     {QStringLiteral("orbitPitch"), -20.0},
                     {QStringLiteral("orbitDistance"), 38.0}}));

@@ -190,8 +190,10 @@ ApplicationWindow {
     }
 
     onActiveChanged: {
-        if (!active)
+        if (!active) {
             window.viewer.releaseManualInputs()
+            viewport.releaseFreeMovement()
+        }
     }
 
     Component.onCompleted: Qt.callLater(function() {
@@ -213,6 +215,10 @@ ApplicationWindow {
         }
         function onSelectedRunChanged() {
             window.synchronizeRunPoses()
+        }
+        function onLoadedChanged() {
+            if (!window.viewer.loaded)
+                viewport.resetCameraFocus()
         }
     }
 
@@ -461,12 +467,46 @@ ApplicationWindow {
                     property real orbitYaw: 35
                     property real orbitPitch: -20
                     property real orbitDistance: 38
+                    property bool freeCamera: false
+                    property vector3d freeCameraPosition:
+                        Qt.vector3d(0, 0, 0)
+                    readonly property vector3d cameraForward: {
+                        const yaw = orbitYaw * Math.PI / 180
+                        const pitch = orbitPitch * Math.PI / 180
+                        const pitchCos = Math.cos(pitch)
+                        return Qt.vector3d(
+                            -Math.sin(yaw) * pitchCos,
+                            Math.sin(pitch),
+                            -Math.cos(yaw) * pitchCos)
+                    }
+                    readonly property vector3d freeCameraTarget:
+                        Qt.vector3d(
+                            freeCameraPosition.x
+                                + cameraForward.x * orbitDistance,
+                            freeCameraPosition.y
+                                + cameraForward.y * orbitDistance,
+                            freeCameraPosition.z
+                                + cameraForward.z * orbitDistance)
+                    property bool hasObjectFocus: false
                     property bool cuboidFocused: false
                     property vector3d cuboidFocusCenter:
                         Qt.vector3d(0, 0, 0)
                     readonly property vector3d cameraTarget:
-                        cuboidFocused ? cuboidFocusCenter
-                                       : window.viewer.carPosition
+                        freeCamera ? freeCameraTarget
+                        : cuboidFocused ? cuboidFocusCenter
+                                         : window.viewer.carPosition
+                    readonly property string cameraFocusMode:
+                        freeCamera ? "free"
+                        : cuboidFocused ? "object" : "car"
+                    property bool freeMoveForward: false
+                    property bool freeMoveBackward: false
+                    property bool freeMoveLeft: false
+                    property bool freeMoveRight: false
+                    property bool freeMoveUp: false
+                    property bool freeMoveDown: false
+                    property real freeMoveSpeed: 0
+                    property real freeMoveStartedAt: 0
+                    property real freeMoveLastStepAt: 0
                     property bool cuboidDragActive: false
                     property bool cuboidPointerCaptured: false
                     property string cuboidDragKind: ""
@@ -482,8 +522,189 @@ ApplicationWindow {
                     property bool exportingWhiteboardImage: false
                     property url whiteboardImageExportUrl: ""
 
+                    function hasFreeMovement() {
+                        return freeMoveForward || freeMoveBackward
+                            || freeMoveLeft || freeMoveRight
+                            || freeMoveUp || freeMoveDown
+                    }
+
+                    function releaseFreeMovement() {
+                        freeMoveForward = false
+                        freeMoveBackward = false
+                        freeMoveLeft = false
+                        freeMoveRight = false
+                        freeMoveUp = false
+                        freeMoveDown = false
+                        freeMoveSpeed = 0
+                        freeMoveStartedAt = 0
+                        freeMoveLastStepAt = 0
+                        freeCameraMovementTimer.stop()
+                    }
+
+                    function setFreeMovement(direction, active) {
+                        const hadMovement = hasFreeMovement()
+                        if (direction === "forward")
+                            freeMoveForward = active
+                        else if (direction === "backward")
+                            freeMoveBackward = active
+                        else if (direction === "left")
+                            freeMoveLeft = active
+                        else if (direction === "right")
+                            freeMoveRight = active
+                        else if (direction === "up")
+                            freeMoveUp = active
+                        else if (direction === "down")
+                            freeMoveDown = active
+                        else
+                            return false
+
+                        const hasMovement = hasFreeMovement()
+                        if (!hadMovement && hasMovement) {
+                            const now = Date.now()
+                            freeMoveStartedAt = now
+                            freeMoveLastStepAt = now
+                            freeMoveSpeed = 3
+                            freeCameraMovementTimer.start()
+                        } else if (!hasMovement) {
+                            releaseFreeMovement()
+                        }
+                        return true
+                    }
+
+                    function freeMovementForKey(key) {
+                        if (key === Qt.Key_W || key === Qt.Key_Z)
+                            return "forward"
+                        if (key === Qt.Key_S)
+                            return "backward"
+                        if (key === Qt.Key_A || key === Qt.Key_Q)
+                            return "left"
+                        if (key === Qt.Key_D)
+                            return "right"
+                        if (key === Qt.Key_E)
+                            return "up"
+                        if (key === Qt.Key_C)
+                            return "down"
+                        return ""
+                    }
+
+                    function handleFreeCameraKey(event, active) {
+                        if (!freeCamera || window.viewer.manualDriving
+                                || (window.viewer.takeOverOnInput
+                                    && window.viewer.playing))
+                            return false
+                        const direction = freeMovementForKey(event.key)
+                        if (direction.length === 0)
+                            return false
+                        event.accepted = true
+                        if (!event.isAutoRepeat)
+                            setFreeMovement(direction, active)
+                        return true
+                    }
+
+                    function stepFreeCameraMovement(timestamp) {
+                        if (!freeCamera || window.viewer.manualDriving
+                                || (window.viewer.takeOverOnInput
+                                    && window.viewer.playing)) {
+                            releaseFreeMovement()
+                            return false
+                        }
+                        if (!hasFreeMovement())
+                            return false
+                        const now = Number.isFinite(timestamp)
+                                  ? timestamp : Date.now()
+                        if (freeMoveStartedAt <= 0)
+                            freeMoveStartedAt = now
+                        if (freeMoveLastStepAt <= 0)
+                            freeMoveLastStepAt = now
+                        const elapsed = Math.max(
+                            0, (now - freeMoveStartedAt) / 1000)
+                        const delta = Math.max(
+                            0,
+                            Math.min(0.05,
+                                     (now - freeMoveLastStepAt) / 1000))
+                        freeMoveLastStepAt = now
+                        freeMoveSpeed = Math.min(120, 3 + elapsed * 10)
+                        if (delta <= 0)
+                            return true
+
+                        const yaw = orbitYaw * Math.PI / 180
+                        const pitch = orbitPitch * Math.PI / 180
+                        const pitchCos = Math.cos(pitch)
+                        const forward = Qt.vector3d(
+                            -Math.sin(yaw) * pitchCos,
+                            Math.sin(pitch),
+                            -Math.cos(yaw) * pitchCos)
+                        const right = Qt.vector3d(
+                            Math.cos(yaw), 0, -Math.sin(yaw))
+                        let x = 0
+                        let y = 0
+                        let z = 0
+                        if (freeMoveForward) {
+                            x += forward.x
+                            y += forward.y
+                            z += forward.z
+                        }
+                        if (freeMoveBackward) {
+                            x -= forward.x
+                            y -= forward.y
+                            z -= forward.z
+                        }
+                        if (freeMoveRight) {
+                            x += right.x
+                            z += right.z
+                        }
+                        if (freeMoveLeft) {
+                            x -= right.x
+                            z -= right.z
+                        }
+                        if (freeMoveUp)
+                            y += 1
+                        if (freeMoveDown)
+                            y -= 1
+                        const length = Math.sqrt(x * x + y * y + z * z)
+                        if (length <= 0.000001)
+                            return true
+                        const distance = freeMoveSpeed * delta / length
+                        freeCameraPosition = Qt.vector3d(
+                            freeCameraPosition.x + x * distance,
+                            freeCameraPosition.y + y * distance,
+                            freeCameraPosition.z + z * distance)
+                        return true
+                    }
+
+                    function enableFreeCamera() {
+                        const position = viewCamera.scenePosition
+                        freeCameraPosition = Qt.vector3d(
+                            position.x, position.y, position.z)
+                        freeCamera = true
+                        cuboidFocused = false
+                    }
+
+                    function focusCurrentCar() {
+                        releaseFreeMovement()
+                        freeCamera = false
+                        cuboidFocused = false
+                    }
+
+                    function resetCameraFocus() {
+                        focusCurrentCar()
+                        hasObjectFocus = false
+                        cuboidFocusCenter = Qt.vector3d(0, 0, 0)
+                    }
+
+                    function focusLastObject() {
+                        if (!hasObjectFocus)
+                            return
+                        releaseFreeMovement()
+                        freeCamera = false
+                        cuboidFocused = true
+                    }
+
                     function focusCuboid(center, size) {
+                        releaseFreeMovement()
                         cuboidFocusCenter = center
+                        hasObjectFocus = true
+                        freeCamera = false
                         cuboidFocused = true
                         orbitDistance = Math.max(
                             3,
@@ -533,14 +754,25 @@ ApplicationWindow {
                     }
 
                     function restoreWhiteboardView(board) {
+                        releaseFreeMovement()
                         cuboidFocusCenter = Qt.vector3d(
                             board.targetX,
                             board.targetY,
                             board.targetZ)
+                        hasObjectFocus = true
+                        freeCamera = false
                         cuboidFocused = true
                         orbitYaw = board.yaw
                         orbitPitch = board.pitch
                         orbitDistance = board.distance
+                    }
+
+                    Timer {
+                        id: freeCameraMovementTimer
+                        interval: 16
+                        repeat: true
+                        onTriggered:
+                            viewport.stepFreeCameraMovement(Date.now())
                     }
 
                     function finishWhiteboardImageExport(success) {
@@ -1491,7 +1723,9 @@ ApplicationWindow {
                         }
 
                         Node {
-                            position: viewport.cameraTarget
+                            position: viewport.freeCamera
+                                      ? viewport.freeCameraPosition
+                                      : viewport.cameraTarget
                             eulerRotation.x: viewport.orbitPitch
                             eulerRotation.y: viewport.orbitYaw
 
@@ -1503,7 +1737,8 @@ ApplicationWindow {
                                         scenePosition,
                                         viewport.orbitDistance)
 
-                                z: viewport.orbitDistance
+                                z: viewport.freeCamera
+                                   ? 0 : viewport.orbitDistance
                                 clipNear: dynamicClipPlanes.x
                                 clipFar: dynamicClipPlanes.y
                                 fieldOfView: 55
@@ -1787,7 +2022,9 @@ ApplicationWindow {
                         }
 
                         Node {
-                            position: viewport.cameraTarget
+                            position: viewport.freeCamera
+                                      ? viewport.freeCameraPosition
+                                      : viewport.cameraTarget
                             eulerRotation.x: viewport.orbitPitch
                             eulerRotation.y: viewport.orbitYaw
 
@@ -1798,7 +2035,8 @@ ApplicationWindow {
                                         scenePosition,
                                         viewport.orbitDistance)
 
-                                z: viewport.orbitDistance
+                                z: viewport.freeCamera
+                                   ? 0 : viewport.orbitDistance
                                 clipNear: dynamicClipPlanes.x
                                 clipFar: dynamicClipPlanes.y
                                 fieldOfView: viewCamera.fieldOfView
@@ -1847,6 +2085,8 @@ ApplicationWindow {
                         z: 1.75
                         model: window.viewer.whiteboard
                         cameraTarget: viewport.cameraTarget
+                        cameraPosition: viewport.freeCameraPosition
+                        freeCamera: viewport.freeCamera
                         orbitYaw: viewport.orbitYaw
                         orbitPitch: viewport.orbitPitch
                         orbitDistance: viewport.orbitDistance
@@ -1883,20 +2123,29 @@ ApplicationWindow {
                         property real previousY: 0
 
                         Keys.priority: Keys.BeforeItem
-                        Keys.onPressed: event =>
+                        Keys.onPressed: event => {
                             window.handleManualKey(event, true)
-                        Keys.onReleased: event =>
+                            if (!event.accepted)
+                                viewport.handleFreeCameraKey(event, true)
+                        }
+                        Keys.onReleased: event => {
                             window.handleManualKey(event, false)
+                            if (!event.accepted)
+                                viewport.handleFreeCameraKey(event, false)
+                        }
                         onActiveFocusChanged: {
                             if (!activeFocus
                                 && window.viewer.manualDriving) {
                                 window.viewer.releaseManualInputs()
                             }
+                            if (!activeFocus)
+                                viewport.releaseFreeMovement()
                         }
 
                         onPressed: mouse => {
                             if (window.viewer.manualDriving
-                                || window.viewer.takeOverOnInput)
+                                || window.viewer.takeOverOnInput
+                                || viewport.freeCamera)
                                 manualInputFocus.forceActiveFocus()
                             previousX = mouse.x
                             previousY = mouse.y
@@ -2019,7 +2268,8 @@ ApplicationWindow {
                             viewport.endPoseInteraction()
                             viewport.cuboidPointerCaptured = false
                             if (window.viewer.manualDriving
-                                || window.viewer.takeOverOnInput)
+                                || window.viewer.takeOverOnInput
+                                || viewport.freeCamera)
                                 manualInputFocus.forceActiveFocus()
                         }
                         onCanceled: {
@@ -2058,6 +2308,102 @@ ApplicationWindow {
                                         index, fileUrl)
                         }
                         visible: !viewport.exportingWhiteboardImage
+                    }
+
+                    Rectangle {
+                        id: cameraFocusToolbar
+                        objectName: "cameraFocusToolbar"
+
+                        function layoutX(viewportWidth, drawingListOpen) {
+                            return drawingListOpen
+                                   ? 12 : viewportWidth - width - 12
+                        }
+
+                        function layoutTopMargin(viewportWidth,
+                                                 drawingListOpen) {
+                            const toolbarWouldOverlap =
+                                window.viewer.whiteboard.active
+                                && layoutX(viewportWidth, false)
+                                   < whiteboardOverlay.toolbarRight + 8
+                            return drawingListOpen || toolbarWouldOverlap
+                                   ? whiteboardOverlay.toolbarBottom
+                                     - raceViewerHeader.height + 8
+                                   : 10
+                        }
+
+                        anchors.top: raceViewerHeader.bottom
+                        anchors.topMargin: layoutTopMargin(
+                                               parent.width,
+                                               whiteboardOverlay
+                                                       .drawingListOpen)
+                        x: layoutX(parent.width,
+                                   whiteboardOverlay.drawingListOpen)
+                        z: 3
+                        width: cameraFocusControls.implicitWidth + 12
+                        height: 42
+                        radius: 6
+                        color: AppTheme.viewerOverlay
+                        border.width: 1
+                        border.color: AppTheme.viewerOverlayBorder
+                        visible: window.viewer.loaded
+                                 && !viewport.exportingWhiteboardImage
+
+                        RowLayout {
+                            id: cameraFocusControls
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            ThemedButton {
+                                objectName: "freeCameraButton"
+                                Layout.preferredWidth: 58
+                                Layout.preferredHeight: 32
+                                text: qsTr("Free")
+                                highlighted: viewport.freeCamera
+                                Accessible.name: qsTr("Free camera")
+                                onClicked: {
+                                    viewport.enableFreeCamera()
+                                    manualInputFocus.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr("Free camera")
+                            }
+
+                            ThemedButton {
+                                objectName: "focusCarButton"
+                                Layout.preferredWidth: 52
+                                Layout.preferredHeight: 32
+                                text: qsTr("Car")
+                                highlighted: !viewport.freeCamera
+                                             && !viewport.cuboidFocused
+                                Accessible.name: qsTr("Focus current car")
+                                onClicked: {
+                                    viewport.focusCurrentCar()
+                                    manualInputFocus.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr("Focus current car")
+                            }
+
+                            ThemedButton {
+                                objectName: "focusObjectButton"
+                                Layout.preferredWidth: 64
+                                Layout.preferredHeight: 32
+                                text: qsTr("Target")
+                                enabled: viewport.hasObjectFocus
+                                highlighted: !viewport.freeCamera
+                                             && viewport.cuboidFocused
+                                Accessible.name: qsTr("Focus selected target")
+                                onClicked: {
+                                    viewport.focusLastObject()
+                                    manualInputFocus.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr("Focus selected target")
+                            }
+                        }
                     }
 
                     Rectangle {
@@ -2217,7 +2563,7 @@ ApplicationWindow {
                                     viewport.orbitYaw = 35
                                     viewport.orbitPitch = -20
                                     viewport.orbitDistance = 38
-                                    viewport.cuboidFocused = false
+                                    viewport.focusCurrentCar()
                                 }
                             }
                         }
