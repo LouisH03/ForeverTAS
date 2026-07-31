@@ -250,12 +250,37 @@ void SearchWorker::run() {
     control.cudaBatchSizeChanged = [this](std::uint32_t batchSize) {
         emit cudaBatchSizeChanged(batchSize);
     };
+    const auto publishedTrajectoryNumber =
+            std::make_shared<std::atomic_uint64_t>(0u);
+    const auto publishImprovement =
+            [this, publishedTrajectoryNumber](
+                    const SearchLiveUpdate &live,
+                    std::string_view backendId) {
+                if (live.bestTimeline.empty()) {
+                    return;
+                }
+                auto improvement = std::make_shared<SearchImprovement>();
+                improvement->searchId = searchId_;
+                improvement->improvementNumber =
+                        publishedTrajectoryNumber->fetch_add(
+                                1u, std::memory_order_relaxed) +
+                        1u;
+                improvement->packsDirectory =
+                        FilePathFromUtf8(request_.packDirectory);
+                improvement->replayPath =
+                        FilePathFromUtf8(request_.replayPath);
+                improvement->simulationBackendId = QString::fromLatin1(
+                        backendId.data(),
+                        static_cast<qsizetype>(backendId.size()));
+                improvement->timeline = live.bestTimeline;
+                emit improvementFound(std::move(improvement));
+            };
     control.liveChanged = [this,
                            latestInputsText = QString(),
                            latestSource = SearchWinnerSource::Baseline,
                            latestIteration =
                                    std::optional<std::uint64_t>{},
-                           publishedTrajectoryNumber = std::uint64_t{0},
+                           publishImprovement,
                            throughput = RollingThroughput()](
                                   const SearchLiveUpdate &live) mutable {
         if (latestInputsText.isEmpty() ||
@@ -271,27 +296,22 @@ void SearchWorker::run() {
                 IterationsPerSecond(
                         throughput.Observe(live.iterations, live.elapsed)),
                 RoundedDuration(live.elapsed));
-        if (!live.bestTimeline.empty()) {
-            auto improvement = std::make_shared<SearchImprovement>();
-            improvement->searchId = searchId_;
-            improvement->improvementNumber =
-                    ++publishedTrajectoryNumber;
-            improvement->packsDirectory =
-                    FilePathFromUtf8(request_.packDirectory);
-            improvement->replayPath =
-                    FilePathFromUtf8(request_.replayPath);
-            const std::string_view backendId =
-                    PhysicsBackendId(request_.backend);
-            improvement->simulationBackendId = QString::fromLatin1(
-                    backendId.data(),
-                    static_cast<qsizetype>(backendId.size()));
-            improvement->timeline = live.bestTimeline;
-            emit improvementFound(std::move(improvement));
-        }
+        publishImprovement(live, PhysicsBackendId(request_.backend));
         emit bestChanged(
                 FormatLive(live, QStringLiteral("Current best")),
                 latestInputsText);
     };
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (request_.backend == PhysicsBackend::Cuda) {
+        control.improvementTimelineSampled =
+                [publishImprovement](const SearchLiveUpdate &live) {
+                    publishImprovement(
+                            live,
+                            PhysicsBackendId(
+                                    PhysicsBackend::OptimizedCpu));
+                };
+    }
+#endif
 
     try {
         SearchResult result = RunSearch(request_, &control);

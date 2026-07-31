@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <exception>
 #include <map>
 #include <memory>
@@ -211,6 +212,130 @@ std::vector<SearchTimelineFrame> SampleBestTimeline(
     return SampleTimeline(runtime, inputs, control, true);
 }
 
+class AsyncImprovementTimelineSampler final {
+public:
+    AsyncImprovementTimelineSampler(
+            SearchRequest request,
+            forevervalidator::AssetBytes replay,
+            forevervalidator::ReplayIdentity identity,
+            const SearchRunControl *control,
+            std::function<void(const SearchLiveUpdate &)> callback)
+        : request_(std::move(request)),
+          replay_(std::move(replay)),
+          identity_(std::move(identity)),
+          control_(control),
+          callback_(std::move(callback)) {
+        request_.backend = PhysicsBackend::OptimizedCpu;
+        samplingControl_.cancellationRequested = [this]() {
+            return discardRequested_.load(std::memory_order_relaxed) ||
+                    (control_ != nullptr &&
+                     control_->cancellationRequested &&
+                     control_->cancellationRequested());
+        };
+        worker_ = std::thread([this]() { Run(); });
+    }
+
+    ~AsyncImprovementTimelineSampler() {
+        static_cast<void>(Stop(true));
+    }
+
+    AsyncImprovementTimelineSampler(
+            const AsyncImprovementTimelineSampler &) = delete;
+    AsyncImprovementTimelineSampler &operator=(
+            const AsyncImprovementTimelineSampler &) = delete;
+
+    void Submit(const SearchLiveUpdate &live) {
+        std::exception_ptr failure;
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            failure = failure_;
+            if (!failure && !stopRequested_) {
+                if (live.winnerSource == SearchWinnerSource::Baseline ||
+                    pending_.empty() ||
+                    pending_.back().winnerSource ==
+                            SearchWinnerSource::Baseline) {
+                    pending_.push_back(live);
+                } else {
+                    pending_.back() = live;
+                }
+            }
+        }
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+        ready_.notify_one();
+    }
+
+    std::exception_ptr Stop(bool discardPending) noexcept {
+        if (discardPending) {
+            discardRequested_.store(true, std::memory_order_relaxed);
+        }
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            stopRequested_ = true;
+            if (discardPending) {
+                pending_.clear();
+            }
+        }
+        ready_.notify_one();
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+        std::lock_guard<std::mutex> guard(mutex_);
+        return failure_;
+    }
+
+private:
+    void Run() noexcept {
+        try {
+            std::optional<TimelineSamplingRuntime> runtime;
+            for (;;) {
+                std::optional<SearchLiveUpdate> task;
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    ready_.wait(lock, [this]() {
+                        return stopRequested_ || !pending_.empty();
+                    });
+                    if (pending_.empty()) {
+                        return;
+                    }
+                    task = std::move(pending_.front());
+                    pending_.pop_front();
+                }
+                if (!runtime) {
+                    runtime.emplace(CreateTimelineSamplingRuntime(
+                            request_, replay_, identity_));
+                }
+                task->bestTimeline = SampleTimeline(
+                        *runtime,
+                        task->bestInputs,
+                        &samplingControl_,
+                        false);
+                callback_(*task);
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> guard(mutex_);
+            failure_ = std::current_exception();
+            pending_.clear();
+            stopRequested_ = true;
+        }
+    }
+
+    SearchRequest request_;
+    forevervalidator::AssetBytes replay_;
+    forevervalidator::ReplayIdentity identity_;
+    const SearchRunControl *control_ = nullptr;
+    SearchRunControl samplingControl_;
+    std::function<void(const SearchLiveUpdate &)> callback_;
+    std::atomic_bool discardRequested_{false};
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<SearchLiveUpdate> pending_;
+    std::exception_ptr failure_;
+    bool stopRequested_ = false;
+    std::thread worker_;
+};
+
 struct CachedSearchSandbox {
     std::mutex lock;
     forevervalidator::AssetBytes replay;
@@ -290,12 +415,30 @@ SearchResult RunLoadedSearch(
     const SearchRunControl *executionControl = control;
     SearchRunControl instrumentedControl;
     std::unique_ptr<TimelineSamplingRuntime> improvementSampler;
+    std::unique_ptr<AsyncImprovementTimelineSampler>
+            asyncImprovementSampler;
     std::uint64_t sampledImprovementCount = 0u;
     bool sampledBaseline = false;
     if (control != nullptr && control->liveChanged &&
         control->sampleImprovementTimelines) {
         instrumentedControl = *control;
         const auto downstreamLiveChanged = control->liveChanged;
+#if FOREVERVALIDATOR_HAS_CUDA
+        const bool asynchronousCpuSampling =
+                request.backend == PhysicsBackend::Cuda &&
+                static_cast<bool>(control->improvementTimelineSampled);
+#else
+        constexpr bool asynchronousCpuSampling = false;
+#endif
+        if (asynchronousCpuSampling) {
+            asyncImprovementSampler =
+                    std::make_unique<AsyncImprovementTimelineSampler>(
+                            request,
+                            replay,
+                            identity,
+                            control,
+                            control->improvementTimelineSampled);
+        }
         instrumentedControl.liveChanged =
                 [&, downstreamLiveChanged](
                         const SearchLiveUpdate &live) {
@@ -308,6 +451,20 @@ SearchResult RunLoadedSearch(
                                     SearchWinnerSource::Mutation &&
                             live.mutationImprovementCount >
                                     sampledImprovementCount;
+                    if (asyncImprovementSampler) {
+                        downstreamLiveChanged(live);
+                        if (!initialBaseline && !improvedMutation) {
+                            return;
+                        }
+                        asyncImprovementSampler->Submit(live);
+                        if (initialBaseline) {
+                            sampledBaseline = true;
+                        } else {
+                            sampledImprovementCount =
+                                    live.mutationImprovementCount;
+                        }
+                        return;
+                    }
                     if (!initialBaseline && !improvedMutation) {
                         downstreamLiveChanged(live);
                         return;
@@ -337,16 +494,34 @@ SearchResult RunLoadedSearch(
         executionControl = &instrumentedControl;
     }
 
-    SearchResult result = search->Run({
-            sandbox,
-            kSearchTickDurationMs,
-            mutator,
-            *evaluator,
-            executionControl,
-            request.parallelSampleCount,
-            request.calibrateCudaParallelSampleCount,
-            cudaModifiers.empty() ? nullptr : &cudaModifiers,
-            cudaEvaluator ? &*cudaEvaluator : nullptr});
+    SearchResult result = [&]() {
+        try {
+            SearchResult completed = search->Run({
+                    sandbox,
+                    kSearchTickDurationMs,
+                    mutator,
+                    *evaluator,
+                    executionControl,
+                    request.parallelSampleCount,
+                    request.calibrateCudaParallelSampleCount,
+                    cudaModifiers.empty() ? nullptr : &cudaModifiers,
+                    cudaEvaluator ? &*cudaEvaluator : nullptr});
+            if (asyncImprovementSampler) {
+                const std::exception_ptr failure =
+                        asyncImprovementSampler->Stop(false);
+                if (failure) {
+                    std::rethrow_exception(failure);
+                }
+            }
+            return completed;
+        } catch (...) {
+            if (asyncImprovementSampler) {
+                static_cast<void>(
+                        asyncImprovementSampler->Stop(true));
+            }
+            throw;
+        }
+    }();
     CheckCancellation(control);
     if (control == nullptr || control->sampleBestTimeline) {
         result.bestTimeline = SampleBestTimeline(
