@@ -63,18 +63,12 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG 696d8355795b40f1adf6b56772e8da21c86f3fab
+    GIT_TAG 75e633d28d1136e14490aff8529111ccbd07bfa4
     GIT_SHALLOW FALSE
     PATCH_COMMAND
         "${CMAKE_COMMAND}"
         "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
-        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-stunt-points.patch"
-        "-DSOURCE_DIR=<SOURCE_DIR>"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake"
-        COMMAND
-        "${CMAKE_COMMAND}"
-        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
-        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-map-name.patch"
+        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-cpu-multithreading.patch"
         "-DSOURCE_DIR=<SOURCE_DIR>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake")
 FetchContent_MakeAvailable(ForeverValidator)
