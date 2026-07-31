@@ -2818,6 +2818,100 @@ ApplicationWindow {
 
                     }
 
+                    ColumnLayout {
+                        id: replaySection
+
+                        objectName: "replaySection"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        spacing: 6
+
+                        Label {
+                            text: qsTr("Replay")
+                            font.weight: Font.Medium
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            TextField {
+                                objectName: "replayPathField"
+                                Layout.fillWidth: true
+                                text: window.controller.replayPath
+                                enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                placeholderText: qsTr("Select replay file")
+                                selectByMouse: true
+                                onTextEdited: window.controller.replayPath = text
+                            }
+
+                            ThemedButton {
+                                objectName: "browseReplayButton"
+                                text: qsTr("Browse")
+                                enabled: !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                onClicked:
+                                    window.controller.browseForReplay()
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ThemedButton {
+                                objectName: "loadMapButton"
+                                Layout.fillWidth: true
+                                text: window.viewer.loading
+                                      ? qsTr("Loading map...")
+                                      : qsTr("Load map")
+                                enabled: !window.viewer.loading
+                                         && !window.viewer.manualDriving
+                                         && !window.controller.running
+                                         && !window.controller.extractingReplayInputs
+                                         && window.controller.packsDirectory.length > 0
+                                         && window.controller.replayPath.length > 0
+                                highlighted: true
+                                onClicked: window.viewer.loadMap(
+                                    window.controller.packsDirectory,
+                                    window.controller.replayPath,
+                                    window.controller.simulationBackendId)
+                            }
+
+                            ThemedButton {
+                                objectName: "extractReplayInputsButton"
+                                Layout.fillWidth: true
+                                text: window.controller.extractingReplayInputs
+                                      ? qsTr("Extracting...")
+                                      : qsTr("Extract inputs to script")
+                                enabled: window.controller.canExtractReplayInputs
+                                         && !window.viewer.loading
+                                         && !window.viewer.manualDriving
+                                onClicked: {
+                                    if (window.controller.baseInputScript.trim().length > 0)
+                                        replaceBaseInputScriptDialog.open()
+                                    else
+                                        window.controller.extractReplayInputs()
+                                }
+                            }
+                        }
+
+                        Label {
+                            objectName: "replayInputStatusLabel"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: window.controller.replayInputStatusText
+                            color: text.indexOf(qsTr("failed")) >= 0
+                                   || text.indexOf(qsTr("discarded")) >= 0
+                                   ? AppTheme.error
+                                   : AppTheme.success
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
+                    }
+
                     ConfigurationSection {
                         objectName: "baseInputScriptSection"
                         Layout.fillWidth: true
@@ -2913,6 +3007,37 @@ ApplicationWindow {
                         }
                     }
 
+                    RowLayout {
+                        id: appearanceControls
+
+                        objectName: "appearanceControls"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        spacing: 8
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Appearance")
+                            color: AppTheme.textMuted
+                            font.pixelSize: 11
+                        }
+
+                        ThemedSwitch {
+                            id: darkModeToggle
+                            objectName: "darkModeToggle"
+                            text: qsTr("Dark mode")
+                            checked: window.controller.darkMode
+                            onToggled:
+                                window.controller.darkMode = checked
+                            Accessible.name: qsTr("Dark mode")
+                            ToolTip.visible: hovered
+                            ToolTip.text: checked
+                                          ? qsTr("Use the default light theme")
+                                          : qsTr("Use the dark theme")
+                        }
+                    }
+
                     TabBar {
                         id: toolTabs
 
@@ -2944,35 +3069,6 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
-                        objectName: "appearanceControls"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        spacing: 8
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: qsTr("Appearance")
-                            color: AppTheme.textMuted
-                            font.pixelSize: 11
-                        }
-
-                        ThemedSwitch {
-                            id: darkModeToggle
-                            objectName: "darkModeToggle"
-                            text: qsTr("Dark mode")
-                            checked: window.controller.darkMode
-                            onToggled:
-                                window.controller.darkMode = checked
-                            Accessible.name: qsTr("Dark mode")
-                            ToolTip.visible: hovered
-                            ToolTip.text: checked
-                                          ? qsTr("Use the default light theme")
-                                          : qsTr("Use the dark theme")
-                        }
-                    }
-
                     ColumnLayout {
                         id: bruteforceTabContent
 
@@ -2980,95 +3076,6 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         visible: toolTabs.currentIndex === 0
                         spacing: 14
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        spacing: 6
-
-                        Label {
-                            text: qsTr("Replay")
-                            font.weight: Font.Medium
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            TextField {
-                                Layout.fillWidth: true
-                                text: window.controller.replayPath
-                                enabled: !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                placeholderText: qsTr("Select replay file")
-                                selectByMouse: true
-                                onTextEdited: window.controller.replayPath = text
-                            }
-
-                            ThemedButton {
-                                text: qsTr("Browse")
-                                enabled: !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                onClicked:
-                                    window.controller.browseForReplay()
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            ThemedButton {
-                                objectName: "loadMapButton"
-                                Layout.fillWidth: true
-                                text: window.viewer.loading
-                                      ? qsTr("Loading map...")
-                                      : qsTr("Load map")
-                                enabled: !window.viewer.loading
-                                         && !window.viewer.manualDriving
-                                         && !window.controller.running
-                                         && !window.controller.extractingReplayInputs
-                                         && window.controller.packsDirectory.length > 0
-                                         && window.controller.replayPath.length > 0
-                                highlighted: true
-                                onClicked: window.viewer.loadMap(
-                                    window.controller.packsDirectory,
-                                    window.controller.replayPath,
-                                    window.controller.simulationBackendId)
-                            }
-
-                            ThemedButton {
-                                objectName: "extractReplayInputsButton"
-                                Layout.fillWidth: true
-                                text: window.controller.extractingReplayInputs
-                                      ? qsTr("Extracting...")
-                                      : qsTr("Extract inputs to script")
-                                enabled: window.controller.canExtractReplayInputs
-                                         && !window.viewer.loading
-                                         && !window.viewer.manualDriving
-                                onClicked: {
-                                    if (window.controller.baseInputScript.trim().length > 0)
-                                        replaceBaseInputScriptDialog.open()
-                                    else
-                                        window.controller.extractReplayInputs()
-                                }
-                            }
-                        }
-
-                        Label {
-                            objectName: "replayInputStatusLabel"
-                            Layout.fillWidth: true
-                            visible: text.length > 0
-                            text: window.controller.replayInputStatusText
-                            color: text.indexOf(qsTr("failed")) >= 0
-                                   || text.indexOf(qsTr("discarded")) >= 0
-                                   ? AppTheme.error
-                                   : AppTheme.success
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: 11
-                        }
-                    }
 
                     ColumnLayout {
                         Layout.fillWidth: true

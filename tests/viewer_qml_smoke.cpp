@@ -599,6 +599,30 @@ int main(int argc, char **argv) {
             qobject_cast<QQuickItem *>(
                     root->findChild<QObject *>(
                             QStringLiteral("baseInputScriptSection")));
+    auto *const initialReplaySection =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("replaySection")));
+    auto *const initialAppearanceControls =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("appearanceControls")));
+    auto *const initialReplayPathField =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("replayPathField")));
+    auto *const initialBrowseReplayButton =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("browseReplayButton")));
+    auto *const initialLoadMapButton =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("loadMapButton")));
+    auto *const initialExtractReplayInputsButton =
+            qobject_cast<QQuickItem *>(
+                    root->findChild<QObject *>(
+                            QStringLiteral("extractReplayInputsButton")));
     auto *const initialToolTabs =
             qobject_cast<QQuickItem *>(
                     root->findChild<QObject *>(
@@ -611,8 +635,14 @@ int main(int argc, char **argv) {
             qobject_cast<QQuickItem *>(
                     root->findChild<QObject *>(
                             QStringLiteral("simulationDebuggerPanel")));
-    bool globalScriptVisibleAcrossTabs =
+    bool globalSettingsVisibleAcrossTabs =
             initialGlobalScript != nullptr &&
+            initialReplaySection != nullptr &&
+            initialAppearanceControls != nullptr &&
+            initialReplayPathField != nullptr &&
+            initialBrowseReplayButton != nullptr &&
+            initialLoadMapButton != nullptr &&
+            initialExtractReplayInputsButton != nullptr &&
             initialToolTabs != nullptr &&
             initialBruteforceContent != nullptr &&
             initialDebuggerContent != nullptr;
@@ -633,17 +663,29 @@ int main(int argc, char **argv) {
                         QStringLiteral("<font color=")) ==
                         QStringLiteral("physics.cpp").size();
     }
-    if (globalScriptVisibleAcrossTabs) {
+    if (globalSettingsVisibleAcrossTabs) {
         initialToolTabs->setProperty("currentIndex", 1);
         QCoreApplication::processEvents();
-        globalScriptVisibleAcrossTabs &=
+        globalSettingsVisibleAcrossTabs &=
                 initialGlobalScript->isVisible() &&
+                initialReplaySection->isVisible() &&
+                initialAppearanceControls->isVisible() &&
+                initialReplayPathField->isVisible() &&
+                initialBrowseReplayButton->isVisible() &&
+                initialLoadMapButton->isVisible() &&
+                initialExtractReplayInputsButton->isVisible() &&
                 !initialBruteforceContent->isVisible() &&
                 initialDebuggerContent->isVisible();
         initialToolTabs->setProperty("currentIndex", 0);
         QCoreApplication::processEvents();
-        globalScriptVisibleAcrossTabs &=
+        globalSettingsVisibleAcrossTabs &=
                 initialGlobalScript->isVisible() &&
+                initialReplaySection->isVisible() &&
+                initialAppearanceControls->isVisible() &&
+                initialReplayPathField->isVisible() &&
+                initialBrowseReplayButton->isVisible() &&
+                initialLoadMapButton->isVisible() &&
+                initialExtractReplayInputsButton->isVisible() &&
                 initialBruteforceContent->isVisible() &&
                 !initialDebuggerContent->isVisible();
     }
@@ -925,6 +967,20 @@ int main(int argc, char **argv) {
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
                                             "packsDirectorySection")));
+                    auto *const replaySection =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "replaySection")));
+                    auto *const appearanceControls =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "appearanceControls")));
+                    QObject *const replayPathField =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "replayPathField"));
+                    QObject *const browseReplayButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "browseReplayButton"));
                     QObject *const baseInputScriptScrollView =
                             root->findChild<QObject *>(QStringLiteral(
                                     "baseInputScriptScrollView"));
@@ -1196,10 +1252,12 @@ int main(int argc, char **argv) {
                             renderModeSelector->width() >= 179.0 &&
                             runSelector->property("count").toInt() == 1 &&
                             runSelector->property("enabled").toBool();
-                    bool globalBaseInputScriptPlacement =
-                            globalScriptVisibleAcrossTabs &&
+                    bool globalSettingsPlacement =
+                            globalSettingsVisibleAcrossTabs &&
                             packsDirectorySection != nullptr &&
+                            replaySection != nullptr &&
                             baseInputScriptSection != nullptr &&
+                            appearanceControls != nullptr &&
                             toolTabs != nullptr &&
                             bruteforceTabContent != nullptr &&
                             simulationDebuggerPanel != nullptr &&
@@ -1207,18 +1265,48 @@ int main(int argc, char **argv) {
                                         QStringLiteral(
                                                 "baseInputScriptSection"))
                                             .size() == 1 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral("replaySection"))
+                                            .size() == 1 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral("appearanceControls"))
+                                            .size() == 1 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral("replayPathField"))
+                                            .size() == 1 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral("browseReplayButton"))
+                                            .size() == 1 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral("loadMapButton"))
+                                            .size() == 1 &&
+                            root->findChildren<QObject *>(
+                                        QStringLiteral(
+                                                "extractReplayInputsButton"))
+                                            .size() == 1 &&
                             packsDirectorySection->parentItem() ==
+                                    replaySection->parentItem() &&
+                            replaySection->parentItem() ==
                                     baseInputScriptSection->parentItem() &&
                             baseInputScriptSection->parentItem() ==
+                                    appearanceControls->parentItem() &&
+                            appearanceControls->parentItem() ==
                                     toolTabs->parentItem() &&
                             packsDirectorySection->y() +
                                             packsDirectorySection->height() <=
+                                    replaySection->y() &&
+                            replaySection->y() + replaySection->height() <=
                                     baseInputScriptSection->y() &&
                             baseInputScriptSection->y() +
                                             baseInputScriptSection->height() <=
+                                    appearanceControls->y() &&
+                            appearanceControls->y() +
+                                            appearanceControls->height() <=
                                     toolTabs->y();
                     const bool baseInputScriptUiValid =
                             baseInputScriptSection != nullptr &&
+                            replayPathField != nullptr &&
+                            browseReplayButton != nullptr &&
                             baseInputScriptScrollView != nullptr &&
                             baseInputScriptTextArea != nullptr &&
                             baseInputScriptErrorLabel != nullptr &&
@@ -2644,7 +2732,7 @@ int main(int argc, char **argv) {
                             timelinePanel != nullptr && viewport != nullptr &&
                             timelinePanel->x() < viewport->x() &&
                             runSelectorValid &&
-                            globalBaseInputScriptPlacement &&
+                            globalSettingsPlacement &&
                             baseInputScriptUiValid &&
                             bestInputsUiValid &&
                             searchControlsValid && searchMetricsUiValid &&
@@ -2692,8 +2780,8 @@ int main(int argc, char **argv) {
                                 << "editor checks: runSelector=" << runSelectorValid
                                 << ", baseInputScript="
                                 << baseInputScriptUiValid
-                                << ", globalBaseInput="
-                                << globalBaseInputScriptPlacement
+                                << ", globalSettings="
+                                << globalSettingsPlacement
                                 << " (packs="
                                 << (packsDirectorySection != nullptr
                                             ? packsDirectorySection->y()
@@ -2702,6 +2790,12 @@ int main(int argc, char **argv) {
                                 << (packsDirectorySection != nullptr
                                             ? packsDirectorySection->height()
                                             : -1.0)
+                                << ", replay="
+                                << (replaySection != nullptr
+                                            ? replaySection->y() : -1.0)
+                                << "+"
+                                << (replaySection != nullptr
+                                            ? replaySection->height() : -1.0)
                                 << ", script="
                                 << (baseInputScriptSection != nullptr
                                             ? baseInputScriptSection->y()
@@ -2709,6 +2803,13 @@ int main(int argc, char **argv) {
                                 << "+"
                                 << (baseInputScriptSection != nullptr
                                             ? baseInputScriptSection->height()
+                                            : -1.0)
+                                << ", appearance="
+                                << (appearanceControls != nullptr
+                                            ? appearanceControls->y() : -1.0)
+                                << "+"
+                                << (appearanceControls != nullptr
+                                            ? appearanceControls->height()
                                             : -1.0)
                                 << ", tabs="
                                 << (toolTabs != nullptr
