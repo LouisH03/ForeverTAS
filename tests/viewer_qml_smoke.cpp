@@ -5021,6 +5021,19 @@ int main(int argc, char **argv) {
                                 QObject *const placedPlane =
                                         root->findChild<QObject *>(
                                                 planeObjectName);
+                                const QString planeSurfaceObjectName =
+                                        QStringLiteral(
+                                                "whiteboardPlaneSurface_")
+                                        + placedBoard
+                                                  .value(
+                                                          QStringLiteral(
+                                                                  "id"))
+                                                  .toString();
+                                QObject *const placedPlaneSurface =
+                                        root->findChild<QObject *>(
+                                                planeSurfaceObjectName);
+                                auto *const viewerWindow =
+                                        qobject_cast<QQuickWindow *>(root);
                                 const double savedYaw =
                                         placedBoard.value(
                                                            QStringLiteral(
@@ -5062,6 +5075,93 @@ int main(int argc, char **argv) {
                                                         QVariant(
                                                                 placedBoard)));
                                 QCoreApplication::processEvents();
+                                const auto waitForWhiteboardFrame = []() {
+                                    QEventLoop loop;
+                                    QTimer::singleShot(
+                                            100, &loop, &QEventLoop::quit);
+                                    loop.exec();
+                                    QCoreApplication::processEvents();
+                                };
+                                waitForWhiteboardFrame();
+                                const QImage transparentPlaneImage =
+                                        viewerWindow != nullptr
+                                        ? viewerWindow->grabWindow()
+                                        : QImage();
+                                const QPointF emptyPlanePoint =
+                                        whiteboardPlaneView != nullptr
+                                        ? whiteboardPlaneView->mapToScene(
+                                                  QPointF(
+                                                          whiteboardPlaneView
+                                                                  ->width() *
+                                                                  0.9,
+                                                          whiteboardPlaneView
+                                                                  ->height() *
+                                                                  0.85))
+                                        : QPointF();
+                                const bool whiteboardHiddenForTransparency =
+                                        whiteboard->setBoardVisible(0, false);
+                                waitForWhiteboardFrame();
+                                const QImage unobstructedViewerImage =
+                                        viewerWindow != nullptr
+                                        ? viewerWindow->grabWindow()
+                                        : QImage();
+                                const bool whiteboardReshownAfterTransparency =
+                                        whiteboard->setBoardVisible(0, true);
+                                waitForWhiteboardFrame();
+                                const auto emptyRegionUnchanged =
+                                        [](const QImage &withPlane,
+                                           const QImage &withoutPlane,
+                                           const QPointF &center) {
+                                            if (withPlane.isNull() ||
+                                                withoutPlane.isNull() ||
+                                                withPlane.size() !=
+                                                        withoutPlane.size()) {
+                                                return false;
+                                            }
+                                            const QRect region(
+                                                    qRound(center.x()) - 8,
+                                                    qRound(center.y()) - 8,
+                                                    17,
+                                                    17);
+                                            const QRect bounded =
+                                                    region.intersected(
+                                                            withPlane.rect());
+                                            if (bounded.size() !=
+                                                region.size()) {
+                                                return false;
+                                            }
+                                            for (int y = bounded.top();
+                                                 y <= bounded.bottom(); ++y) {
+                                                for (int x = bounded.left();
+                                                     x <= bounded.right();
+                                                     ++x) {
+                                                    const QColor first =
+                                                            withPlane.pixelColor(
+                                                                    x, y);
+                                                    const QColor second =
+                                                            withoutPlane
+                                                                    .pixelColor(
+                                                                            x,
+                                                                            y);
+                                                    if (first != second) {
+                                                        return false;
+                                                    }
+                                                }
+                                            }
+                                            return true;
+                                        };
+                                const bool whiteboardTransparency =
+                                        placedPlaneSurface != nullptr &&
+                                        placedPlaneSurface
+                                                        ->property("color")
+                                                        .value<QColor>()
+                                                        .alpha() == 0 &&
+                                        whiteboardHiddenForTransparency &&
+                                        whiteboardReshownAfterTransparency &&
+                                        emptyRegionUnchanged(
+                                                transparentPlaneImage,
+                                                unobstructedViewerImage,
+                                                emptyPlanePoint);
                                 const auto projectedBounds =
                                         [whiteboardPlaneView]() {
                                             QVariant result;
@@ -5114,8 +5214,6 @@ int main(int argc, char **argv) {
                                                                 .toDouble() -
                                                 whiteboardPlaneView->height()) <=
                                                 projectionTolerance;
-                                auto *const viewerWindow =
-                                        qobject_cast<QQuickWindow *>(root);
                                 const int originalWindowWidth =
                                         viewerWindow != nullptr
                                         ? viewerWindow->width() : 0;
@@ -5256,6 +5354,7 @@ int main(int argc, char **argv) {
                                 const bool whiteboardPlaneState =
                                         whiteboardPlaced &&
                                         whiteboardExactProjection &&
+                                        whiteboardTransparency &&
                                         whiteboardWorldPick &&
                                         whiteboard->count() == 0 &&
                                         whiteboard->boardCount() == 1 &&

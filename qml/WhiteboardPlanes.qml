@@ -257,14 +257,13 @@ View3D {
                 cullMode: Material.NoCulling
                 diffuseMap: Texture {
                     sourceItem: Rectangle {
+                        objectName:
+                            "whiteboardPlaneSurface_" + plane.modelData.id
                         width: Math.max(
                             1, Math.min(8192, plane.sourceCanvasWidth))
                         height: Math.max(
                             1, Math.min(8192, plane.sourceCanvasHeight))
-                        color: "#b8111513"
-                        border.width: root.exportMode ? 0 : 3
-                        border.color: plane.modelData.selected
-                                      ? "#dce75c" : "#8aa096"
+                        color: "transparent"
 
                         Repeater {
                             model: plane.modelData.items
