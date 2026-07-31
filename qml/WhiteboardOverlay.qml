@@ -484,6 +484,25 @@ Item {
                     ToolTip.text: qsTr("%1 px").arg(Math.round(value))
                 }
 
+                SliderValueField {
+                    objectName: "whiteboardSizeSliderValueField"
+                    visible: root.model.active
+                    width: 62
+                    height: 34
+                    value: root.model.size.toString()
+                    from: sizeSlider.from
+                    to: sizeSlider.to
+                    integer: true
+                    suffix: qsTr("px")
+                    accessibleName: qsTr("Drawing size exact value")
+                    fieldColor: AppTheme.viewerOverlayControl
+                    fieldDisabledColor: AppTheme.viewerOverlayControl
+                    fieldBorderColor: AppTheme.viewerOverlayBorder
+                    fieldTextColor: AppTheme.viewerOverlayText
+                    fieldDisabledTextColor: AppTheme.viewerOverlayMuted
+                    onEdited: value => root.model.size = Number(value)
+                }
+
                 ThemedToolButton {
                     objectName: "whiteboardDeleteButton"
                     visible: root.model.active

@@ -661,6 +661,8 @@ int main(int argc, char **argv) {
                 QStringLiteral("whiteboardDrawingInput"));
         QObject *const sizeSlider = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardSizeSlider"));
+        QObject *const sizeValueField = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardSizeSliderValueField"));
         QObject *const customColor = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardCustomColor"));
         QObject *const textEditor = overlay->findChild<QObject *>(
@@ -709,14 +711,65 @@ int main(int argc, char **argv) {
                "active whiteboard captures drawing input");
         expect(sizeSlider != nullptr &&
                        sizeSlider->property("visible").toBool() &&
+                       sizeValueField != nullptr &&
+                       sizeValueField->property("visible").toBool() &&
+                       sizeValueField
+                               ->property("exactValueEditor").toBool() &&
+                       sizeValueField->property("integer").toBool() &&
+                       sizeValueField->property("from").toReal() == 1.0 &&
+                       sizeValueField->property("to").toReal() == 24.0 &&
                        customColor != nullptr &&
                        textEditor != nullptr,
-               "size, arbitrary color, and text controls are connected");
+               "size slider, exact entry, arbitrary color, and text controls "
+               "are connected");
         if (sizeSlider != nullptr) {
             sizeSlider->setProperty("value", 9.0);
             QCoreApplication::processEvents();
             expect(Near(model.size(), 9.0),
                    "keyboard and accessibility slider changes update size");
+        }
+        if (sizeSlider != nullptr && sizeValueField != nullptr) {
+            QVariant committed;
+            sizeValueField->setProperty("text", QStringLiteral("13"));
+            const bool invoked = QMetaObject::invokeMethod(
+                    sizeValueField,
+                    "commitText",
+                    Qt::DirectConnection,
+                    Q_RETURN_ARG(QVariant, committed));
+            QCoreApplication::processEvents();
+            expect(invoked && committed.toBool() &&
+                           Near(model.size(), 13.0) &&
+                           Near(sizeSlider->property("value").toReal(), 13.0) &&
+                           sizeValueField->property("text").toString() ==
+                                   QStringLiteral("13"),
+                   "typed drawing size updates the model and slider exactly");
+
+            sizeValueField->setProperty("text", QStringLiteral("13.5"));
+            committed.clear();
+            const bool rejectedFraction = QMetaObject::invokeMethod(
+                    sizeValueField,
+                    "commitText",
+                    Qt::DirectConnection,
+                    Q_RETURN_ARG(QVariant, committed));
+            QCoreApplication::processEvents();
+            expect(rejectedFraction && !committed.toBool() &&
+                           Near(model.size(), 13.0) &&
+                           sizeValueField
+                                   ->property("validationFailed").toBool(),
+                   "drawing size entry rejects fractional values without "
+                   "changing the current size");
+
+            sizeValueField->setProperty("text", QStringLiteral("25"));
+            committed.clear();
+            const bool rejectedRange = QMetaObject::invokeMethod(
+                    sizeValueField,
+                    "commitText",
+                    Qt::DirectConnection,
+                    Q_RETURN_ARG(QVariant, committed));
+            QCoreApplication::processEvents();
+            expect(rejectedRange && !committed.toBool() &&
+                           Near(model.size(), 13.0),
+                   "drawing size entry rejects out-of-range values");
         }
         expect(toolRepeater != nullptr &&
                        toolRepeater->property("count").toInt() == 7,

@@ -336,6 +336,7 @@ qt_add_qml_module(forevertas
         qml/AppTheme.qml
         qml/Main.qml
         qml/SimulationDebuggerPanel.qml
+        qml/SliderValueField.qml
         qml/ThemedButton.qml
         qml/ThemedCheckBox.qml
         qml/ThemedItemDelegate.qml

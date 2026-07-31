@@ -254,6 +254,23 @@ QColor FirstDescendantColor(QObject *root) {
     return {};
 }
 
+bool InvokeSliderValueCommit(
+        QObject *field,
+        const QString &text,
+        bool expectedResult) {
+    if (field == nullptr || !field->setProperty("text", text)) {
+        return false;
+    }
+    QVariant result;
+    const bool invoked = QMetaObject::invokeMethod(
+            field,
+            "commitText",
+            Qt::DirectConnection,
+            Q_RETURN_ARG(QVariant, result));
+    QCoreApplication::processEvents();
+    return invoked && result.toBool() == expectedResult;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1908,6 +1925,7 @@ int main(int argc, char **argv) {
                     bool bestInputsWheelValid = false;
                     bool sourceTreeWheelValid = false;
                     bool codeViewerWheelValid = false;
+                    bool perturbationSliderEditorsValid = false;
                     bool wheelScrollingValid =
                             settingsScroll != nullptr &&
                             settingsWheelRedirector != nullptr &&
@@ -2046,6 +2064,29 @@ int main(int argc, char **argv) {
                                                       ->findChild<QObject *>(
                                                               QStringLiteral(
                                                                       "perturbationAbsoluteMinimumSlider")));
+                            QObject *const perturbationMinimumField =
+                                    perturbationSettings == nullptr
+                                    ? nullptr
+                                    : perturbationSettings
+                                              ->findChild<QObject *>(
+                                                      QStringLiteral(
+                                                              "perturbationAbsoluteMinimumSliderValueField"));
+                            QObject *const perturbationMaximumField =
+                                    perturbationSettings == nullptr
+                                    ? nullptr
+                                    : perturbationSettings
+                                              ->findChild<QObject *>(
+                                                      QStringLiteral(
+                                                              "perturbationAbsoluteMaximumSliderValueField"));
+                            perturbationSliderEditorsValid =
+                                    perturbationMinimumField != nullptr &&
+                                    perturbationMaximumField != nullptr &&
+                                    perturbationMinimumField
+                                            ->property("exactValueEditor")
+                                            .toBool() &&
+                                    perturbationMaximumField
+                                            ->property("exactValueEditor")
+                                            .toBool();
                             wheelScrollingValid &=
                                     absoluteMinimumSlider != nullptr;
                             if (wheelScrollingValid) {
@@ -2487,6 +2528,18 @@ int main(int argc, char **argv) {
                             : insertionSettings->findChild<QObject *>(
                                       QStringLiteral(
                                               "insertionAbsoluteMaximumSlider"));
+                    QObject *const insertionMinimumField =
+                            insertionSettings == nullptr
+                            ? nullptr
+                            : insertionSettings->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "insertionAbsoluteMinimumSliderValueField"));
+                    QObject *const insertionMaximumField =
+                            insertionSettings == nullptr
+                            ? nullptr
+                            : insertionSettings->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "insertionAbsoluteMaximumSliderValueField"));
                     dropdownStateUpdates &=
                             activateCombo(insertionModeCombo, 1);
                     QCoreApplication::processEvents();
@@ -2499,9 +2552,15 @@ int main(int argc, char **argv) {
                                             .toString() ==
                                     QStringLiteral("absolute");
 
-                    const bool insertionSlidersValid =
+                    bool insertionSlidersValid =
                             insertionMinimumSlider != nullptr &&
                             insertionMaximumSlider != nullptr &&
+                            insertionMinimumField != nullptr &&
+                            insertionMaximumField != nullptr &&
+                            insertionMinimumField
+                                    ->property("exactValueEditor").toBool() &&
+                            insertionMaximumField
+                                    ->property("exactValueEditor").toBool() &&
                             insertionMinimumSlider->property("from").toReal() ==
                                     -1.0 &&
                             insertionMinimumSlider->property("to").toReal() ==
@@ -2510,6 +2569,72 @@ int main(int argc, char **argv) {
                                     -1.0 &&
                             insertionMaximumSlider->property("to").toReal() ==
                                     1.0;
+                    insertionSlidersValid &=
+                            InvokeSliderValueCommit(
+                                    insertionMinimumField,
+                                    QStringLiteral("-0.375"),
+                                    true) &&
+                            controller.modifierPasses()
+                                            .front()
+                                            .toMap()
+                                            .value(QStringLiteral("settings"))
+                                            .toMap()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "steerAbsoluteMin"))
+                                            .toString() ==
+                                    QStringLiteral("-0.375") &&
+                            std::abs(
+                                    insertionMinimumSlider
+                                                    ->property("value")
+                                                    .toReal() +
+                                    0.375) < 0.000001 &&
+                            InvokeSliderValueCommit(
+                                    insertionMinimumField,
+                                    QStringLiteral("-1.01"),
+                                    false) &&
+                            insertionMinimumField
+                                    ->property("validationFailed").toBool() &&
+                            !insertionMinimumField
+                                     ->property("inputValid").toBool() &&
+                            insertionMinimumField
+                                            ->property("effectiveBorderColor")
+                                            .value<QColor>() ==
+                                    QColor(QStringLiteral("#a23434")) &&
+                            controller.modifierPasses()
+                                            .front()
+                                            .toMap()
+                                            .value(QStringLiteral("settings"))
+                                            .toMap()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "steerAbsoluteMin"))
+                                            .toString() ==
+                                    QStringLiteral("-0.375") &&
+                            InvokeSliderValueCommit(
+                                    insertionMinimumField,
+                                    QStringLiteral("not-a-number"),
+                                    false);
+                    controller.setModifierPassSetting(
+                            0,
+                            QStringLiteral("steerAbsoluteMin"),
+                            QStringLiteral("-0.625"));
+                    QCoreApplication::processEvents();
+                    insertionSlidersValid &=
+                            insertionMinimumField != nullptr &&
+                            insertionMinimumField->property("text").toString() ==
+                                    QStringLiteral("-0.625") &&
+                            !insertionMinimumField
+                                     ->property("validationFailed").toBool() &&
+                            std::abs(
+                                    insertionMinimumSlider
+                                                    ->property("value")
+                                                    .toReal() +
+                                    0.625) < 0.000001 &&
+                            InvokeSliderValueCommit(
+                                    insertionMinimumField,
+                                    QStringLiteral("-1"),
+                                    true);
 
                     dropdownStateUpdates &=
                             activateCombo(evaluationTargetCombo, 5);
@@ -2533,8 +2658,14 @@ int main(int argc, char **argv) {
                                     ->property("settingsItem")
                                     .value<QObject *>();
                     QObject *const rotationWeightSlider =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("rotationWeightSlider"));
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral("rotationWeightSlider"));
+                    QObject *const rotationWeightField =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "rotationWeightSliderValueField"));
                     QObject *const poseSelector =
                             poseEditor == nullptr ? nullptr
                             : poseEditor->findChild<QObject *>(
@@ -2580,6 +2711,9 @@ int main(int argc, char **argv) {
                     QVariant beganPoseRotation;
                     bool poseSliderValid =
                             rotationWeightSlider != nullptr &&
+                            rotationWeightField != nullptr &&
+                            rotationWeightField
+                                    ->property("exactValueEditor").toBool() &&
                             rotationWeightSlider->property("from").toReal() ==
                                     0.0 &&
                             rotationWeightSlider->property("to").toReal() ==
@@ -2676,6 +2810,50 @@ int main(int argc, char **argv) {
                                         QStringLiteral(
                                                 "poseTargetRotationHandle"))
                                             .size() >= 6;
+                    poseSliderValid &=
+                            InvokeSliderValueCommit(
+                                    rotationWeightField,
+                                    QStringLiteral("37.5"),
+                                    true) &&
+                            controller.evaluationTargetSettings()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "rotationWeightPercent"))
+                                            .toString() ==
+                                    QStringLiteral("37.5") &&
+                            std::abs(
+                                    rotationWeightSlider
+                                                    ->property("value")
+                                                    .toReal() -
+                                    37.5) < 0.000001 &&
+                            InvokeSliderValueCommit(
+                                    rotationWeightField,
+                                    QStringLiteral("50"),
+                                    true);
+                    if (!poseSliderValid) {
+                        std::cerr
+                                << "pose slider editor: field="
+                                << (rotationWeightField != nullptr
+                                            ? rotationWeightField
+                                                      ->property("text")
+                                                      .toString()
+                                                      .toStdString()
+                                            : "<missing>")
+                                << ", stored="
+                                << controller.evaluationTargetSettings()
+                                           .value(
+                                                   QStringLiteral(
+                                                           "rotationWeightPercent"))
+                                           .toString()
+                                           .toStdString()
+                                << ", slider="
+                                << (rotationWeightSlider != nullptr
+                                            ? rotationWeightSlider
+                                                      ->property("value")
+                                                      .toReal()
+                                            : -999.0)
+                                << '\n';
+                    }
 
                     dropdownStateUpdates &=
                             activateCombo(evaluationTargetCombo, 3);
@@ -2936,15 +3114,73 @@ int main(int argc, char **argv) {
                             activateCombo(modifierPassCombo, 0);
                     QCoreApplication::processEvents();
                     QCoreApplication::processEvents();
+                    QObject *const velocityEditor =
+                            evaluationTargetSelector
+                                    ->property("settingsItem")
+                                    .value<QObject *>();
                     QObject *const minimumAlignmentSlider =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("minimumAlignmentSlider"));
-                    const bool velocitySliderValid =
+                            velocityEditor == nullptr ? nullptr
+                            : velocityEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "minimumAlignmentSlider"));
+                    QObject *const minimumAlignmentField =
+                            velocityEditor == nullptr ? nullptr
+                            : velocityEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "minimumAlignmentSliderValueField"));
+                    bool velocitySliderValid =
                             minimumAlignmentSlider != nullptr &&
+                            minimumAlignmentField != nullptr &&
+                            minimumAlignmentField
+                                    ->property("exactValueEditor").toBool() &&
                             minimumAlignmentSlider->property("from").toReal() ==
                                     -100.0 &&
                             minimumAlignmentSlider->property("to").toReal() ==
                                     100.0;
+                    velocitySliderValid &=
+                            InvokeSliderValueCommit(
+                                    minimumAlignmentField,
+                                    QStringLiteral("-12.5"),
+                                    true) &&
+                            controller.evaluationTargetSettings()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "minAlignmentPercent"))
+                                            .toString() ==
+                                    QStringLiteral("-12.5") &&
+                            std::abs(
+                                    minimumAlignmentSlider
+                                                    ->property("value")
+                                                    .toReal() +
+                                    12.5) < 0.000001 &&
+                            InvokeSliderValueCommit(
+                                    minimumAlignmentField,
+                                    QStringLiteral("-100"),
+                                    true);
+                    if (!velocitySliderValid) {
+                        std::cerr
+                                << "velocity slider editor: field="
+                                << (minimumAlignmentField != nullptr
+                                            ? minimumAlignmentField
+                                                      ->property("text")
+                                                      .toString()
+                                                      .toStdString()
+                                            : "<missing>")
+                                << ", stored="
+                                << controller.evaluationTargetSettings()
+                                           .value(
+                                                   QStringLiteral(
+                                                           "minAlignmentPercent"))
+                                           .toString()
+                                           .toStdString()
+                                << ", slider="
+                                << (minimumAlignmentSlider != nullptr
+                                            ? minimumAlignmentSlider
+                                                      ->property("value")
+                                                      .toReal()
+                                            : -999.0)
+                                << '\n';
+                    }
 
                     controller.setModifierPassId(
                             0, QStringLiteral("random-steering"));
@@ -3090,7 +3326,9 @@ int main(int argc, char **argv) {
                             comboSlotsStyled && settingComboTextValid &&
                             modifierPassLayoutValid && debuggerUiValid &&
                             wheelScrollingValid &&
-                            dropdownStateUpdates && insertionSlidersValid &&
+                            dropdownStateUpdates &&
+                            perturbationSliderEditorsValid &&
+                            insertionSlidersValid &&
                             poseSliderValid && velocitySliderValid &&
                             modifierFocusStable && unboundedFieldsScrubbable &&
                             playPause != nullptr && jumpStart != nullptr &&
@@ -3181,6 +3419,8 @@ int main(int argc, char **argv) {
                                 << "/" << codeViewerWheelValid
                                 << ", dropdown=" << dropdownStateUpdates
                                 << ", insertion=" << insertionSlidersValid
+                                << ", perturbationFields="
+                                << perturbationSliderEditorsValid
                                 << ", pose=" << poseSliderValid
                                 << ", velocity=" << velocitySliderValid
                                 << ", focus=" << modifierFocusStable
