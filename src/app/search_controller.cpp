@@ -249,6 +249,10 @@ QString SearchController::baseInputScriptError() const {
     return baseInputScriptError_;
 }
 
+bool SearchController::canUndoBaseInputScript() const {
+    return !baseInputScriptUndoHistory_.empty();
+}
+
 bool SearchController::extractingReplayInputs() const {
     return extractingReplayInputs_;
 }
@@ -438,8 +442,21 @@ void SearchController::setReplayPath(const QString &value) {
 }
 
 void SearchController::setBaseInputScript(const QString &value) {
+    applyBaseInputScript(value, true);
+}
+
+void SearchController::applyBaseInputScript(const QString &value,
+                                            bool recordUndo) {
     if (baseInputScript_ == value) {
         return;
+    }
+    if (recordUndo) {
+        constexpr std::size_t MaximumUndoEntries = 100u;
+        if (baseInputScriptUndoHistory_.size() == MaximumUndoEntries) {
+            baseInputScriptUndoHistory_.erase(
+                    baseInputScriptUndoHistory_.begin());
+        }
+        baseInputScriptUndoHistory_.push_back(baseInputScript_);
     }
     baseInputScript_ = value;
     InputScriptParseResult parsed = ParseInputScript(value.toStdString());
@@ -452,6 +469,16 @@ void SearchController::setBaseInputScript(const QString &value) {
     }
     emit baseInputScriptChanged();
     refreshValidation();
+}
+
+bool SearchController::undoBaseInputScript() {
+    if (baseInputScriptUndoHistory_.empty()) {
+        return false;
+    }
+    QString previous = std::move(baseInputScriptUndoHistory_.back());
+    baseInputScriptUndoHistory_.pop_back();
+    applyBaseInputScript(previous, false);
+    return true;
 }
 
 void SearchController::setSearchAlgorithmId(const QString &value) {

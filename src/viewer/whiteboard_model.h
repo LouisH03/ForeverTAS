@@ -78,6 +78,7 @@ public:
                             double y,
                             const QString &text);
     Q_INVOKABLE bool setText(int index, const QString &text);
+    Q_INVOKABLE int itemAt(double x, double y) const;
     Q_INVOKABLE bool selectItem(int index);
     Q_INVOKABLE void clearSelection();
     Q_INVOKABLE bool moveSelected(double deltaX, double deltaY);
@@ -90,6 +91,7 @@ public:
     Q_INVOKABLE int captureCurrentBoard(
             const QString &name,
             const QVariantMap &capture);
+    Q_INVOKABLE bool pickUpBoard(int index);
     Q_INVOKABLE bool selectBoard(int index);
     Q_INVOKABLE bool setBoardVisible(int index, bool visible);
     Q_INVOKABLE bool removeBoard(int index);

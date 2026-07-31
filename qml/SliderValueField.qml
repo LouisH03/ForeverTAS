@@ -7,6 +7,7 @@ TextField {
     property string value: ""
     property real from: 0
     property real to: 100
+    property bool maximumEnabled: true
     property bool integer: false
     property string suffix: ""
     property string accessibleName: ""
@@ -51,11 +52,14 @@ TextField {
     function isValidText(candidate) {
         const number = parsedText(candidate)
         return Number.isFinite(number)
-                && number >= control.from && number <= control.to
+                && number >= control.from
+                && (!control.maximumEnabled || number <= control.to)
     }
 
     function formatNumber(number) {
-        const bounded = Math.max(control.from, Math.min(control.to, number))
+        const bounded = control.maximumEnabled
+                ? Math.max(control.from, Math.min(control.to, number))
+                : Math.max(control.from, number)
         if (control.integer)
             return Math.round(bounded).toString()
         return bounded === 0 ? "0" : bounded.toString()
@@ -154,9 +158,13 @@ TextField {
     }
 
     ToolTip.visible: validationFailed
-    ToolTip.text: integer
-                  ? qsTr("Enter a whole number from %1 to %2.")
-                        .arg(from).arg(to)
-                  : qsTr("Enter a number from %1 to %2.")
-                        .arg(from).arg(to)
+    ToolTip.text: maximumEnabled
+                  ? (integer
+                     ? qsTr("Enter a whole number from %1 to %2.")
+                           .arg(from).arg(to)
+                     : qsTr("Enter a number from %1 to %2.")
+                           .arg(from).arg(to))
+                  : (integer
+                     ? qsTr("Enter a whole number of at least %1.").arg(from)
+                     : qsTr("Enter a number of at least %1.").arg(from))
 }

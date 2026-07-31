@@ -475,6 +475,11 @@ bool TestStaticBatching() {
     hidden.visible = false;
     scene.instances.push_back(hidden);
 
+    PhysicsSandboxRenderInstance lowerLod = placed;
+    lowerLod.lodLevel = 1u;
+    lowerLod.worldTransform.translation = {70.0f, 20.0f, 30.0f};
+    scene.instances.push_back(lowerLod);
+
     const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
     const auto repeat = forevertas::viewer::BuildStaticVisualBatches(scene);
     bool okay = Check(
@@ -488,7 +493,7 @@ bool TestStaticBatching() {
                     result.skippedGrassBladeTriangleCount == 32u &&
                     result.batches.size() == 3u,
             "static batch counts, blade removal, or duplicate suppression "
-            "were incorrect");
+            "were incorrect, or a lower-detail LOD reached the preview");
     const auto turboBatch = std::find_if(
             result.batches.cbegin(), result.batches.cend(),
             [](const StaticVisualBatch &batch) {

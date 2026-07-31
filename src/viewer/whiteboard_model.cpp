@@ -29,7 +29,6 @@ constexpr qint64 kMaximumImportBytes = 16 * 1024 * 1024;
 constexpr double kMinimumExtent = 0.01;
 constexpr double kMinimumGestureExtent = 0.002;
 constexpr double kMinimumSize = 1.0;
-constexpr double kMaximumSize = 24.0;
 constexpr int kMaximumMapNameLength = 512;
 constexpr char kPersistedBoardsKey[] = "whiteboards/boardsV2";
 constexpr char kFileFormat[] = "ForeverTAS whiteboard set";
@@ -269,8 +268,7 @@ void WhiteboardModel::setSize(double value) {
     if (!IsFinite(value)) {
         return;
     }
-    const double clamped =
-            std::clamp(value, kMinimumSize, kMaximumSize);
+    const double clamped = std::max(value, kMinimumSize);
     if (qFuzzyCompare(size_ + 1.0, clamped + 1.0)) {
         return;
     }
@@ -454,6 +452,22 @@ bool WhiteboardModel::setText(int index, const QString &text) {
         emit selectionChanged();
     }
     return true;
+}
+
+int WhiteboardModel::itemAt(double x, double y) const {
+    if (!active_ || drawing_ || !IsFinite(x) || !IsFinite(y)) {
+        return -1;
+    }
+    const QPointF point(ClampUnit(x), ClampUnit(y));
+    for (int index = count() - 1; index >= 0; --index) {
+        const Item &item = items_[static_cast<std::size_t>(index)];
+        const double padding = std::max(0.003, item.strokeWidth / 2000.0);
+        if (item.bounds.adjusted(-padding, -padding, padding, padding)
+                    .contains(point)) {
+            return index;
+        }
+    }
+    return -1;
 }
 
 bool WhiteboardModel::selectItem(int index) {
@@ -710,6 +724,39 @@ int WhiteboardModel::captureCurrentBoard(
     setOperationMessage(QStringLiteral(
             "Drawing placed in the 3D view."));
     return selectedBoardIndex_;
+}
+
+bool WhiteboardModel::pickUpBoard(int index) {
+    if (!active_ || drawing_ || !items_.empty() || index < 0 ||
+        index >= boardCount()) {
+        setOperationMessage(QStringLiteral(
+                "Finish or place the current drawing before picking one up."));
+        return false;
+    }
+    const Board board = boards_[static_cast<std::size_t>(index)];
+    if (board.mapKey != mapKey_) {
+        setOperationMessage(QStringLiteral(
+                "Load this drawing's map before picking it up."));
+        return false;
+    }
+
+    const int previousSelection = selectedBoardIndex_;
+    boards_.erase(boards_.begin() + index);
+    selectedBoardIndex_ = -1;
+    if (!persistBoards()) {
+        boards_.insert(boards_.begin() + index, board);
+        selectedBoardIndex_ = previousSelection;
+        return false;
+    }
+
+    items_ = board.items;
+    selectedIndex_ = items_.empty() ? -1 : 0;
+    notifyItemsChanged(true);
+    emit boardsChanged();
+    emit boardSelectionChanged();
+    setOperationMessage(QStringLiteral(
+            "Drawing picked up and ready to place again."));
+    return true;
 }
 
 bool WhiteboardModel::selectBoard(int index) {
@@ -1439,7 +1486,6 @@ bool WhiteboardModel::deserializeBoards(
                 x + width > 1.000001 ||
                 y + height > 1.000001 ||
                 item.strokeWidth < kMinimumSize ||
-                item.strokeWidth > kMaximumSize ||
                 item.fontSize < 0.001 || item.fontSize > 10.0) {
                 *error = QStringLiteral(
                         "A whiteboard item has invalid geometry.");

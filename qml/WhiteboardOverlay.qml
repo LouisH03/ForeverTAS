@@ -16,6 +16,7 @@ Item {
     property real pendingTextX: 0
     property real pendingTextY: 0
     property bool drawingListOpen: false
+    property real toolbarMaximumWidth: width - 28
     property bool imageExportInProgress: false
     property int pendingImageBoardIndex: -1
     property string pendingImageMode: ""
@@ -81,6 +82,22 @@ Item {
             restoreViewpoint(board)
     }
 
+    component WhiteboardToolButton: ThemedButton {
+        required property string toolId
+        required property string label
+        required property real buttonWidth
+
+        objectName: "whiteboardToolButton_" + toolId
+        visible: root.model.active
+        height: 32
+        width: Math.max(buttonWidth, implicitWidth + 4)
+        checkable: true
+        elideText: false
+        checked: root.model.tool === toolId
+        text: label
+        onClicked: root.model.tool = toolId
+    }
+
     onAvailableChanged: {
         if (!available && model.active)
             model.active = false
@@ -111,12 +128,20 @@ Item {
             id: drawingInput
             objectName: "whiteboardDrawingInput"
             anchors.fill: parent
-            z: 0
+            z: 5
             enabled: root.model.active
             acceptedButtons: Qt.LeftButton
             hoverEnabled: true
+            cursorShape: root.model.tool === "eraser"
+                         ? Qt.CrossCursor
+                         : root.model.tool === "select"
+                           ? Qt.SizeAllCursor : Qt.ArrowCursor
+            property real lastBoardX: 0
+            property real lastBoardY: 0
 
             onPressed: mouse => {
+                lastBoardX = mouse.x
+                lastBoardY = mouse.y
                 if (root.model.tool === "text") {
                     root.beginTextEntry(
                                 -1,
@@ -125,7 +150,21 @@ Item {
                                 mouse.y / Math.max(1, height))
                 } else if (root.model.tool === "select"
                            || root.model.tool === "eraser") {
-                    root.model.clearSelection()
+                    const index = root.model.itemAt(
+                                    mouse.x / Math.max(1, width),
+                                    mouse.y / Math.max(1, height))
+                    if (index >= 0) {
+                        root.model.selectItem(index)
+                        if (root.model.tool === "eraser") {
+                            root.model.eraseSelected(
+                                        mouse.x / Math.max(1, width),
+                                        mouse.y / Math.max(1, height),
+                                        root.model.size
+                                        / Math.max(1, Math.min(width, height)))
+                        }
+                    } else {
+                        root.model.clearSelection()
+                    }
                 } else {
                     root.model.beginItem(
                                 mouse.x / Math.max(1, width),
@@ -133,18 +172,44 @@ Item {
                 }
             }
             onPositionChanged: mouse => {
-                if ((mouse.buttons & Qt.LeftButton)
-                        && root.model.drawing) {
+                if (!(mouse.buttons & Qt.LeftButton))
+                    return
+                if (root.model.drawing) {
                     root.model.updateItem(
                                 mouse.x / Math.max(1, width),
                                 mouse.y / Math.max(1, height))
+                } else if (root.model.selectedIndex >= 0
+                           && root.model.tool === "select") {
+                    root.model.moveSelected(
+                                (mouse.x - lastBoardX) / Math.max(1, width),
+                                (mouse.y - lastBoardY) / Math.max(1, height))
+                } else if (root.model.selectedIndex >= 0
+                           && root.model.tool === "eraser") {
+                    root.model.eraseSelected(
+                                mouse.x / Math.max(1, width),
+                                mouse.y / Math.max(1, height),
+                                root.model.size
+                                / Math.max(1, Math.min(width, height)))
                 }
+                lastBoardX = mouse.x
+                lastBoardY = mouse.y
             }
             onReleased: {
                 if (root.model.drawing)
                     root.model.finishItem()
             }
             onCanceled: root.model.cancelItem()
+            onDoubleClicked: mouse => {
+                if (root.model.tool !== "select")
+                    return
+                const index = root.model.itemAt(
+                                mouse.x / Math.max(1, width),
+                                mouse.y / Math.max(1, height))
+                const item = index >= 0 ? root.model.items[index] : null
+                if (item && item.type === "text") {
+                    root.beginTextEntry(index, item.text, item.x, item.y)
+                }
+            }
         }
 
         Repeater {
@@ -157,8 +222,6 @@ Item {
                 objectName: "whiteboardDrawingItem"
                 required property var modelData
                 required property int index
-                property real lastBoardX: 0
-                property real lastBoardY: 0
 
                 x: modelData.x * boardArea.width
                 y: modelData.y * boardArea.height
@@ -183,121 +246,55 @@ Item {
                              && root.model.tool !== "eraser"
                 }
 
-                MouseArea {
-                    id: itemInput
-                    objectName: "whiteboardItemInput"
-                    anchors.fill: parent
-                    enabled: root.model.active
-                             && (root.model.tool === "select"
-                                 || root.model.tool === "eraser")
-                    acceptedButtons: Qt.LeftButton
-                    hoverEnabled: true
-                    cursorShape: root.model.tool === "eraser"
-                                 ? Qt.CrossCursor
-                                 : Qt.SizeAllCursor
+            }
+        }
 
-                    onPressed: mouse => {
-                        root.model.selectItem(drawingDelegate.index)
-                        const point = drawingDelegate.mapToItem(
-                                        boardArea, mouse.x, mouse.y)
-                        drawingDelegate.lastBoardX = point.x
-                        drawingDelegate.lastBoardY = point.y
-                        if (root.model.tool === "eraser") {
-                            root.model.eraseSelected(
-                                        point.x / Math.max(1,
-                                                           boardArea.width),
-                                        point.y / Math.max(1,
-                                                           boardArea.height),
-                                        root.model.size
-                                        / Math.max(
-                                            1,
-                                            Math.min(boardArea.width,
-                                                     boardArea.height)))
-                        }
-                    }
-                    onPositionChanged: mouse => {
-                        if (!(mouse.buttons & Qt.LeftButton))
-                            return
-                        const point = drawingDelegate.mapToItem(
-                                        boardArea, mouse.x, mouse.y)
-                        if (root.model.tool === "eraser") {
-                            root.model.eraseSelected(
-                                        point.x / Math.max(1,
-                                                           boardArea.width),
-                                        point.y / Math.max(1,
-                                                           boardArea.height),
-                                        root.model.size
-                                        / Math.max(
-                                            1,
-                                            Math.min(boardArea.width,
-                                                     boardArea.height)))
-                        } else {
-                            root.model.moveSelected(
-                                        (point.x
-                                         - drawingDelegate.lastBoardX)
-                                        / Math.max(1, boardArea.width),
-                                        (point.y
-                                         - drawingDelegate.lastBoardY)
-                                        / Math.max(1, boardArea.height))
-                        }
-                        drawingDelegate.lastBoardX = point.x
-                        drawingDelegate.lastBoardY = point.y
-                    }
-                    onDoubleClicked: {
-                        if (drawingDelegate.modelData.type === "text") {
-                            root.beginTextEntry(
-                                        drawingDelegate.index,
-                                        drawingDelegate.modelData.text,
-                                        drawingDelegate.modelData.x,
-                                        drawingDelegate.modelData.y)
-                        }
-                    }
+        Rectangle {
+            id: resizeHandle
+            objectName: "whiteboardResizeHandle"
+            width: 13
+            height: 13
+            x: root.model.selectedIndex >= 0
+               ? (root.model.selectedItem.x + root.model.selectedItem.width)
+                 * boardArea.width - width / 2
+               : 0
+            y: root.model.selectedIndex >= 0
+               ? (root.model.selectedItem.y + root.model.selectedItem.height)
+                 * boardArea.height - height / 2
+               : 0
+            radius: 2
+            color: AppTheme.focus
+            border.width: 1
+            border.color: AppTheme.text
+            visible: root.model.active
+                     && root.model.selectedIndex >= 0
+                     && root.model.tool === "select"
+            z: 7
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton
+                cursorShape: Qt.SizeFDiagCursor
+                property real lastBoardX: 0
+                property real lastBoardY: 0
+                onPressed: mouse => {
+                    const point = resizeHandle.mapToItem(
+                                    boardArea, mouse.x, mouse.y)
+                    lastBoardX = point.x
+                    lastBoardY = point.y
                 }
-
-                Rectangle {
-                    id: resizeHandle
-                    objectName: "whiteboardResizeHandle"
-                    width: 13
-                    height: 13
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.rightMargin: -7
-                    anchors.bottomMargin: -7
-                    radius: 2
-                    color: AppTheme.focus
-                    border.width: 1
-                    border.color: AppTheme.text
-                    visible: root.model.active
-                             && drawingDelegate.modelData.selected
-                             && root.model.tool === "select"
-                    z: 4
-
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton
-                        cursorShape: Qt.SizeFDiagCursor
-                        onPressed: mouse => {
-                            const point = resizeHandle.mapToItem(
-                                            boardArea, mouse.x, mouse.y)
-                            drawingDelegate.lastBoardX = point.x
-                            drawingDelegate.lastBoardY = point.y
-                        }
-                        onPositionChanged: mouse => {
-                            if (!(mouse.buttons & Qt.LeftButton))
-                                return
-                            const point = resizeHandle.mapToItem(
-                                            boardArea, mouse.x, mouse.y)
-                            root.model.resizeSelected(
-                                        (point.x
-                                         - drawingDelegate.lastBoardX)
-                                        / Math.max(1, boardArea.width),
-                                        (point.y
-                                         - drawingDelegate.lastBoardY)
-                                        / Math.max(1, boardArea.height))
-                            drawingDelegate.lastBoardX = point.x
-                            drawingDelegate.lastBoardY = point.y
-                        }
-                    }
+                onPositionChanged: mouse => {
+                    if (!(mouse.buttons & Qt.LeftButton))
+                        return
+                    const point = resizeHandle.mapToItem(
+                                    boardArea, mouse.x, mouse.y)
+                    root.model.resizeSelected(
+                                (point.x - lastBoardX)
+                                / Math.max(1, boardArea.width),
+                                (point.y - lastBoardY)
+                                / Math.max(1, boardArea.height))
+                    lastBoardX = point.x
+                    lastBoardY = point.y
                 }
             }
         }
@@ -338,13 +335,10 @@ Item {
         z: 20
         width: Math.min(
                    parent.width - 28,
-                   Math.max(root.model.active ? 522 : 198,
-                            (root.model.active
-                             ? toolbarContent.implicitWidth
-                             : modeToggle.width +
-                               inactiveListButton.width +
-                               primaryToolbarRow.spacing) + 20))
-        height: root.model.active ? 84 : 46
+                   root.toolbarMaximumWidth,
+                   root.model.active ? 552 : 198)
+        height: root.model.active
+                ? toolbarContent.height + 12 : 46
         radius: 6
         color: AppTheme.viewerOverlayStrong
         border.width: 1
@@ -353,217 +347,274 @@ Item {
                       : AppTheme.viewerOverlayBorder
         clip: true
 
-        Column {
+        Item {
             id: toolbarContent
             objectName: "whiteboardToolbarContent"
+            width: toolbar.width - 12
+            height: primaryToolbarRow.height
+                    + (secondaryToolbarRow.visible
+                       ? 4 + secondaryToolbarRow.height : 0)
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 4
 
-            Row {
+            Item {
                 id: primaryToolbarRow
-                spacing: 4
+                objectName: "whiteboardPrimaryToolbarRow"
+                width: parent.width
+                height: !root.model.active || width >= 530 ? 34 : 72
 
-                ThemedButton {
-                    id: modeToggle
-                    objectName: "whiteboardModeToggle"
-                    contentObjectName: "whiteboardModeToggleLabel"
-                    width: Math.max(98, implicitWidth + 4)
-                    height: 34
-                    checkable: true
-                    checked: root.model.active
-                    enabled: root.available
-                    elideText: false
-                    text: qsTr("Whiteboard")
-                    onToggled: root.model.active = checked
+                Row {
+                    id: primaryLeadingControls
+                    spacing: 4
 
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 350
-                    ToolTip.text: root.available
-                                  ? qsTr("Draw over the 3D viewer")
-                                  : qsTr("Load a map to use the whiteboard")
-                }
-
-                Rectangle {
-                    visible: root.model.active
-                    width: 1
-                    height: 24
-                    color: AppTheme.viewerOverlayBorder
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Repeater {
-                    objectName: "whiteboardToolRepeater"
-                    model: [
-                        { "id": "select", "label": qsTr("Select"),
-                          "buttonWidth": 56 },
-                        { "id": "pen", "label": qsTr("Pen"),
-                          "buttonWidth": 48 },
-                        { "id": "line", "label": qsTr("Line"),
-                          "buttonWidth": 48 },
-                        { "id": "rectangle", "label": qsTr("Rect"),
-                          "buttonWidth": 48 },
-                        { "id": "ellipse", "label": qsTr("Ellipse"),
-                          "buttonWidth": 58 },
-                        { "id": "text", "label": qsTr("Text"),
-                          "buttonWidth": 48 },
-                        { "id": "eraser", "label": qsTr("Erase"),
-                          "buttonWidth": 52 }
-                    ]
-
-                    delegate: ThemedButton {
-                        id: toolButton
-                        objectName: "whiteboardToolButton_" + modelData.id
-                        visible: root.model.active
-                        height: 32
-                        width: Math.max(modelData.buttonWidth,
-                                        implicitWidth + 4)
+                    ThemedButton {
+                        id: modeToggle
+                        objectName: "whiteboardModeToggle"
+                        contentObjectName: "whiteboardModeToggleLabel"
+                        width: Math.max(98, implicitWidth + 4)
+                        height: 34
                         checkable: true
-                        autoExclusive: true
+                        checked: root.model.active
+                        enabled: root.available
                         elideText: false
-                        checked: root.model.tool === modelData.id
-                        text: modelData.label
-                        onClicked: root.model.tool = modelData.id
+                        text: qsTr("Whiteboard")
+                        onToggled: root.model.active = checked
 
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: root.available
+                                      ? qsTr("Draw over the 3D viewer")
+                                      : qsTr("Load a map to use the whiteboard")
+                    }
+
+                    Item {
+                        visible: root.model.active
+                        width: 1
+                        height: 34
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.topMargin: 5
+                            anchors.bottomMargin: 5
+                            color: AppTheme.viewerOverlayBorder
+                        }
+                    }
+
+                    WhiteboardToolButton {
+                        toolId: "select"
+                        label: qsTr("Select")
+                        buttonWidth: 56
+                    }
+                    WhiteboardToolButton {
+                        toolId: "pen"
+                        label: qsTr("Pen")
+                        buttonWidth: 48
+                    }
+                    WhiteboardToolButton {
+                        toolId: "line"
+                        label: qsTr("Line")
+                        buttonWidth: 48
+                    }
+
+                    ThemedButton {
+                        id: inactiveListButton
+                        objectName: "whiteboardInactiveListButton"
+                        visible: !root.model.active
+                        width: Math.max(76, implicitWidth + 4)
+                        height: 32
+                        elideText: false
+                        text: qsTr("Drawings")
+                        onClicked:
+                            root.drawingListOpen = !root.drawingListOpen
                     }
                 }
 
-                ThemedButton {
-                    id: inactiveListButton
-                    objectName: "whiteboardInactiveListButton"
-                    visible: !root.model.active
-                    width: Math.max(76, implicitWidth + 4)
-                    height: 32
-                    elideText: false
-                    text: qsTr("Drawings")
-                    onClicked:
-                        root.drawingListOpen = !root.drawingListOpen
+                Row {
+                    id: primaryTrailingControls
+                    x: root.model.active && primaryToolbarRow.width >= 530
+                       ? primaryLeadingControls.width + 4 : 0
+                    y: root.model.active && primaryToolbarRow.width < 530
+                       ? 38 : 0
+                    spacing: 4
+
+                    WhiteboardToolButton {
+                        toolId: "rectangle"
+                        label: qsTr("Rect")
+                        buttonWidth: 48
+                    }
+                    WhiteboardToolButton {
+                        toolId: "ellipse"
+                        label: qsTr("Ellipse")
+                        buttonWidth: 58
+                    }
+                    WhiteboardToolButton {
+                        toolId: "text"
+                        label: qsTr("Text")
+                        buttonWidth: 48
+                    }
+                    WhiteboardToolButton {
+                        toolId: "eraser"
+                        label: qsTr("Erase")
+                        buttonWidth: 52
+                    }
                 }
             }
 
-            Row {
+            Item {
+                id: secondaryToolbarRow
+                objectName: "whiteboardSecondaryToolbarRow"
                 visible: root.model.active
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 4
+                width: parent.width
+                y: primaryToolbarRow.height + 4
+                height: width >= 510 ? 34 : 72
 
-                ThemedToolButton {
-                    id: colorButton
-                    objectName: "whiteboardColorButton"
-                    visible: root.model.active
-                    width: 34
-                    height: 34
-                    Accessible.name: qsTr("Drawing color")
-                    onClicked: colorPopup.open()
+                Row {
+                    id: secondaryLeadingControls
+                    spacing: 4
 
-                    contentItem: Rectangle {
-                        width: 18
-                        height: 18
-                        radius: 3
-                        anchors.centerIn: parent
-                        color: root.model.color
-                        border.width: 1
-                        border.color: AppTheme.viewerOverlayMuted
+                    ThemedToolButton {
+                        id: colorButton
+                        objectName: "whiteboardColorButton"
+                        visible: root.model.active
+                        width: 34
+                        height: 34
+                        Accessible.name: qsTr("Drawing color")
+                        onClicked: colorPopup.open()
+
+                        contentItem: Rectangle {
+                            width: 18
+                            height: 18
+                            radius: 3
+                            anchors.centerIn: parent
+                            color: root.model.color
+                            border.width: 1
+                            border.color: AppTheme.viewerOverlayMuted
+                        }
+
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: qsTr("Drawing color")
                     }
 
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 350
-                    ToolTip.text: qsTr("Drawing color")
-                }
-
-                Label {
-                    visible: root.model.active
-                    text: qsTr("Size")
-                    color: AppTheme.viewerOverlayMuted
-                    font.pixelSize: 11
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                ThemedSlider {
-                    id: sizeSlider
-                    objectName: "whiteboardSizeSlider"
-                    visible: root.model.active
-                    width: 70
-                    height: 34
-                    Accessible.name: qsTr("Drawing size")
-                    from: 1
-                    to: 24
-                    stepSize: 1
-                    value: root.model.size
-                    onValueChanged: {
-                        if (Math.abs(root.model.size - value) > 0.001)
-                            root.model.size = value
+                    Label {
+                        visible: root.model.active
+                        height: 34
+                        text: qsTr("Size")
+                        color: AppTheme.viewerOverlayMuted
+                        font.pixelSize: 11
+                        verticalAlignment: Text.AlignVCenter
                     }
-                    ToolTip.visible: hovered || pressed
-                    ToolTip.text: qsTr("%1 px").arg(Math.round(value))
-                }
 
-                SliderValueField {
-                    objectName: "whiteboardSizeSliderValueField"
-                    visible: root.model.active
-                    width: 62
-                    height: 34
-                    value: root.model.size.toString()
-                    from: sizeSlider.from
-                    to: sizeSlider.to
-                    integer: true
-                    suffix: qsTr("px")
-                    accessibleName: qsTr("Drawing size exact value")
-                    fieldColor: AppTheme.viewerOverlayControl
-                    fieldDisabledColor: AppTheme.viewerOverlayControl
-                    fieldBorderColor: AppTheme.viewerOverlayBorder
-                    fieldTextColor: AppTheme.viewerOverlayText
-                    fieldDisabledTextColor: AppTheme.viewerOverlayMuted
-                    onEdited: value => root.model.size = Number(value)
-                }
-
-                ThemedToolButton {
-                    objectName: "whiteboardDeleteButton"
-                    visible: root.model.active
-                    enabled: root.model.selectedIndex >= 0
-                    width: 34
-                    height: 34
-                    Accessible.name: qsTr("Delete selected item")
-                    text: "\u00d7"
-                    font.pixelSize: 22
-                    onClicked: root.model.removeSelected()
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 350
-                    ToolTip.text: qsTr("Delete selected item")
-                }
-
-                ThemedButton {
-                    objectName: "whiteboardPlaceButton"
-                    visible: root.model.active
-                    enabled: root.model.count > 0
-                             && root.model.mapKey.length > 0
-                             && root.model.mapName.length > 0
-                    width: Math.max(58, implicitWidth + 4)
-                    height: 32
-                    elideText: false
-                    text: qsTr("Place")
-                    onClicked: {
-                        const index = root.model.captureCurrentBoard(
-                                        qsTr("Drawing %1").arg(
-                                            root.model.boardCount + 1),
-                                        root.captureViewpoint())
-                        if (index >= 0)
-                            root.drawingListOpen = true
+                    ThemedSlider {
+                        id: sizeSlider
+                        objectName: "whiteboardSizeSlider"
+                        visible: root.model.active
+                        width: 70
+                        height: 34
+                        Accessible.name: qsTr("Drawing size")
+                        from: 1
+                        to: 24
+                        stepSize: 1
+                        value: root.model.size
+                        onMoved: root.model.size = value
+                        ToolTip.visible: hovered || pressed
+                        ToolTip.text: qsTr("%1 px").arg(Math.round(value))
                     }
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 350
-                    ToolTip.text: qsTr(
-                                      "Place this drawing at the current camera view")
+
+                    SliderValueField {
+                        objectName: "whiteboardSizeSliderValueField"
+                        visible: root.model.active
+                        width: 62
+                        height: 34
+                        value: root.model.size.toString()
+                        from: sizeSlider.from
+                        to: sizeSlider.to
+                        maximumEnabled: false
+                        integer: true
+                        suffix: qsTr("px")
+                        accessibleName: qsTr("Drawing size exact value")
+                        fieldColor: AppTheme.viewerOverlayControl
+                        fieldDisabledColor: AppTheme.viewerOverlayControl
+                        fieldBorderColor: AppTheme.viewerOverlayBorder
+                        fieldTextColor: AppTheme.viewerOverlayText
+                        fieldDisabledTextColor: AppTheme.viewerOverlayMuted
+                        onEdited: value => root.model.size = Number(value)
+                    }
                 }
 
-                ThemedButton {
-                    objectName: "whiteboardActiveListButton"
-                    visible: root.model.active
-                    width: Math.max(72, implicitWidth + 4)
-                    height: 32
-                    elideText: false
-                    text: qsTr("Drawings")
-                    onClicked:
-                        root.drawingListOpen = !root.drawingListOpen
+                Row {
+                    id: secondaryTrailingControls
+                    x: secondaryToolbarRow.width >= 510
+                       ? secondaryLeadingControls.width + 4 : 0
+                    y: secondaryToolbarRow.width < 510 ? 38 : 0
+                    spacing: 4
+
+                    ThemedToolButton {
+                        objectName: "whiteboardDeleteButton"
+                        visible: root.model.active
+                        enabled: root.model.selectedIndex >= 0
+                        width: 34
+                        height: 34
+                        Accessible.name: qsTr("Delete selected item")
+                        text: "\u00d7"
+                        font.pixelSize: 22
+                        onClicked: root.model.removeSelected()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: qsTr("Delete selected item")
+                    }
+
+                    ThemedButton {
+                        objectName: "whiteboardPickUpButton"
+                        visible: root.model.active
+                        enabled: root.model.count === 0
+                                 && root.model.selectedBoardIndex >= 0
+                        width: Math.max(66, implicitWidth + 4)
+                        height: 32
+                        elideText: false
+                        text: qsTr("Pick up")
+                        onClicked: root.model.pickUpBoard(
+                                       root.model.selectedBoardIndex)
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: qsTr(
+                                          "Pick up the selected drawing so it can be placed again")
+                    }
+
+                    ThemedButton {
+                        objectName: "whiteboardPlaceButton"
+                        visible: root.model.active
+                        enabled: root.model.count > 0
+                                 && root.model.mapKey.length > 0
+                                 && root.model.mapName.length > 0
+                        width: Math.max(58, implicitWidth + 4)
+                        height: 32
+                        elideText: false
+                        text: qsTr("Place")
+                        onClicked: {
+                            const index = root.model.captureCurrentBoard(
+                                            qsTr("Drawing %1").arg(
+                                                root.model.boardCount + 1),
+                                            root.captureViewpoint())
+                            if (index >= 0)
+                                root.drawingListOpen = true
+                        }
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: qsTr(
+                                          "Place this drawing at the current camera view")
+                    }
+
+                    ThemedButton {
+                        objectName: "whiteboardActiveListButton"
+                        visible: root.model.active
+                        width: Math.max(72, implicitWidth + 4)
+                        height: 32
+                        elideText: false
+                        text: qsTr("Drawings")
+                        onClicked:
+                            root.drawingListOpen = !root.drawingListOpen
+                    }
                 }
             }
         }
@@ -574,12 +625,10 @@ Item {
         objectName: "whiteboardDrawingList"
         z: 25
         visible: root.drawingListOpen
-        width: Math.min(310, root.width - 28)
-        height: Math.max(
-                    250,
-                    Math.min(450, root.height - y - 104))
-        x: root.width - width - 14
-        y: root.boardTop + 10
+        width: Math.min(310, root.toolbarMaximumWidth, root.width - 28)
+        height: Math.max(0, Math.min(450, root.height - y - 12))
+        x: 14
+        y: root.toolbarBottom + 8
         radius: 6
         color: AppTheme.viewerOverlayStrong
         border.width: 1

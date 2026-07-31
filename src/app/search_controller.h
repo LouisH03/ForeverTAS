@@ -36,6 +36,8 @@ class SearchController final : public QObject {
                        setBaseInputScript NOTIFY baseInputScriptChanged)
     Q_PROPERTY(QString baseInputScriptError READ baseInputScriptError NOTIFY
                        baseInputScriptChanged)
+    Q_PROPERTY(bool canUndoBaseInputScript READ canUndoBaseInputScript NOTIFY
+                       baseInputScriptChanged)
     Q_PROPERTY(bool extractingReplayInputs READ extractingReplayInputs NOTIFY
                        replayInputStateChanged)
     Q_PROPERTY(bool canExtractReplayInputs READ canExtractReplayInputs NOTIFY
@@ -110,6 +112,7 @@ public:
     QString replayPath() const;
     QString baseInputScript() const;
     QString baseInputScriptError() const;
+    bool canUndoBaseInputScript() const;
     bool extractingReplayInputs() const;
     bool canExtractReplayInputs() const;
     QString replayInputStatusText() const;
@@ -162,6 +165,7 @@ public slots:
     Q_INVOKABLE void applyAutoDetectedPacksDirectory();
     Q_INVOKABLE void browseForReplay();
     Q_INVOKABLE void extractReplayInputs();
+    Q_INVOKABLE bool undoBaseInputScript();
     Q_INVOKABLE void setSearchAlgorithmSetting(const QString &key,
                                                const QString &value);
     Q_INVOKABLE void addModifierPass(const QString &id);
@@ -253,12 +257,14 @@ private:
     void synchronizeSelectedPoseTarget();
     void synchronizePoseTargetSetting(const QString &key,
                                       const QString &value);
+    void applyBaseInputScript(const QString &value, bool recordUndo);
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
     QString baseInputScript_;
     QString baseInputScriptError_;
+    std::vector<QString> baseInputScriptUndoHistory_;
     QString replayInputStatusText_;
     std::vector<ParsedInputCommand> parsedBaseInputCommands_;
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;

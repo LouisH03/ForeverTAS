@@ -338,6 +338,24 @@ ApplicationWindow {
         onActivated: window.commitBaseInputScript()
     }
 
+    Shortcut {
+        objectName: "undoBaseInputScriptShortcut"
+        sequences: [StandardKey.Undo]
+        context: Qt.ApplicationShortcut
+        enabled: baseInputScriptArea.activeFocus
+                 && (baseInputScriptArea.text
+                     !== window.controller.baseInputScript
+                     || window.controller.canUndoBaseInputScript)
+        onActivated: {
+            if (baseInputScriptArea.text
+                    !== window.controller.baseInputScript) {
+                baseInputScriptArea.undo()
+            } else {
+                window.controller.undoBaseInputScript()
+            }
+        }
+    }
+
     SplitView {
         anchors.fill: parent
         orientation: Qt.Horizontal
@@ -749,7 +767,15 @@ ApplicationWindow {
 
                     function enableFreeCamera() {
                         beginViewRotation()
-                        const position = viewCamera.scenePosition
+                        const position = freeCamera
+                            ? freeCameraPosition
+                            : Qt.vector3d(
+                                  cameraTarget.x
+                                      - cameraForward.x * orbitDistance,
+                                  cameraTarget.y
+                                      - cameraForward.y * orbitDistance,
+                                  cameraTarget.z
+                                      - cameraForward.z * orbitDistance)
                         freeCameraPosition = Qt.vector3d(
                             position.x, position.y, position.z)
                         exactWhiteboardBoardIndex = -1
@@ -806,11 +832,7 @@ ApplicationWindow {
                         if (!board || !board.isCurrentMap) {
                             if (exactWhiteboardBoardId ===
                                     lastFocusedWhiteboardId) {
-                                exactWhiteboardBoardIndex = -1
-                                exactWhiteboardBoardId = ""
-                                cameraFieldOfView = 55
-                                freeCamera = false
-                                cuboidFocused = false
+                                enableFreeCamera()
                             }
                             lastFocusedWhiteboardIndex = -1
                             lastFocusedWhiteboardId = ""
@@ -2056,8 +2078,7 @@ ApplicationWindow {
 
                                 objectName: "trackVisualModel"
                                 visible: window.viewer.loaded
-                                         && window.renderMode !== "collision"
-                                         && window.renderMode !== "wireframe"
+                                         && window.renderMode === "textured"
                                          && modelData.defaultVisible
                                 geometry: modelData.geometry
                                 castsShadows: false
@@ -2085,14 +2106,18 @@ ApplicationWindow {
                         Model {
                             objectName: "trackFilledModel"
                             visible: window.viewer.loaded
-                                     && window.renderMode === "collision"
+                                     && (window.renderMode === "neutral"
+                                         || window.renderMode === "collision"
+                                         || window.renderMode ===
+                                            "material-debug")
                             geometry: window.viewer.loaded
                                       ? window.viewer.trackFilledGeometry
                                       : null
                             materials: DefaultMaterial {
                                 lighting: DefaultMaterial.NoLighting
                                 vertexColorsEnabled: true
-                                diffuseColor: "white"
+                                diffuseColor: window.renderMode === "neutral"
+                                              ? "#aeb3af" : "white"
                                 cullMode: Material.BackFaceCulling
                             }
                         }
@@ -2538,6 +2563,8 @@ ApplicationWindow {
                             return viewport.exportWhiteboardBackground(
                                         index, fileUrl)
                         }
+                        toolbarMaximumWidth: Math.max(
+                            198, cameraFocusToolbar.x - 22)
                         visible: !viewport.exportingWhiteboardImage
                     }
 
@@ -2546,20 +2573,12 @@ ApplicationWindow {
                         objectName: "cameraFocusToolbar"
 
                         function layoutX(viewportWidth, drawingListOpen) {
-                            return drawingListOpen
-                                   ? 12 : viewportWidth - width - 12
+                            return viewportWidth - width - 12
                         }
 
                         function layoutTopMargin(viewportWidth,
                                                  drawingListOpen) {
-                            const toolbarWouldOverlap =
-                                window.viewer.whiteboard.active
-                                && layoutX(viewportWidth, false)
-                                   < whiteboardOverlay.toolbarRight + 8
-                            return drawingListOpen || toolbarWouldOverlap
-                                   ? whiteboardOverlay.toolbarBottom
-                                     - raceViewerHeader.height + 8
-                                   : 10
+                            return 10
                         }
 
                         anchors.top: raceViewerHeader.bottom
@@ -3095,11 +3114,10 @@ ApplicationWindow {
                     Rectangle {
                         id: checkpointSplitOverlay
                         objectName: "checkpointSplitOverlay"
-                        anchors.left: parent.left
-                        anchors.leftMargin: 14
-                        anchors.top: raceViewerHeader.bottom
-                        anchors.topMargin:
-                            window.viewer.whiteboard.active ? 104 : 66
+                        anchors.right: parent.right
+                        anchors.rightMargin: 14
+                        anchors.top: cameraFocusToolbar.bottom
+                        anchors.topMargin: 8
                         z: 3
                         width: 198
                         height: Math.max(

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -1016,11 +1017,8 @@ StaticVisualBatchResult
 BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
     StaticVisualBatchResult result;
     result.sourceMeshCount = scene.meshes.size();
-    std::vector<std::vector<VisualVertex>> preparedMeshes;
-    preparedMeshes.reserve(scene.meshes.size());
-    for (const PhysicsSandboxRenderMesh &mesh : scene.meshes) {
-        preparedMeshes.push_back(PrepareMesh(mesh));
-    }
+    std::vector<std::optional<std::vector<VisualVertex>>> preparedMeshes(
+            scene.meshes.size());
 
     std::map<BatchKey, BatchAccumulator> accumulators;
     std::map<BatchKey, TerrainCoverage> terrainCoverage;
@@ -1071,10 +1069,14 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
         const BatchKey key =
                 MakeBatchKey(materialClass, instance.purpose,
                              mesh.hasVertexColors, defaultVisible);
+        auto &preparedMesh = preparedMeshes[instance.meshIndex];
+        if (!preparedMesh.has_value()) {
+            preparedMesh.emplace(PrepareMesh(mesh));
+        }
         if (materialClass == ReplacementMaterialClass::Grass ||
             materialClass == ReplacementMaterialClass::Dirt) {
             AppendRandomizedTiledInstance(
-                    accumulators[key], preparedMeshes[instance.meshIndex],
+                    accumulators[key], *preparedMesh,
                     mesh.indices, instance.worldTransform,
                     replacement.worldUvScale,
                     instance.purpose == PhysicsSandboxScenePurpose::Clip
@@ -1082,7 +1084,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                             : nullptr);
         } else {
             AppendInstance(accumulators[key],
-                           preparedMeshes[instance.meshIndex], mesh.indices,
+                           *preparedMesh, mesh.indices,
                            instance.worldTransform, replacement.worldUvScale);
         }
 

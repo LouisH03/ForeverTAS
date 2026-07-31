@@ -119,7 +119,7 @@ int main(int argc, char **argv) {
     model.setSize(-100.0);
     expect(Near(model.size(), 1.0), "size is clamped at the lower bound");
     model.setSize(100.0);
-    expect(Near(model.size(), 24.0), "size is clamped at the upper bound");
+    expect(Near(model.size(), 100.0), "typed sizes are not capped at 24 px");
     model.setSize(6.0);
     model.setColor(QColor(QStringLiteral("#42d3c6")));
 
@@ -198,6 +198,8 @@ int main(int argc, char **argv) {
            "non-text items cannot be edited as text");
 
     model.setTool(QStringLiteral("select"));
+    expect(model.itemAt(0.5, 0.5) >= 0,
+           "persistent selection input can hit-test drawing items");
     expect(model.selectItem(1), "line can be selected");
     const QVariantMap lineBeforeMove = model.selectedItem();
     expect(model.moveSelected(10.0, -10.0),
@@ -429,6 +431,12 @@ int main(int argc, char **argv) {
                                    .toList()
                                    .size() == 1,
            "placed drawing retains vector items and its exact projection");
+    expect(repositoryModel.pickUpBoard(0) &&
+                   repositoryModel.count() == 1 &&
+                   repositoryModel.boardCount() == 0 &&
+                   repositoryModel.captureCurrentBoard(
+                           QStringLiteral("Entry line"), firstCapture) == 0,
+           "picking up removes a placed plane and restores its editable items");
 
     repositoryModel.setTool(QStringLiteral("text"));
     expect(repositoryModel.addText(
@@ -880,15 +888,18 @@ int main(int argc, char **argv) {
                 QStringLiteral("whiteboardCustomColor"));
         QObject *const textEditor = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardTextEditor"));
+        auto *const resizeHandle = qobject_cast<QQuickItem *>(
+                overlay->findChild<QObject *>(
+                        QStringLiteral("whiteboardResizeHandle")));
         auto *const deleteButton = qobject_cast<QQuickItem *>(
                 overlay->findChild<QObject *>(
                         QStringLiteral("whiteboardDeleteButton")));
-        QObject *const toolRepeater = overlay->findChild<QObject *>(
-                QStringLiteral("whiteboardToolRepeater"));
         QObject *const drawingRepeater = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardDrawingRepeater"));
         QObject *const placeButton = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardPlaceButton"));
+        QObject *const pickUpButton = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardPickUpButton"));
         QObject *const inactiveListButton = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardInactiveListButton"));
         QObject *const drawingList = overlay->findChild<QObject *>(
@@ -912,18 +923,123 @@ int main(int argc, char **argv) {
         auto *const toolbarContent = qobject_cast<QQuickItem *>(
                 overlay->findChild<QObject *>(
                         QStringLiteral("whiteboardToolbarContent")));
+        auto *const primaryToolbarRow = qobject_cast<QQuickItem *>(
+                overlay->findChild<QObject *>(
+                        QStringLiteral("whiteboardPrimaryToolbarRow")));
+        auto *const secondaryToolbarRow = qobject_cast<QQuickItem *>(
+                overlay->findChild<QObject *>(
+                        QStringLiteral("whiteboardSecondaryToolbarRow")));
+        QList<QQuickItem *> toolButtons;
+        for (const QString &toolName : {
+                     QStringLiteral("select"), QStringLiteral("pen"),
+                     QStringLiteral("line"), QStringLiteral("rectangle"),
+                     QStringLiteral("ellipse"), QStringLiteral("text"),
+                     QStringLiteral("eraser")}) {
+            toolButtons.push_back(qobject_cast<QQuickItem *>(
+                    overlay->findChild<QObject *>(
+                            QStringLiteral("whiteboardToolButton_") +
+                            toolName)));
+        }
+        auto *const colorButton = qobject_cast<QQuickItem *>(
+                overlay->findChild<QObject *>(
+                        QStringLiteral("whiteboardColorButton")));
+        auto *const sizeSliderItem = qobject_cast<QQuickItem *>(sizeSlider);
+        auto *const sizeValueFieldItem =
+                qobject_cast<QQuickItem *>(sizeValueField);
+        auto *const pickUpButtonItem = qobject_cast<QQuickItem *>(pickUpButton);
+        auto *const placeButtonItem = qobject_cast<QQuickItem *>(placeButton);
+        auto *const activeListButtonItem = qobject_cast<QQuickItem *>(
+                overlay->findChild<QObject *>(
+                        QStringLiteral("whiteboardActiveListButton")));
         expect(board != nullptr && Near(board->y(), 52.0) &&
                        Near(board->height(), 648.0),
                "drawing surface overlays the viewer below its header");
-        expect(toolbar != nullptr && toolbar->width() <= 972.0 &&
-                       toolbar->height() == 84.0,
-               "active toolbar fits a desktop viewport");
+        expect(toolbar != nullptr && Near(toolbar->width(), 552.0) &&
+                       toolbar->height() >= 84.0 &&
+                       toolbar->height() <= 90.0,
+               "active toolbar hugs its controls in a desktop viewport");
+        const QPointF togglePosition =
+                toggleItem != nullptr && primaryToolbarRow != nullptr
+                ? toggleItem->mapToItem(primaryToolbarRow, QPointF())
+                : QPointF();
+        bool primaryRowOrdered = toggleItem != nullptr &&
+                primaryToolbarRow != nullptr;
+        qreal primaryRight = toggleItem != nullptr
+                ? togglePosition.x() + toggleItem->width() : 0.0;
+        for (QQuickItem *const toolButton : toolButtons) {
+            const QPointF position =
+                    toolButton != nullptr && primaryToolbarRow != nullptr
+                    ? toolButton->mapToItem(primaryToolbarRow, QPointF())
+                    : QPointF();
+            primaryRowOrdered = primaryRowOrdered && toolButton != nullptr &&
+                    Near(position.y(), togglePosition.y(), 1.0) &&
+                    position.x() >= primaryRight + 3.0;
+            if (toolButton != nullptr) {
+                primaryRight = position.x() + toolButton->width();
+            }
+        }
+        primaryRowOrdered = primaryRowOrdered && toolbarContent != nullptr &&
+                primaryRight <= toolbarContent->width() + 0.1;
+        const QList<QQuickItem *> secondaryControls = {
+                colorButton, sizeSliderItem, sizeValueFieldItem, deleteButton,
+                pickUpButtonItem, placeButtonItem, activeListButtonItem};
+        const QPointF colorPosition =
+                colorButton != nullptr && secondaryToolbarRow != nullptr
+                ? colorButton->mapToItem(secondaryToolbarRow, QPointF())
+                : QPointF();
+        bool secondaryRowOrdered = colorButton != nullptr &&
+                secondaryToolbarRow != nullptr;
+        qreal secondaryRight = 0.0;
+        for (QQuickItem *const control : secondaryControls) {
+            const QPointF position =
+                    control != nullptr && secondaryToolbarRow != nullptr
+                    ? control->mapToItem(secondaryToolbarRow, QPointF())
+                    : QPointF();
+            secondaryRowOrdered = secondaryRowOrdered && control != nullptr &&
+                    Near(position.y(), colorPosition.y(), 1.0) &&
+                    position.x() >= secondaryRight;
+            if (control != nullptr) {
+                secondaryRight = position.x() + control->width();
+            }
+        }
+        secondaryRowOrdered = secondaryRowOrdered &&
+                toolbarContent != nullptr &&
+                secondaryRight <= toolbarContent->width() + 0.1;
+        expect(primaryRowOrdered && secondaryRowOrdered,
+               "active whiteboard controls form two compact ordered rows");
+        if ((!primaryRowOrdered || !secondaryRowOrdered) &&
+            toolbar != nullptr) {
+            std::cerr << "desktop toolbar=" << toolbar->width() << 'x'
+                      << toolbar->height() << ", primary="
+                      << (primaryToolbarRow ? primaryToolbarRow->width() : -1.0)
+                      << 'x'
+                      << (primaryToolbarRow ? primaryToolbarRow->height() : -1.0)
+                      << ", secondary="
+                      << (secondaryToolbarRow ? secondaryToolbarRow->width()
+                                              : -1.0)
+                      << 'x'
+                      << (secondaryToolbarRow ? secondaryToolbarRow->height()
+                                              : -1.0)
+                      << '\n';
+            for (QQuickItem *const toolButton : toolButtons) {
+                if (toolButton != nullptr) {
+                    std::cerr << toolButton->objectName().toStdString() << '='
+                              << toolButton->x() << ',' << toolButton->y() << ' '
+                              << toolButton->width() << 'x'
+                              << toolButton->height() << '\n';
+                }
+            }
+        }
         expect(toggle != nullptr &&
                        toggle->property("enabled").toBool() &&
                        toggle->property("checked").toBool(),
                "available mode toggle reflects active state");
         expect(input != nullptr && input->property("enabled").toBool(),
                "active whiteboard captures drawing input");
+        expect(resizeHandle != nullptr &&
+                       resizeHandle->parentItem() == board &&
+                       input->property("z").toReal() > 2.0,
+               "move and resize input persists outside refreshed delegates");
         expect(sizeSlider != nullptr &&
                        sizeSlider->property("visible").toBool() &&
                        sizeValueField != nullptr &&
@@ -933,12 +1049,15 @@ int main(int argc, char **argv) {
                        sizeValueField->property("integer").toBool() &&
                        sizeValueField->property("from").toReal() == 1.0 &&
                        sizeValueField->property("to").toReal() == 24.0 &&
+                       !sizeValueField
+                                ->property("maximumEnabled").toBool() &&
                        customColor != nullptr &&
                        textEditor != nullptr,
                "size slider, exact entry, arbitrary color, and text controls "
                "are connected");
         if (sizeSlider != nullptr) {
             sizeSlider->setProperty("value", 9.0);
+            QMetaObject::invokeMethod(sizeSlider, "moved");
             QCoreApplication::processEvents();
             expect(Near(model.size(), 9.0),
                    "keyboard and accessibility slider changes update size");
@@ -976,20 +1095,23 @@ int main(int argc, char **argv) {
 
             sizeValueField->setProperty("text", QStringLiteral("25"));
             committed.clear();
-            const bool rejectedRange = QMetaObject::invokeMethod(
+            const bool acceptedAboveSlider = QMetaObject::invokeMethod(
                     sizeValueField,
                     "commitText",
                     Qt::DirectConnection,
                     Q_RETURN_ARG(QVariant, committed));
             QCoreApplication::processEvents();
-            expect(rejectedRange && !committed.toBool() &&
-                           Near(model.size(), 13.0),
-                   "drawing size entry rejects out-of-range values");
+            expect(acceptedAboveSlider && committed.toBool() &&
+                           Near(model.size(), 25.0),
+                   "drawing size entry accepts values above the slider range");
         }
-        expect(toolRepeater != nullptr &&
-                       toolRepeater->property("count").toInt() == 7,
+        expect(std::all_of(toolButtons.cbegin(), toolButtons.cend(),
+                           [](QQuickItem *button) {
+                               return button != nullptr;
+                           }),
                "every whiteboard tool has a mode control");
-        expect(placeButton != nullptr && drawingList != nullptr &&
+        expect(placeButton != nullptr && pickUpButton != nullptr &&
+                       drawingList != nullptr &&
                        importButton != nullptr &&
                        exportButton != nullptr &&
                        imageExportMenu != nullptr &&
@@ -1015,7 +1137,7 @@ int main(int argc, char **argv) {
                 : QPointF(-1.0, -1.0);
         const bool compactLayout =
                 toolbar != nullptr && toolbar->width() <= 492.0 &&
-                Near(toolbar->height(), 84.0) &&
+                toolbar->height() >= 84.0 && toolbar->height() <= 180.0 &&
                 board != nullptr && Near(board->width(), 520.0) &&
                 Near(board->height(), 338.0) &&
                 deleteButton != nullptr &&
@@ -1054,9 +1176,12 @@ int main(int argc, char **argv) {
         overlay->setProperty("drawingListOpen", true);
         QCoreApplication::processEvents();
         expect(drawingList != nullptr &&
+                       Near(drawingList->property("x").toDouble(), 14.0) &&
+                       drawingList->property("y").toDouble() >=
+                               toolbar->y() + toolbar->height() + 7.9 &&
                        drawingList->property("height").toDouble() <=
                                286.0,
-               "compact drawing repository leaves room for bottom viewer controls");
+               "drawing repository stays below the left whiteboard actions");
         overlay->setProperty("drawingListOpen", false);
 
         textEditor->setProperty("visible", true);

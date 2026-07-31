@@ -744,6 +744,14 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           controller.baseInputScriptError().contains(
                                   QStringLiteral("Line 1")),
                   "invalid base input script did not disable Start");
+    okay &= Check(controller.canUndoBaseInputScript() &&
+                          controller.undoBaseInputScript() &&
+                          controller.baseInputScript() ==
+                                  QStringLiteral(
+                                          "0.00 press up\n0.20 steer 32768") &&
+                          controller.baseInputScriptError().isEmpty(),
+                  "script undo did not restore a non-manual replacement");
+    controller.setBaseInputScript(QStringLiteral("0.001 press up"));
     controller.setBaseInputScript({});
     okay &= Check(controller.canStart(),
                   "empty base input script did not restore Start");

@@ -1096,6 +1096,9 @@ int main(int argc, char **argv) {
                     QObject *const saveBaseInputScriptShortcut =
                             root->findChild<QObject *>(QStringLiteral(
                                     "saveBaseInputScriptShortcut"));
+                    QObject *const undoBaseInputScriptShortcut =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "undoBaseInputScriptShortcut"));
                     QObject *const copyCurrentRaceInputsButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "copyCurrentRaceInputsButton"));
@@ -1778,6 +1781,8 @@ int main(int argc, char **argv) {
                             baseInputScriptScrollView != nullptr &&
                             baseInputScriptTextArea != nullptr &&
                             baseInputScriptErrorLabel != nullptr &&
+                            saveBaseInputScriptShortcut != nullptr &&
+                            undoBaseInputScriptShortcut != nullptr &&
                             copyCurrentRaceInputsButton != nullptr &&
                             copyCurrentRaceInputsButton
                                      ->property("enabled").toBool() &&
@@ -4384,9 +4389,18 @@ int main(int argc, char **argv) {
                     QCoreApplication::processEvents();
                     const bool compactSplitLayout =
                             checkpointSplitOverlay != nullptr &&
+                            cameraFocusToolbar != nullptr &&
                             playbackDock != nullptr &&
                             checkpointSplitOverlay->x() >= 13.9 &&
                             checkpointSplitOverlay->width() >= 197.9 &&
+                            std::abs(
+                                    checkpointSplitOverlay->x() +
+                                            checkpointSplitOverlay->width() -
+                                    cameraFocusToolbar->x() -
+                                            cameraFocusToolbar->width()) <= 2.1 &&
+                            checkpointSplitOverlay->y() >=
+                                    cameraFocusToolbar->y() +
+                                            cameraFocusToolbar->height() + 7.9 &&
                             checkpointSplitOverlay->y() +
                                             checkpointSplitOverlay->height() <=
                                     playbackDock->y() - 7.9;
@@ -4925,10 +4939,12 @@ int main(int argc, char **argv) {
                                         QStringLiteral("neutral"));
                                 QCoreApplication::processEvents();
                                 const bool neutralModeState =
-                                        !filled->property("visible").toBool() &&
+                                        filled->property("visible").toBool() &&
                                         !wire->property("visible").toBool() &&
-                                        VisibleModelCount(visualModels) ==
-                                                initialVisibleVisualModels &&
+                                        ModelsHaveState(
+                                                visualModels,
+                                                visualModels.size(),
+                                                false) &&
                                         std::all_of(
                                                 visualMaterials.cbegin(),
                                                 visualMaterials.cend(),
@@ -4960,10 +4976,12 @@ int main(int argc, char **argv) {
                                         QStringLiteral("material-debug"));
                                 QCoreApplication::processEvents();
                                 const bool materialDebugState =
-                                        !filled->property("visible").toBool() &&
+                                        filled->property("visible").toBool() &&
                                         !wire->property("visible").toBool() &&
-                                        VisibleModelCount(visualModels) ==
-                                                initialVisibleVisualModels;
+                                        ModelsHaveState(
+                                                visualModels,
+                                                visualModels.size(),
+                                                false);
                                 root->setProperty(
                                         "renderMode",
                                         QStringLiteral("wireframe"));
@@ -5032,6 +5050,10 @@ int main(int argc, char **argv) {
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
                                                         "whiteboardPlaceButton"));
+                                QObject *const whiteboardPickUpButton =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardPickUpButton"));
                                 QObject *const whiteboardDrawingInput =
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
@@ -5135,6 +5157,8 @@ int main(int argc, char **argv) {
                                         buttonTextFits(whiteboardModeToggle) &&
                                         buttonTextFits(
                                                 whiteboardActiveListButton) &&
+                                        buttonTextFits(
+                                                whiteboardPickUpButton) &&
                                         buttonTextFits(whiteboardPlaceButton);
                                 auto *const compactCameraFocusToolbar =
                                         qobject_cast<QQuickItem *>(
@@ -5197,12 +5221,6 @@ int main(int argc, char **argv) {
                                                       QVariant(591.0)),
                                                 Q_ARG(QVariant,
                                                       QVariant(true)));
-                                const qreal compactToolbarBottom =
-                                        compactWhiteboardToolbar != nullptr
-                                        ? compactWhiteboardToolbar->y() +
-                                                  compactWhiteboardToolbar
-                                                          ->height()
-                                        : 0;
                                 const qreal compactCameraClosedY =
                                         compactRaceViewerHeader != nullptr
                                         ? compactRaceViewerHeader->y() +
@@ -5228,22 +5246,53 @@ int main(int argc, char **argv) {
                                               compactCameraFocusToolbar
                                                       ->width() -
                                               12.0)) < 0.1 &&
-                                        compactCameraClosedY >=
-                                                compactToolbarBottom + 7.9;
-                                const qreal compactDrawingListLeft =
-                                        591.0 -
-                                        std::min(310.0, 591.0 - 28.0) -
-                                        14.0;
-                                const bool compactWhiteboardListSeparated =
-                                        compactLayoutInvoked &&
-                                        compactCameraFocusToolbar != nullptr &&
-                                        compactOpenX.toReal() +
-                                                        compactCameraFocusToolbar
+                                        qAbs(compactOpenX.toReal() -
+                                             compactClosedX.toReal()) < 0.1 &&
+                                        qAbs(compactClosedTopMargin.toReal() -
+                                             10.0) < 0.1 &&
+                                        qAbs(compactOpenTopMargin.toReal() -
+                                             10.0) < 0.1 &&
+                                        compactWhiteboardToolbar->x() +
+                                                        compactWhiteboardToolbar
                                                                 ->width() +
                                                         7.9 <=
-                                                compactDrawingListLeft &&
-                                        compactCameraOpenY >=
-                                                compactToolbarBottom + 7.9;
+                                                compactCameraFocusToolbar->x();
+                                if (whiteboardOverlay != nullptr) {
+                                    whiteboardOverlay->setProperty(
+                                            "drawingListOpen", true);
+                                    QCoreApplication::processEvents();
+                                }
+                                const bool drawingListBelowWhiteboard =
+                                        whiteboardDrawingList != nullptr &&
+                                        compactWhiteboardToolbar != nullptr &&
+                                        whiteboardDrawingList
+                                                        ->property("y")
+                                                        .toReal() >=
+                                                compactWhiteboardToolbar->y() +
+                                                        compactWhiteboardToolbar
+                                                                ->height() +
+                                                        7.9 &&
+                                        qAbs(whiteboardDrawingList
+                                                     ->property("x").toReal() -
+                                             14.0) < 0.1 &&
+                                        whiteboardDrawingList
+                                                                ->property("x")
+                                                                .toReal() +
+                                                        whiteboardDrawingList
+                                                                ->property("width")
+                                                                .toReal() +
+                                                        7.9 <=
+                                                compactCameraFocusToolbar->x();
+                                if (whiteboardOverlay != nullptr) {
+                                    whiteboardOverlay->setProperty(
+                                            "drawingListOpen", false);
+                                    QCoreApplication::processEvents();
+                                }
+                                const bool compactWhiteboardListSeparated =
+                                        compactLayoutInvoked &&
+                                        drawingListBelowWhiteboard &&
+                                        qAbs(compactCameraOpenY -
+                                             compactCameraClosedY) < 0.1;
                                 QVariant whiteboardCaptureValue;
                                 const bool whiteboardViewCaptured =
                                         whiteboardViewport != nullptr &&
@@ -5851,6 +5900,47 @@ int main(int argc, char **argv) {
                                                         "with background exported"));
                                 const bool whiteboardVisibilityRestored =
                                         whiteboard->setBoardVisible(0, true);
+                                whiteboard->setActive(true);
+                                const bool pickupViewRestored =
+                                        whiteboardViewport != nullptr &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardViewport,
+                                                "restoreWhiteboardView",
+                                                Q_ARG(
+                                                        QVariant,
+                                                        QVariant(placedBoard)));
+                                QCoreApplication::processEvents();
+                                const QVector3D cameraBeforePickup =
+                                        viewCamera != nullptr
+                                        ? viewCamera
+                                                  ->property("scenePosition")
+                                                  .value<QVector3D>()
+                                        : QVector3D();
+                                const bool pickupInvoked =
+                                        pickupViewRestored &&
+                                        whiteboardPickUpButton != nullptr &&
+                                        whiteboardPickUpButton
+                                                ->property("enabled").toBool() &&
+                                        QMetaObject::invokeMethod(
+                                                whiteboardPickUpButton,
+                                                "clicked");
+                                QCoreApplication::processEvents();
+                                QCoreApplication::processEvents();
+                                const QVector3D cameraAfterPickup =
+                                        viewCamera != nullptr
+                                        ? viewCamera
+                                                  ->property("scenePosition")
+                                                  .value<QVector3D>()
+                                        : QVector3D();
+                                const bool pickupPreservesFreeCamera =
+                                        pickupInvoked &&
+                                        whiteboardViewport
+                                                ->property("freeCamera")
+                                                .toBool() &&
+                                        (cameraAfterPickup - cameraBeforePickup)
+                                                        .length() < 0.001f &&
+                                        whiteboard->boardCount() == 0 &&
+                                        whiteboard->count() == 2;
 
                                 if (viewer.loaded() &&
                                     !viewer.loading()) {
@@ -6011,7 +6101,8 @@ int main(int argc, char **argv) {
                                                         manualActionKeysValid &&
                                                         whiteboardIntegrated &&
                                                         fullBackgroundExportValid &&
-                                                        whiteboardVisibilityRestored
+                                                        whiteboardVisibilityRestored &&
+                                                        pickupPreservesFreeCamera
                                                 ? 0
                                                 : 1;
                                 if (exitCode != 0) {
@@ -6140,6 +6231,23 @@ int main(int argc, char **argv) {
                                                        .toBool()
                                             << "/shownAgain="
                                             << whiteboardShownAgain
+                                            << "/pickup="
+                                            << pickupPreservesFreeCamera
+                                            << "/pickupInvoked="
+                                            << pickupInvoked
+                                            << "/pickupView="
+                                            << pickupViewRestored
+                                            << "/free="
+                                            << (whiteboardViewport
+                                                        ? whiteboardViewport
+                                                                  ->property(
+                                                                          "freeCamera")
+                                                                  .toBool()
+                                                        : false)
+                                            << "/cameraDelta="
+                                            << (cameraAfterPickup -
+                                                cameraBeforePickup)
+                                                       .length()
                                             << "/imageExport="
                                             << fullBackgroundExportValid
                                             << "/captureState="
