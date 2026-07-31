@@ -4,6 +4,7 @@
 #include "evaluators/iteration_evaluator.h"
 #include "mutations/input_mutator.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -67,6 +68,19 @@ struct SearchTimelineFrame {
     std::uint32_t totalLaps = 1u;
     bool raceCompleted = false;
     std::optional<std::uint32_t> finishTimeMs;
+    float linearSpeedX = 0.0f;
+    float linearSpeedY = 0.0f;
+    float linearSpeedZ = 0.0f;
+    float signedSpeed = 0.0f;
+    float turbo = 0.0f;
+    float cameraFlightTransition = 0.0f;
+    bool burning = false;
+    bool gearChanged = false;
+    std::array<bool, 4> wheelContact{{true, true, true, true}};
+    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
+    float cameraSupportUpX = 0.0f;
+    float cameraSupportUpY = 1.0f;
+    float cameraSupportUpZ = 0.0f;
 };
 
 struct SearchLiveUpdate {

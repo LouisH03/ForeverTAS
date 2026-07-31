@@ -1,0 +1,4185 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0a8b865..666501b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -449,6 +449,28 @@ endif()
+ if(FOREVERVALIDATOR_BUILD_TESTS)
+     enable_testing()
+
++    add_executable(forevervalidator-race-camera-tests
++        tests/race_camera_tests.cpp)
++    target_include_directories(forevervalidator-race-camera-tests PRIVATE
++        "${CMAKE_CURRENT_SOURCE_DIR}/include"
++        "${CMAKE_CURRENT_SOURCE_DIR}/src")
++    target_link_libraries(forevervalidator-race-camera-tests PRIVATE
++        forevervalidator_core)
++    forevervalidator_configure_target(forevervalidator-race-camera-tests)
++    add_test(NAME forevervalidator-race-camera
++             COMMAND forevervalidator-race-camera-tests)
++
++    add_executable(forevervalidator-race-camera-pack-tests
++        tests/race_camera_pack_tests.cpp)
++    target_include_directories(forevervalidator-race-camera-pack-tests PRIVATE
++        "${CMAKE_CURRENT_SOURCE_DIR}/include"
++        "${CMAKE_CURRENT_SOURCE_DIR}/src")
++    target_link_libraries(forevervalidator-race-camera-pack-tests PRIVATE
++        forevervalidator_core)
++    forevervalidator_configure_target(forevervalidator-race-camera-pack-tests)
++    add_test(NAME forevervalidator-race-camera-pack
++             COMMAND forevervalidator-race-camera-pack-tests)
++
+     add_executable(forevervalidator-finish-time-tests
+         tests/replay_finish_time_estimator_tests.cpp)
+     target_include_directories(forevervalidator-finish-time-tests PRIVATE
+diff --git a/include/forevervalidator/camera.h b/include/forevervalidator/camera.h
+new file mode 100644
+index 0000000..06f1687
+--- /dev/null
++++ b/include/forevervalidator/camera.h
+@@ -0,0 +1,191 @@
++#ifndef FOREVERVALIDATOR_CAMERA_H
++#define FOREVERVALIDATOR_CAMERA_H
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <functional>
++#include <memory>
++#include <optional>
++#include <string_view>
++
++namespace forevervalidator::camera {
++
++namespace detail {
++struct RaceCameraEnvironmentFactory;
++}
++
++struct Vector3 {
++    float x = 0.0f;
++    float y = 0.0f;
++    float z = 0.0f;
++};
++
++struct Quaternion {
++    float w = 1.0f;
++    float x = 0.0f;
++    float y = 0.0f;
++    float z = 0.0f;
++};
++
++struct Transform {
++    Quaternion rotation{};
++    Vector3 position{};
++};
++
++// Exact public representation of the game's five-float GmLensVal. The first,
++// fourth, and fifth values have stable engine semantics. The middle two are
++// intentionally exposed by neutral storage names because the race controllers
++// use them differently between profiles.
++struct Lens {
++    float fieldOfViewDegrees = 90.0f;
++    float parameter1 = 60.0f;
++    float parameter2 = 3.0f;
++    float nearClipDistance = -1.0f;
++    float farClipDistance = -1.0f;
++};
++
++enum class RaceCameraProfile : std::uint8_t {
++    Race,
++    Race2,
++    Race3,
++};
++
++struct RaceCameraProfileInfo {
++    RaceCameraProfile profile = RaceCameraProfile::Race;
++    std::uint32_t classId = 0u;
++    std::string_view className;
++    std::optional<std::uint32_t> stadiumVehicleResourceIndex;
++};
++
++const RaceCameraProfileInfo &ProfileInfo(RaceCameraProfile profile) noexcept;
++
++struct SegmentQuery {
++    Vector3 start{};
++    Vector3 end{};
++};
++
++struct SegmentHit {
++    // Parametric hit position along start-to-end. The scene query used by the
++    // game returns values in [0, 1], where 1 means no shortening.
++    float fraction = 1.0f;
++};
++
++using SegmentCollisionQuery =
++        std::function<std::optional<SegmentHit>(const SegmentQuery &)>;
++
++struct RaceCameraVehicleState {
++    // A stable caller-owned identity for the followed mobil. Changing it has
++    // the same effect as changing CGameControlCameraTarget::TargetId in-game.
++    std::uint32_t targetId = 0u;
++
++    // Controller time. Queries are expected in chronological order. The
++    // original controllers cap a single integration interval at 200 ms.
++    std::uint32_t timeMs = 0u;
++
++    Transform transform{};
++    Vector3 linearSpeed{};
++    float signedSpeed = 0.0f;
++
++    float steering = 0.0f;
++    float accelerate = 0.0f;
++    float brake = 0.0f;
++    float turbo = 0.0f;
++
++    // Raw vehicle-camera transition source used by Race3 while airborne.
++    // This maps the original vehicle field at offset 0x4cc; its gameplay
++    // meaning is intentionally not guessed here.
++    float cameraFlightTransition = 0.0f;
++
++    bool burning = false;
++    bool gearChanged = false;
++    bool isVehicleCar = true;
++
++    // Race2 tests the wheel contact-present field used by the simulation
++    // state (CSceneVehicleCar::SSimulationWheel + 0x124).
++    std::array<bool, 4> wheelContact{{true, true, true, true}};
++
++    // Race3 instead tests the asynchronous surface snapshot's has-surface
++    // field (CSceneVehicleCar::SSimulationWheel + 0x2a8), including for its
++    // camera collision gate. These signals normally agree, but not on every
++    // frame, so both are required for exact reproduction.
++    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
++
++    // Race and Race2 read this orientation support vector from the vehicle's
++    // camera support resource. It is already negated as expected by the
++    // original SetDOVandUpV call.
++    Vector3 cameraSupportUp{0.0f, 1.0f, 0.0f};
++};
++
++struct RaceCameraQuery {
++    RaceCameraVehicleState vehicle{};
++    SegmentCollisionQuery segmentCollision;
++};
++
++struct RaceCameraOutput {
++    Transform transform{};
++    Lens lens{};
++};
++
++class RaceCameraEnvironment {
++  public:
++    RaceCameraEnvironment();
++    ~RaceCameraEnvironment();
++
++    RaceCameraEnvironment(const RaceCameraEnvironment &) noexcept;
++    RaceCameraEnvironment &
++    operator=(const RaceCameraEnvironment &) noexcept;
++    RaceCameraEnvironment(RaceCameraEnvironment &&) noexcept;
++    RaceCameraEnvironment &operator=(RaceCameraEnvironment &&) noexcept;
++
++    bool HasProfile(RaceCameraProfile profile) const noexcept;
++    std::string_view SourceName() const noexcept;
++    // A collector can declare more than one resource with the same camera
++    // class, notably the four classic Race variants.
++    std::size_t ResourceCount(RaceCameraProfile profile) const noexcept;
++    std::string_view ResourceName(RaceCameraProfile profile,
++                                  std::size_t resourceIndex) const noexcept;
++
++  private:
++    class Impl;
++    std::shared_ptr<const Impl> impl_;
++
++    explicit RaceCameraEnvironment(std::shared_ptr<const Impl> impl);
++    friend class RaceCameraSession;
++    friend struct detail::RaceCameraEnvironmentFactory;
++};
++
++// Stateful, explicitly queried camera evaluator. It is not attached to the
++// validator simulation loop and performs no work unless Reset or Evaluate is
++// called by a consumer.
++class RaceCameraSession {
++  public:
++    // Uses only profiles declared by the supplied environment. When multiple
++    // resources share a class, this selects the collector's final declaration.
++    // Construction fails with std::invalid_argument when the profile is absent.
++    RaceCameraSession(const RaceCameraEnvironment &environment,
++                      RaceCameraProfile profile);
++    // Selects one collector-declared resource of the requested class.
++    RaceCameraSession(const RaceCameraEnvironment &environment,
++                      RaceCameraProfile profile,
++                      std::size_t resourceIndex);
++    ~RaceCameraSession();
++
++    RaceCameraSession(RaceCameraSession &&) noexcept;
++    RaceCameraSession &operator=(RaceCameraSession &&) noexcept;
++
++    RaceCameraSession(const RaceCameraSession &) = delete;
++    RaceCameraSession &operator=(const RaceCameraSession &) = delete;
++
++    RaceCameraProfile Profile() const noexcept;
++    void Reset(const RaceCameraVehicleState &vehicle);
++    RaceCameraOutput Evaluate(const RaceCameraQuery &query);
++
++  private:
++    class Impl;
++    std::unique_ptr<Impl> impl_;
++};
++
++} // namespace forevervalidator::camera
++
++#endif
+diff --git a/include/forevervalidator/experimental/physics_sandbox.h b/include/forevervalidator/experimental/physics_sandbox.h
+index 1e7e932..eac9c38 100644
+--- a/include/forevervalidator/experimental/physics_sandbox.h
++++ b/include/forevervalidator/experimental/physics_sandbox.h
+@@ -3,6 +3,7 @@
+
+ // This API is experimental. It may change without compatibility guarantees.
+
++#include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <functional>
+@@ -101,6 +102,19 @@ struct PhysicsSandboxCarState {
+     Vector3 angularSpeed{};
+     Vector3 force{};
+     Vector3 torque{};
++
++    // Vehicle signals consumed by the public race-camera controllers. These
++    // are exposed with the simulated car state so callers can reproduce the
++    // game's airborne, turbo, and gear-transition camera behavior without
++    // depending on engine-private vehicle structures.
++    float signedSpeed = 0.0f;
++    float turbo = 0.0f;
++    float cameraFlightTransition = 0.0f;
++    bool burning = false;
++    bool gearChanged = false;
++    std::array<bool, 4> wheelContact{{true, true, true, true}};
++    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
++    Vector3 cameraSupportUp{0.0f, 1.0f, 0.0f};
+ };
+
+ struct PhysicsSandboxCollisionTriangle {
+diff --git a/include/forevervalidator/native.h b/include/forevervalidator/native.h
+index d23913d..28cccd8 100644
+--- a/include/forevervalidator/native.h
++++ b/include/forevervalidator/native.h
+@@ -2,11 +2,18 @@
+ #define FOREVERVALIDATOR_NATIVE_H
+
+ #include <string>
++
++#include <forevervalidator/camera.h>
+ #include <forevervalidator/validation.h>
+
+ namespace forevervalidator {
+ Result<AssetSource> OpenInstalledPackDirectory(
+         const std::string &packDirectory) noexcept;
++// Authenticates <packName>.pak with packlist.dat, resolves the vehicle
++// collector's declared race-camera GBXs, and decodes their loaded values.
++Result<camera::RaceCameraEnvironment> LoadInstalledRaceCameraEnvironment(
++        const std::string &packDirectory,
++        const std::string &packName) noexcept;
+ Result<AssetBytes> ReadNativeReplayFile(
+         const std::string &path,
+         const ReplayIdentity &identity = {}) noexcept;
+diff --git a/src/engine/camera/race_camera_api.cpp b/src/engine/camera/race_camera_api.cpp
+new file mode 100644
+index 0000000..b7ba4b5
+--- /dev/null
++++ b/src/engine/camera/race_camera_api.cpp
+@@ -0,0 +1,203 @@
++#include <forevervalidator/camera.h>
++
++#include <array>
++#include <memory>
++#include <stdexcept>
++#include <utility>
++
++#include "engine/camera/race_camera_internal.h"
++
++namespace forevervalidator::camera {
++namespace {
++
++constexpr std::array<RaceCameraProfileInfo, 3u> ProfileInfos{{
++        {RaceCameraProfile::Race, 0x24085000u,
++         "CGameControlCameraTrackManiaRace", std::nullopt},
++        {RaceCameraProfile::Race2, 0x24086000u,
++         "CGameControlCameraTrackManiaRace2", 1u},
++        {RaceCameraProfile::Race3, 0x24087000u,
++         "CGameControlCameraTrackManiaRace3", 2u},
++}};
++
++} // namespace
++
++const RaceCameraProfileInfo &ProfileInfo(RaceCameraProfile profile) noexcept {
++    const std::size_t index = static_cast<std::size_t>(profile);
++    return ProfileInfos[index < ProfileInfos.size() ? index : 0u];
++}
++
++class RaceCameraEnvironment::Impl {
++  public:
++    explicit Impl(detail::EnvironmentConfig value)
++        : config(std::move(value)) {}
++
++    detail::EnvironmentConfig config;
++};
++
++RaceCameraEnvironment::RaceCameraEnvironment() = default;
++RaceCameraEnvironment::~RaceCameraEnvironment() = default;
++RaceCameraEnvironment::RaceCameraEnvironment(
++        const RaceCameraEnvironment &) noexcept = default;
++RaceCameraEnvironment &RaceCameraEnvironment::operator=(
++        const RaceCameraEnvironment &) noexcept = default;
++RaceCameraEnvironment::RaceCameraEnvironment(
++        RaceCameraEnvironment &&) noexcept = default;
++RaceCameraEnvironment &RaceCameraEnvironment::operator=(
++        RaceCameraEnvironment &&) noexcept = default;
++
++RaceCameraEnvironment::RaceCameraEnvironment(
++        std::shared_ptr<const Impl> impl)
++    : impl_(std::move(impl)) {}
++
++bool RaceCameraEnvironment::HasProfile(
++        RaceCameraProfile profile) const noexcept {
++    if (!impl_) {
++        return false;
++    }
++    switch (profile) {
++    case RaceCameraProfile::Race:
++        return !impl_->config.raceResources.empty();
++    case RaceCameraProfile::Race2:
++        return !impl_->config.race2Resources.empty();
++    case RaceCameraProfile::Race3:
++        return !impl_->config.race3Resources.empty();
++    }
++    return false;
++}
++
++std::string_view RaceCameraEnvironment::SourceName() const noexcept {
++    return impl_ ? std::string_view(impl_->config.sourceName)
++                 : std::string_view{};
++}
++
++std::size_t RaceCameraEnvironment::ResourceCount(
++        RaceCameraProfile profile) const noexcept {
++    if (!impl_) {
++        return 0u;
++    }
++    switch (profile) {
++    case RaceCameraProfile::Race:
++        return impl_->config.raceResources.size();
++    case RaceCameraProfile::Race2:
++        return impl_->config.race2Resources.size();
++    case RaceCameraProfile::Race3:
++        return impl_->config.race3Resources.size();
++    }
++    return 0u;
++}
++
++std::string_view RaceCameraEnvironment::ResourceName(
++        RaceCameraProfile profile,
++        std::size_t resourceIndex) const noexcept {
++    if (!impl_) {
++        return {};
++    }
++    switch (profile) {
++    case RaceCameraProfile::Race:
++        return resourceIndex < impl_->config.raceResources.size()
++                       ? std::string_view(
++                                 impl_->config.raceResources[resourceIndex]
++                                         .sourceName)
++                       : std::string_view{};
++    case RaceCameraProfile::Race2:
++        return resourceIndex < impl_->config.race2Resources.size()
++                       ? std::string_view(
++                                 impl_->config.race2Resources[resourceIndex]
++                                         .sourceName)
++                       : std::string_view{};
++    case RaceCameraProfile::Race3:
++        return resourceIndex < impl_->config.race3Resources.size()
++                       ? std::string_view(
++                                 impl_->config.race3Resources[resourceIndex]
++                                         .sourceName)
++                       : std::string_view{};
++    }
++    return {};
++}
++
++RaceCameraEnvironment detail::RaceCameraEnvironmentFactory::Create(
++        EnvironmentConfig config) {
++    if (!config.race && !config.raceResources.empty()) {
++        config.race = config.raceResources.back().config;
++    }
++    if (!config.race2 && !config.race2Resources.empty()) {
++        config.race2 = config.race2Resources.back().config;
++    }
++    if (!config.race3 && !config.race3Resources.empty()) {
++        config.race3 = config.race3Resources.back().config;
++    }
++    if (config.race && config.raceResources.empty()) {
++        config.raceResources.push_back(
++                {config.sourceName, *config.race});
++    }
++    if (config.race2 && config.race2Resources.empty()) {
++        config.race2Resources.push_back(
++                {config.sourceName, *config.race2});
++    }
++    if (config.race3 && config.race3Resources.empty()) {
++        config.race3Resources.push_back(
++                {config.sourceName, *config.race3});
++    }
++    return RaceCameraEnvironment(
++            std::make_shared<const RaceCameraEnvironment::Impl>(
++                    std::move(config)));
++}
++
++const detail::EnvironmentConfig &
++detail::RaceCameraEnvironmentFactory::Config(
++        const RaceCameraEnvironment &environment) {
++    if (!environment.impl_) {
++        throw std::invalid_argument("race camera environment is empty");
++    }
++    return environment.impl_->config;
++}
++
++class RaceCameraSession::Impl {
++  public:
++    Impl(const RaceCameraEnvironment &environment,
++         RaceCameraProfile profile,
++         std::optional<std::size_t> resourceIndex)
++        : controller(detail::CreateController(
++                  detail::RaceCameraEnvironmentFactory::Config(environment),
++                  profile, resourceIndex)) {
++        if (!controller) {
++            throw std::invalid_argument("unsupported race camera profile");
++        }
++    }
++
++    std::unique_ptr<detail::Controller> controller;
++};
++
++RaceCameraSession::RaceCameraSession(
++        const RaceCameraEnvironment &environment,
++        RaceCameraProfile profile)
++    : impl_(std::make_unique<Impl>(environment, profile, std::nullopt)) {}
++
++RaceCameraSession::RaceCameraSession(
++        const RaceCameraEnvironment &environment,
++        RaceCameraProfile profile,
++        std::size_t resourceIndex)
++    : impl_(std::make_unique<Impl>(
++              environment, profile, resourceIndex)) {}
++
++RaceCameraSession::~RaceCameraSession() = default;
++
++RaceCameraSession::RaceCameraSession(RaceCameraSession &&) noexcept = default;
++
++RaceCameraSession &
++RaceCameraSession::operator=(RaceCameraSession &&) noexcept = default;
++
++RaceCameraProfile RaceCameraSession::Profile() const noexcept {
++    return impl_->controller->Profile();
++}
++
++void RaceCameraSession::Reset(const RaceCameraVehicleState &vehicle) {
++    impl_->controller->Reset(detail::ToInternal(vehicle));
++}
++
++RaceCameraOutput RaceCameraSession::Evaluate(const RaceCameraQuery &query) {
++    return detail::ToPublic(impl_->controller->Evaluate(
++            detail::ToInternal(query.vehicle), query.segmentCollision));
++}
++
++} // namespace forevervalidator::camera
+diff --git a/src/engine/camera/race_camera_config.h b/src/engine/camera/race_camera_config.h
+new file mode 100644
+index 0000000..f416068
+--- /dev/null
++++ b/src/engine/camera/race_camera_config.h
+@@ -0,0 +1,142 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++#include <optional>
++#include <string>
++#include <vector>
++
++namespace forevervalidator::camera::detail {
++
++struct CurveKey {
++    float position = 0.0f;
++    float value = 0.0f;
++};
++
++struct SmoothRealConfig {
++    float delta = 0.0f;
++    std::uint32_t riseTimeMs = 1000u;
++    std::uint32_t fallTimeMs = 1000u;
++};
++
++struct CameraCommonConfig {
++    std::array<float, 3> followedOffset{{0.0f, 0.0f, 0.0f}};
++    float maximumFollowSpeed = 30.0f;
++    float height = 3.0f;
++    float minimumDistance = 4.0f;
++    float maximumDistance = 5.0f;
++    float baseFieldOfView = 75.0f;
++    float initialFieldOfView = 75.0f;
++    float lensParameter1 = 30.0f;
++    float lensParameter2 = 3.0f;
++    float lookFactor = 1.0f;
++    bool ignoreTargetRotation = false;
++};
++
++struct RaceConfig {
++    CameraCommonConfig common{};
++    float coneAperture = 1.0f;
++    float coneMinimumSpeed = 20.0f;
++    float coneMaximumSpeed = 60.0f;
++    bool useSpeedDirection = false;
++    float cameraHeight = 3.0f;
++    float cameraDistance = 9.0f;
++    float targetDistance = 0.0f;
++    float cameraAlignment = 4.0f;
++    bool segmentCast = true;
++    float segmentCastMinimumDistance = 8.5f;
++    float segmentCastLength = 10.0f;
++    std::array<float, 3> segmentCastDirection{{0.0f, 0.0f, 0.0f}};
++};
++
++struct Race2Config {
++    CameraCommonConfig common{};
++    std::array<SmoothRealConfig, 15u> smoothers{};
++    float flyingLookRate = 0.2f;
++    float loadedAuxiliaryRate = 20.0f;
++    std::uint32_t airborneValidationMs = 200u;
++    std::uint32_t flyingCameraMoveDelayMs = 1000u;
++    std::uint32_t flyingModeDelayMs = 1000u;
++    std::uint32_t steeringYawTriggerMs = 200u;
++    std::uint32_t steeringRollTriggerMs = 300u;
++    std::uint32_t steeringInactiveResetMs = 150u;
++    float orientationMinimumSpeed = 20.0f;
++    float heightRate = 4.0f;
++    float fieldOfViewRate = 40.0f;
++    std::vector<CurveKey> flyingLookCurve;
++    std::vector<CurveKey> yawFromSpeedCurve;
++    std::vector<CurveKey> rollFromSpeedCurve;
++    float distanceSpringStiffness = 10.0f;
++    float distanceSpringDamping = 5.0f;
++    float lookSpringStiffness = 1.5f;
++    float lookSpringDamping = 0.7f;
++    bool rollFromInput = false;
++};
++
++struct Race3Config {
++    CameraCommonConfig common{};
++    float directionNormalRate = 5.0f;
++    float up = 2.2f;
++    float far = 4.5f;
++    std::uint32_t airborneValidationMs = 1u;
++    std::uint32_t steeringInactiveResetMs = 150u;
++    std::uint32_t burningSteerDelayMs = 2000u;
++    float lowSpeedThreshold = 30.0f;
++    float veryLowSpeedThreshold = 10.0f;
++    SmoothRealConfig reverse{};
++    SmoothRealConfig lowSpeedFlightTarget{};
++    SmoothRealConfig flyingDirectionBlend{};
++    SmoothRealConfig flyingUpBlend{};
++    float directionFlyingRate = 3.0f;
++    SmoothRealConfig flyingSpeedEffect{};
++    float upNormalRate = 4.0f;
++    float upFlyingRate = 1.0f;
++    SmoothRealConfig flyingUpSpeedEffect{};
++    SmoothRealConfig flyingLook{};
++    float flyingLookRate = 0.2f;
++    SmoothRealConfig flyingRadius{};
++    float constantFlyingLookDownFactor = 0.3f;
++    float flyingDownSpringStiffness = 1.5f;
++    float flyingDownSpringDamping = 0.7f;
++    float radiusSpringStiffness = 10.0f;
++    float radiusSpringDamping = 5.0f;
++    SmoothRealConfig gasFar{};
++    SmoothRealConfig brakeFar{};
++    SmoothRealConfig steerFar{};
++    SmoothRealConfig turboFieldOfView{};
++    SmoothRealConfig turboFar{};
++    SmoothRealConfig gearFar{};
++    SmoothRealConfig burningLook{};
++    SmoothRealConfig burningRadius{};
++    std::vector<CurveKey> speedModulationCurve;
++    std::vector<CurveKey> flyingLookCurve;
++    std::vector<CurveKey> flyingDownCurve;
++    float collisionRadius = 2.0f;
++};
++
++struct RaceResourceConfig {
++    std::string sourceName;
++    RaceConfig config;
++};
++
++struct Race2ResourceConfig {
++    std::string sourceName;
++    Race2Config config;
++};
++
++struct Race3ResourceConfig {
++    std::string sourceName;
++    Race3Config config;
++};
++
++struct EnvironmentConfig {
++    std::string sourceName;
++    std::optional<RaceConfig> race;
++    std::optional<Race2Config> race2;
++    std::optional<Race3Config> race3;
++    std::vector<RaceResourceConfig> raceResources;
++    std::vector<Race2ResourceConfig> race2Resources;
++    std::vector<Race3ResourceConfig> race3Resources;
++};
++
++} // namespace forevervalidator::camera::detail
+diff --git a/src/engine/camera/race_camera_internal.cpp b/src/engine/camera/race_camera_internal.cpp
+new file mode 100644
+index 0000000..ce57603
+--- /dev/null
++++ b/src/engine/camera/race_camera_internal.cpp
+@@ -0,0 +1,344 @@
++#include "engine/camera/race_camera_internal.h"
++
++#include <algorithm>
++#include <cmath>
++#include <stdexcept>
++
++#include "engine/core/binary32_math.h"
++
++namespace forevervalidator::camera::detail {
++
++LinearCurve::LinearCurve(std::initializer_list<CurveKey> keys) : keys_(keys) {}
++
++LinearCurve::LinearCurve(std::vector<CurveKey> keys)
++    : keys_(std::move(keys)) {}
++
++float LinearCurve::Evaluate(float position) const {
++    if (keys_.empty()) {
++        return 0.0f;
++    }
++    if (position <= keys_.front().position) {
++        return keys_.front().value;
++    }
++    for (std::size_t index = 1u; index < keys_.size(); ++index) {
++        if (position <= keys_[index].position) {
++            const CurveKey &left = keys_[index - 1u];
++            const CurveKey &right = keys_[index];
++            const float interval = right.position - left.position;
++            if (interval <= 0.0f) {
++                return right.value;
++            }
++            const float blend = (position - left.position) / interval;
++            return (right.value - left.value) * blend + left.value;
++        }
++    }
++    return keys_.back().value;
++}
++
++SmoothReal2::SmoothReal2(float delta, std::uint32_t riseTimeMs,
++                         std::uint32_t fallTimeMs)
++    : delta_(delta), riseTimeMs_(riseTimeMs), fallTimeMs_(fallTimeMs) {
++    Reset();
++}
++
++void SmoothReal2::Reset() {
++    transitionScale_ = 1.0f;
++    value_ = 0.0f;
++    transitionStartTimeMs_ = 0u;
++    transitionStartValue_ = 0.0f;
++    direction_ = SmoothDirection::Falling;
++}
++
++float SmoothReal2::SmoothedValue(SmoothDirection direction, float position) {
++    const float clamped = Clamp(position, 0.0f, 1.0f);
++    const float cosine = CIcos(clamped * Pi);
++    if (direction == SmoothDirection::Rising) {
++        return (1.0f - cosine) * 0.5f;
++    }
++    return (cosine + 1.0f) * 0.5f;
++}
++
++float SmoothReal2::SmoothedPosition(SmoothDirection direction, float value) {
++    float clamped = 0.000009999999747378752f;
++    if (value > clamped) {
++        clamped = value;
++        if (value >= 0.999989986419677734375f) {
++            clamped = 0.999989986419677734375f;
++        }
++    }
++    if (direction == SmoothDirection::Rising) {
++        return CIacos(1.0f - (clamped + clamped)) / Pi;
++    }
++    return CIacos(clamped + clamped - 1.0f) / Pi;
++}
++
++void SmoothReal2::SetDirection(SmoothDirection direction,
++                               std::uint32_t timeMs) {
++    transitionScale_ = SmoothedPosition(direction_, std::fabs(value_ / delta_));
++    direction_ = direction;
++    transitionStartTimeMs_ = timeMs;
++    transitionStartValue_ = value_;
++}
++
++float SmoothReal2::Update(bool active, std::uint32_t timeMs) {
++    if (active) {
++        if (direction_ != SmoothDirection::Rising) {
++            SetDirection(SmoothDirection::Rising, timeMs);
++        }
++        if (std::fabs(delta_) > std::fabs(value_) &&
++            timeMs >= transitionStartTimeMs_ &&
++            std::fabs(transitionScale_) > 0.000009999999747378752f &&
++            riseTimeMs_ != 0u) {
++            const float position =
++                    static_cast<float>(timeMs - transitionStartTimeMs_) /
++                    (static_cast<float>(riseTimeMs_) * transitionScale_);
++            value_ = SmoothedValue(direction_, position) *
++                             (delta_ - transitionStartValue_) +
++                     transitionStartValue_;
++        }
++    } else {
++        if (direction_ == SmoothDirection::Rising) {
++            SetDirection(SmoothDirection::Falling, timeMs);
++        }
++        if (std::fabs(value_) > 0.0f && timeMs >= transitionStartTimeMs_ &&
++            std::fabs(transitionScale_) > 0.000009999999747378752f &&
++            fallTimeMs_ != 0u) {
++            const float position =
++                    static_cast<float>(timeMs - transitionStartTimeMs_) /
++                    (static_cast<float>(fallTimeMs_) * transitionScale_);
++            value_ =
++                    SmoothedValue(direction_, position) * transitionStartValue_;
++        }
++    }
++    return value_;
++}
++
++float SmoothReal2::UpdateUsingFullTime(bool active, std::uint32_t timeMs) {
++    if (active) {
++        if (direction_ != SmoothDirection::Rising) {
++            direction_ = SmoothDirection::Rising;
++            transitionStartTimeMs_ = timeMs;
++            transitionStartValue_ = value_;
++        }
++        if (std::fabs(delta_) > std::fabs(value_) &&
++            timeMs >= transitionStartTimeMs_ && transitionScale_ != 0.0f) {
++            const float position =
++                    static_cast<float>(timeMs - transitionStartTimeMs_) /
++                    static_cast<float>(riseTimeMs_);
++            value_ = SmoothedValue(direction_, position) *
++                             (delta_ - transitionStartValue_) +
++                     transitionStartValue_;
++        }
++    } else {
++        if (direction_ == SmoothDirection::Rising) {
++            direction_ = SmoothDirection::Falling;
++            transitionStartTimeMs_ = timeMs;
++            transitionStartValue_ = value_;
++        }
++        if (std::fabs(value_) > 0.0f && timeMs >= transitionStartTimeMs_ &&
++            transitionScale_ != 0.0f) {
++            const float position =
++                    static_cast<float>(timeMs - transitionStartTimeMs_) /
++                    static_cast<float>(fallTimeMs_);
++            value_ =
++                    SmoothedValue(direction_, position) * transitionStartValue_;
++        }
++    }
++    return value_;
++}
++
++bool VehicleFrame::AllWheelsWithoutContact() const noexcept {
++    return std::none_of(wheelContact.begin(), wheelContact.end(),
++                        [](bool contact) { return contact; });
++}
++
++bool VehicleFrame::AllWheelsWithoutSurface() const noexcept {
++    return std::none_of(wheelHasSurface.begin(), wheelHasSurface.end(),
++                        [](bool hasSurface) { return hasSurface; });
++}
++
++TargetController::TargetController(float fieldOfViewDegrees) {
++    camera_.transform.SetIdentity();
++    camera_.lens = {fieldOfViewDegrees, fieldOfViewDegrees, 3.0f, -1.0f, -1.0f};
++}
++
++CameraFrame
++TargetController::Evaluate(const VehicleFrame &vehicle,
++                           const SegmentCollisionQuery &segmentCollision) {
++    UpdateCamera(vehicle, segmentCollision);
++    return camera_;
++}
++
++GmVec3 ToInternal(const Vector3 &value) { return {value.x, value.y, value.z}; }
++
++Vector3 ToPublic(const GmVec3 &value) { return {value.x, value.y, value.z}; }
++
++GmQuat ToInternal(const Quaternion &value) {
++    GmQuat result{value.w, value.x, value.y, value.z};
++    result.Normalize();
++    return result;
++}
++
++Quaternion ToPublic(const GmQuat &value) {
++    return {value.w, value.x, value.y, value.z};
++}
++
++GmIso4 ToInternal(const Transform &value) {
++    GmIso4 result;
++    GmMat3 rotation;
++    rotation.Set(ToInternal(value.rotation));
++    result.Set(rotation, ToInternal(value.position));
++    return result;
++}
++
++Transform ToPublic(const GmIso4 &value) {
++    GmQuat rotation;
++    rotation.Set(value.rotation);
++    rotation.Normalize();
++    return {ToPublic(rotation), ToPublic(value.translation)};
++}
++
++VehicleFrame ToInternal(const RaceCameraVehicleState &value) {
++    VehicleFrame result;
++    result.targetId = value.targetId;
++    result.timeMs = value.timeMs;
++    result.transform = ToInternal(value.transform);
++    result.linearSpeed = ToInternal(value.linearSpeed);
++    result.signedSpeed = value.signedSpeed;
++    result.steering = value.steering;
++    result.accelerate = value.accelerate;
++    result.brake = value.brake;
++    result.turbo = value.turbo;
++    result.cameraFlightTransition = value.cameraFlightTransition;
++    result.burning = value.burning;
++    result.gearChanged = value.gearChanged;
++    result.isVehicleCar = value.isVehicleCar;
++    result.wheelContact = value.wheelContact;
++    result.wheelHasSurface = value.wheelHasSurface;
++    result.cameraSupportUp = ToInternal(value.cameraSupportUp);
++    return result;
++}
++
++RaceCameraOutput ToPublic(const CameraFrame &value) {
++    RaceCameraOutput result;
++    result.transform = ToPublic(value.transform);
++    result.lens.fieldOfViewDegrees = value.lens[0];
++    result.lens.parameter1 = value.lens[1];
++    result.lens.parameter2 = value.lens[2];
++    result.lens.nearClipDistance = value.lens[3];
++    result.lens.farClipDistance = value.lens[4];
++    return result;
++}
++
++float Clamp(float value, float minimum, float maximum) {
++    return std::max(minimum, std::min(maximum, value));
++}
++
++GmVec3 Add(const GmVec3 &left, const GmVec3 &right) {
++    return {left.x + right.x, left.y + right.y, left.z + right.z};
++}
++
++GmVec3 Subtract(const GmVec3 &left, const GmVec3 &right) {
++    return {left.x - right.x, left.y - right.y, left.z - right.z};
++}
++
++GmVec3 Scale(const GmVec3 &value, float scale) {
++    return {value.x * scale, value.y * scale, value.z * scale};
++}
++
++float LengthSquared(const GmVec3 &value) {
++    return value.x * value.x + value.y * value.y + value.z * value.z;
++}
++
++GmVec3 Normalize(const GmVec3 &value) {
++    const float lengthSquared = LengthSquared(value);
++    if (lengthSquared <= VectorNormalizeEpsilonSquared) {
++        return value;
++    }
++    return Scale(value, 1.0f / CIsqrt(lengthSquared));
++}
++
++GmVec3 Cross(const GmVec3 &left, const GmVec3 &right) {
++    return {left.y * right.z - left.z * right.y,
++            left.z * right.x - left.x * right.z,
++            left.x * right.y - left.y * right.x};
++}
++
++float Dot(const GmVec3 &left, const GmVec3 &right) {
++    return (left.x * right.x + left.y * right.y) + left.z * right.z;
++}
++
++GmVec3 TransformDirection(const GmMat3 &rotation, const GmVec3 &value) {
++    return {rotation.basisX.x * value.x + rotation.basisX.y * value.y +
++                    rotation.basisX.z * value.z,
++            rotation.basisY.x * value.x + rotation.basisY.y * value.y +
++                    rotation.basisY.z * value.z,
++            rotation.basisZ.x * value.x + rotation.basisZ.y * value.y +
++                    rotation.basisZ.z * value.z};
++}
++
++GmVec3 InverseTransformDirection(const GmMat3 &rotation, const GmVec3 &value) {
++    return {rotation.basisX.x * value.x + rotation.basisY.x * value.y +
++                    rotation.basisZ.x * value.z,
++            rotation.basisX.y * value.x + rotation.basisY.y * value.y +
++                    rotation.basisZ.y * value.z,
++            rotation.basisX.z * value.x + rotation.basisY.z * value.y +
++                    rotation.basisZ.z * value.z};
++}
++
++void SetDovAndUp(GmMat3 &rotation, const GmVec3 &directionOfView,
++                 const GmVec3 &up) {
++    GmVec3 side = Cross(up, directionOfView);
++    const float sideLengthSquared = LengthSquared(side);
++    if (sideLengthSquared > VectorNormalizeEpsilonSquared) {
++        side = Scale(side, 1.0f / CIsqrt(sideLengthSquared));
++    }
++
++    GmVec3 normalizedDirection = directionOfView;
++    const float directionLengthSquared = LengthSquared(normalizedDirection);
++    if (directionLengthSquared > VectorNormalizeEpsilonSquared) {
++        normalizedDirection = Scale(normalizedDirection,
++                                    1.0f / CIsqrt(directionLengthSquared));
++    }
++
++    rotation.SetRow(GmAxis::X, side);
++    rotation.SetRow(GmAxis::Y, Cross(normalizedDirection, side));
++    rotation.SetRow(GmAxis::Z, normalizedDirection);
++}
++
++GmVec3 SlerpVector(const GmVec3 &from, const GmVec3 &to, float blend) {
++    if (blend == 0.0f) {
++        return from;
++    }
++    if (blend == 1.0f) {
++        return to;
++    }
++    const GmVec3 cross = Cross(from, to);
++    const float sine = CIsqrt(LengthSquared(cross));
++    const float dot = Dot(from, to);
++    float fromWeight = 1.0f - blend;
++    float toWeight = blend;
++    if (1.0f - dot > VectorNormalizeEpsilonSquared) {
++        const float angle = CIasin(Clamp(sine, -1.0f, 1.0f));
++        fromWeight = CIsin((1.0f - blend) * angle) / sine;
++        toWeight = CIsin(blend * angle) / sine;
++    }
++    return Add(Scale(from, fromWeight), Scale(to, toWeight));
++}
++
++std::uint32_t DeltaTimeMs(std::uint32_t now, std::uint32_t before) {
++    if (now < before) {
++        return 0u;
++    }
++    return std::min<std::uint32_t>(now - before, 200u);
++}
++
++float RateLimit(float current, float target, float maximumStep) {
++    const float delta = target - current;
++    if (std::fabs(delta) <= maximumStep) {
++        return target;
++    }
++    return current + (delta < 0.0f ? -maximumStep : maximumStep);
++}
++
++} // namespace forevervalidator::camera::detail
+diff --git a/src/engine/camera/race_camera_internal.h b/src/engine/camera/race_camera_internal.h
+new file mode 100644
+index 0000000..c69c9cd
+--- /dev/null
++++ b/src/engine/camera/race_camera_internal.h
+@@ -0,0 +1,156 @@
++#pragma once
++
++#include <forevervalidator/camera.h>
++
++#include <array>
++#include <cstdint>
++#include <initializer_list>
++#include <memory>
++#include <vector>
++
++#include "engine/core/gm_types.h"
++#include "engine/camera/race_camera_config.h"
++
++namespace forevervalidator::camera::detail {
++
++inline constexpr float Pi = 3.1415927410125732421875f;
++inline constexpr float MillisecondsToSeconds = 0.0010000000474974513f;
++inline constexpr float VectorNormalizeEpsilonSquared = 0.000009999999747378752f;
++
++class LinearCurve {
++  public:
++    LinearCurve() = default;
++    LinearCurve(std::initializer_list<CurveKey> keys);
++    explicit LinearCurve(std::vector<CurveKey> keys);
++
++    float Evaluate(float position) const;
++    const std::vector<CurveKey> &Keys() const noexcept { return keys_; }
++
++  private:
++    std::vector<CurveKey> keys_;
++};
++
++enum class SmoothDirection : std::uint32_t {
++    Falling = 0u,
++    Rising = 1u,
++};
++
++class SmoothReal2 {
++  public:
++    SmoothReal2() = default;
++    SmoothReal2(float delta, std::uint32_t riseTimeMs,
++                std::uint32_t fallTimeMs);
++
++    void Reset();
++    float Update(bool active, std::uint32_t timeMs);
++    float UpdateUsingFullTime(bool active, std::uint32_t timeMs);
++
++    float Value() const noexcept { return value_; }
++    float Delta() const noexcept { return delta_; }
++
++  private:
++    static float SmoothedValue(SmoothDirection direction, float position);
++    static float SmoothedPosition(SmoothDirection direction, float value);
++    void SetDirection(SmoothDirection direction, std::uint32_t timeMs);
++
++    float delta_ = 0.0f;
++    std::uint32_t riseTimeMs_ = 1000u;
++    std::uint32_t fallTimeMs_ = 1000u;
++    float transitionScale_ = 1.0f;
++    float value_ = 0.0f;
++    std::uint32_t transitionStartTimeMs_ = 0u;
++    float transitionStartValue_ = 0.0f;
++    SmoothDirection direction_ = SmoothDirection::Falling;
++};
++
++struct CameraFrame {
++    GmIso4 transform{};
++    std::array<float, 5> lens{{90.0f, 60.0f, 3.0f, -1.0f, -1.0f}};
++};
++
++struct VehicleFrame {
++    std::uint32_t targetId = 0u;
++    std::uint32_t timeMs = 0u;
++    GmIso4 transform{};
++    GmVec3 linearSpeed{};
++    float signedSpeed = 0.0f;
++    float steering = 0.0f;
++    float accelerate = 0.0f;
++    float brake = 0.0f;
++    float turbo = 0.0f;
++    float cameraFlightTransition = 0.0f;
++    bool burning = false;
++    bool gearChanged = false;
++    bool isVehicleCar = true;
++    std::array<bool, 4> wheelContact{{true, true, true, true}};
++    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
++    GmVec3 cameraSupportUp{};
++
++    bool AllWheelsWithoutContact() const noexcept;
++    bool AllWheelsWithoutSurface() const noexcept;
++};
++
++class Controller {
++  public:
++    virtual ~Controller() = default;
++    virtual RaceCameraProfile Profile() const noexcept = 0;
++    virtual void Reset(const VehicleFrame &vehicle) = 0;
++    virtual CameraFrame
++    Evaluate(const VehicleFrame &vehicle,
++             const SegmentCollisionQuery &segmentCollision) = 0;
++};
++
++class TargetController : public Controller {
++  public:
++    CameraFrame Evaluate(const VehicleFrame &vehicle,
++                         const SegmentCollisionQuery &segmentCollision) final;
++
++  protected:
++    explicit TargetController(float fieldOfViewDegrees);
++
++    virtual void
++    UpdateCamera(const VehicleFrame &vehicle,
++                 const SegmentCollisionQuery &segmentCollision) = 0;
++
++    CameraFrame camera_{};
++
++  private:
++};
++
++std::unique_ptr<Controller> CreateController(
++        const EnvironmentConfig &environment,
++        RaceCameraProfile profile,
++        std::optional<std::size_t> resourceIndex = std::nullopt);
++
++struct RaceCameraEnvironmentFactory {
++    static RaceCameraEnvironment Create(EnvironmentConfig config);
++    static const EnvironmentConfig &Config(
++            const RaceCameraEnvironment &environment);
++};
++
++GmVec3 ToInternal(const Vector3 &value);
++Vector3 ToPublic(const GmVec3 &value);
++GmQuat ToInternal(const Quaternion &value);
++Quaternion ToPublic(const GmQuat &value);
++GmIso4 ToInternal(const Transform &value);
++Transform ToPublic(const GmIso4 &value);
++VehicleFrame ToInternal(const RaceCameraVehicleState &value);
++RaceCameraOutput ToPublic(const CameraFrame &value);
++
++float Clamp(float value, float minimum, float maximum);
++GmVec3 Add(const GmVec3 &left, const GmVec3 &right);
++GmVec3 Subtract(const GmVec3 &left, const GmVec3 &right);
++GmVec3 Scale(const GmVec3 &value, float scale);
++float LengthSquared(const GmVec3 &value);
++GmVec3 Normalize(const GmVec3 &value);
++GmVec3 Cross(const GmVec3 &left, const GmVec3 &right);
++float Dot(const GmVec3 &left, const GmVec3 &right);
++GmVec3 TransformDirection(const GmMat3 &rotation, const GmVec3 &value);
++GmVec3 InverseTransformDirection(const GmMat3 &rotation, const GmVec3 &value);
++void SetDovAndUp(GmMat3 &rotation, const GmVec3 &directionOfView,
++                 const GmVec3 &up);
++GmVec3 SlerpVector(const GmVec3 &from, const GmVec3 &to, float blend);
++std::uint32_t DeltaTimeMs(std::uint32_t now, std::uint32_t before);
++float RateLimit(float current, float target, float maximumStep);
++
++} // namespace forevervalidator::camera::detail
+diff --git a/src/engine/camera/race_cameras.cpp b/src/engine/camera/race_cameras.cpp
+new file mode 100644
+index 0000000..8fff078
+--- /dev/null
++++ b/src/engine/camera/race_cameras.cpp
+@@ -0,0 +1,1055 @@
++#include "engine/camera/race_camera_internal.h"
++
++#include <algorithm>
++#include <cmath>
++#include <memory>
++#include <utility>
++
++#include "engine/core/binary32_math.h"
++
++namespace forevervalidator::camera::detail {
++namespace {
++
++constexpr GmVec3 WorldUp{0.0f, 1.0f, 0.0f};
++
++enum class CameraState : std::uint32_t {
++    Ground = 0u,
++    Burning = 1u,
++    Airborne = 2u,
++};
++
++bool IsActive(float value) { return value > 0.10000000149011612f; }
++
++bool IsSteering(float value) {
++    return value > 0.10000000149011612f || value < -0.10000000149011612f;
++}
++
++float HorizontalLength(const GmVec3 &value) {
++    return CIsqrt(value.x * value.x + value.z * value.z);
++}
++
++GmVec3 VehicleForward(const VehicleFrame &vehicle) {
++    return vehicle.transform.rotation.Row(GmAxis::Z);
++}
++
++GmVec3 VehicleUp(const VehicleFrame &vehicle) {
++    return vehicle.transform.rotation.Row(GmAxis::Y);
++}
++
++GmMat3 TrackingFrame(const GmVec3 &direction) {
++    GmMat3 frame;
++    GmVec3 side = Cross(WorldUp, direction);
++    const float sideLengthSquared = LengthSquared(side);
++    if (sideLengthSquared > VectorNormalizeEpsilonSquared) {
++        side = Scale(side, 1.0f / CIsqrt(sideLengthSquared));
++    }
++
++    GmVec3 normalizedUp = WorldUp;
++    const float upLengthSquared = LengthSquared(normalizedUp);
++    if (upLengthSquared > VectorNormalizeEpsilonSquared) {
++        normalizedUp = Scale(normalizedUp, 1.0f / CIsqrt(upLengthSquared));
++    }
++
++    frame.SetRow(GmAxis::X, side);
++    frame.SetRow(GmAxis::Y, normalizedUp);
++    frame.SetRow(GmAxis::Z, Cross(side, normalizedUp));
++    return frame;
++}
++
++void IntegrateSpring(float target, float stiffness, float damping, float dt,
++                     float &value, float &velocity) {
++    const float acceleration =
++            (target - value) * stiffness - damping * velocity;
++    velocity = acceleration * dt + velocity;
++    value = dt * velocity + value;
++}
++
++void SetCameraPose(CameraFrame &camera, const GmVec3 &position,
++                   const GmVec3 &direction, const GmVec3 &up) {
++    camera.transform.translation = position;
++    SetDovAndUp(camera.transform.rotation, direction, up);
++}
++
++struct InputHistory {
++    bool steering = false;
++    std::uint32_t steeringStartMs = 0u;
++    std::uint32_t steeringEndMs = 0u;
++    std::uint32_t steeringDurationMs = 0u;
++    float steeringSign = 0.0f;
++
++    bool airborneCandidate = false;
++    std::uint32_t airborneCandidateStartMs = 0u;
++    std::uint32_t burningStartMs = 0u;
++
++    void Reset() { *this = {}; }
++
++    void UpdateSteering(const VehicleFrame &vehicle, std::uint32_t dtMs,
++                        std::uint32_t inactiveResetMs) {
++        if (IsSteering(vehicle.steering)) {
++            if (!steering) {
++                steering = true;
++                steeringStartMs = vehicle.timeMs;
++            }
++            steeringDurationMs += dtMs;
++            steeringSign = vehicle.steering;
++            return;
++        }
++        if (steering) {
++            steering = false;
++            steeringEndMs = vehicle.timeMs;
++        }
++        if (vehicle.timeMs >= steeringEndMs &&
++            vehicle.timeMs - steeringEndMs > inactiveResetMs) {
++            steeringDurationMs = 0u;
++        }
++    }
++
++    CameraState UpdateState(const VehicleFrame &vehicle, CameraState previous,
++                            bool allWheelsUnsupported,
++                            std::uint32_t airborneValidationMs) {
++        if (vehicle.isVehicleCar && allWheelsUnsupported) {
++            if (!airborneCandidate) {
++                airborneCandidate = true;
++                airborneCandidateStartMs = vehicle.timeMs;
++            }
++        } else {
++            airborneCandidate = false;
++        }
++
++        if (airborneCandidate && vehicle.timeMs >= airborneCandidateStartMs &&
++            vehicle.timeMs - airborneCandidateStartMs > airborneValidationMs) {
++            return CameraState::Airborne;
++        }
++        if (vehicle.burning) {
++            if (previous != CameraState::Burning) {
++                burningStartMs = vehicle.timeMs;
++            }
++            return CameraState::Burning;
++        }
++        return CameraState::Ground;
++    }
++};
++
++class RaceController final : public TargetController {
++  public:
++    explicit RaceController(RaceConfig config)
++        : TargetController(config.common.initialFieldOfView),
++          config_(std::move(config)) {
++        camera_.lens = {config_.common.initialFieldOfView,
++                        config_.common.lensParameter1,
++                        config_.common.lensParameter2, -1.0f, -1.0f};
++    }
++
++    RaceCameraProfile Profile() const noexcept override {
++        return RaceCameraProfile::Race;
++    }
++
++    void Reset(const VehicleFrame &vehicle) override {
++        targetId_ = vehicle.targetId;
++        camera_.transform = vehicle.transform;
++        camera_.transform.translation =
++                Add(vehicle.transform.translation,
++                    TransformDirection(vehicle.transform.rotation,
++                                       {0.0f, 0.0f, -15.0f}));
++    }
++
++  private:
++    void UpdateCamera(const VehicleFrame &vehicle,
++                      const SegmentCollisionQuery &) override {
++        if (vehicle.targetId != targetId_) {
++            Reset(vehicle);
++        }
++
++        // The separately inserted Race profile loads the inherited
++        // ignore-target-rotation flag. The original copies the target
++        // transform, replaces only its rotation with identity, and retains
++        // the target translation before applying this controller.
++        const GmMat3 tracking = TrackingFrame(
++                config_.common.ignoreTargetRotation
++                        ? GmVec3{0.0f, 0.0f, 1.0f}
++                        : VehicleForward(vehicle));
++        const GmVec3 reference =
++                Add(vehicle.transform.translation,
++                    Scale(WorldUp, config_.common.height));
++        GmVec3 offset = InverseTransformDirection(
++                tracking, Subtract(camera_.transform.translation, reference));
++        offset.y = 0.0f;
++
++        float radiusSquared = offset.x * offset.x + offset.z * offset.z;
++        if (radiusSquared <= VectorNormalizeEpsilonSquared) {
++            offset = {0.0f, 0.0f, -config_.common.minimumDistance};
++            radiusSquared = config_.common.minimumDistance *
++                            config_.common.minimumDistance;
++        }
++        const float radius = CIsqrt(radiusSquared);
++        if (radius < config_.common.minimumDistance) {
++            offset = Scale(offset, config_.common.minimumDistance / radius);
++        } else if (radius > config_.common.maximumDistance) {
++            offset = Scale(offset, config_.common.maximumDistance / radius);
++        }
++
++        float alignment = 1.0f;
++        if (vehicle.signedSpeed >= 0.0f) {
++            if (vehicle.signedSpeed < config_.coneMinimumSpeed) {
++                alignment = 1.0f;
++            } else if (vehicle.signedSpeed <= config_.coneMaximumSpeed) {
++                const float interval = config_.coneMaximumSpeed -
++                                       config_.coneMinimumSpeed;
++                alignment = interval == 0.0f
++                                    ? config_.coneAperture
++                                    : (config_.coneMaximumSpeed -
++                                       vehicle.signedSpeed) *
++                                                      (1.0f -
++                                                       config_.coneAperture) /
++                                                      interval +
++                                              config_.coneAperture;
++            } else {
++                alignment = config_.coneAperture;
++            }
++        }
++        if (alignment < 0.9998999834060669f) {
++            const float maxAngle = alignment * Pi;
++            float angle = CIatan2(-offset.x, -offset.z);
++            angle = Clamp(angle, -maxAngle, maxAngle);
++            const float length = HorizontalLength(offset);
++            offset.x = -CIsin(angle) * length;
++            offset.z = -CIcos(angle) * length;
++        }
++
++        GmVec3 look = Scale(offset, -1.0f);
++        look.y -= (1.0f - config_.common.lookFactor) *
++                  config_.common.height;
++        const GmVec3 worldOffset = TransformDirection(tracking, offset);
++        const GmVec3 worldLook = TransformDirection(tracking, look);
++        SetCameraPose(camera_, Add(reference, worldOffset), worldLook,
++                      vehicle.cameraSupportUp);
++        camera_.lens = {config_.common.baseFieldOfView,
++                        config_.common.lensParameter1,
++                        config_.common.lensParameter2, -1.0f, -1.0f};
++    }
++
++    std::uint32_t targetId_ = ~std::uint32_t{0};
++    RaceConfig config_;
++};
++
++class Race2Controller final : public TargetController {
++  public:
++    explicit Race2Controller(Race2Config config)
++        : TargetController(config.common.initialFieldOfView),
++          config_(std::move(config)),
++          lookCurve_(config_.flyingLookCurve),
++          rollFromSpeed_(config_.rollFromSpeedCurve),
++          yawFromSpeed_(config_.yawFromSpeedCurve),
++          gasDistance_(config_.smoothers[0].delta,
++                       config_.smoothers[0].riseTimeMs,
++                       config_.smoothers[0].fallTimeMs),
++          brakeDistance_(config_.smoothers[1].delta,
++                         config_.smoothers[1].riseTimeMs,
++                         config_.smoothers[1].fallTimeMs),
++          steerDistance_(config_.smoothers[2].delta,
++                         config_.smoothers[2].riseTimeMs,
++                         config_.smoothers[2].fallTimeMs),
++          turboFov_(config_.smoothers[3].delta,
++                    config_.smoothers[3].riseTimeMs,
++                    config_.smoothers[3].fallTimeMs),
++          turboDistance_(config_.smoothers[4].delta,
++                         config_.smoothers[4].riseTimeMs,
++                         config_.smoothers[4].fallTimeMs),
++          gearDistance_(config_.smoothers[5].delta,
++                        config_.smoothers[5].riseTimeMs,
++                        config_.smoothers[5].fallTimeMs),
++          burningLook_(config_.smoothers[6].delta,
++                       config_.smoothers[6].riseTimeMs,
++                       config_.smoothers[6].fallTimeMs),
++          burningDistance_(config_.smoothers[7].delta,
++                           config_.smoothers[7].riseTimeMs,
++                           config_.smoothers[7].fallTimeMs),
++          flyingDistance_(config_.smoothers[8].delta,
++                          config_.smoothers[8].riseTimeMs,
++                          config_.smoothers[8].fallTimeMs),
++          flyingHeight_(config_.smoothers[9].delta,
++                        config_.smoothers[9].riseTimeMs,
++                        config_.smoothers[9].fallTimeMs),
++          flyingLook_(config_.smoothers[10].delta,
++                      config_.smoothers[10].riseTimeMs,
++                      config_.smoothers[10].fallTimeMs),
++          leftRoll_(config_.smoothers[11].delta,
++                    config_.smoothers[11].riseTimeMs,
++                    config_.smoothers[11].fallTimeMs),
++          rightRoll_(config_.smoothers[12].delta,
++                     config_.smoothers[12].riseTimeMs,
++                     config_.smoothers[12].fallTimeMs),
++          leftYaw_(config_.smoothers[13].delta,
++                   config_.smoothers[13].riseTimeMs,
++                   config_.smoothers[13].fallTimeMs),
++          rightYaw_(config_.smoothers[14].delta,
++                    config_.smoothers[14].riseTimeMs,
++                    config_.smoothers[14].fallTimeMs) {
++        camera_.lens = {config_.common.initialFieldOfView,
++                        config_.common.lensParameter1,
++                        config_.common.lensParameter2, -1.0f, -1.0f};
++    }
++
++    RaceCameraProfile Profile() const noexcept override {
++        return RaceCameraProfile::Race2;
++    }
++
++    void Reset(const VehicleFrame &vehicle) override {
++        targetId_ = vehicle.targetId;
++        lastTimeMs_ = vehicle.timeMs;
++        camera_.transform = vehicle.transform;
++        camera_.transform.translation =
++                Add(vehicle.transform.translation,
++                    TransformDirection(vehicle.transform.rotation,
++                                       {0.0f, 0.0f, -15.0f}));
++        history_.Reset();
++        state_ = CameraState::Ground;
++        distance_ = distanceVelocity_ = 0.0f;
++        look_ = lookVelocity_ = 0.0f;
++        fovDelta_ = heightDelta_ = rawFlyingLook_ = 0.0f;
++        steeringOrientationLatched_ = false;
++        steeringOrientationSign_ = 0.0f;
++        steeringOrientationStartDurationMs_ = 0u;
++        lastRollAngle_ = 0.0f;
++        lastYawAngle_ = 0.0f;
++        ResetSmoothers();
++    }
++
++  private:
++    void ResetSmoothers() {
++        gasDistance_.Reset();
++        brakeDistance_.Reset();
++        steerDistance_.Reset();
++        turboFov_.Reset();
++        turboDistance_.Reset();
++        gearDistance_.Reset();
++        burningLook_.Reset();
++        burningDistance_.Reset();
++        flyingDistance_.Reset();
++        flyingHeight_.Reset();
++        flyingLook_.Reset();
++        leftRoll_.Reset();
++        rightRoll_.Reset();
++        leftYaw_.Reset();
++        rightYaw_.Reset();
++    }
++
++    void ApplySteeringOrientation(const VehicleFrame &vehicle,
++                                  bool ground) {
++        if (!config_.rollFromInput) {
++            return;
++        }
++
++        const bool active = history_.steering && ground &&
++                            vehicle.signedSpeed >=
++                                    config_.orientationMinimumSpeed;
++        if (history_.steering) {
++            const float sign = history_.steeringSign < 0.0f ? -1.0f : 1.0f;
++            if (!steeringOrientationLatched_ ||
++                sign != steeringOrientationSign_) {
++                steeringOrientationLatched_ = true;
++                steeringOrientationSign_ = sign;
++                steeringOrientationStartDurationMs_ =
++                        history_.steeringDurationMs;
++                lastRollAngle_ = 0.0f;
++                lastYawAngle_ = 0.0f;
++            }
++        } else if (history_.steeringDurationMs == 0u) {
++            steeringOrientationLatched_ = false;
++            steeringOrientationSign_ = 0.0f;
++        }
++
++        const std::uint32_t elapsed =
++                history_.steeringDurationMs >=
++                                steeringOrientationStartDurationMs_
++                        ? history_.steeringDurationMs -
++                                  steeringOrientationStartDurationMs_
++                        : 0u;
++        const bool positive = steeringOrientationSign_ > 0.0f;
++        const bool negative = steeringOrientationSign_ < 0.0f;
++        const bool leftRollActive =
++                active && positive &&
++                (elapsed > config_.steeringRollTriggerMs ||
++                 lastRollAngle_ < -0.100000001f);
++        const bool rightRollActive =
++                active && negative &&
++                (elapsed > config_.steeringRollTriggerMs ||
++                 lastRollAngle_ > 0.100000001f);
++        const bool leftYawActive =
++                active && positive &&
++                (elapsed > config_.steeringYawTriggerMs ||
++                 lastYawAngle_ < -0.100000001f);
++        const bool rightYawActive =
++                active && negative &&
++                (elapsed > config_.steeringYawTriggerMs ||
++                 lastYawAngle_ > 0.100000001f);
++
++        const float rollMagnitude =
++                rollFromSpeed_.Evaluate(vehicle.signedSpeed) * Pi / 180.0f;
++        const float yawMagnitude =
++                yawFromSpeed_.Evaluate(vehicle.signedSpeed) * Pi / 180.0f;
++        const float roll = Clamp(
++                -rollMagnitude *
++                                leftRoll_.Update(leftRollActive,
++                                                 vehicle.timeMs) +
++                        rollMagnitude *
++                                rightRoll_.Update(rightRollActive,
++                                                  vehicle.timeMs),
++                -Pi * 0.5f, Pi * 0.5f);
++        const float yaw = Clamp(
++                -yawMagnitude *
++                                leftYaw_.Update(leftYawActive,
++                                                vehicle.timeMs) +
++                        yawMagnitude *
++                                rightYaw_.Update(rightYawActive,
++                                                 vehicle.timeMs),
++                -Pi * 0.5f, Pi * 0.5f);
++        lastRollAngle_ = roll;
++        lastYawAngle_ = yaw;
++        camera_.transform.rotation.RotateZ(roll);
++        camera_.transform.rotation.RotateY(yaw);
++    }
++
++    void UpdateCamera(const VehicleFrame &vehicle,
++                      const SegmentCollisionQuery &) override {
++        if (vehicle.targetId != targetId_) {
++            Reset(vehicle);
++        }
++        const std::uint32_t dtMs = DeltaTimeMs(vehicle.timeMs, lastTimeMs_);
++        const float dt = static_cast<float>(dtMs) * MillisecondsToSeconds;
++        lastTimeMs_ = vehicle.timeMs;
++
++        // Stadium Race2 loads isRollFromInput = false, so the original skips
++        // steering-duration, roll, yaw, and steering-distance input handling.
++        if (vehicle.isVehicleCar) {
++            if (config_.rollFromInput) {
++                history_.UpdateSteering(
++                        vehicle, dtMs, config_.steeringInactiveResetMs);
++            }
++            const CameraState previousState = state_;
++            state_ = history_.UpdateState(
++                    vehicle, state_, vehicle.AllWheelsWithoutContact(),
++                    config_.airborneValidationMs);
++            if (state_ != previousState && state_ == CameraState::Airborne) {
++                airborneStateStartMs_ = vehicle.timeMs;
++            }
++        }
++
++        const bool ground = state_ == CameraState::Ground;
++        const bool burning = state_ == CameraState::Burning;
++        const bool airborne = state_ == CameraState::Airborne;
++        const bool burningSteer = false;
++
++        float flyingCurveValue = 0.0f;
++        bool flyingCameraMove = false;
++        if (airborne && vehicle.timeMs >= airborneStateStartMs_) {
++            const std::uint32_t duration =
++                    vehicle.timeMs - airborneStateStartMs_;
++            if (duration > config_.flyingCameraMoveDelayMs) {
++                const float horizontalSpeed =
++                        HorizontalLength(vehicle.linearSpeed);
++                flyingCurveValue = lookCurve_.Evaluate(
++                        -vehicle.linearSpeed.y / (horizontalSpeed + 1.0f));
++                flyingCameraMove = true;
++            }
++        }
++
++        const bool accelerate =
++                vehicle.isVehicleCar && IsActive(vehicle.accelerate);
++        const bool brake = vehicle.isVehicleCar && IsActive(vehicle.brake);
++        const bool turbo = vehicle.isVehicleCar && vehicle.turbo != 0.0f;
++        const bool gasActive = (accelerate && ground) || burning || airborne;
++        const bool turboActive = turbo && (ground || airborne);
++        const bool steerActive = config_.rollFromInput &&
++                                 history_.steeringDurationMs != 0u && ground;
++        const bool gearActive =
++                vehicle.isVehicleCar && !turbo && vehicle.gearChanged && ground;
++        const bool brakeActive = brake && ground;
++
++        float competingDistance =
++                gearDistance_.Update(gearActive, vehicle.timeMs);
++        competingDistance =
++                std::min(competingDistance,
++                         steerDistance_.Update(steerActive, vehicle.timeMs));
++        competingDistance =
++                std::min(competingDistance,
++                         brakeDistance_.Update(brakeActive, vehicle.timeMs));
++
++        const float targetDistance =
++                gasDistance_.Update(gasActive, vehicle.timeMs) +
++                turboDistance_.Update(turboActive, vehicle.timeMs) +
++                competingDistance +
++                burningDistance_.Update(burningSteer, vehicle.timeMs) +
++                flyingDistance_.Update(airborne, vehicle.timeMs);
++        IntegrateSpring(targetDistance, config_.distanceSpringStiffness,
++                        config_.distanceSpringDamping, dt, distance_,
++                        distanceVelocity_);
++
++        const float targetFov = turboFov_.Update(turboActive, vehicle.timeMs);
++        fovDelta_ = RateLimit(fovDelta_, targetFov,
++                              config_.fieldOfViewRate * dt);
++
++        rawFlyingLook_ =
++                RateLimit(rawFlyingLook_, flyingCurveValue,
++                          config_.flyingLookRate * dt);
++        const float targetLook =
++                rawFlyingLook_ +
++                burningLook_.Update(burningSteer, vehicle.timeMs) +
++                flyingLook_.Update(airborne, vehicle.timeMs);
++        IntegrateSpring(targetLook, config_.lookSpringStiffness,
++                        config_.lookSpringDamping, dt, look_, lookVelocity_);
++
++        const float targetHeight =
++                flyingHeight_.Update(flyingCameraMove, vehicle.timeMs);
++        heightDelta_ = RateLimit(heightDelta_, targetHeight,
++                                 config_.heightRate * dt);
++
++        const float minimumDistance =
++                config_.common.minimumDistance + distance_;
++        const float maximumDistance =
++                config_.common.maximumDistance + distance_;
++        const float height = config_.common.height + heightDelta_;
++        const float lookFactor =
++                Clamp(config_.common.lookFactor + look_, 0.0f, 1.0f);
++
++        const GmMat3 tracking = TrackingFrame(VehicleForward(vehicle));
++        const GmVec3 reference =
++                Add(vehicle.transform.translation, Scale(WorldUp, height));
++        GmVec3 offset = InverseTransformDirection(
++                tracking, Subtract(camera_.transform.translation, reference));
++        offset.y = 0.0f;
++        float lengthSquared = offset.x * offset.x + offset.z * offset.z;
++        if (lengthSquared <= VectorNormalizeEpsilonSquared) {
++            offset = {0.0f, 0.0f, -minimumDistance};
++            lengthSquared = minimumDistance * minimumDistance;
++        }
++        if (lengthSquared < minimumDistance * minimumDistance) {
++            offset = Scale(offset, minimumDistance / CIsqrt(lengthSquared));
++        } else if (lengthSquared > maximumDistance * maximumDistance) {
++            offset = Scale(offset, maximumDistance / CIsqrt(lengthSquared));
++        }
++
++        GmVec3 localLook = Scale(offset, -1.0f);
++        localLook.y -= (1.0f - lookFactor) * height;
++        const GmVec3 worldOffset = TransformDirection(tracking, offset);
++        const GmVec3 worldLook = TransformDirection(tracking, localLook);
++        SetCameraPose(camera_, Add(reference, worldOffset), worldLook,
++                      vehicle.cameraSupportUp);
++        ApplySteeringOrientation(vehicle, ground);
++
++        camera_.lens = {config_.common.baseFieldOfView + fovDelta_,
++                        config_.common.lensParameter1,
++                        config_.common.lensParameter2, -1.0f, -1.0f};
++    }
++
++    std::uint32_t targetId_ = ~std::uint32_t{0};
++    std::uint32_t lastTimeMs_ = 0u;
++    std::uint32_t airborneStateStartMs_ = 0u;
++    CameraState state_ = CameraState::Ground;
++    InputHistory history_{};
++    Race2Config config_;
++    LinearCurve lookCurve_;
++    LinearCurve rollFromSpeed_;
++    LinearCurve yawFromSpeed_;
++    SmoothReal2 gasDistance_, brakeDistance_, steerDistance_;
++    SmoothReal2 turboFov_, turboDistance_, gearDistance_;
++    SmoothReal2 burningLook_, burningDistance_;
++    SmoothReal2 flyingDistance_, flyingHeight_, flyingLook_;
++    SmoothReal2 leftRoll_, rightRoll_, leftYaw_, rightYaw_;
++    float distance_ = 0.0f;
++    float distanceVelocity_ = 0.0f;
++    float look_ = 0.0f;
++    float lookVelocity_ = 0.0f;
++    float fovDelta_ = 0.0f;
++    float heightDelta_ = 0.0f;
++    float rawFlyingLook_ = 0.0f;
++    bool steeringOrientationLatched_ = false;
++    float steeringOrientationSign_ = 0.0f;
++    std::uint32_t steeringOrientationStartDurationMs_ = 0u;
++    float lastRollAngle_ = 0.0f;
++    float lastYawAngle_ = 0.0f;
++};
++
++class Race3Controller final : public TargetController {
++  public:
++    explicit Race3Controller(Race3Config config)
++        : TargetController(config.common.initialFieldOfView),
++          config_(std::move(config)),
++          speedModulation_(config_.speedModulationCurve),
++          lookCurve_(config_.flyingLookCurve),
++          flyingDownCurve_(config_.flyingDownCurve),
++          reverse_(config_.reverse.delta, config_.reverse.riseTimeMs,
++                   config_.reverse.fallTimeMs),
++          lowSpeedFlightTarget_(config_.lowSpeedFlightTarget.delta,
++                                config_.lowSpeedFlightTarget.riseTimeMs,
++                                config_.lowSpeedFlightTarget.fallTimeMs),
++          flyingDirectionBlend_(config_.flyingDirectionBlend.delta,
++                                config_.flyingDirectionBlend.riseTimeMs,
++                                config_.flyingDirectionBlend.fallTimeMs),
++          flyingUpBlend_(config_.flyingUpBlend.delta,
++                         config_.flyingUpBlend.riseTimeMs,
++                         config_.flyingUpBlend.fallTimeMs),
++          flyingSpeedEffect_(config_.flyingSpeedEffect.delta,
++                             config_.flyingSpeedEffect.riseTimeMs,
++                             config_.flyingSpeedEffect.fallTimeMs),
++          flyingUpSpeedEffect_(config_.flyingUpSpeedEffect.delta,
++                               config_.flyingUpSpeedEffect.riseTimeMs,
++                               config_.flyingUpSpeedEffect.fallTimeMs),
++          flyingLook_(config_.flyingLook.delta,
++                      config_.flyingLook.riseTimeMs,
++                      config_.flyingLook.fallTimeMs),
++          flyingRadius_(config_.flyingRadius.delta,
++                        config_.flyingRadius.riseTimeMs,
++                        config_.flyingRadius.fallTimeMs),
++          gasFar_(config_.gasFar.delta, config_.gasFar.riseTimeMs,
++                  config_.gasFar.fallTimeMs),
++          brakeFar_(config_.brakeFar.delta, config_.brakeFar.riseTimeMs,
++                    config_.brakeFar.fallTimeMs),
++          steerFar_(config_.steerFar.delta, config_.steerFar.riseTimeMs,
++                    config_.steerFar.fallTimeMs),
++          turboFov_(config_.turboFieldOfView.delta,
++                    config_.turboFieldOfView.riseTimeMs,
++                    config_.turboFieldOfView.fallTimeMs),
++          turboFar_(config_.turboFar.delta, config_.turboFar.riseTimeMs,
++                    config_.turboFar.fallTimeMs),
++          gearFar_(config_.gearFar.delta, config_.gearFar.riseTimeMs,
++                   config_.gearFar.fallTimeMs),
++          burningLook_(config_.burningLook.delta,
++                       config_.burningLook.riseTimeMs,
++                       config_.burningLook.fallTimeMs),
++          burningRadius_(config_.burningRadius.delta,
++                         config_.burningRadius.riseTimeMs,
++                         config_.burningRadius.fallTimeMs) {
++        initialRadius_ = CIsqrt(config_.up * config_.up +
++                                config_.far * config_.far);
++        camera_.lens = {config_.common.initialFieldOfView, initialRadius_,
++                        config_.common.lensParameter2, -1.0f, -1.0f};
++    }
++
++    RaceCameraProfile Profile() const noexcept override {
++        return RaceCameraProfile::Race3;
++    }
++
++    void Reset(const VehicleFrame &vehicle) override {
++        targetId_ = vehicle.targetId;
++        lastTimeMs_ = vehicle.timeMs;
++        state_ = CameraState::Ground;
++        history_.Reset();
++        previousWheelSurfaceCount_ = 0u;
++
++        camera_.transform = vehicle.transform;
++        previousTarget_ = vehicle.transform.translation;
++        if (vehicle.isVehicleCar && vehicle.AllWheelsWithoutSurface() &&
++            camera_.transform.rotation.basisY.y < -0.5f) {
++            camera_.transform.rotation.RotateZ(Pi);
++        }
++
++        const GmVec3 resetOffset = TransformDirection(
++                camera_.transform.rotation,
++                {0.0f, config_.up, -config_.far});
++        camera_.transform.translation =
++                Add(camera_.transform.translation, resetOffset);
++        currentDirection_ = Normalize(resetOffset);
++        idealDirection_ = currentDirection_;
++        normalDirection_ = currentDirection_;
++        flightTarget_ = currentDirection_;
++        resetFlightDirection_ = currentDirection_;
++
++        highFlightDirection_ = TransformDirection(
++                camera_.transform.rotation,
++                {0.0f, config_.up + config_.up, -config_.far});
++        if (highFlightDirection_.y < 0.0f) {
++            highFlightDirection_.y = -highFlightDirection_.y;
++        }
++        highFlightDirection_ = Normalize(highFlightDirection_);
++
++        currentUp_ = camera_.transform.rotation.Row(GmAxis::Y);
++        idealUp_ = currentUp_;
++        normalUp_ = currentUp_;
++        flyingUpTarget_ = WorldUp;
++        fallbackUp_ = WorldUp;
++
++        radius_ = initialRadius_;
++        radiusVelocity_ = 0.0f;
++        flyingDown_ = 0.0f;
++        flyingDownVelocity_ = 0.0f;
++        rawFlyingLook_ = 0.0f;
++        ResetSmoothers();
++    }
++
++  private:
++    void ResetSmoothers() {
++        reverse_.Reset();
++        lowSpeedFlightTarget_.Reset();
++        flyingDirectionBlend_.Reset();
++        flyingUpBlend_.Reset();
++        flyingSpeedEffect_.Reset();
++        flyingUpSpeedEffect_.Reset();
++        flyingLook_.Reset();
++        flyingRadius_.Reset();
++        gasFar_.Reset();
++        brakeFar_.Reset();
++        steerFar_.Reset();
++        turboFov_.Reset();
++        turboFar_.Reset();
++        gearFar_.Reset();
++        burningLook_.Reset();
++        burningRadius_.Reset();
++    }
++
++    void UpdateCamera(const VehicleFrame &vehicle,
++                      const SegmentCollisionQuery &collision) override {
++        if (vehicle.targetId != targetId_) {
++            Reset(vehicle);
++        }
++
++        fallbackUp_ = camera_.transform.rotation.Row(GmAxis::Y);
++        const std::uint32_t dtMs = DeltaTimeMs(vehicle.timeMs, lastTimeMs_);
++        const float dt = static_cast<float>(dtMs) * MillisecondsToSeconds;
++        lastTimeMs_ = vehicle.timeMs;
++
++        if (vehicle.isVehicleCar) {
++            history_.UpdateSteering(
++                    vehicle, dtMs, config_.steeringInactiveResetMs);
++            state_ = history_.UpdateState(
++                    vehicle, state_, vehicle.AllWheelsWithoutSurface(),
++                    config_.airborneValidationMs);
++        }
++        const bool ground = state_ == CameraState::Ground;
++        const bool burning = state_ == CameraState::Burning;
++        const bool airborne = state_ == CameraState::Airborne;
++
++        bool burningSteer = false;
++        if (vehicle.isVehicleCar && burning) {
++            const std::uint32_t start =
++                    std::max(history_.steeringStartMs, history_.burningStartMs);
++            burningSteer = history_.steering && vehicle.timeMs >= start &&
++                           vehicle.timeMs - start >
++                                   config_.burningSteerDelayMs;
++        }
++
++        const GmVec3 linearSpeed =
++                vehicle.isVehicleCar ? vehicle.linearSpeed : GmVec3{};
++        const float horizontalSpeed = HorizontalLength(linearSpeed);
++        float flyingLookTarget = 0.0f;
++        if (airborne) {
++            flyingLookTarget = lookCurve_.Evaluate(-linearSpeed.y /
++                                                   (horizontalSpeed + 1.0f));
++        }
++        rawFlyingLook_ = RateLimit(rawFlyingLook_, flyingLookTarget,
++                                   config_.flyingLookRate * dt);
++
++        const bool accelerate =
++                vehicle.isVehicleCar && IsActive(vehicle.accelerate);
++        const bool brake = vehicle.isVehicleCar && IsActive(vehicle.brake);
++        const bool turbo = vehicle.isVehicleCar && vehicle.turbo != 0.0f;
++        const bool gasActive = (((accelerate && vehicle.signedSpeed > 2.0f) ||
++                                 (brake && vehicle.signedSpeed < -2.0f)) &&
++                                ground) ||
++                               burning || airborne;
++        const bool turboActive = turbo && (ground || airborne);
++        const bool lowSpeed =
++                std::fabs(vehicle.signedSpeed) < config_.lowSpeedThreshold;
++        const bool veryLowSpeed = std::fabs(vehicle.signedSpeed) <
++                                  config_.veryLowSpeedThreshold;
++        const bool steerActive =
++                history_.steeringDurationMs != 0u && ground && !lowSpeed;
++        const bool gearActive =
++                vehicle.isVehicleCar && !turbo && vehicle.gearChanged && ground;
++        const bool brakeActive = brake && ground;
++
++        const float fovDelta = turboFov_.Update(turboActive, vehicle.timeMs);
++        float competingFar = gearFar_.Update(gearActive, vehicle.timeMs);
++        competingFar = std::min(competingFar,
++                                steerFar_.Update(steerActive, vehicle.timeMs));
++        competingFar = std::min(competingFar,
++                                brakeFar_.Update(brakeActive, vehicle.timeMs));
++        const float farDelta = gasFar_.Update(gasActive, vehicle.timeMs) +
++                               turboFar_.Update(turboActive, vehicle.timeMs) +
++                               competingFar;
++        const float horizontalRadius =
++                std::max(config_.far + farDelta, 0.1f);
++
++        const float radiusTarget =
++                CIsqrt(config_.up * config_.up +
++                        horizontalRadius * horizontalRadius) +
++                burningRadius_.Update(burningSteer, vehicle.timeMs) +
++                flyingRadius_.Update(airborne, vehicle.timeMs);
++        IntegrateSpring(radiusTarget, config_.radiusSpringStiffness,
++                        config_.radiusSpringDamping, dt, radius_,
++                        radiusVelocity_);
++
++        float downTarget = flyingDownCurve_.Evaluate(-linearSpeed.y /
++                                                     (horizontalSpeed + 1.0f));
++        downTarget = Clamp(downTarget, 0.0f, 0.949999988079071f);
++        IntegrateSpring(downTarget, config_.flyingDownSpringStiffness,
++                        config_.flyingDownSpringDamping, dt, flyingDown_,
++                        flyingDownVelocity_);
++
++        if (ground || burning) {
++            const float reverseAngle =
++                    reverse_.Update(vehicle.signedSpeed < -4.0f && ground,
++                                    vehicle.timeMs) *
++                    Pi;
++            const GmVec3 localDirection{
++                    CIsin(reverseAngle) * horizontalRadius, config_.up,
++                    CIcos(reverseAngle) * -horizontalRadius};
++            normalDirection_ = Normalize(TransformDirection(
++                    vehicle.transform.rotation, localDirection));
++            normalUp_ = VehicleUp(vehicle);
++        } else if (airborne) {
++            UpdateAirborneTargets(vehicle, horizontalRadius);
++        }
++
++        const bool lowSpeedFlight = veryLowSpeed &&
++                                    vehicle.cameraFlightTransition != 0.0f &&
++                                    airborne;
++        flightTarget_ = SlerpVector(
++                resetFlightDirection_, highFlightDirection_,
++                lowSpeedFlightTarget_.Update(lowSpeedFlight, vehicle.timeMs));
++        idealDirection_ = SlerpVector(normalDirection_, flightTarget_,
++                                      flyingDirectionBlend_.UpdateUsingFullTime(
++                                              airborne, vehicle.timeMs));
++        idealUp_ = SlerpVector(
++                normalUp_, flyingUpTarget_,
++                flyingUpBlend_.UpdateUsingFullTime(airborne, vehicle.timeMs));
++
++        ApplyCollision(vehicle, collision);
++        previousTarget_ = vehicle.transform.translation;
++        SmoothDirection(vehicle, dt, airborne);
++
++        const float lookModifier =
++                rawFlyingLook_ +
++                burningLook_.Update(burningSteer, vehicle.timeMs) +
++                flyingLook_.Update(airborne, vehicle.timeMs);
++        BuildOutput(vehicle, lookModifier, fovDelta);
++    }
++
++    void UpdateAirborneTargets(const VehicleFrame &vehicle,
++                               float horizontalRadius) {
++        if (LengthSquared(Cross(currentDirection_, WorldUp)) >=
++            VectorNormalizeEpsilonSquared) {
++            GmVec3 horizontal{currentDirection_.x, 0.0f, currentDirection_.z};
++            const float horizontalSquared =
++                    horizontal.x * horizontal.x + horizontal.z * horizontal.z;
++            if (horizontalSquared > VectorNormalizeEpsilonSquared) {
++                const float inverse = 1.0f / CIsqrt(horizontalSquared);
++                horizontal.x *= inverse;
++                horizontal.z *= inverse;
++            }
++            highFlightDirection_ = Normalize(
++                    {horizontal.x * horizontalRadius,
++                     config_.up + config_.up,
++                     horizontal.z * horizontalRadius});
++        }
++
++        GmVec3 movement = Subtract(Add(previousTarget_, currentDirection_),
++                                   vehicle.transform.translation);
++        const float movementSquared =
++                movement.x * movement.x + movement.z * movement.z;
++        if (movementSquared > VectorNormalizeEpsilonSquared) {
++            const float inverse = 1.0f / CIsqrt(movementSquared);
++            movement.x *= inverse;
++            movement.z *= inverse;
++        }
++        const float lookDown =
++                Clamp(config_.constantFlyingLookDownFactor + flyingDown_,
++                      0.0f, 0.949999988079071f);
++        const float horizontalScale = CIsin((1.0f - lookDown) * Pi * 0.5f);
++        resetFlightDirection_ = {movement.x * horizontalScale,
++                                 CIsin(lookDown * Pi * 0.5f),
++                                 movement.z * horizontalScale};
++        flyingUpTarget_ = WorldUp;
++    }
++
++    void ApplyCollision(const VehicleFrame &vehicle,
++                        const SegmentCollisionQuery &collision) {
++        if (!vehicle.isVehicleCar) {
++            return;
++        }
++        const std::uint32_t surfaceCount = static_cast<std::uint32_t>(
++                std::count(vehicle.wheelHasSurface.begin(),
++                           vehicle.wheelHasSurface.end(), true));
++        const std::uint32_t wheelCount =
++                static_cast<std::uint32_t>(vehicle.wheelHasSurface.size());
++        if (collision && surfaceCount * 2u <= wheelCount &&
++            previousWheelSurfaceCount_ * 2u <= wheelCount) {
++            const GmVec3 start = Add(vehicle.transform.translation,
++                                     Scale(currentDirection_, radius_));
++            const GmVec3 end = Add(
++                    start,
++                    {0.0f, -2.0f * config_.collisionRadius, 0.0f});
++            const auto hit = collision({ToPublic(start), ToPublic(end)});
++            if (hit && hit->fraction < 1.0f) {
++                const float hitY = start.y + (end.y - start.y) * hit->fraction;
++                float requiredY = (hitY + config_.collisionRadius -
++                                   vehicle.transform.translation.y) /
++                                  radius_;
++                if (idealDirection_.y < requiredY) {
++                    requiredY = Clamp(requiredY, -1.0f, 1.0f);
++                    const float horizontalSquared =
++                            idealDirection_.x * idealDirection_.x +
++                            idealDirection_.z * idealDirection_.z;
++                    const float scaleSquared =
++                            (1.0f - requiredY * requiredY) / horizontalSquared;
++                    const float scale =
++                            scaleSquared <= VectorNormalizeEpsilonSquared
++                                    ? 0.0f
++                                    : CIsqrt(scaleSquared);
++                    idealDirection_.x *= scale;
++                    idealDirection_.y = requiredY;
++                    idealDirection_.z *= scale;
++                }
++            }
++        }
++        previousWheelSurfaceCount_ = surfaceCount;
++    }
++
++    void SmoothDirection(const VehicleFrame &vehicle, float dt, bool airborne) {
++        const float directionDot = Dot(currentDirection_, idealDirection_);
++        const float directionAngle = CIacos(Clamp(directionDot, -1.0f, 1.0f));
++        const float directionDenominator = directionAngle * 2.0f + 1.0f;
++        const float directionAirWeight =
++                flyingSpeedEffect_.Update(airborne, vehicle.timeMs);
++        const float directionFlyingStep =
++                Clamp(config_.directionFlyingRate * dt /
++                              directionDenominator,
++                      0.0f, 1.0f);
++        const float directionNormalStep =
++                Clamp(config_.directionNormalRate * dt /
++                              directionDenominator,
++                      0.0f, 1.0f) *
++                speedModulation_.Evaluate(vehicle.signedSpeed);
++        const float directionBlend =
++                directionAirWeight * directionFlyingStep +
++                (1.0f - directionAirWeight) * directionNormalStep;
++        currentDirection_ =
++                SlerpVector(currentDirection_, idealDirection_, directionBlend);
++
++        const float upDot = Dot(currentUp_, idealUp_);
++        const float upAngle = CIacos(Clamp(upDot, -1.0f, 1.0f));
++        const float upDenominator = upAngle * 2.0f + 1.0f;
++        const float upAirWeight =
++                flyingUpSpeedEffect_.Update(airborne, vehicle.timeMs);
++        const float upFlyingStep =
++                Clamp(config_.upFlyingRate * dt / upDenominator,
++                      0.0f, 1.0f);
++        const float upNormalStep =
++                Clamp(config_.upNormalRate * dt / upDenominator,
++                      0.0f, 1.0f) *
++                speedModulation_.Evaluate(vehicle.signedSpeed);
++        const float upBlend = upAirWeight * upFlyingStep +
++                              (1.0f - upAirWeight) * upNormalStep;
++        currentUp_ = SlerpVector(currentUp_, idealUp_, upBlend);
++    }
++
++    void BuildOutput(const VehicleFrame &vehicle, float lookModifier,
++                     float fovDelta) {
++        const GmVec3 target = vehicle.transform.translation;
++        const GmVec3 position = Add(target, Scale(currentDirection_, radius_));
++        const float lookFactor =
++                Clamp(config_.common.lookFactor + lookModifier, 0.0f, 1.0f);
++        const GmVec3 lookTarget =
++                Add(target, Scale(currentUp_, lookFactor * config_.up));
++        const GmVec3 direction = Subtract(lookTarget, position);
++        const GmVec3 up = LengthSquared(Cross(currentUp_, direction)) <
++                                          VectorNormalizeEpsilonSquared
++                                  ? fallbackUp_
++                                  : currentUp_;
++        SetCameraPose(camera_, position, direction, up);
++        camera_.lens = {config_.common.baseFieldOfView + fovDelta, radius_,
++                        config_.common.lensParameter2, -1.0f, -1.0f};
++    }
++
++    std::uint32_t targetId_ = ~std::uint32_t{0};
++    std::uint32_t lastTimeMs_ = 0u;
++    std::uint32_t previousWheelSurfaceCount_ = 0u;
++    CameraState state_ = CameraState::Ground;
++    InputHistory history_{};
++    Race3Config config_;
++    LinearCurve speedModulation_;
++    LinearCurve lookCurve_;
++    LinearCurve flyingDownCurve_;
++    SmoothReal2 reverse_;
++    SmoothReal2 lowSpeedFlightTarget_;
++    SmoothReal2 flyingDirectionBlend_;
++    SmoothReal2 flyingUpBlend_;
++    SmoothReal2 flyingSpeedEffect_;
++    SmoothReal2 flyingUpSpeedEffect_;
++    SmoothReal2 flyingLook_;
++    SmoothReal2 flyingRadius_;
++    SmoothReal2 gasFar_;
++    SmoothReal2 brakeFar_;
++    SmoothReal2 steerFar_;
++    SmoothReal2 turboFov_;
++    SmoothReal2 turboFar_;
++    SmoothReal2 gearFar_;
++    SmoothReal2 burningLook_;
++    SmoothReal2 burningRadius_;
++    GmVec3 previousTarget_{};
++    GmVec3 currentDirection_{};
++    GmVec3 idealDirection_{};
++    GmVec3 normalDirection_{};
++    GmVec3 flightTarget_{};
++    GmVec3 resetFlightDirection_{};
++    GmVec3 highFlightDirection_{};
++    GmVec3 currentUp_{0.0f, 1.0f, 0.0f};
++    GmVec3 idealUp_{0.0f, 1.0f, 0.0f};
++    GmVec3 normalUp_{0.0f, 1.0f, 0.0f};
++    GmVec3 flyingUpTarget_{0.0f, 1.0f, 0.0f};
++    GmVec3 fallbackUp_{0.0f, 1.0f, 0.0f};
++    float initialRadius_ = 0.0f;
++    float radius_ = 0.0f;
++    float radiusVelocity_ = 0.0f;
++    float flyingDown_ = 0.0f;
++    float flyingDownVelocity_ = 0.0f;
++    float rawFlyingLook_ = 0.0f;
++};
++} // namespace
++
++std::unique_ptr<Controller> CreateController(
++        const EnvironmentConfig &environment,
++        RaceCameraProfile profile,
++        std::optional<std::size_t> resourceIndex) {
++    switch (profile) {
++    case RaceCameraProfile::Race: {
++        if (resourceIndex) {
++            return *resourceIndex < environment.raceResources.size()
++                           ? std::make_unique<RaceController>(
++                                     environment.raceResources[*resourceIndex]
++                                             .config)
++                           : nullptr;
++        }
++        return environment.race
++                       ? std::make_unique<RaceController>(*environment.race)
++                       : nullptr;
++    }
++    case RaceCameraProfile::Race2: {
++        if (resourceIndex) {
++            return *resourceIndex < environment.race2Resources.size()
++                           ? std::make_unique<Race2Controller>(
++                                     environment.race2Resources[*resourceIndex]
++                                             .config)
++                           : nullptr;
++        }
++        return environment.race2
++                       ? std::make_unique<Race2Controller>(*environment.race2)
++                       : nullptr;
++    }
++    case RaceCameraProfile::Race3: {
++        if (resourceIndex) {
++            return *resourceIndex < environment.race3Resources.size()
++                           ? std::make_unique<Race3Controller>(
++                                     environment.race3Resources[*resourceIndex]
++                                             .config)
++                           : nullptr;
++        }
++        return environment.race3
++                       ? std::make_unique<Race3Controller>(*environment.race3)
++                       : nullptr;
++    }
++    }
++    return nullptr;
++}
++
++} // namespace forevervalidator::camera::detail
+diff --git a/src/format/archive/archive_class_ids.h b/src/format/archive/archive_class_ids.h
+index fbe19ba..264058e 100644
+--- a/src/format/archive/archive_class_ids.h
++++ b/src/format/archive/archive_class_ids.h
+@@ -37,6 +37,9 @@ enum : uint32_t {
+     TMNF_CLASS_CGameCtnZoneTest = 0x0305f000u,
+     TMNF_CLASS_CGameCtnGhost = 0x03092000u,
+     TMNF_CLASS_CGameCtnReplayRecord = 0x03093000u,
++    TMNF_CLASS_CGameControlCameraTrackManiaRace = 0x24085000u,
++    TMNF_CLASS_CGameControlCameraTrackManiaRace2 = 0x24086000u,
++    TMNF_CLASS_CGameControlCameraTrackManiaRace3 = 0x24087000u,
+     TMNF_CLASS_GxLight = 0x04001000u,
+     TMNF_CLASS_GxLightAmbient = 0x04005000u,
+     TMNF_CLASS_GxLightDirectional = 0x04007000u,
+diff --git a/src/format/camera/race_camera_gbx_reader.cpp b/src/format/camera/race_camera_gbx_reader.cpp
+new file mode 100644
+index 0000000..1aad75a
+--- /dev/null
++++ b/src/format/camera/race_camera_gbx_reader.cpp
+@@ -0,0 +1,416 @@
++#include "format/camera/race_camera_gbx_reader.h"
++
++#include <array>
++#include <cstring>
++#include <limits>
++#include <optional>
++#include <utility>
++#include <vector>
++
++#include "format/archive/archive_binary.h"
++#include "format/archive/archive_class_ids.h"
++#include "format/archive/tmnf_gbx_body_reader.h"
++
++namespace forevervalidator::camera::detail {
++namespace {
++
++using TmnfFormat::ArchiveBinary::ReadU32LE;
++
++constexpr std::uint32_t CommonChunk = 0x0306b00bu;
++constexpr std::uint32_t TargetChunk = 0x03072001u;
++constexpr std::uint32_t RaceChunk = 0x24085000u;
++constexpr std::uint32_t Race2Chunk = 0x24086000u;
++constexpr std::uint32_t Race2FlagsChunk = 0x24086001u;
++constexpr std::uint32_t Race3Chunk = 0x24087000u;
++constexpr std::uint32_t Race3CollisionChunk = 0x24087001u;
++constexpr std::uint32_t CurveClass = 0x0501a000u;
++constexpr std::uint32_t CurveXChunk = 0x05002001u;
++constexpr std::uint32_t CurveIdChunk = 0x05002003u;
++constexpr std::uint32_t CurveYChunk = 0x0501a001u;
++constexpr std::uint32_t Facade = 0xfacade01u;
++constexpr std::size_t CommonPayloadSize = 156u;
++constexpr std::size_t TargetPayloadSize = 60u;
++constexpr std::size_t Race2FixedPayloadSize = 220u;
++constexpr std::size_t Race3FixedPayloadSize = 260u;
++constexpr std::size_t MaximumCurveKeyCount = 128u;
++
++struct View {
++    const std::uint8_t *bytes = nullptr;
++    std::size_t size = 0u;
++
++    bool Contains(std::size_t offset, std::size_t count) const {
++        return bytes != nullptr && offset <= size && count <= size - offset;
++    }
++
++    std::uint32_t U32(std::size_t offset) const {
++        return ReadU32LE(bytes + offset);
++    }
++
++    float F32(std::size_t offset) const {
++        const std::uint32_t bits = U32(offset);
++        float result = 0.0f;
++        std::memcpy(&result, &bits, sizeof(result));
++        return result;
++    }
++};
++
++void SetError(std::string *error, const char *message) {
++    if (error != nullptr) {
++        *error = message;
++    }
++}
++
++std::optional<std::size_t> FindWord(
++        const View &view,
++        std::size_t begin,
++        std::size_t end,
++        std::uint32_t value) {
++    if (end > view.size) {
++        end = view.size;
++    }
++    for (std::size_t offset = begin; offset + 4u <= end; offset++) {
++        if (view.U32(offset) == value) {
++            return offset;
++        }
++    }
++    return std::nullopt;
++}
++
++bool ParseCommonConfig(
++        const View &view,
++        std::size_t bodyOffset,
++        CameraCommonConfig *config,
++        std::string *error) {
++    const auto chunk = FindWord(
++            view, bodyOffset, view.size, CommonChunk);
++    if (!chunk || !view.Contains(*chunk + 4u, CommonPayloadSize)) {
++        SetError(error, "camera GBX is missing the consolidated common chunk");
++        return false;
++    }
++    const std::size_t payload = *chunk + 4u;
++    config->followedOffset = {
++            view.F32(payload), view.F32(payload + 4u),
++            view.F32(payload + 8u)};
++    config->maximumFollowSpeed = view.F32(payload + 24u);
++    config->height = view.F32(payload + 28u);
++    config->minimumDistance = view.F32(payload + 32u);
++    config->maximumDistance = view.F32(payload + 36u);
++    config->initialFieldOfView = view.F32(payload + 40u);
++    config->baseFieldOfView = view.F32(payload + 44u);
++    config->ignoreTargetRotation = view.U32(payload + 100u) != 0u;
++
++    const auto target = FindWord(
++            view, payload + CommonPayloadSize, view.size, TargetChunk);
++    if (!target || !view.Contains(*target + 4u, TargetPayloadSize)) {
++        SetError(error, "camera GBX is missing the target chunk");
++        return false;
++    }
++    config->lookFactor = view.F32(*target + 4u + 56u);
++    return true;
++}
++
++bool ParseSmooth(
++        const View &view,
++        std::size_t offset,
++        SmoothRealConfig *out) {
++    if (!view.Contains(offset, 12u) || out == nullptr) {
++        return false;
++    }
++    out->delta = view.F32(offset);
++    out->riseTimeMs = view.U32(offset + 4u);
++    out->fallTimeMs = view.U32(offset + 8u);
++    return out->riseTimeMs != 0u && out->fallTimeMs != 0u;
++}
++
++bool ParseCurve(
++        const View &view,
++        std::size_t rootOffset,
++        std::size_t limit,
++        std::vector<CurveKey> *out,
++        std::string *error) {
++    if (out == nullptr || !view.Contains(rootOffset, 4u) ||
++        view.U32(rootOffset) != CurveClass || limit > view.size ||
++        rootOffset >= limit) {
++        SetError(error, "camera GBX contains an invalid curve root");
++        return false;
++    }
++    const auto idChunk = FindWord(
++            view, rootOffset + 4u, limit, CurveIdChunk);
++    if (!idChunk || !view.Contains(*idChunk + 8u, 4u) ||
++        view.U32(*idChunk + 8u) != CurveYChunk) {
++        SetError(error, "camera GBX curve is missing its value chunk");
++        return false;
++    }
++    const std::size_t yCountOffset = *idChunk + 12u;
++    if (!view.Contains(yCountOffset, 4u)) {
++        SetError(error, "camera GBX curve has a truncated value count");
++        return false;
++    }
++    const std::uint32_t count = view.U32(yCountOffset);
++    if (count == 0u || count > MaximumCurveKeyCount ||
++        !view.Contains(yCountOffset + 4u,
++                       static_cast<std::size_t>(count) * 4u)) {
++        SetError(error, "camera GBX curve has an invalid value array");
++        return false;
++    }
++
++    std::size_t xOffset = rootOffset + 4u;
++    if (!view.Contains(xOffset, 8u)) {
++        SetError(error, "camera GBX curve has truncated key metadata");
++        return false;
++    }
++    if (view.U32(xOffset) == CurveXChunk) {
++        if (!view.Contains(xOffset + 4u, 4u) ||
++            view.U32(xOffset + 4u) != count) {
++            SetError(error, "camera GBX curve key/value counts differ");
++            return false;
++        }
++        xOffset += 8u;
++    } else {
++        // Some shipped camera curves use the old compact CFuncKeys metadata:
++        // two opaque words followed by the key array. The Y count remains the
++        // authoritative key count in that encoding.
++        xOffset += 8u;
++    }
++    if (!view.Contains(xOffset, static_cast<std::size_t>(count) * 4u) ||
++        xOffset + static_cast<std::size_t>(count) * 4u != *idChunk) {
++        SetError(error, "camera GBX curve key array is malformed");
++        return false;
++    }
++
++    out->clear();
++    out->reserve(count);
++    for (std::uint32_t index = 0u; index < count; index++) {
++        out->push_back({view.F32(xOffset + index * 4u),
++                        view.F32(yCountOffset + 4u + index * 4u)});
++    }
++    return true;
++}
++
++bool FindCurveRoots(
++        const View &view,
++        std::size_t begin,
++        std::size_t end,
++        std::array<std::size_t, 3u> *roots,
++        std::string *error) {
++    std::size_t cursor = begin;
++    for (std::size_t index = 0u; index < roots->size(); index++) {
++        const auto root = FindWord(view, cursor, end, CurveClass);
++        if (!root) {
++            SetError(error, "camera GBX is missing a serialized curve");
++            return false;
++        }
++        (*roots)[index] = *root;
++        cursor = *root + 4u;
++    }
++    return true;
++}
++
++bool DecodeRace(
++        const View &view,
++        std::size_t bodyOffset,
++        EnvironmentConfig *environment,
++        std::string *error) {
++    RaceConfig config;
++    if (!ParseCommonConfig(view, bodyOffset, &config.common, error)) {
++        return false;
++    }
++    config.common.lensParameter1 = 30.0f;
++    config.common.lensParameter2 = 3.0f;
++    const auto chunk = FindWord(view, bodyOffset, view.size, RaceChunk);
++    if (!chunk || !view.Contains(*chunk + 4u, 56u)) {
++        SetError(error, "Race camera GBX is missing its class chunk");
++        return false;
++    }
++    const std::size_t payload = *chunk + 4u;
++    config.coneAperture = view.F32(payload);
++    config.coneMinimumSpeed = view.F32(payload + 4u);
++    config.coneMaximumSpeed = view.F32(payload + 8u);
++    config.useSpeedDirection = view.U32(payload + 12u) != 0u;
++    config.cameraHeight = view.F32(payload + 16u);
++    config.cameraDistance = view.F32(payload + 20u);
++    config.targetDistance = view.F32(payload + 24u);
++    config.cameraAlignment = view.F32(payload + 28u);
++    config.segmentCast = view.U32(payload + 32u) != 0u;
++    config.segmentCastMinimumDistance = view.F32(payload + 36u);
++    config.segmentCastLength = view.F32(payload + 40u);
++    config.segmentCastDirection = {
++            view.F32(payload + 44u), view.F32(payload + 48u),
++            view.F32(payload + 52u)};
++    environment->race = std::move(config);
++    return true;
++}
++
++bool DecodeRace2(
++        const View &view,
++        std::size_t bodyOffset,
++        EnvironmentConfig *environment,
++        std::string *error) {
++    Race2Config config;
++    if (!ParseCommonConfig(view, bodyOffset, &config.common, error)) {
++        return false;
++    }
++    config.common.lensParameter1 = 30.0f;
++    config.common.lensParameter2 = 3.0f;
++    const auto chunk = FindWord(view, bodyOffset, view.size, Race2Chunk);
++    const auto flags = FindWord(
++            view, bodyOffset, view.size, Race2FlagsChunk);
++    if (!chunk || !flags || *flags <= *chunk ||
++        !view.Contains(*chunk + 4u, Race2FixedPayloadSize) ||
++        !view.Contains(*flags + 4u, 4u)) {
++        SetError(error, "Race2 camera GBX is missing its class chunks");
++        return false;
++    }
++    const std::size_t payload = *chunk + 4u;
++    for (std::size_t index = 0u; index < config.smoothers.size(); index++) {
++        if (!ParseSmooth(view, payload + index * 12u,
++                         &config.smoothers[index])) {
++            SetError(error, "Race2 camera GBX contains an invalid smoother");
++            return false;
++        }
++    }
++    std::size_t offset = payload + config.smoothers.size() * 12u;
++    config.flyingLookRate = view.F32(offset);
++    config.loadedAuxiliaryRate = view.F32(offset + 4u);
++    config.airborneValidationMs = view.U32(offset + 8u);
++    config.flyingCameraMoveDelayMs = view.U32(offset + 12u);
++    config.flyingModeDelayMs = view.U32(offset + 16u);
++    config.steeringYawTriggerMs = view.U32(offset + 20u);
++    config.steeringRollTriggerMs = view.U32(offset + 24u);
++    config.steeringInactiveResetMs = view.U32(offset + 28u);
++    config.heightRate = view.F32(offset + 32u);
++    config.fieldOfViewRate = view.F32(offset + 36u);
++
++    std::array<std::size_t, 3u> roots{};
++    if (!FindCurveRoots(view, payload + Race2FixedPayloadSize,
++                        *flags, &roots, error) ||
++        !ParseCurve(view, roots[0], roots[1],
++                    &config.flyingLookCurve, error) ||
++        !ParseCurve(view, roots[1], roots[2],
++                    &config.yawFromSpeedCurve, error) ||
++        !ParseCurve(view, roots[2], *flags,
++                    &config.rollFromSpeedCurve, error)) {
++        return false;
++    }
++    if (*flags < 16u || !view.Contains(*flags - 16u, 16u)) {
++        SetError(error, "Race2 camera GBX has a truncated spring tail");
++        return false;
++    }
++    config.distanceSpringStiffness = view.F32(*flags - 16u);
++    config.distanceSpringDamping = view.F32(*flags - 12u);
++    config.lookSpringStiffness = view.F32(*flags - 8u);
++    config.lookSpringDamping = view.F32(*flags - 4u);
++    config.rollFromInput = view.U32(*flags + 4u) != 0u;
++    environment->race2 = std::move(config);
++    return true;
++}
++
++bool DecodeRace3(
++        const View &view,
++        std::size_t bodyOffset,
++        EnvironmentConfig *environment,
++        std::string *error) {
++    Race3Config config;
++    if (!ParseCommonConfig(view, bodyOffset, &config.common, error)) {
++        return false;
++    }
++    config.common.lensParameter1 = 0.0f;
++    config.common.lensParameter2 = 1.0f;
++    const auto chunk = FindWord(view, bodyOffset, view.size, Race3Chunk);
++    const auto collision = FindWord(
++            view, bodyOffset, view.size, Race3CollisionChunk);
++    if (!chunk || !collision || *collision <= *chunk ||
++        !view.Contains(*chunk + 4u, Race3FixedPayloadSize) ||
++        !view.Contains(*collision + 4u, 4u)) {
++        SetError(error, "Race3 camera GBX is missing its class chunks");
++        return false;
++    }
++    const std::size_t p = *chunk + 4u;
++    config.directionNormalRate = view.F32(p);
++    config.up = view.F32(p + 4u);
++    config.far = view.F32(p + 8u);
++    config.airborneValidationMs = view.U32(p + 12u);
++    config.steeringInactiveResetMs = view.U32(p + 16u);
++    config.burningSteerDelayMs = view.U32(p + 20u);
++    config.lowSpeedThreshold = view.F32(p + 24u);
++    config.veryLowSpeedThreshold = view.F32(p + 28u);
++    if (!ParseSmooth(view, p + 32u, &config.reverse) ||
++        !ParseSmooth(view, p + 44u, &config.lowSpeedFlightTarget) ||
++        !ParseSmooth(view, p + 56u, &config.flyingDirectionBlend) ||
++        !ParseSmooth(view, p + 68u, &config.flyingUpBlend) ||
++        !ParseSmooth(view, p + 84u, &config.flyingSpeedEffect) ||
++        !ParseSmooth(view, p + 104u, &config.flyingUpSpeedEffect) ||
++        !ParseSmooth(view, p + 116u, &config.flyingLook) ||
++        !ParseSmooth(view, p + 132u, &config.flyingRadius) ||
++        !ParseSmooth(view, p + 164u, &config.gasFar) ||
++        !ParseSmooth(view, p + 176u, &config.brakeFar) ||
++        !ParseSmooth(view, p + 188u, &config.steerFar) ||
++        !ParseSmooth(view, p + 200u, &config.turboFieldOfView) ||
++        !ParseSmooth(view, p + 212u, &config.turboFar) ||
++        !ParseSmooth(view, p + 224u, &config.gearFar) ||
++        !ParseSmooth(view, p + 236u, &config.burningLook) ||
++        !ParseSmooth(view, p + 248u, &config.burningRadius)) {
++        SetError(error, "Race3 camera GBX contains an invalid smoother");
++        return false;
++    }
++    config.directionFlyingRate = view.F32(p + 80u);
++    config.upNormalRate = view.F32(p + 96u);
++    config.upFlyingRate = view.F32(p + 100u);
++    config.flyingLookRate = view.F32(p + 128u);
++    config.constantFlyingLookDownFactor = view.F32(p + 144u);
++    config.flyingDownSpringStiffness = view.F32(p + 148u);
++    config.flyingDownSpringDamping = view.F32(p + 152u);
++    config.radiusSpringStiffness = view.F32(p + 156u);
++    config.radiusSpringDamping = view.F32(p + 160u);
++
++    std::array<std::size_t, 3u> roots{};
++    if (!FindCurveRoots(view, p + Race3FixedPayloadSize,
++                        *collision, &roots, error) ||
++        !ParseCurve(view, roots[0], roots[1],
++                    &config.speedModulationCurve, error) ||
++        !ParseCurve(view, roots[1], roots[2],
++                    &config.flyingLookCurve, error) ||
++        !ParseCurve(view, roots[2], *collision,
++                    &config.flyingDownCurve, error)) {
++        return false;
++    }
++    config.collisionRadius = view.F32(*collision + 4u);
++    environment->race3 = std::move(config);
++    return true;
++}
++
++} // namespace
++
++bool DecodeRaceCameraProfileGbx(
++        const std::uint8_t *bytes,
++        std::size_t byteCount,
++        EnvironmentConfig *environment,
++        std::string *error) {
++    if (environment == nullptr || bytes == nullptr ||
++        byteCount > std::numeric_limits<std::uint32_t>::max()) {
++        SetError(error, "invalid camera GBX input");
++        return false;
++    }
++    std::uint32_t classId = 0u;
++    std::uint32_t bodyOffset = 0u;
++    if (!GbxBodyOffsetReader::TryParse(
++                bytes, static_cast<std::uint32_t>(byteCount),
++                &classId, &bodyOffset)) {
++        SetError(error, "camera GBX header or reference table is invalid");
++        return false;
++    }
++    const View view{bytes, byteCount};
++    switch (classId) {
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace:
++        return DecodeRace(view, bodyOffset, environment, error);
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace2:
++        return DecodeRace2(view, bodyOffset, environment, error);
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace3:
++        return DecodeRace3(view, bodyOffset, environment, error);
++    default:
++        SetError(error, "GBX is not a supported TrackMania race camera");
++        return false;
++    }
++}
++
++} // namespace forevervalidator::camera::detail
+diff --git a/src/format/camera/race_camera_gbx_reader.h b/src/format/camera/race_camera_gbx_reader.h
+new file mode 100644
+index 0000000..762e7f8
+--- /dev/null
++++ b/src/format/camera/race_camera_gbx_reader.h
+@@ -0,0 +1,17 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <string>
++
++#include "engine/camera/race_camera_config.h"
++
++namespace forevervalidator::camera::detail {
++
++bool DecodeRaceCameraProfileGbx(
++        const std::uint8_t *bytes,
++        std::size_t byteCount,
++        EnvironmentConfig *environment,
++        std::string *error);
++
++} // namespace forevervalidator::camera::detail
+diff --git a/src/format/pack/installed_vehicle_asset_graph.cpp b/src/format/pack/installed_vehicle_asset_graph.cpp
+index f0734c1..41ab2a1 100644
+--- a/src/format/pack/installed_vehicle_asset_graph.cpp
++++ b/src/format/pack/installed_vehicle_asset_graph.cpp
+@@ -158,6 +158,49 @@ bool ResolveUniqueDeclaredClass(
+     return found;
+ }
+
++bool IsRaceCameraClass(u32 classId) {
++    return classId == TMNF_CLASS_CGameControlCameraTrackManiaRace ||
++           classId == TMNF_CLASS_CGameControlCameraTrackManiaRace2 ||
++           classId == TMNF_CLASS_CGameControlCameraTrackManiaRace3;
++}
++
++bool ResolveDeclaredRaceCameras(
++        CPlugFilePack &pack,
++        const InstalledVehicleAssetReference &source,
++        const GbxBodyReferenceTable &references,
++        std::vector<InstalledVehicleAssetReference> *out) {
++    if (out == nullptr) {
++        return false;
++    }
++    out->clear();
++    for (const GbxBodyExternalReference &reference :
++         references.externalReferences) {
++        if (reference.IsResource()) {
++            continue;
++        }
++        std::string logicalPath;
++        std::array<char, 512u> selectedPath{};
++        if (!references.ResolvePlainPathForReference(
++                    source.logicalPath, reference, &logicalPath) ||
++            !pack.SelectedPathForPlainRef(
++                    logicalPath.c_str(), selectedPath.data(),
++                    selectedPath.size())) {
++            continue;
++        }
++        const CPlugFileFidContainer_SFileDesc *file =
++                pack.FindFileDescByPath(selectedPath.data());
++        if (file == nullptr || !IsRaceCameraClass(file->classId)) {
++            continue;
++        }
++        InstalledVehicleAssetReference camera;
++        camera.logicalPath = std::move(logicalPath);
++        camera.selectedPath = selectedPath.data();
++        camera.classId = file->classId;
++        out->push_back(std::move(camera));
++    }
++    return true;
++}
++
+ }  // namespace
+
+ std::optional<InstalledVehicleAssetGraph>
+@@ -175,6 +218,9 @@ InstalledVehicleAssetGraph::ResolveFromPack(CPlugFilePack &pack) {
+                         &graph.collector) &&
+                 ParseReferenceTable(
+                         pack, graph.collector, &collectorReferences) &&
++                ResolveDeclaredRaceCameras(
++                        pack, graph.collector, collectorReferences,
++                        &graph.raceCameras) &&
+                 ResolveUniqueDeclaredClass(
+                         pack,
+                         graph.collector,
+@@ -231,6 +277,26 @@ InstalledVehicleAssetGraph::ResolveFromPack(CPlugFilePack &pack) {
+     }
+ }
+
++std::optional<std::vector<InstalledVehicleAssetReference>>
++InstalledVehicleAssetGraph::ResolveRaceCamerasFromPack(CPlugFilePack &pack) {
++    try {
++        InstalledVehicleAssetReference collector;
++        GbxBodyReferenceTable references;
++        std::vector<InstalledVehicleAssetReference> cameras;
++        if (!FindUniquePackClass(
++                    pack, TMNF_CLASS_CGameCtnCollectorVehicle, &collector) ||
++            !ParseReferenceTable(pack, collector, &references) ||
++            !ResolveDeclaredRaceCameras(
++                    pack, collector, references, &cameras) ||
++            cameras.empty()) {
++            return std::nullopt;
++        }
++        return cameras;
++    } catch (const std::bad_alloc &) {
++        return std::nullopt;
++    }
++}
++
+ bool InstalledVehicleAssetGraph::IsComplete() const {
+     return collector.IsValid() &&
+            collector.classId == TMNF_CLASS_CGameCtnCollectorVehicle &&
+diff --git a/src/format/pack/installed_vehicle_asset_graph.h b/src/format/pack/installed_vehicle_asset_graph.h
+index 00018f5..906e97e 100644
+--- a/src/format/pack/installed_vehicle_asset_graph.h
++++ b/src/format/pack/installed_vehicle_asset_graph.h
+@@ -2,6 +2,7 @@
+
+ #include <optional>
+ #include <string>
++#include <vector>
+
+ #include "engine/core/engine_types.h"
+
+@@ -26,8 +27,11 @@ struct InstalledVehicleAssetGraph {
+     InstalledVehicleAssetReference vehicleStruct;
+     InstalledVehicleAssetReference fakeContactBitmap;
+     InstalledVehicleAssetReference fakeContactTexture;
++    std::vector<InstalledVehicleAssetReference> raceCameras;
+
+     static std::optional<InstalledVehicleAssetGraph> ResolveFromPack(
+             CPlugFilePack &pack);
++    static std::optional<std::vector<InstalledVehicleAssetReference>>
++    ResolveRaceCamerasFromPack(CPlugFilePack &pack);
+     bool IsComplete() const;
+ };
+diff --git a/src/platform/native/installed_race_camera_environment.cpp b/src/platform/native/installed_race_camera_environment.cpp
+new file mode 100644
+index 0000000..b5fb8be
+--- /dev/null
++++ b/src/platform/native/installed_race_camera_environment.cpp
+@@ -0,0 +1,206 @@
++#include <forevervalidator/native.h>
++
++#include <new>
++#include <utility>
++
++#include "engine/camera/race_camera_internal.h"
++#include "format/archive/archive_class_ids.h"
++#include "format/camera/race_camera_gbx_reader.h"
++#include "format/pack/installed/byte_buffer.h"
++#include "format/pack/installed/installed_pack_key_catalog.h"
++#include "format/pack/installed/plug_file_pack.h"
++#include "format/pack/installed_vehicle_asset_graph.h"
++#include "platform/native/installed_pack_asset_source_internal.h"
++#include "platform/native/native_system_file_operations.h"
++
++namespace forevervalidator {
++namespace {
++
++ValidationError CameraEnvironmentError(
++        ValidationErrorCode code,
++        ValidationFailureReason reason,
++        const std::string &asset,
++        std::string diagnostic) {
++    ValidationError error;
++    error.category = code == ValidationErrorCode::AllocationFailed
++            ? ValidationErrorCategory::Allocation
++            : code == ValidationErrorCode::InvalidArgument
++                    ? ValidationErrorCategory::InvalidInput
++                    : ValidationErrorCategory::Asset;
++    error.code = code;
++    error.stage = ValidationStage::AssetLoading;
++    error.reason = reason;
++    error.relatedAsset = asset;
++    error.diagnostic = std::move(diagnostic);
++    return error;
++}
++
++Result<AssetBytes> ReadPackAsset(
++        const native_detail::InstalledPackRoot &root,
++        const std::string &identifier) {
++    AssetRequest request;
++    request.logicalIdentifier = identifier;
++    return native_detail::ReadInstalledPackAsset(root, request);
++}
++
++bool HasDecodedCameraClass(
++        const camera::detail::EnvironmentConfig &environment,
++        u32 classId) {
++    switch (classId) {
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace:
++        return environment.race.has_value();
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace2:
++        return environment.race2.has_value();
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace3:
++        return environment.race3.has_value();
++    default:
++        return false;
++    }
++}
++
++void AppendDecodedCameraClass(
++        camera::detail::EnvironmentConfig *environment,
++        camera::detail::EnvironmentConfig decoded,
++        u32 classId,
++        std::string sourceName) {
++    switch (classId) {
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace:
++        environment->race = std::move(decoded.race);
++        environment->raceResources.push_back(
++                {std::move(sourceName), *environment->race});
++        break;
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace2:
++        environment->race2 = std::move(decoded.race2);
++        environment->race2Resources.push_back(
++                {std::move(sourceName), *environment->race2});
++        break;
++    case TMNF_CLASS_CGameControlCameraTrackManiaRace3:
++        environment->race3 = std::move(decoded.race3);
++        environment->race3Resources.push_back(
++                {std::move(sourceName), *environment->race3});
++        break;
++    default:
++        break;
++    }
++}
++
++} // namespace
++
++Result<camera::RaceCameraEnvironment> LoadInstalledRaceCameraEnvironment(
++        const std::string &packDirectory,
++        const std::string &packName) noexcept {
++    tmnf::platform::InstallNativeSystemFileOperations();
++    try {
++        if (packName.empty() ||
++            packName.find_first_of("/\\") != std::string::npos ||
++            packName.find('\0') != std::string::npos ||
++            packName == "." || packName == "..") {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    CameraEnvironmentError(
++                            ValidationErrorCode::InvalidArgument,
++                            ValidationFailureReason::InvalidAssetIdentifier,
++                            packName,
++                            "installed camera pack name is invalid"));
++        }
++
++        Result<native_detail::InstalledPackRoot> resolved =
++                native_detail::ResolveInstalledPackRoot(packDirectory);
++        if (!resolved) {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    std::move(resolved).Error());
++        }
++        native_detail::InstalledPackRoot root = std::move(resolved).Value();
++
++        Result<AssetBytes> packlist = ReadPackAsset(root, "packlist.dat");
++        if (!packlist) {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    std::move(packlist).Error());
++        }
++        const std::string packIdentifier = packName + ".pak";
++        Result<AssetBytes> pak = ReadPackAsset(root, packIdentifier);
++        if (!pak) {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    std::move(pak).Error());
++        }
++
++        AssetBytes packlistBytes = std::move(packlist).Value();
++        AssetBytes pakBytes = std::move(pak).Value();
++        InstalledPackKeyCatalog keys;
++        CPlugFilePack pack;
++        if (!keys.LoadFromMemory(
++                    packlistBytes.data(), packlistBytes.size(), "") ||
++            !pack.OpenFromMemory(
++                    pakBytes.data(), pakBytes.size(), keys,
++                    packName.c_str())) {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    CameraEnvironmentError(
++                            ValidationErrorCode::AssetLoadingFailed,
++                            ValidationFailureReason::InstalledPackInvalid,
++                            packIdentifier,
++                            "installed camera pack could not be authenticated or opened"));
++        }
++
++        const auto cameraAssets =
++                InstalledVehicleAssetGraph::ResolveRaceCamerasFromPack(pack);
++        if (!cameraAssets) {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    CameraEnvironmentError(
++                            ValidationErrorCode::AssetLoadingFailed,
++                            ValidationFailureReason::DefaultVehicleUnavailable,
++                            packIdentifier,
++                            "vehicle collector has no supported race-camera references"));
++        }
++
++        camera::detail::EnvironmentConfig environment;
++        environment.sourceName = packName + ".pak";
++        for (const InstalledVehicleAssetReference &asset : *cameraAssets) {
++            ByteBuffer bytes;
++            std::string decodeError;
++            camera::detail::EnvironmentConfig decoded;
++            if (!pack.ExtractPath(asset.selectedPath.c_str(), &bytes) ||
++                !camera::detail::DecodeRaceCameraProfileGbx(
++                        bytes.Data(), bytes.Size(), &decoded,
++                        &decodeError) ||
++                !HasDecodedCameraClass(decoded, asset.classId)) {
++                return Result<camera::RaceCameraEnvironment>::Failure(
++                        CameraEnvironmentError(
++                                ValidationErrorCode::AssetLoadingFailed,
++                                ValidationFailureReason::InstalledPackInvalid,
++                                asset.logicalPath,
++                                decodeError.empty()
++                                        ? "race-camera GBX could not be extracted or its root class differs from the pack index"
++                                        : std::move(decodeError)));
++            }
++            AppendDecodedCameraClass(
++                    &environment, std::move(decoded), asset.classId,
++                    asset.logicalPath);
++        }
++        if (!environment.race && !environment.race2 && !environment.race3) {
++            return Result<camera::RaceCameraEnvironment>::Failure(
++                    CameraEnvironmentError(
++                            ValidationErrorCode::AssetLoadingFailed,
++                            ValidationFailureReason::DefaultVehicleUnavailable,
++                            packIdentifier,
++                            "no supported camera profile was decoded"));
++        }
++        return Result<camera::RaceCameraEnvironment>::Success(
++                camera::detail::RaceCameraEnvironmentFactory::Create(
++                        std::move(environment)));
++    } catch (const std::bad_alloc &) {
++        return Result<camera::RaceCameraEnvironment>::Failure(
++                CameraEnvironmentError(
++                        ValidationErrorCode::AllocationFailed,
++                        ValidationFailureReason::AllocationFailed,
++                        packName,
++                        "allocation failed while loading race-camera resources"));
++    } catch (...) {
++        return Result<camera::RaceCameraEnvironment>::Failure(
++                CameraEnvironmentError(
++                        ValidationErrorCode::UnexpectedFailure,
++                        ValidationFailureReason::UnexpectedFailure,
++                        packName,
++                        "unexpected failure while loading race-camera resources"));
++    }
++}
++
++} // namespace forevervalidator
+diff --git a/src/simulation/runtime/replay_simulation_runtime.cpp b/src/simulation/runtime/replay_simulation_runtime.cpp
+index 6e5d334..4ab6915 100644
+--- a/src/simulation/runtime/replay_simulation_runtime.cpp
++++ b/src/simulation/runtime/replay_simulation_runtime.cpp
+@@ -983,6 +983,30 @@ ReplayVehicleControlState ReplaySimulationRuntime::CurrentControls() const {
+     return {input.lowSpeedGateA, input.lowSpeedGateB, input.steering};
+ }
+
++ReplayRaceCameraVehicleState
++ReplaySimulationRuntime::CurrentRaceCameraState() const {
++    ReplayRaceCameraVehicleState result;
++    const CSceneVehicleCar &car = state_->vehicle.Car();
++    const CSceneVehicleCar::SVehicleCarState &physics =
++            car.ReplayPhysicsState();
++    result.signedSpeed = physics.forwardSpeed;
++    result.turbo = physics.turboActive != 0u ? 1.0f : 0.0f;
++    result.gearChanged =
++            physics.engineControlState ==
++            CSceneVehicleCarEngineControlState_GearShift;
++    const std::size_t wheelCount =
++            std::min<std::size_t>(car.WheelGetCount(), 4u);
++    for (std::size_t index = 0u; index < wheelCount; ++index) {
++        const CSceneVehicleCar::SSimulationWheel &wheel =
++                car.WheelAt(static_cast<u32>(index));
++        result.wheelContact[index] =
++                wheel.currentPhysicsState.contactPresent;
++        result.wheelHasSurface[index] =
++                wheel.asyncState.contactPresent;
++    }
++    return result;
++}
++
+
+ std::uint64_t ReplaySimulationRuntimeSemanticHash(
+         const ReplaySimulationRuntime::RuntimeClone &clone) {
+diff --git a/src/simulation/runtime/replay_simulation_runtime.h b/src/simulation/runtime/replay_simulation_runtime.h
+index 254f4eb..d2addcd 100644
+--- a/src/simulation/runtime/replay_simulation_runtime.h
++++ b/src/simulation/runtime/replay_simulation_runtime.h
+@@ -1,6 +1,7 @@
+ #ifndef TMNF_REPLAY_SIMULATION_RUNTIME_H
+ #define TMNF_REPLAY_SIMULATION_RUNTIME_H
+
++#include <array>
+ #include <memory>
+ #include <optional>
+ #include <vector>
+@@ -29,6 +30,17 @@ struct ReplaySimulationStepExecution {
+     std::uint32_t respawnExecutedCount = 0u;
+ };
+
++struct ReplayRaceCameraVehicleState {
++    float signedSpeed = 0.0f;
++    float turbo = 0.0f;
++    float cameraFlightTransition = 0.0f;
++    bool burning = false;
++    bool gearChanged = false;
++    std::array<bool, 4> wheelContact{{true, true, true, true}};
++    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
++    GmVec3 cameraSupportUp{0.0f, 1.0f, 0.0f};
++};
++
+
+ ReplayStuntSimulationState BuildReplayStuntSimulationState(
+         const ReplaySimulationStepExecution &execution,
+@@ -82,6 +94,7 @@ public:
+     std::optional<std::uint32_t> StuntsScore() const;
+     ReplayDynaFrameState CurrentFrame() const;
+     ReplayVehicleControlState CurrentControls() const;
++    ReplayRaceCameraVehicleState CurrentRaceCameraState() const;
+     const ReplayRaceProgress &RaceProgress() const;
+     std::optional<std::uint32_t> ApplyReplayStuntTimePenalty(
+             std::uint32_t overtimeMs);
+diff --git a/src/simulation/runtime/replay_simulation_session.cpp b/src/simulation/runtime/replay_simulation_session.cpp
+index 0c046ae..b8df509 100644
+--- a/src/simulation/runtime/replay_simulation_session.cpp
++++ b/src/simulation/runtime/replay_simulation_session.cpp
+@@ -1506,6 +1506,16 @@ ReplaySimulationSession::CurrentState() const {
+     result.finishTime = impl->instance.runtime->FinishTime();
+     result.stuntsScore = impl->instance.runtime->StuntsScore();
+     result.respawnCount = impl->instance.incrementalRespawnCount;
++    const ReplayRaceCameraVehicleState camera =
++            impl->instance.runtime->CurrentRaceCameraState();
++    result.signedSpeed = camera.signedSpeed;
++    result.turbo = camera.turbo;
++    result.cameraFlightTransition = camera.cameraFlightTransition;
++    result.burning = camera.burning;
++    result.gearChanged = camera.gearChanged;
++    result.wheelContact = camera.wheelContact;
++    result.wheelHasSurface = camera.wheelHasSurface;
++    result.cameraSupportUp = camera.cameraSupportUp;
+     return result;
+ }
+
+diff --git a/src/simulation/runtime/replay_simulation_session.h b/src/simulation/runtime/replay_simulation_session.h
+index c3b3fd7..44df28a 100644
+--- a/src/simulation/runtime/replay_simulation_session.h
++++ b/src/simulation/runtime/replay_simulation_session.h
+@@ -41,6 +41,14 @@ struct ReplaySimulationStateView {
+     std::optional<forevervalidator::FinishTimeEstimate> finishTime;
+     std::optional<std::uint32_t> stuntsScore;
+     std::uint32_t respawnCount = 0u;
++    float signedSpeed = 0.0f;
++    float turbo = 0.0f;
++    float cameraFlightTransition = 0.0f;
++    bool burning = false;
++    bool gearChanged = false;
++    std::array<bool, 4> wheelContact{{true, true, true, true}};
++    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
++    GmVec3 cameraSupportUp{0.0f, 1.0f, 0.0f};
+ };
+
+ struct ReplayCudaVehiclePrefixDifferential {
+diff --git a/src/validation/api/validation_api.cpp b/src/validation/api/validation_api.cpp
+index 3a63934..e2d2e8c 100644
+--- a/src/validation/api/validation_api.cpp
++++ b/src/validation/api/validation_api.cpp
+@@ -1480,6 +1480,14 @@ struct PhysicsSandbox::Impl {
+         view.car.angularSpeed = ToPublicVector(frame.angularSpeed);
+         view.car.force = ToPublicVector(frame.force);
+         view.car.torque = ToPublicVector(frame.torque);
++        view.car.signedSpeed = state->signedSpeed;
++        view.car.turbo = state->turbo;
++        view.car.cameraFlightTransition = state->cameraFlightTransition;
++        view.car.burning = state->burning;
++        view.car.gearChanged = state->gearChanged;
++        view.car.wheelContact = state->wheelContact;
++        view.car.wheelHasSurface = state->wheelHasSurface;
++        view.car.cameraSupportUp = ToPublicVector(state->cameraSupportUp);
+         view.accelerate = state->controls.lowSpeedGateA;
+         view.brake = state->controls.lowSpeedGateB;
+         view.steering = state->controls.steering;
+diff --git a/tests/race_camera_pack_tests.cpp b/tests/race_camera_pack_tests.cpp
+new file mode 100644
+index 0000000..9d1735d
+--- /dev/null
++++ b/tests/race_camera_pack_tests.cpp
+@@ -0,0 +1,508 @@
++#include <forevervalidator/camera.h>
++
++#include "engine/camera/race_camera_internal.h"
++#include "format/camera/race_camera_gbx_reader.h"
++
++#include <cmath>
++#include <cstdint>
++#include <cstring>
++#include <iostream>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace {
++
++using forevervalidator::camera::RaceCameraEnvironment;
++using forevervalidator::camera::RaceCameraProfile;
++using forevervalidator::camera::RaceCameraQuery;
++using forevervalidator::camera::RaceCameraSession;
++using forevervalidator::camera::RaceCameraVehicleState;
++using forevervalidator::camera::detail::CurveKey;
++using forevervalidator::camera::detail::EnvironmentConfig;
++using forevervalidator::camera::detail::RaceCameraEnvironmentFactory;
++
++constexpr std::uint32_t CommonChunk = 0x0306b00bu;
++constexpr std::uint32_t TargetChunk = 0x03072001u;
++constexpr std::uint32_t RaceClass = 0x24085000u;
++constexpr std::uint32_t Race2Class = 0x24086000u;
++constexpr std::uint32_t Race2FlagsChunk = 0x24086001u;
++constexpr std::uint32_t Race3Class = 0x24087000u;
++constexpr std::uint32_t Race3CollisionChunk = 0x24087001u;
++constexpr std::uint32_t CurveClass = 0x0501a000u;
++constexpr std::uint32_t CurveXChunk = 0x05002001u;
++constexpr std::uint32_t CurveIdChunk = 0x05002003u;
++constexpr std::uint32_t CurveYChunk = 0x0501a001u;
++constexpr std::uint32_t Facade = 0xfacade01u;
++
++void U32(std::vector<std::uint8_t> &bytes, std::uint32_t value) {
++    bytes.push_back(static_cast<std::uint8_t>(value));
++    bytes.push_back(static_cast<std::uint8_t>(value >> 8u));
++    bytes.push_back(static_cast<std::uint8_t>(value >> 16u));
++    bytes.push_back(static_cast<std::uint8_t>(value >> 24u));
++}
++
++void F32(std::vector<std::uint8_t> &bytes, float value) {
++    std::uint32_t bits = 0u;
++    std::memcpy(&bits, &value, sizeof(bits));
++    U32(bytes, bits);
++}
++
++void SetU32(std::vector<std::uint8_t> &bytes, std::size_t offset,
++            std::uint32_t value) {
++    bytes[offset] = static_cast<std::uint8_t>(value);
++    bytes[offset + 1u] = static_cast<std::uint8_t>(value >> 8u);
++    bytes[offset + 2u] = static_cast<std::uint8_t>(value >> 16u);
++    bytes[offset + 3u] = static_cast<std::uint8_t>(value >> 24u);
++}
++
++void SetF32(std::vector<std::uint8_t> &bytes, std::size_t offset,
++            float value) {
++    std::uint32_t bits = 0u;
++    std::memcpy(&bits, &value, sizeof(bits));
++    SetU32(bytes, offset, bits);
++}
++
++bool ReplaceFirstU32(std::vector<std::uint8_t> &bytes,
++                     std::uint32_t from,
++                     std::uint32_t to) {
++    for (std::size_t offset = 0u; offset + 4u <= bytes.size(); offset++) {
++        std::uint32_t value = 0u;
++        std::memcpy(&value, bytes.data() + offset, sizeof(value));
++        if (value == from) {
++            SetU32(bytes, offset, to);
++            return true;
++        }
++    }
++    return false;
++}
++
++std::vector<std::uint8_t> Header(std::uint32_t classId,
++                                 std::uint32_t nodeCount) {
++    std::vector<std::uint8_t> bytes{
++            'G', 'B', 'X', 6u, 0u, 'B', 'U', 'U', 'R'};
++    U32(bytes, classId);
++    U32(bytes, 0u);
++    U32(bytes, nodeCount);
++    U32(bytes, 0u);
++    return bytes;
++}
++
++void Common(std::vector<std::uint8_t> &bytes, float height,
++            float minimumDistance, float maximumDistance,
++            float fieldOfView, bool ignoreTargetRotation,
++            float lookFactor) {
++    U32(bytes, CommonChunk);
++    const std::size_t payload = bytes.size();
++    bytes.resize(bytes.size() + 156u, 0u);
++    SetF32(bytes, payload + 24u, 30.0f);
++    SetF32(bytes, payload + 28u, height);
++    SetF32(bytes, payload + 32u, minimumDistance);
++    SetF32(bytes, payload + 36u, maximumDistance);
++    SetF32(bytes, payload + 40u, fieldOfView);
++    SetF32(bytes, payload + 44u, fieldOfView);
++    SetU32(bytes, payload + 100u, ignoreTargetRotation ? 1u : 0u);
++
++    U32(bytes, TargetChunk);
++    const std::size_t target = bytes.size();
++    bytes.resize(bytes.size() + 60u, 0u);
++    SetF32(bytes, target + 56u, lookFactor);
++}
++
++void Smooth(std::vector<std::uint8_t> &bytes, float delta,
++            std::uint32_t rise, std::uint32_t fall) {
++    F32(bytes, delta);
++    U32(bytes, rise);
++    U32(bytes, fall);
++}
++
++void Curve(std::vector<std::uint8_t> &bytes,
++           const std::vector<CurveKey> &keys,
++           bool compactKeys = false,
++           bool facade = true) {
++    U32(bytes, CurveClass);
++    if (compactKeys) {
++        U32(bytes, 0x10203040u);
++        U32(bytes, 0x50607080u);
++    } else {
++        U32(bytes, CurveXChunk);
++        U32(bytes, static_cast<std::uint32_t>(keys.size()));
++    }
++    for (const CurveKey &key : keys) {
++        F32(bytes, key.position);
++    }
++    U32(bytes, CurveIdChunk);
++    U32(bytes, 0xffffffffu);
++    U32(bytes, CurveYChunk);
++    U32(bytes, static_cast<std::uint32_t>(keys.size()));
++    for (const CurveKey &key : keys) {
++        F32(bytes, key.value);
++    }
++    if (facade) {
++        U32(bytes, Facade);
++    }
++}
++
++std::vector<std::uint8_t> Race2Fixture() {
++    std::vector<std::uint8_t> bytes = Header(Race2Class, 4u);
++    Common(bytes, 6.0f, 7.0f, 8.0f, 66.0f, false, 0.42f);
++    U32(bytes, Race2Class);
++    for (std::uint32_t index = 0u; index < 15u; index++) {
++        Smooth(bytes, static_cast<float>(index + 1u) * 0.125f,
++               100u + index, 200u + index);
++    }
++    F32(bytes, 0.35f);
++    F32(bytes, 17.0f);
++    U32(bytes, 250u);
++    U32(bytes, 1250u);
++    U32(bytes, 1500u);
++    U32(bytes, 650u);
++    U32(bytes, 450u);
++    U32(bytes, 175u);
++    F32(bytes, 3.5f);
++    F32(bytes, 22.0f);
++    Curve(bytes, {{0.0f, 0.0f}, {2.0f, -0.2f}, {5.0f, -0.4f}}, true);
++    Curve(bytes, {{0.0f, 0.0f}, {100.0f, 3.0f}});
++    Curve(bytes, {{0.0f, 0.0f}, {100.0f, 1.5f}}, false, false);
++    U32(bytes, 0xabcdef01u);
++    U32(bytes, 0xabcdef02u);
++    F32(bytes, 9.0f);
++    F32(bytes, 4.0f);
++    F32(bytes, 2.0f);
++    F32(bytes, 0.8f);
++    U32(bytes, Race2FlagsChunk);
++    U32(bytes, 1u);
++    U32(bytes, Facade);
++    return bytes;
++}
++
++std::vector<std::uint8_t> RaceFixture() {
++    std::vector<std::uint8_t> bytes = Header(RaceClass, 1u);
++    Common(bytes, 5.5f, 2.5f, 9.0f, 70.0f, false, 0.35f);
++    U32(bytes, RaceClass);
++    F32(bytes, 0.25f);
++    F32(bytes, 15.0f);
++    F32(bytes, 90.0f);
++    U32(bytes, 1u);
++    F32(bytes, 4.0f);
++    F32(bytes, 11.0f);
++    F32(bytes, 1.5f);
++    F32(bytes, 3.25f);
++    U32(bytes, 1u);
++    F32(bytes, 7.0f);
++    F32(bytes, 12.0f);
++    F32(bytes, 0.0f);
++    F32(bytes, -1.0f);
++    F32(bytes, 0.0f);
++    U32(bytes, Facade);
++    return bytes;
++}
++
++std::vector<std::uint8_t> Race3Fixture() {
++    std::vector<std::uint8_t> bytes = Header(Race3Class, 4u);
++    Common(bytes, 2.0f, 3.0f, 4.0f, 68.0f, false, 0.6f);
++    U32(bytes, Race3Class);
++    F32(bytes, 6.0f);
++    F32(bytes, 1.25f);
++    F32(bytes, 3.75f);
++    U32(bytes, 5u);
++    U32(bytes, 180u);
++    U32(bytes, 1700u);
++    F32(bytes, 27.0f);
++    F32(bytes, 8.0f);
++    Smooth(bytes, 1.0f, 2100u, 2200u);
++    Smooth(bytes, 0.9f, 1900u, 1800u);
++    Smooth(bytes, 0.8f, 1700u, 1600u);
++    Smooth(bytes, 0.7f, 1500u, 1400u);
++    F32(bytes, 2.5f);
++    Smooth(bytes, 0.6f, 1300u, 1200u);
++    F32(bytes, 3.5f);
++    F32(bytes, 0.75f);
++    Smooth(bytes, 0.5f, 1100u, 1000u);
++    Smooth(bytes, -0.3f, 900u, 800u);
++    F32(bytes, 0.15f);
++    Smooth(bytes, 2.5f, 700u, 600u);
++    F32(bytes, 0.25f);
++    F32(bytes, 1.2f);
++    F32(bytes, 0.65f);
++    F32(bytes, 8.0f);
++    F32(bytes, 4.5f);
++    Smooth(bytes, 1.1f, 500u, 400u);
++    Smooth(bytes, -0.6f, 510u, 410u);
++    Smooth(bytes, -0.7f, 520u, 420u);
++    Smooth(bytes, 9.5f, 530u, 430u);
++    Smooth(bytes, -0.5f, 540u, 440u);
++    Smooth(bytes, -0.4f, 550u, 450u);
++    Smooth(bytes, -0.35f, 560u, 460u);
++    Smooth(bytes, 0.9f, 570u, 470u);
++    Curve(bytes, {{-100.0f, 1.1f}, {0.0f, 1.0f}, {300.0f, 1.8f}});
++    Curve(bytes, {{0.0f, 0.0f}, {10.0f, -0.3f}}, true);
++    Curve(bytes, {{0.0f, 0.0f}, {2.0f, 0.2f}, {20.0f, 0.5f}});
++    U32(bytes, Race3CollisionChunk);
++    F32(bytes, 1.75f);
++    U32(bytes, Facade);
++    return bytes;
++}
++
++bool Near(float left, float right, float tolerance = 1.0e-5f) {
++    return std::fabs(left - right) <= tolerance;
++}
++
++bool Check(bool condition, const char *message) {
++    if (!condition) {
++        std::cerr << message << '\n';
++    }
++    return condition;
++}
++
++bool TestDecodeAndEvaluate() {
++    EnvironmentConfig config;
++    config.sourceName = "synthetic-camera-pack";
++    std::string error;
++    const std::vector<std::uint8_t> raceBytes = RaceFixture();
++    const std::vector<std::uint8_t> race2Bytes = Race2Fixture();
++    const std::vector<std::uint8_t> race3Bytes = Race3Fixture();
++    bool okay = Check(
++            forevervalidator::camera::detail::DecodeRaceCameraProfileGbx(
++                    raceBytes.data(), raceBytes.size(), &config, &error),
++            "synthetic Race camera GBX did not decode");
++    okay &= Check(
++            forevervalidator::camera::detail::DecodeRaceCameraProfileGbx(
++                    race2Bytes.data(), race2Bytes.size(), &config, &error),
++            "synthetic Race2 camera GBX did not decode");
++    okay &= Check(
++            forevervalidator::camera::detail::DecodeRaceCameraProfileGbx(
++                    race3Bytes.data(), race3Bytes.size(), &config, &error),
++            "synthetic Race3 camera GBX did not decode");
++    if (!okay || !config.race || !config.race2 || !config.race3) {
++        return false;
++    }
++
++    okay &= Check(Near(config.race->common.height, 5.5f) &&
++                            Near(config.race->common.minimumDistance, 2.5f) &&
++                            Near(config.race->common.maximumDistance, 9.0f) &&
++                            Near(config.race->common.baseFieldOfView, 70.0f) &&
++                            Near(config.race->common.lookFactor, 0.35f) &&
++                            Near(config.race->coneAperture, 0.25f) &&
++                            Near(config.race->coneMinimumSpeed, 15.0f) &&
++                            Near(config.race->coneMaximumSpeed, 90.0f) &&
++                            config.race->useSpeedDirection &&
++                            Near(config.race->cameraHeight, 4.0f) &&
++                            Near(config.race->cameraDistance, 11.0f) &&
++                            config.race->segmentCast &&
++                            Near(config.race->segmentCastMinimumDistance, 7.0f) &&
++                            Near(config.race->segmentCastLength, 12.0f),
++                    "Race values were not loaded from GBX");
++
++    okay &= Check(Near(config.race2->common.height, 6.0f) &&
++                            Near(config.race2->common.minimumDistance, 7.0f) &&
++                            Near(config.race2->common.maximumDistance, 8.0f) &&
++                            Near(config.race2->common.baseFieldOfView, 66.0f) &&
++                            Near(config.race2->common.lookFactor, 0.42f),
++                    "Race2 common values were not loaded from GBX");
++    okay &= Check(config.race2->rollFromInput &&
++                            config.race2->flyingLookCurve.size() == 3u &&
++                            config.race2->yawFromSpeedCurve.size() == 2u &&
++                            config.race2->rollFromSpeedCurve.size() == 2u &&
++                            Near(config.race2->distanceSpringStiffness, 9.0f) &&
++                            Near(config.race2->lookSpringDamping, 0.8f),
++                    "Race2 class values were not loaded from GBX");
++    okay &= Check(Near(config.race3->up, 1.25f) &&
++                            Near(config.race3->far, 3.75f) &&
++                            Near(config.race3->collisionRadius, 1.75f) &&
++                            config.race3->speedModulationCurve.size() == 3u &&
++                            config.race3->flyingLookCurve.size() == 2u &&
++                            config.race3->flyingDownCurve.size() == 3u,
++                    "Race3 values were not loaded from GBX");
++
++    RaceCameraEnvironment environment =
++            RaceCameraEnvironmentFactory::Create(std::move(config));
++    okay &= Check(environment.SourceName() == "synthetic-camera-pack" &&
++                            environment.HasProfile(RaceCameraProfile::Race) &&
++                            environment.HasProfile(RaceCameraProfile::Race2) &&
++                            environment.HasProfile(RaceCameraProfile::Race3) &&
++                            environment.ResourceCount(RaceCameraProfile::Race) ==
++                                    1u &&
++                            environment.ResourceName(
++                                    RaceCameraProfile::Race, 0u) ==
++                                    "synthetic-camera-pack",
++                    "decoded environment metadata is incorrect");
++
++    RaceCameraVehicleState vehicle;
++    vehicle.targetId = 7u;
++    RaceCameraQuery query;
++    query.vehicle = vehicle;
++    RaceCameraSession race(environment, RaceCameraProfile::Race);
++    RaceCameraSession race2(environment, RaceCameraProfile::Race2);
++    RaceCameraSession race3(environment, RaceCameraProfile::Race3);
++    race.Reset(vehicle);
++    race2.Reset(vehicle);
++    race3.Reset(vehicle);
++    const auto output = race.Evaluate(query);
++    const auto output2 = race2.Evaluate(query);
++    const auto output3 = race3.Evaluate(query);
++    okay &= Check(Near(output.transform.position.y, 5.5f) &&
++                            Near(output.transform.position.z, -9.0f) &&
++                            Near(output.lens.fieldOfViewDegrees, 70.0f),
++                    "Race session ignored decoded configuration");
++    okay &= Check(Near(output2.transform.position.y, 6.0f) &&
++                            Near(output2.transform.position.z, -8.0f) &&
++                            Near(output2.lens.fieldOfViewDegrees, 66.0f),
++                    "Race2 session ignored decoded configuration");
++    okay &= Check(Near(output3.transform.position.y, 1.25f) &&
++                            Near(output3.transform.position.z, -3.75f) &&
++                            Near(output3.lens.fieldOfViewDegrees, 68.0f),
++                    "Race3 session ignored decoded configuration");
++
++    RaceCameraSession neutral(environment, RaceCameraProfile::Race2);
++    RaceCameraSession steering(environment, RaceCameraProfile::Race2);
++    RaceCameraVehicleState neutralVehicle = vehicle;
++    RaceCameraVehicleState steeringVehicle = vehicle;
++    neutralVehicle.signedSpeed = 120.0f;
++    steeringVehicle.signedSpeed = 120.0f;
++    steeringVehicle.steering = 1.0f;
++    neutral.Reset(neutralVehicle);
++    steering.Reset(steeringVehicle);
++    forevervalidator::camera::RaceCameraOutput neutralOutput;
++    forevervalidator::camera::RaceCameraOutput steeringOutput;
++    for (const std::uint32_t timeMs : {0u, 100u, 300u, 600u, 1000u}) {
++        neutralVehicle.timeMs = timeMs;
++        steeringVehicle.timeMs = timeMs;
++        RaceCameraQuery neutralQuery;
++        RaceCameraQuery steeringQuery;
++        neutralQuery.vehicle = neutralVehicle;
++        steeringQuery.vehicle = steeringVehicle;
++        neutralOutput = neutral.Evaluate(neutralQuery);
++        steeringOutput = steering.Evaluate(steeringQuery);
++    }
++    const auto &neutralRotation = neutralOutput.transform.rotation;
++    const auto &steeringRotation = steeringOutput.transform.rotation;
++    const float orientationDifference =
++            std::fabs(neutralRotation.w - steeringRotation.w) +
++            std::fabs(neutralRotation.x - steeringRotation.x) +
++            std::fabs(neutralRotation.y - steeringRotation.y) +
++            std::fabs(neutralRotation.z - steeringRotation.z);
++    okay &= Check(
++            orientationDifference > 1.0e-4f,
++            "Race2 ignored loaded steering roll/yaw configuration");
++    return okay;
++}
++
++bool TestRejectsTruncatedArchive() {
++    std::vector<std::uint8_t> bytes = Race2Fixture();
++    bytes.resize(bytes.size() - 20u);
++    EnvironmentConfig config;
++    std::string error;
++    return Check(
++            !forevervalidator::camera::detail::DecodeRaceCameraProfileGbx(
++                    bytes.data(), bytes.size(), &config, &error) &&
++                    !error.empty(),
++            "truncated camera GBX was accepted");
++}
++
++bool TestRejectsMissingSerializedChunks() {
++    bool okay = true;
++
++    std::vector<std::uint8_t> missingTarget = Race2Fixture();
++    okay &= Check(ReplaceFirstU32(missingTarget, TargetChunk, 0u),
++                    "target chunk fixture marker was not found");
++    EnvironmentConfig targetConfig;
++    std::string targetError;
++    okay &= Check(
++            !forevervalidator::camera::detail::DecodeRaceCameraProfileGbx(
++                    missingTarget.data(), missingTarget.size(),
++                    &targetConfig, &targetError) &&
++                    !targetError.empty(),
++            "camera GBX without a target chunk inherited defaults");
++
++    std::vector<std::uint8_t> missingClass = RaceFixture();
++    // Skip the root class ID in the GBX header and corrupt the class chunk.
++    bool classChunkReplaced = false;
++    for (std::size_t offset = 13u;
++         offset + 4u <= missingClass.size();
++         offset++) {
++        std::uint32_t value = 0u;
++        std::memcpy(&value, missingClass.data() + offset, sizeof(value));
++        if (value == RaceClass) {
++            SetU32(missingClass, offset, 0u);
++            classChunkReplaced = true;
++            break;
++        }
++    }
++    okay &= Check(classChunkReplaced,
++                    "Race class chunk fixture marker was not found");
++    EnvironmentConfig classConfig;
++    std::string classError;
++    okay &= Check(
++            !forevervalidator::camera::detail::DecodeRaceCameraProfileGbx(
++                    missingClass.data(), missingClass.size(),
++                    &classConfig, &classError) &&
++                    !classError.empty(),
++            "Race GBX without its class chunk inherited defaults");
++    return okay;
++}
++
++bool TestMultipleRaceResources() {
++    EnvironmentConfig config;
++    config.sourceName = "multi-race-pack";
++    forevervalidator::camera::detail::RaceConfig first;
++    auto second = first;
++    first.common.height = 4.0f;
++    first.common.maximumDistance = 6.0f;
++    first.common.baseFieldOfView = 71.0f;
++    first.common.initialFieldOfView = 71.0f;
++    second.common.height = 8.0f;
++    second.common.maximumDistance = 3.0f;
++    second.common.baseFieldOfView = 82.0f;
++    second.common.initialFieldOfView = 82.0f;
++    config.raceResources = {
++            {"CameraFirst.gbx", first},
++            {"CameraSecond.gbx", second},
++    };
++    RaceCameraEnvironment environment =
++            RaceCameraEnvironmentFactory::Create(std::move(config));
++    bool okay = Check(
++            environment.ResourceCount(RaceCameraProfile::Race) == 2u &&
++                    environment.ResourceName(RaceCameraProfile::Race, 0u) ==
++                            "CameraFirst.gbx" &&
++                    environment.ResourceName(RaceCameraProfile::Race, 1u) ==
++                            "CameraSecond.gbx",
++            "multiple Race resources were not preserved");
++
++    RaceCameraVehicleState vehicle;
++    vehicle.targetId = 9u;
++    RaceCameraQuery query;
++    query.vehicle = vehicle;
++    RaceCameraSession defaultSession(environment, RaceCameraProfile::Race);
++    RaceCameraSession firstSession(
++            environment, RaceCameraProfile::Race, 0u);
++    RaceCameraSession secondSession(
++            environment, RaceCameraProfile::Race, 1u);
++    defaultSession.Reset(vehicle);
++    firstSession.Reset(vehicle);
++    secondSession.Reset(vehicle);
++    const auto defaultOutput = defaultSession.Evaluate(query);
++    const auto firstOutput = firstSession.Evaluate(query);
++    const auto secondOutput = secondSession.Evaluate(query);
++    okay &= Check(
++            Near(defaultOutput.transform.position.y, 8.0f) &&
++                    Near(defaultOutput.transform.position.z, -3.0f) &&
++                    Near(defaultOutput.lens.fieldOfViewDegrees, 82.0f) &&
++                    Near(firstOutput.transform.position.y, 4.0f) &&
++                    Near(firstOutput.transform.position.z, -6.0f) &&
++                    Near(firstOutput.lens.fieldOfViewDegrees, 71.0f) &&
++                    Near(secondOutput.transform.position.y, 8.0f),
++            "indexed Race resource selection is incorrect");
++    return okay;
++}
++
++} // namespace
++
++int main() {
++    bool okay = true;
++    okay &= TestDecodeAndEvaluate();
++    okay &= TestRejectsTruncatedArchive();
++    okay &= TestRejectsMissingSerializedChunks();
++    okay &= TestMultipleRaceResources();
++    return okay ? 0 : 1;
++}
+diff --git a/tests/race_camera_test_fixture.h b/tests/race_camera_test_fixture.h
+new file mode 100644
+index 0000000..a5e577a
+--- /dev/null
++++ b/tests/race_camera_test_fixture.h
+@@ -0,0 +1,129 @@
++#pragma once
++
++#include <forevervalidator/camera.h>
++
++#include "engine/camera/race_camera_internal.h"
++
++namespace race_camera_test_fixture {
++
++inline forevervalidator::camera::detail::SmoothRealConfig Smooth(
++        float delta,
++        std::uint32_t rise,
++        std::uint32_t fall) {
++    return {delta, rise, fall};
++}
++
++inline forevervalidator::camera::RaceCameraEnvironment BuildEnvironment() {
++    using namespace forevervalidator::camera::detail;
++
++    EnvironmentConfig environment;
++    environment.sourceName = "captured camera test fixture";
++
++    RaceConfig race;
++    race.common.height = 30.0f;
++    race.common.minimumDistance = 10.0f;
++    race.common.maximumDistance = 30.0f;
++    race.common.baseFieldOfView = 80.0f;
++    race.common.initialFieldOfView = 80.0f;
++    race.common.lensParameter1 = 30.0f;
++    race.common.lensParameter2 = 3.0f;
++    race.common.lookFactor = 0.0f;
++    race.common.ignoreTargetRotation = true;
++    race.coneAperture = 0.0f;
++    race.coneMinimumSpeed = 0.0f;
++    race.coneMaximumSpeed = 60.0f;
++    race.useSpeedDirection = false;
++    race.cameraHeight = 30.0f;
++    race.cameraDistance = 15.0f;
++    environment.race = race;
++
++    Race2Config race2;
++    race2.common.height = 3.299999952316284f;
++    race2.common.minimumDistance = 4.0f;
++    race2.common.maximumDistance = 5.0f;
++    race2.common.baseFieldOfView = 75.0f;
++    race2.common.initialFieldOfView = 75.0f;
++    race2.common.lensParameter1 = 30.0f;
++    race2.common.lensParameter2 = 3.0f;
++    race2.common.lookFactor = 0.699999988079071f;
++    race2.smoothers = {{
++            Smooth(1.0f, 2000u, 1000u),
++            Smooth(-0.699999988f, 750u, 1000u),
++            Smooth(-0.800000012f, 2000u, 1500u),
++            Smooth(10.5f, 1000u, 1400u),
++            Smooth(-0.600000024f, 1000u, 1400u),
++            Smooth(-0.349999994f, 500u, 2000u),
++            Smooth(-0.400000006f, 2000u, 1500u),
++            Smooth(1.0f, 2000u, 1500u),
++            Smooth(2.0f, 3000u, 2500u),
++            Smooth(4.0f, 3000u, 2500u),
++            Smooth(-0.200000003f, 3000u, 2500u),
++            Smooth(1.0f, 2000u, 1200u),
++            Smooth(1.0f, 2000u, 1200u),
++            Smooth(1.0f, 2500u, 1500u),
++            Smooth(1.0f, 2000u, 1500u),
++    }};
++    race2.flyingLookCurve = {
++            {0.0f, 0.0f}, {1.0f, 0.0f}, {5.0f, -0.300000012f},
++            {10.0f, -0.349999994f}, {20.0f, -0.400000006f},
++            {40.0f, -0.449999988f}, {60.0f, -0.5f},
++    };
++    race2.yawFromSpeedCurve = {
++            {-10.0f, 2.0f}, {0.0f, 0.0f}, {50.0f, 2.0f},
++            {100.0f, 4.0f}, {200.0f, 8.0f}, {400.0f, 14.0f},
++    };
++    race2.rollFromSpeedCurve = {
++            {-10.0f, 1.0f}, {0.0f, 0.0f}, {50.0f, 1.0f},
++            {100.0f, 2.0f}, {200.0f, 2.5f}, {400.0f, 3.0f},
++    };
++    race2.rollFromInput = false;
++    environment.race2 = race2;
++
++    Race3Config race3;
++    race3.common.height = 1.5f;
++    race3.common.minimumDistance = 3.0f;
++    race3.common.maximumDistance = 4.0f;
++    race3.common.baseFieldOfView = 75.0f;
++    race3.common.initialFieldOfView = 75.0f;
++    race3.common.lensParameter1 = 5.008991718292236f;
++    race3.common.lensParameter2 = 1.0f;
++    race3.common.lookFactor = 0.8799999952316284f;
++    race3.reverse = Smooth(1.0f, 2000u, 2000u);
++    race3.lowSpeedFlightTarget = Smooth(1.0f, 2000u, 2000u);
++    race3.flyingDirectionBlend = Smooth(1.0f, 2000u, 1000u);
++    race3.flyingUpBlend = Smooth(1.0f, 2000u, 2000u);
++    race3.flyingSpeedEffect = Smooth(1.0f, 1000u, 1000u);
++    race3.flyingUpSpeedEffect = Smooth(1.0f, 1000u, 1000u);
++    race3.flyingLook = Smooth(-0.200000003f, 3000u, 2500u);
++    race3.flyingRadius = Smooth(3.0f, 3000u, 2500u);
++    race3.gasFar = Smooth(1.0f, 2000u, 1000u);
++    race3.brakeFar = Smooth(-0.699999988f, 750u, 1000u);
++    race3.steerFar = Smooth(-0.800000012f, 2000u, 1500u);
++    race3.turboFieldOfView = Smooth(10.5f, 1000u, 1400u);
++    race3.turboFar = Smooth(-0.600000024f, 1000u, 1400u);
++    race3.gearFar = Smooth(-0.349999994f, 500u, 2000u);
++    race3.burningLook = Smooth(-0.400000006f, 2000u, 1500u);
++    race3.burningRadius = Smooth(1.0f, 2000u, 1500u);
++    race3.speedModulationCurve = {
++            {-100.0f, 1.5f}, {-50.0f, 1.20000005f}, {0.0f, 1.0f},
++            {250.0f, 1.5f}, {500.0f, 2.0f}, {700.0f, 3.0f},
++    };
++    race3.flyingLookCurve = race2.flyingLookCurve;
++    race3.flyingDownCurve = {
++            {0.0f, 0.0f}, {1.0f, 0.0f},
++            {1.10000002f, 0.0299999993f},
++            {1.29999995f, 0.100000001f}, {2.0f, 0.300000012f},
++            {10.0f, 0.349999994f}, {20.0f, 0.400000006f},
++            {40.0f, 0.5f}, {60.0f, 0.600000024f},
++    };
++    environment.race3 = race3;
++
++    return RaceCameraEnvironmentFactory::Create(std::move(environment));
++}
++
++inline const forevervalidator::camera::RaceCameraEnvironment &Environment() {
++    static const auto environment = BuildEnvironment();
++    return environment;
++}
++
++} // namespace race_camera_test_fixture
+diff --git a/tests/race_camera_tests.cpp b/tests/race_camera_tests.cpp
+new file mode 100644
+index 0000000..991e7d5
+--- /dev/null
++++ b/tests/race_camera_tests.cpp
+@@ -0,0 +1,397 @@
++#include <forevervalidator/camera.h>
++
++#include "engine/camera/race_camera_internal.h"
++#include "race_camera_test_fixture.h"
++
++#include <cmath>
++#include <cstdint>
++#include <iostream>
++#include <optional>
++
++namespace {
++
++using forevervalidator::camera::ProfileInfo;
++using forevervalidator::camera::RaceCameraOutput;
++using forevervalidator::camera::RaceCameraEnvironment;
++using forevervalidator::camera::RaceCameraProfile;
++using forevervalidator::camera::RaceCameraQuery;
++using forevervalidator::camera::RaceCameraSession;
++using forevervalidator::camera::RaceCameraVehicleState;
++using forevervalidator::camera::SegmentHit;
++using forevervalidator::camera::SegmentQuery;
++using forevervalidator::camera::detail::ToInternal;
++
++const RaceCameraEnvironment &FixtureEnvironment() {
++    return race_camera_test_fixture::Environment();
++}
++
++bool Check(bool condition, const char *message) {
++    if (!condition) {
++        std::cerr << message << '\n';
++    }
++    return condition;
++}
++
++bool NearlyEqual(float lhs, float rhs, float tolerance = 1.0e-5f) {
++    return std::fabs(lhs - rhs) <= tolerance;
++}
++
++bool NearlyEqual(const GmVec3 &lhs, const GmVec3 &rhs,
++                 float tolerance = 1.0e-5f) {
++    return NearlyEqual(lhs.x, rhs.x, tolerance) &&
++           NearlyEqual(lhs.y, rhs.y, tolerance) &&
++           NearlyEqual(lhs.z, rhs.z, tolerance);
++}
++
++GmVec3 Normalize(const GmVec3 &value) {
++    const float inverse =
++            1.0f / std::sqrt(value.x * value.x + value.y * value.y +
++                             value.z * value.z);
++    return {value.x * inverse, value.y * inverse, value.z * inverse};
++}
++
++RaceCameraVehicleState IdentityVehicle(std::uint32_t timeMs = 0u) {
++    RaceCameraVehicleState vehicle;
++    vehicle.targetId = 0x1234u;
++    vehicle.timeMs = timeMs;
++    vehicle.transform.rotation = {1.0f, 0.0f, 0.0f, 0.0f};
++    vehicle.transform.position = {0.0f, 0.0f, 0.0f};
++    vehicle.cameraSupportUp = {0.0f, 1.0f, 0.0f};
++    return vehicle;
++}
++
++RaceCameraOutput Evaluate(RaceCameraSession &session,
++                          const RaceCameraVehicleState &vehicle) {
++    RaceCameraQuery query;
++    query.vehicle = vehicle;
++    return session.Evaluate(query);
++}
++
++bool CheckPose(const RaceCameraOutput &output, const GmVec3 &position,
++               const GmVec3 &direction, const char *name) {
++    const GmIso4 transform = ToInternal(output.transform);
++    bool okay = true;
++    okay &= Check(NearlyEqual(transform.translation, position, 2.0e-5f), name);
++    okay &= Check(NearlyEqual(transform.rotation.Row(GmAxis::Z),
++                              Normalize(direction), 2.0e-5f),
++                  name);
++    return okay;
++}
++
++bool TestProfileMetadata() {
++    const auto &race = ProfileInfo(RaceCameraProfile::Race);
++    const auto &race2 = ProfileInfo(RaceCameraProfile::Race2);
++    const auto &race3 = ProfileInfo(RaceCameraProfile::Race3);
++    bool okay = true;
++    okay &= Check(race.classId == 0x24085000u &&
++                          race.className ==
++                                  "CGameControlCameraTrackManiaRace" &&
++                          !race.stadiumVehicleResourceIndex,
++                  "Race profile metadata differs from the executable");
++    okay &= Check(race2.classId == 0x24086000u &&
++                          race2.stadiumVehicleResourceIndex == 1u,
++                  "Race2 profile metadata differs from the executable");
++    okay &= Check(race3.classId == 0x24087000u &&
++                          race3.stadiumVehicleResourceIndex == 2u,
++                  "Race3 profile metadata differs from the executable");
++    return okay;
++}
++
++bool TestLoadedIdentityFixtures() {
++    const RaceCameraVehicleState vehicle = IdentityVehicle();
++    bool okay = true;
++
++    RaceCameraSession race(FixtureEnvironment(), RaceCameraProfile::Race);
++    race.Reset(vehicle);
++    const RaceCameraOutput raceOutput = Evaluate(race, vehicle);
++    okay &= CheckPose(raceOutput, {0.0f, 30.0f, -15.0f}, {0.0f, -30.0f, 15.0f},
++                      "Race identity pose differs from loaded-profile oracle");
++    okay &= Check(NearlyEqual(raceOutput.lens.fieldOfViewDegrees, 80.0f) &&
++                          NearlyEqual(raceOutput.lens.parameter1, 30.0f) &&
++                          NearlyEqual(raceOutput.lens.parameter2, 3.0f),
++                  "Race identity lens differs from loaded-profile oracle");
++
++    RaceCameraSession race2(FixtureEnvironment(), RaceCameraProfile::Race2);
++    race2.Reset(vehicle);
++    const RaceCameraOutput race2Output = Evaluate(race2, vehicle);
++    okay &= CheckPose(race2Output, {0.0f, 3.299999952316284f, -5.0f},
++                      {0.0f, -0.9899999499320984f, 5.0f},
++                      "Race2 identity pose differs from loaded-profile oracle");
++    okay &= Check(NearlyEqual(race2Output.lens.fieldOfViewDegrees, 75.0f) &&
++                          NearlyEqual(race2Output.lens.parameter1, 30.0f) &&
++                          NearlyEqual(race2Output.lens.parameter2, 3.0f),
++                  "Race2 identity lens differs from loaded-profile oracle");
++
++    RaceCameraSession race3(FixtureEnvironment(), RaceCameraProfile::Race3);
++    race3.Reset(vehicle);
++    const RaceCameraOutput race3Output = Evaluate(race3, vehicle);
++    okay &= CheckPose(race3Output, {0.0f, 2.200000047683716f, -4.5f},
++                      {0.0f, -0.2640000581741333f, 4.5f},
++                      "Race3 identity pose differs from loaded-profile oracle");
++    okay &= Check(
++            NearlyEqual(race3Output.lens.fieldOfViewDegrees, 75.0f) &&
++                    NearlyEqual(race3Output.lens.parameter1,
++                                5.008991718292236f) &&
++                    NearlyEqual(race3Output.lens.parameter2, 1.0f),
++            "Race3 identity lens differs from captured executable fixture");
++    return okay;
++}
++
++bool TestRaceWorldAlignedCone() {
++    RaceCameraVehicleState resetVehicle = IdentityVehicle();
++    RaceCameraSession identityRotation(
++            FixtureEnvironment(), RaceCameraProfile::Race);
++    RaceCameraSession rotatedVehicle(
++            FixtureEnvironment(), RaceCameraProfile::Race);
++    identityRotation.Reset(resetVehicle);
++    rotatedVehicle.Reset(resetVehicle);
++
++    RaceCameraVehicleState identityQuery = resetVehicle;
++    identityQuery.transform.position = {20.0f, 0.0f, 0.0f};
++    identityQuery.signedSpeed = 60.0f;
++
++    RaceCameraVehicleState rotatedQuery = identityQuery;
++    constexpr float HalfSqrtTwo = 0.7071067690849304f;
++    rotatedQuery.transform.rotation = {HalfSqrtTwo, 0.0f, HalfSqrtTwo, 0.0f};
++
++    const GmIso4 identityOutput =
++            ToInternal(Evaluate(identityRotation, identityQuery).transform);
++    const GmIso4 rotatedOutput =
++            ToInternal(Evaluate(rotatedVehicle, rotatedQuery).transform);
++
++    bool okay = Check(NearlyEqual(identityOutput.translation,
++                                  {20.0f, 30.0f, -25.0f}, 2.0e-5f),
++                      "Race cone edge differs from the executable");
++    okay &= Check(NearlyEqual(identityOutput.translation,
++                              rotatedOutput.translation, 2.0e-5f),
++                  "Race incorrectly followed target rotation");
++    return okay;
++}
++
++bool TestRace2LoadedSteeringDisable() {
++    RaceCameraSession neutral(FixtureEnvironment(), RaceCameraProfile::Race2);
++    RaceCameraSession steering(FixtureEnvironment(), RaceCameraProfile::Race2);
++    RaceCameraVehicleState neutralVehicle = IdentityVehicle();
++    RaceCameraVehicleState steeringVehicle = neutralVehicle;
++    neutral.Reset(neutralVehicle);
++    steering.Reset(steeringVehicle);
++
++    bool okay = true;
++    for (const std::uint32_t timeMs : {0u, 100u, 300u, 700u, 1500u, 3000u}) {
++        neutralVehicle.timeMs = timeMs;
++        steeringVehicle.timeMs = timeMs;
++        neutralVehicle.signedSpeed = 200.0f;
++        steeringVehicle.signedSpeed = 200.0f;
++        steeringVehicle.steering = 1.0f;
++        const GmIso4 neutralTransform =
++                ToInternal(Evaluate(neutral, neutralVehicle).transform);
++        const GmIso4 steeringTransform =
++                ToInternal(Evaluate(steering, steeringVehicle).transform);
++        okay &= Check(
++                NearlyEqual(neutralTransform.translation,
++                            steeringTransform.translation) &&
++                        NearlyEqual(neutralTransform.rotation.basisX,
++                                    steeringTransform.rotation.basisX) &&
++                        NearlyEqual(neutralTransform.rotation.basisY,
++                                    steeringTransform.rotation.basisY) &&
++                        NearlyEqual(neutralTransform.rotation.basisZ,
++                                    steeringTransform.rotation.basisZ),
++                "Race2 applied steering despite loaded isRollFromInput=false");
++    }
++    return okay;
++}
++
++bool TestTurboFovFixture() {
++    bool okay = true;
++    for (const RaceCameraProfile profile :
++         {RaceCameraProfile::Race2, RaceCameraProfile::Race3}) {
++        RaceCameraSession session(FixtureEnvironment(), profile);
++        RaceCameraVehicleState vehicle = IdentityVehicle();
++        vehicle.turbo = 1.0f;
++        session.Reset(vehicle);
++        (void)Evaluate(session, vehicle);
++        vehicle.timeMs = 500u;
++        const RaceCameraOutput output = Evaluate(session, vehicle);
++        okay &= Check(
++                NearlyEqual(output.lens.fieldOfViewDegrees, 80.26664733886719f,
++                            2.0e-5f),
++                "Turbo FOV inverse-cosine fixture differs from executable");
++    }
++    return okay;
++}
++
++bool TestRace3CollisionGate() {
++    RaceCameraSession session(FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraVehicleState vehicle = IdentityVehicle();
++    session.Reset(vehicle);
++
++    int queryCount = 0;
++    SegmentQuery lastQuery{};
++    auto collision =
++            [&](const SegmentQuery &query) -> std::optional<SegmentHit> {
++        ++queryCount;
++        lastQuery = query;
++        return std::nullopt;
++    };
++
++    RaceCameraQuery query;
++    query.vehicle = vehicle;
++    query.segmentCollision = collision;
++    (void)session.Evaluate(query);
++
++    query.vehicle.timeMs = 1u;
++    query.vehicle.wheelHasSurface = {{false, false, false, false}};
++    (void)session.Evaluate(query);
++    bool okay = Check(queryCount == 0,
++                      "Race3 collision ran before the prior low-surface frame");
++
++    query.vehicle.timeMs = 3u;
++    (void)session.Evaluate(query);
++    okay &= Check(queryCount == 1,
++                  "Race3 collision did not run after two low-surface frames");
++    okay &= Check(
++            NearlyEqual(lastQuery.start.x, lastQuery.end.x) &&
++                    NearlyEqual(lastQuery.start.z, lastQuery.end.z) &&
++                    NearlyEqual(lastQuery.end.y - lastQuery.start.y, -4.0f),
++            "Race3 collision segment differs from loaded radius 2.0");
++    return okay;
++}
++
++bool TestRace3LowSpeedFlightTransition() {
++    RaceCameraSession normal(FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraSession transitioned(
++            FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraVehicleState normalVehicle = IdentityVehicle();
++    RaceCameraVehicleState transitionedVehicle = normalVehicle;
++    normal.Reset(normalVehicle);
++    transitioned.Reset(transitionedVehicle);
++
++    for (const std::uint32_t timeMs : {0u, 1u, 3u, 503u, 1003u}) {
++        normalVehicle.timeMs = timeMs;
++        transitionedVehicle.timeMs = timeMs;
++        normalVehicle.wheelHasSurface =
++                timeMs == 0u
++                        ? std::array<bool, 4>{{true, true, true, true}}
++                        : std::array<bool, 4>{{false, false, false, false}};
++        transitionedVehicle.wheelHasSurface = normalVehicle.wheelHasSurface;
++        transitionedVehicle.cameraFlightTransition = 1.0f;
++        (void)Evaluate(normal, normalVehicle);
++        (void)Evaluate(transitioned, transitionedVehicle);
++    }
++
++    const GmIso4 normalOutput =
++            ToInternal(Evaluate(normal, normalVehicle).transform);
++    const GmIso4 transitionedOutput =
++            ToInternal(Evaluate(transitioned, transitionedVehicle).transform);
++    return Check(
++            !NearlyEqual(normalOutput.translation,
++                         transitionedOutput.translation, 1.0e-4f),
++            "Race3 ignored the low-speed airborne camera transition input");
++}
++
++bool TestDistinctWheelSignals() {
++    RaceCameraVehicleState baseVehicle = IdentityVehicle();
++    bool okay = true;
++
++    RaceCameraSession race2Ground(
++            FixtureEnvironment(), RaceCameraProfile::Race2);
++    RaceCameraSession race2Airborne(
++            FixtureEnvironment(), RaceCameraProfile::Race2);
++    race2Ground.Reset(baseVehicle);
++    race2Airborne.Reset(baseVehicle);
++    RaceCameraVehicleState race2GroundVehicle = baseVehicle;
++    RaceCameraVehicleState race2AirborneVehicle = baseVehicle;
++    for (const std::uint32_t timeMs : {0u, 1u, 202u, 1000u, 2000u}) {
++        race2GroundVehicle.timeMs = timeMs;
++        race2AirborneVehicle.timeMs = timeMs;
++        if (timeMs != 0u) {
++            race2AirborneVehicle.wheelContact = {{false, false, false, false}};
++        }
++        race2AirborneVehicle.wheelHasSurface = {{true, true, true, true}};
++        (void)Evaluate(race2Ground, race2GroundVehicle);
++        (void)Evaluate(race2Airborne, race2AirborneVehicle);
++    }
++    const GmIso4 race2GroundOutput =
++            ToInternal(Evaluate(race2Ground, race2GroundVehicle).transform);
++    const GmIso4 race2AirborneOutput =
++            ToInternal(Evaluate(race2Airborne, race2AirborneVehicle).transform);
++    okay &= Check(!NearlyEqual(race2GroundOutput.translation,
++                               race2AirborneOutput.translation, 1.0e-4f),
++                  "Race2 ignored the wheel contact-present signal");
++
++    RaceCameraSession race3ContactPresent(
++            FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraSession race3ContactAbsent(
++            FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraVehicleState contactPresentVehicle = baseVehicle;
++    RaceCameraVehicleState contactAbsentVehicle = baseVehicle;
++    contactAbsentVehicle.wheelContact = {{false, false, false, false}};
++    race3ContactPresent.Reset(contactPresentVehicle);
++    race3ContactAbsent.Reset(contactAbsentVehicle);
++    for (const std::uint32_t timeMs : {0u, 3u, 500u}) {
++        contactPresentVehicle.timeMs = timeMs;
++        contactAbsentVehicle.timeMs = timeMs;
++        const GmIso4 present = ToInternal(
++                Evaluate(race3ContactPresent, contactPresentVehicle).transform);
++        const GmIso4 absent = ToInternal(
++                Evaluate(race3ContactAbsent, contactAbsentVehicle).transform);
++        okay &= Check(
++                NearlyEqual(present.translation, absent.translation, 2.0e-5f),
++                "Race3 incorrectly used wheel contact-present state");
++    }
++    return okay;
++}
++
++bool TestRace3CollisionCorrection() {
++    RaceCameraSession noHit(FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraSession hit(FixtureEnvironment(), RaceCameraProfile::Race3);
++    RaceCameraQuery noHitQuery;
++    RaceCameraQuery hitQuery;
++    noHitQuery.vehicle = IdentityVehicle();
++    hitQuery.vehicle = noHitQuery.vehicle;
++    noHit.Reset(noHitQuery.vehicle);
++    hit.Reset(hitQuery.vehicle);
++
++    noHitQuery.segmentCollision =
++            [](const SegmentQuery &) -> std::optional<SegmentHit> {
++        return std::nullopt;
++    };
++    hitQuery.segmentCollision =
++            [](const SegmentQuery &) -> std::optional<SegmentHit> {
++        return SegmentHit{0.0f};
++    };
++
++    for (const std::uint32_t timeMs : {0u, 1u, 3u, 13u}) {
++        noHitQuery.vehicle.timeMs = timeMs;
++        hitQuery.vehicle.timeMs = timeMs;
++        if (timeMs != 0u) {
++            noHitQuery.vehicle.wheelHasSurface = {{false, false, false, false}};
++            hitQuery.vehicle.wheelHasSurface =
++                    noHitQuery.vehicle.wheelHasSurface;
++        }
++        (void)noHit.Evaluate(noHitQuery);
++        (void)hit.Evaluate(hitQuery);
++    }
++
++    const RaceCameraOutput noHitOutput = noHit.Evaluate(noHitQuery);
++    const RaceCameraOutput hitOutput = hit.Evaluate(hitQuery);
++    return Check(hitOutput.transform.position.y >
++                         noHitOutput.transform.position.y + 0.01f,
++                 "Race3 did not apply the segment collision correction");
++}
++
++} // namespace
++
++int main() {
++    bool okay = true;
++    okay &= TestProfileMetadata();
++    okay &= TestLoadedIdentityFixtures();
++    okay &= TestRaceWorldAlignedCone();
++    okay &= TestRace2LoadedSteeringDisable();
++    okay &= TestTurboFovFixture();
++    okay &= TestRace3CollisionGate();
++    okay &= TestRace3LowSpeedFlightTransition();
++    okay &= TestDistinctWheelSignals();
++    okay &= TestRace3CollisionCorrection();
++    return okay ? 0 : 1;
++}

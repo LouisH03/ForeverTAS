@@ -75,7 +75,20 @@ SearchTimelineFrame ToTimelineFrame(
             view.completedLaps,
             view.totalLaps,
             view.raceCompleted,
-            view.finishTimeMs};
+            view.finishTimeMs,
+            view.car.linearSpeed.x,
+            view.car.linearSpeed.y,
+            view.car.linearSpeed.z,
+            view.car.signedSpeed,
+            view.car.turbo,
+            view.car.cameraFlightTransition,
+            view.car.burning,
+            view.car.gearChanged,
+            view.car.wheelContact,
+            view.car.wheelHasSurface,
+            view.car.cameraSupportUp.x,
+            view.car.cameraSupportUp.y,
+            view.car.cameraSupportUp.z};
 }
 
 struct TimelineSamplingRuntime {

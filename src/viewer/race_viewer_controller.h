@@ -18,6 +18,7 @@
 #include <QVector2D>
 #include <QVector3D>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,6 +29,8 @@ class QThread;
 namespace forevertas::viewer {
 
 class ManualDriveRuntime;
+class RaceCameraResources;
+class RaceCameraRuntime;
 
 struct RaceViewerFrame {
     std::int64_t timeMs = 0;
@@ -42,6 +45,15 @@ struct RaceViewerFrame {
     std::uint32_t totalLaps = 1u;
     bool raceCompleted = false;
     std::optional<std::uint32_t> finishTimeMs;
+    QVector3D linearSpeed{};
+    float signedSpeed = 0.0f;
+    float turbo = 0.0f;
+    float cameraFlightTransition = 0.0f;
+    bool burning = false;
+    bool gearChanged = false;
+    std::array<bool, 4> wheelContact{{true, true, true, true}};
+    std::array<bool, 4> wheelHasSurface{{true, true, true, true}};
+    QVector3D cameraSupportUp{0.0f, 1.0f, 0.0f};
 };
 
 struct RaceViewerSplit {
@@ -95,6 +107,7 @@ struct RaceViewerLoadResult {
     std::int64_t materialCount = 0;
     std::int64_t diagnosticCount = 0;
     std::shared_ptr<ManualDriveRuntime> manualRuntime;
+    std::shared_ptr<const RaceCameraResources> cameraResources;
     PhysicsBackend backend = PhysicsBackend::OptimizedCpu;
 };
 
@@ -139,6 +152,19 @@ class RaceViewerController final : public QObject {
                        NOTIFY selectedRunChanged)
     Q_PROPERTY(QVector3D carPosition READ carPosition NOTIFY poseChanged)
     Q_PROPERTY(QQuaternion carRotation READ carRotation NOTIFY poseChanged)
+    Q_PROPERTY(int cameraPreset READ cameraPreset WRITE setCameraPreset NOTIFY
+                       cameraPresetChanged)
+    Q_PROPERTY(bool carCameraAvailable READ carCameraAvailable NOTIFY
+                       cameraChanged)
+    Q_PROPERTY(QVector3D carCameraPosition READ carCameraPosition NOTIFY
+                       cameraChanged)
+    Q_PROPERTY(QQuaternion carCameraRotation READ carCameraRotation NOTIFY
+                       cameraChanged)
+    Q_PROPERTY(QVector3D carCameraTarget READ carCameraTarget NOTIFY
+                       cameraChanged)
+    Q_PROPERTY(double carCameraFieldOfView READ carCameraFieldOfView NOTIFY
+                       cameraChanged)
+    Q_PROPERTY(bool hideSelectedCar READ hideSelectedCar NOTIFY cameraChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY timelineChanged)
     Q_PROPERTY(qint64 timeMs READ timeMs WRITE setTimeMs NOTIFY timeChanged)
     Q_PROPERTY(qint64 currentTick READ currentTick WRITE setCurrentTick NOTIFY
@@ -212,6 +238,13 @@ public:
     QString selectedRunId() const;
     QVector3D carPosition() const;
     QQuaternion carRotation() const;
+    int cameraPreset() const;
+    bool carCameraAvailable() const;
+    QVector3D carCameraPosition() const;
+    QQuaternion carCameraRotation() const;
+    QVector3D carCameraTarget() const;
+    double carCameraFieldOfView() const;
+    bool hideSelectedCar() const;
     qint64 durationMs() const;
     qint64 timelineSeekLimitMs() const;
     qint64 timeMs() const;
@@ -281,6 +314,7 @@ public slots:
     void setSelectedRunId(const QString &value);
     void setPreviewInputScript(const QString &value);
     void setTakeOverOnInput(bool value);
+    void setCameraPreset(int value);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void togglePlayback();
@@ -321,6 +355,8 @@ signals:
     void selectedRunChanged();
     void trajectoriesChanged();
     void previewInputScriptChanged();
+    void cameraPresetChanged();
+    void cameraChanged();
 
 private:
     void applyLoadResult(std::uint64_t loadSerial,
@@ -364,6 +400,7 @@ private:
     void setStatusText(const QString &value);
     void waitForWorker();
     void updatePose();
+    void updateCarCamera();
     void advancePlayback();
     void advanceManualDrive();
     void appendSimulationDebuggerFrame(const QVariantMap &frame);
@@ -418,6 +455,12 @@ private:
     std::vector<QString> trajectoryKeys_;
     QVector3D carPosition_{};
     QQuaternion carRotation_{};
+    QVector3D carCameraPosition_{};
+    QQuaternion carCameraRotation_{};
+    QVector3D carCameraTarget_{};
+    double carCameraFieldOfView_ = 75.0;
+    int cameraPreset_ = 1;
+    bool carCameraAvailable_ = false;
     QString statusText_ = QStringLiteral("No map loaded");
     QString selectedRunId_;
     QString loadedPacksDirectory_;
@@ -457,6 +500,8 @@ private:
     QElapsedTimer manualDriveClock_;
     SimulationDebuggerModel simulationDebugger_;
     std::shared_ptr<ManualDriveRuntime> manualRuntime_;
+    std::shared_ptr<const RaceCameraResources> cameraResources_;
+    std::unique_ptr<RaceCameraRuntime> cameraRuntime_;
     std::shared_ptr<ManualDriveRuntime> inputPreviewRuntime_;
     QThread *workerThread_ = nullptr;
     QThread *inputPreviewThread_ = nullptr;

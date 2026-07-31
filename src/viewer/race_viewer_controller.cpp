@@ -6,12 +6,14 @@
 #include "time_format.h"
 #include "viewer/material_classifier.h"
 
+#include <forevervalidator/camera.h>
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
 #include <QCryptographicHash>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QSettings>
 #include <QThread>
 #include <QVariantMap>
 #include <QtEndian>
@@ -22,6 +24,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace forevertas::viewer {
@@ -49,6 +52,297 @@ public:
             forevervalidator::experimental::PhysicsSandboxInputEvent>
             driverInputs;
     forevervalidator::experimental::PhysicsSandboxStateView state{};
+};
+
+class RaceCameraResources {
+public:
+    forevervalidator::VehicleModel vehicleModel =
+            forevervalidator::VehicleModel::Unknown;
+    forevervalidator::camera::RaceCameraEnvironment vehicleEnvironment;
+    std::optional<forevervalidator::camera::RaceCameraEnvironment>
+            sharedFarEnvironment;
+    QVector3D hoodLocalPosition{0.0f, 1.1f, 0.75f};
+};
+
+class RaceCameraRuntime {
+public:
+    explicit RaceCameraRuntime(
+            std::shared_ptr<const RaceCameraResources> resources)
+        : resources_(std::move(resources)) {}
+
+    bool Evaluate(const RaceViewerRun &run,
+                  int preset,
+                  qint64 timeMs,
+                  QVector3D *position,
+                  QQuaternion *rotation,
+                  QVector3D *target,
+                  double *fieldOfView) {
+        if (resources_ == nullptr || run.frames.empty() ||
+            position == nullptr || rotation == nullptr ||
+            target == nullptr || fieldOfView == nullptr) {
+            return false;
+        }
+        const qint64 clampedTime = std::clamp<qint64>(
+                timeMs, run.frames.front().timeMs,
+                run.frames.back().timeMs);
+        const RaceViewerFrame sampled = SampleFrame(run.frames, clampedTime);
+        if (preset == 3) {
+            const QQuaternion vehicleRotation = sampled.rotation.normalized();
+            *position = sampled.position +
+                    vehicleRotation.rotatedVector(
+                            resources_->hoodLocalPosition);
+            *rotation = vehicleRotation *
+                    QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, 180.0f);
+            *target = *position +
+                    rotation->rotatedVector(QVector3D(0.0f, 0.0f, -10.0f));
+            *fieldOfView = 75.0;
+            session_.reset();
+            runId_ = run.id;
+            preset_ = preset;
+            lastTimeMs_ = clampedTime;
+            nextFrameIndex_ = 0u;
+            return true;
+        }
+
+        if (preset != preset_ || run.id != runId_ ||
+            !session_ || clampedTime < lastTimeMs_) {
+            if (!Reset(run, preset)) {
+                return false;
+            }
+        }
+        if (clampedTime == lastTimeMs_ && outputValid_) {
+            WriteOutput(position, rotation, target, fieldOfView);
+            return true;
+        }
+        while (nextFrameIndex_ < run.frames.size() &&
+               run.frames[nextFrameIndex_].timeMs <= clampedTime) {
+            EvaluateFrame(run.frames[nextFrameIndex_]);
+            ++nextFrameIndex_;
+        }
+        if (lastTimeMs_ < clampedTime) {
+            EvaluateFrame(sampled);
+        }
+        if (!outputValid_) {
+            return false;
+        }
+        WriteOutput(position, rotation, target, fieldOfView);
+        return true;
+    }
+
+private:
+    struct SessionSelection {
+        const forevervalidator::camera::RaceCameraEnvironment *environment =
+                nullptr;
+        forevervalidator::camera::RaceCameraProfile profile =
+                forevervalidator::camera::RaceCameraProfile::Race;
+        std::optional<std::size_t> resourceIndex;
+    };
+
+    static RaceViewerFrame SampleFrame(
+            const std::vector<RaceViewerFrame> &frames, qint64 timeMs) {
+        const auto upper = std::lower_bound(
+                frames.begin(), frames.end(), timeMs,
+                [](const RaceViewerFrame &frame, qint64 time) {
+                    return frame.timeMs < time;
+                });
+        if (upper == frames.begin()) {
+            RaceViewerFrame result = *upper;
+            result.timeMs = timeMs;
+            return result;
+        }
+        if (upper == frames.end()) {
+            RaceViewerFrame result = frames.back();
+            result.timeMs = timeMs;
+            return result;
+        }
+        if (upper->timeMs == timeMs) {
+            return *upper;
+        }
+        const RaceViewerFrame &after = *upper;
+        const RaceViewerFrame &before = *(upper - 1);
+        const qint64 interval = after.timeMs - before.timeMs;
+        const float blend = interval > 0
+                ? static_cast<float>(timeMs - before.timeMs) /
+                          static_cast<float>(interval)
+                : 0.0f;
+        RaceViewerFrame result = before;
+        result.timeMs = timeMs;
+        result.position = before.position * (1.0f - blend) +
+                after.position * blend;
+        result.rotation = QQuaternion::slerp(
+                before.rotation, after.rotation, blend).normalized();
+        result.linearSpeed = before.linearSpeed * (1.0f - blend) +
+                after.linearSpeed * blend;
+        result.signedSpeed = before.signedSpeed * (1.0f - blend) +
+                after.signedSpeed * blend;
+        result.accelerate = before.accelerate * (1.0f - blend) +
+                after.accelerate * blend;
+        result.brake = before.brake * (1.0f - blend) +
+                after.brake * blend;
+        result.steering = before.steering * (1.0f - blend) +
+                after.steering * blend;
+        return result;
+    }
+
+    static std::optional<std::size_t> FindResource(
+            const forevervalidator::camera::RaceCameraEnvironment &environment,
+            forevervalidator::camera::RaceCameraProfile profile,
+            std::string_view text) {
+        for (std::size_t index = 0u;
+             index < environment.ResourceCount(profile); ++index) {
+            if (environment.ResourceName(profile, index).find(text) !=
+                std::string_view::npos) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::optional<SessionSelection> SelectSession(int preset) const {
+        using forevervalidator::VehicleModel;
+        using forevervalidator::camera::RaceCameraProfile;
+        const auto &vehicle = resources_->vehicleEnvironment;
+        if (preset == 2) {
+            if (vehicle.HasProfile(RaceCameraProfile::Race2)) {
+                return SessionSelection{
+                        &vehicle, RaceCameraProfile::Race2, std::nullopt};
+            }
+            if (vehicle.HasProfile(RaceCameraProfile::Race)) {
+                return SessionSelection{
+                        &vehicle, RaceCameraProfile::Race,
+                        FindResource(vehicle, RaceCameraProfile::Race,
+                                     "Raprochee")};
+            }
+            return std::nullopt;
+        }
+        if (vehicle.HasProfile(RaceCameraProfile::Race)) {
+            std::optional<std::size_t> resource;
+            if (resources_->vehicleModel == VehicleModel::SnowCar) {
+                resource = FindResource(
+                        vehicle, RaceCameraProfile::Race, "Normale2");
+            } else if (resources_->vehicleModel == VehicleModel::RallyCar) {
+                resource = FindResource(
+                        vehicle, RaceCameraProfile::Race, "Rally");
+            } else if (resources_->vehicleModel == VehicleModel::DesertCar) {
+                const std::size_t count =
+                        vehicle.ResourceCount(RaceCameraProfile::Race);
+                if (count != 0u) {
+                    resource = count - 1u;
+                }
+            }
+            return SessionSelection{
+                    &vehicle, RaceCameraProfile::Race, resource};
+        }
+        if (resources_->sharedFarEnvironment &&
+            resources_->sharedFarEnvironment->HasProfile(
+                    RaceCameraProfile::Race)) {
+            const auto &shared = *resources_->sharedFarEnvironment;
+            const std::size_t count =
+                    shared.ResourceCount(RaceCameraProfile::Race);
+            return SessionSelection{
+                    &shared, RaceCameraProfile::Race,
+                    count == 0u
+                            ? std::optional<std::size_t>{}
+                            : std::optional<std::size_t>{count - 1u}};
+        }
+        return std::nullopt;
+    }
+
+    static forevervalidator::camera::RaceCameraVehicleState ToCameraState(
+            const RaceViewerFrame &frame) {
+        forevervalidator::camera::RaceCameraVehicleState result;
+        result.targetId = 1u;
+        result.timeMs = static_cast<std::uint32_t>(
+                std::clamp<std::int64_t>(
+                        frame.timeMs, std::int64_t{0},
+                        static_cast<std::int64_t>(
+                                std::numeric_limits<std::uint32_t>::max())));
+        result.transform.position = {
+                frame.position.x(), frame.position.y(), frame.position.z()};
+        const QQuaternion rotation = frame.rotation.normalized();
+        result.transform.rotation = {rotation.scalar(), rotation.x(),
+                                     rotation.y(), rotation.z()};
+        result.linearSpeed = {frame.linearSpeed.x(), frame.linearSpeed.y(),
+                              frame.linearSpeed.z()};
+        result.signedSpeed = frame.signedSpeed;
+        result.steering = frame.steering;
+        result.accelerate = frame.accelerate;
+        result.brake = frame.brake;
+        result.turbo = frame.turbo;
+        result.cameraFlightTransition = frame.cameraFlightTransition;
+        result.burning = frame.burning;
+        result.gearChanged = frame.gearChanged;
+        result.wheelContact = frame.wheelContact;
+        result.wheelHasSurface = frame.wheelHasSurface;
+        result.cameraSupportUp = {
+                frame.cameraSupportUp.x(), frame.cameraSupportUp.y(),
+                frame.cameraSupportUp.z()};
+        return result;
+    }
+
+    bool Reset(const RaceViewerRun &run, int preset) {
+        const std::optional<SessionSelection> selection =
+                SelectSession(preset);
+        if (!selection || selection->environment == nullptr) {
+            return false;
+        }
+        if (selection->resourceIndex) {
+            session_ = std::make_unique<
+                    forevervalidator::camera::RaceCameraSession>(
+                    *selection->environment, selection->profile,
+                    *selection->resourceIndex);
+        } else {
+            session_ = std::make_unique<
+                    forevervalidator::camera::RaceCameraSession>(
+                    *selection->environment, selection->profile);
+        }
+        const forevervalidator::camera::RaceCameraVehicleState initial =
+                ToCameraState(run.frames.front());
+        session_->Reset(initial);
+        runId_ = run.id;
+        preset_ = preset;
+        lastTimeMs_ = std::numeric_limits<qint64>::min();
+        nextFrameIndex_ = 0u;
+        outputValid_ = false;
+        return true;
+    }
+
+    void EvaluateFrame(const RaceViewerFrame &frame) {
+        forevervalidator::camera::RaceCameraQuery query;
+        query.vehicle = ToCameraState(frame);
+        output_ = session_->Evaluate(query);
+        outputValid_ = true;
+        lastTimeMs_ = frame.timeMs;
+    }
+
+    void WriteOutput(QVector3D *position,
+                     QQuaternion *rotation,
+                     QVector3D *target,
+                     double *fieldOfView) const {
+        *position = QVector3D(output_.transform.position.x,
+                              output_.transform.position.y,
+                              output_.transform.position.z);
+        const QQuaternion validatorRotation(
+                output_.transform.rotation.w,
+                output_.transform.rotation.x,
+                output_.transform.rotation.y,
+                output_.transform.rotation.z);
+        *rotation = validatorRotation.normalized() *
+                QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, 180.0f);
+        *target = *position +
+                rotation->rotatedVector(QVector3D(0.0f, 0.0f, -10.0f));
+        *fieldOfView = std::clamp<double>(
+                output_.lens.fieldOfViewDegrees, 20.0, 150.0);
+    }
+
+    std::shared_ptr<const RaceCameraResources> resources_;
+    std::unique_ptr<forevervalidator::camera::RaceCameraSession> session_;
+    QString runId_;
+    int preset_ = 0;
+    qint64 lastTimeMs_ = std::numeric_limits<qint64>::min();
+    std::size_t nextFrameIndex_ = 0u;
+    forevervalidator::camera::RaceCameraOutput output_{};
+    bool outputValid_ = false;
 };
 
 namespace {
@@ -79,6 +373,85 @@ T Require(DiscriminatedResult<T, Error> result, const char *operation) {
 
 QVector3D ToQt(const forevervalidator::Vector3 &value) {
     return {value.x, value.y, value.z};
+}
+
+std::string VehicleCameraPackName(forevervalidator::VehicleModel model) {
+    using forevervalidator::VehicleModel;
+    switch (model) {
+    case VehicleModel::SnowCar:
+        return "Alpine";
+    case VehicleModel::DesertCar:
+        return "Speed";
+    case VehicleModel::RallyCar:
+        return "Rally";
+    case VehicleModel::IslandCar:
+        return "Island";
+    case VehicleModel::CoastCar:
+        return "Coast";
+    case VehicleModel::BayCar:
+        return "Bay";
+    case VehicleModel::StadiumCar:
+        return "Stadium";
+    case VehicleModel::Unknown:
+        break;
+    }
+    return {};
+}
+
+QVector3D HoodCameraPosition(
+        const forevervalidator::experimental::PhysicsSandboxSceneView &scene) {
+    float top = 1.1f;
+    float front = 0.75f;
+    for (const auto &ellipsoid : scene.carEllipsoids) {
+        const QQuaternion rotation(
+                ellipsoid.rotationW, ellipsoid.rotationX,
+                ellipsoid.rotationY, ellipsoid.rotationZ);
+        const QVector3D x = rotation.rotatedVector(
+                QVector3D(ellipsoid.radii.x, 0.0f, 0.0f));
+        const QVector3D y = rotation.rotatedVector(
+                QVector3D(0.0f, ellipsoid.radii.y, 0.0f));
+        const QVector3D z = rotation.rotatedVector(
+                QVector3D(0.0f, 0.0f, ellipsoid.radii.z));
+        const QVector3D extent(
+                std::fabs(x.x()) + std::fabs(y.x()) + std::fabs(z.x()),
+                std::fabs(x.y()) + std::fabs(y.y()) + std::fabs(z.y()),
+                std::fabs(x.z()) + std::fabs(y.z()) + std::fabs(z.z()));
+        top = std::max(top, ellipsoid.position.y + extent.y());
+        front = std::max(front, ellipsoid.position.z + extent.z());
+    }
+    return QVector3D(
+            0.0f,
+            std::clamp(top - 0.28f, 0.75f, 1.8f),
+            std::clamp(front * 0.62f, 0.35f, 1.5f));
+}
+
+std::shared_ptr<const RaceCameraResources> LoadCameraResources(
+        const QString &packsDirectory,
+        forevervalidator::VehicleModel vehicleModel,
+        const forevervalidator::experimental::PhysicsSandboxSceneView &scene) {
+    const std::string packName = VehicleCameraPackName(vehicleModel);
+    if (packName.empty()) {
+        return {};
+    }
+    auto loaded = forevervalidator::LoadInstalledRaceCameraEnvironment(
+            packsDirectory.toUtf8().toStdString(), packName);
+    if (!loaded) {
+        return {};
+    }
+    auto resources = std::make_shared<RaceCameraResources>();
+    resources->vehicleModel = vehicleModel;
+    resources->vehicleEnvironment = std::move(loaded).Value();
+    resources->hoodLocalPosition = HoodCameraPosition(scene);
+    using forevervalidator::camera::RaceCameraProfile;
+    if (!resources->vehicleEnvironment.HasProfile(
+                RaceCameraProfile::Race)) {
+        auto shared = forevervalidator::LoadInstalledRaceCameraEnvironment(
+                packsDirectory.toUtf8().toStdString(), "Alpine");
+        if (shared) {
+            resources->sharedFarEnvironment = std::move(shared).Value();
+        }
+    }
+    return resources;
 }
 
 QString CollisionSceneKey(
@@ -615,6 +988,8 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
                 "loading replay failed");
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
+        result.cameraResources = LoadCameraResources(
+                packsDirectory, initialState.vehicleModel, scene);
         result.mapKey = CollisionSceneKey(scene);
         result.mapName = QString::fromUtf8(Require(
                 sandbox.ReadMapName(),
@@ -807,7 +1182,20 @@ std::vector<RaceViewerFrame> ToViewerFrames(
                 frame.completedLaps,
                 frame.totalLaps,
                 frame.raceCompleted,
-                frame.finishTimeMs});
+                frame.finishTimeMs,
+                QVector3D(frame.linearSpeedX,
+                          frame.linearSpeedY,
+                          frame.linearSpeedZ),
+                frame.signedSpeed,
+                frame.turbo,
+                frame.cameraFlightTransition,
+                frame.burning,
+                frame.gearChanged,
+                frame.wheelContact,
+                frame.wheelHasSurface,
+                QVector3D(frame.cameraSupportUpX,
+                          frame.cameraSupportUpY,
+                          frame.cameraSupportUpZ)});
     }
     return result;
 }
@@ -846,7 +1234,16 @@ RaceViewerFrame ToViewerFrame(const PhysicsSandboxStateView &state) {
             state.completedLaps,
             state.totalLaps,
             state.raceCompleted,
-            state.finishTimeMs};
+            state.finishTimeMs,
+            ToQt(state.car.linearSpeed),
+            state.car.signedSpeed,
+            state.car.turbo,
+            state.car.cameraFlightTransition,
+            state.car.burning,
+            state.car.gearChanged,
+            state.car.wheelContact,
+            state.car.wheelHasSurface,
+            ToQt(state.car.cameraSupportUp)};
 }
 
 RaceViewerInputPreviewResult BuildInputPreview(
@@ -1047,6 +1444,10 @@ void UpdateRunPose(RaceViewerRun &run, qint64 timeMs) {
 
 RaceViewerController::RaceViewerController(QObject *parent)
     : QObject(parent), simulationDebugger_(this) {
+    cameraPreset_ = std::clamp(
+            QSettings().value(
+                    QStringLiteral("viewer/cameraPreset"), 1).toInt(),
+            1, 3);
     playbackTimer_.setInterval(5);
     playbackTimer_.setTimerType(Qt::PreciseTimer);
     connect(&playbackTimer_,
@@ -1219,6 +1620,34 @@ QVector3D RaceViewerController::carPosition() const {
 
 QQuaternion RaceViewerController::carRotation() const {
     return carRotation_;
+}
+
+int RaceViewerController::cameraPreset() const {
+    return cameraPreset_;
+}
+
+bool RaceViewerController::carCameraAvailable() const {
+    return carCameraAvailable_;
+}
+
+QVector3D RaceViewerController::carCameraPosition() const {
+    return carCameraPosition_;
+}
+
+QQuaternion RaceViewerController::carCameraRotation() const {
+    return carCameraRotation_;
+}
+
+QVector3D RaceViewerController::carCameraTarget() const {
+    return carCameraTarget_;
+}
+
+double RaceViewerController::carCameraFieldOfView() const {
+    return carCameraFieldOfView_;
+}
+
+bool RaceViewerController::hideSelectedCar() const {
+    return carCameraAvailable_ && cameraPreset_ == 3;
 }
 
 qint64 RaceViewerController::durationMs() const {
@@ -1788,6 +2217,24 @@ void RaceViewerController::setTakeOverOnInput(bool value) {
     }
     takeOverOnInput_ = value;
     emit takeOverOnInputChanged();
+}
+
+void RaceViewerController::setCameraPreset(int value) {
+    const int clamped = std::clamp(value, 1, 3);
+    if (cameraPreset_ == clamped) {
+        return;
+    }
+    cameraPreset_ = clamped;
+    QSettings().setValue(
+            QStringLiteral("viewer/cameraPreset"), cameraPreset_);
+    if (cameraResources_) {
+        cameraRuntime_ =
+                std::make_unique<RaceCameraRuntime>(cameraResources_);
+    } else {
+        cameraRuntime_.reset();
+    }
+    emit cameraPresetChanged();
+    updateCarCamera();
 }
 
 void RaceViewerController::play() {
@@ -2977,6 +3424,10 @@ void RaceViewerController::applyLoadResult(
     loadedBackend_ = result.backend;
     whiteboard_.setMapIdentity(result.mapKey, result.mapName);
     manualRuntime_ = std::move(result.manualRuntime);
+    cameraResources_ = std::move(result.cameraResources);
+    cameraRuntime_ = cameraResources_
+            ? std::make_unique<RaceCameraRuntime>(cameraResources_)
+            : nullptr;
     inputPreviewRuntime_.reset();
     resetManualTakeoverState();
     simulationDebugger_.configure(QStringLiteral("Reference"));
@@ -3173,6 +3624,7 @@ void RaceViewerController::updatePose() {
         carPosition_ = {};
         carRotation_ = {};
         emit poseChanged();
+        updateCarCamera();
         return;
     }
     for (RaceViewerRun &run : runs_) {
@@ -3184,6 +3636,44 @@ void RaceViewerController::updatePose() {
         carRotation_ = run->rotation;
     }
     emit poseChanged();
+    updateCarCamera();
+}
+
+void RaceViewerController::updateCarCamera() {
+    const RaceViewerRun *const run = selectedRun();
+    QVector3D position;
+    QQuaternion rotation;
+    QVector3D target;
+    double fieldOfView = 75.0;
+    bool available = false;
+    if (cameraRuntime_ != nullptr && run != nullptr) {
+        try {
+            available = cameraRuntime_->Evaluate(
+                    *run, cameraPreset_, timeMs_, &position, &rotation,
+                    &target, &fieldOfView);
+        } catch (...) {
+            cameraRuntime_ = cameraResources_
+                    ? std::make_unique<RaceCameraRuntime>(cameraResources_)
+                    : nullptr;
+        }
+    }
+    const bool changed =
+            carCameraAvailable_ != available ||
+            (available &&
+             (carCameraPosition_ != position ||
+              carCameraRotation_ != rotation ||
+              carCameraTarget_ != target ||
+              carCameraFieldOfView_ != fieldOfView));
+    carCameraAvailable_ = available;
+    if (available) {
+        carCameraPosition_ = position;
+        carCameraRotation_ = rotation;
+        carCameraTarget_ = target;
+        carCameraFieldOfView_ = fieldOfView;
+    }
+    if (changed) {
+        emit cameraChanged();
+    }
 }
 
 void RaceViewerController::advancePlayback() {
@@ -3208,6 +3698,8 @@ void RaceViewerController::appendSimulationDebuggerFrame(
             frame.value(QStringLiteral("position")).toList();
     const QVariantList rotation =
             frame.value(QStringLiteral("rotation")).toList();
+    const QVariantList linearSpeed =
+            frame.value(QStringLiteral("linearSpeed")).toList();
     if (position.size() != 3 || rotation.size() != 4) {
         setStatusText(QStringLiteral(
                 "Native debugger returned an invalid car pose."));
@@ -3239,7 +3731,12 @@ void RaceViewerController::appendSimulationDebuggerFrame(
                     ? std::optional<std::uint32_t>(
                               frame.value(QStringLiteral("finishTimeMs"))
                                       .toUInt())
-                    : std::nullopt};
+                    : std::nullopt,
+            linearSpeed.size() == 3
+                    ? QVector3D(linearSpeed[0].toFloat(),
+                                linearSpeed[1].toFloat(),
+                                linearSpeed[2].toFloat())
+                    : QVector3D{}};
 
     auto found = std::find_if(
             runs_.begin(), runs_.end(), [](const RaceViewerRun &run) {

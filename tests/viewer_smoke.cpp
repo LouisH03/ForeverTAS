@@ -9,6 +9,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSet>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
 
@@ -219,6 +221,28 @@ int main(int argc, char **argv) {
     }
 
     QGuiApplication application(argc, argv);
+    QCoreApplication::setOrganizationName(
+            QStringLiteral("ForeverTASTests"));
+    QCoreApplication::setApplicationName(
+            QStringLiteral("ViewerSmoke"));
+    QStandardPaths::setTestModeEnabled(true);
+    QSettings().clear();
+    {
+        RaceViewerController settingsProbe;
+        if (settingsProbe.cameraPreset() != 1) {
+            std::cerr << "camera preset did not default to far\n";
+            return 1;
+        }
+        settingsProbe.setCameraPreset(2);
+    }
+    {
+        RaceViewerController settingsProbe;
+        if (settingsProbe.cameraPreset() != 2) {
+            std::cerr << "camera preset was not persisted\n";
+            return 1;
+        }
+        settingsProbe.setCameraPreset(1);
+    }
     RaceViewerController viewer;
     viewer.startManualDrive();
     if (viewer.manualDriving() ||
@@ -246,7 +270,9 @@ int main(int argc, char **argv) {
     bool manualInitialNeutral = false;
     bool trajectoryPreviewValid = false;
     bool improvementTrajectoriesValid = false;
+    bool cameraPresetsValid = false;
     QVector3D manualInitialPosition;
+    QVector3D manualInitialCameraPosition;
     QObject::connect(
             &viewer,
             &forevertas::viewer::RaceViewerController::stateChanged,
@@ -275,6 +301,53 @@ int main(int argc, char **argv) {
                             return;
                         }
                         manualVerificationStarted = true;
+                        const QVector3D farPosition =
+                                viewer.carCameraPosition();
+                        const double farFov =
+                                viewer.carCameraFieldOfView();
+                        viewer.setCameraPreset(2);
+                        const QVector3D nearPosition =
+                                viewer.carCameraPosition();
+                        const bool nearValid =
+                                viewer.carCameraAvailable() &&
+                                !viewer.hideSelectedCar() &&
+                                (nearPosition - farPosition)
+                                                .lengthSquared() >
+                                        0.000001f;
+                        viewer.setCameraPreset(3);
+                        const QVector3D internalPosition =
+                                viewer.carCameraPosition();
+                        const bool internalValid =
+                                viewer.carCameraAvailable() &&
+                                viewer.hideSelectedCar() &&
+                                (internalPosition - viewer.carPosition())
+                                                .lengthSquared() <
+                                        16.0f;
+                        viewer.setCameraPreset(1);
+                        cameraPresetsValid =
+                                viewer.carCameraAvailable() &&
+                                viewer.cameraPreset() == 1 &&
+                                !viewer.hideSelectedCar() &&
+                                std::isfinite(farFov) && farFov >= 20.0 &&
+                                farFov <= 150.0 && nearValid && internalValid;
+                        if (!cameraPresetsValid) {
+                            completed = true;
+                            std::cerr
+                                    << "camera preset checks failed: "
+                                    << "available="
+                                    << viewer.carCameraAvailable()
+                                    << ", farFov=" << farFov
+                                    << ", nearDelta="
+                                    << (nearPosition - farPosition)
+                                               .lengthSquared()
+                                    << ", internalDistance="
+                                    << (internalPosition -
+                                        viewer.carPosition())
+                                               .lengthSquared()
+                                    << '\n';
+                            application.quit();
+                            return;
+                        }
                         const QVariantList trajectoryPaths =
                                 viewer.trajectoryPaths();
                         const bool trajectoryGeometryValid =
@@ -558,6 +631,11 @@ int main(int argc, char **argv) {
                                 initialManualInput.accelerate == 0.0f &&
                                 initialManualInput.brake == 0.0f;
                         manualInitialPosition = viewer.carPosition();
+                        manualInitialCameraPosition =
+                                viewer.carCameraPosition();
+                        cameraPresetsValid &=
+                                viewer.carCameraAvailable() &&
+                                viewer.cameraPreset() == 1;
                         viewer.setManualInput(
                                 QStringLiteral("left"), true);
                         viewer.setManualInput(
@@ -582,6 +660,12 @@ int main(int argc, char **argv) {
                                              manualInitialPosition)
                                                     .lengthSquared() >
                                             0.000001f;
+                                    const bool cameraFollowedManualDrive =
+                                            viewer.carCameraAvailable() &&
+                                            (viewer.carCameraPosition() -
+                                             manualInitialCameraPosition)
+                                                    .lengthSquared() >
+                                            0.000001f;
                                     viewer.setManualInput(
                                             QStringLiteral("left"), false);
                                     viewer.setManualInput(
@@ -593,7 +677,8 @@ int main(int argc, char **argv) {
                                             60,
                                             &application,
                                             [&, leftPriority,
-                                             physicsAdvanced]() {
+                                             physicsAdvanced,
+                                             cameraFollowedManualDrive]() {
                                                 const auto rightPressed =
                                                         viewer.inputSample(
                                                                 viewer.currentTick());
@@ -726,6 +811,7 @@ int main(int argc, char **argv) {
                                                         manualInitialNeutral &&
                                                         leftPriority &&
                                                         physicsAdvanced &&
+                                                        cameraFollowedManualDrive &&
                                                         rightAfterRelease &&
                                                         manualCopyValid &&
                                                         stoppedCleanly &&
@@ -745,6 +831,8 @@ int main(int argc, char **argv) {
                                                             << manualInitialNeutral
                                                             << ", physicsAdvanced="
                                                             << physicsAdvanced
+                                                            << ", cameraFollowed="
+                                                            << cameraFollowedManualDrive
                                                             << ", rightAfterRelease="
                                                             << rightAfterRelease
                                                             << ", manualCopy="
@@ -1384,6 +1472,7 @@ int main(int argc, char **argv) {
                     }
                     const bool sceneValid = mapOnlyStateObserved &&
                             manualDriveValid &&
+                            cameraPresetsValid &&
                             viewer.whiteboard()->mapKey().startsWith(
                                     QStringLiteral("collision-sha256:")) &&
                             viewer.whiteboard()->mapKey().size() == 81 &&

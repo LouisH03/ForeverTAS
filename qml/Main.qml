@@ -205,7 +205,7 @@ ApplicationWindow {
         synchronizeRunPoses()
         synchronizeCarEllipsoids()
         if (window.viewer.loaded)
-            viewport.enableFreeCamera()
+            viewport.resetCameraFocus()
     })
 
     Connections {
@@ -217,9 +217,6 @@ ApplicationWindow {
         function onSceneChanged() {
             window.synchronizeCarEllipsoids()
             viewport.resetCameraFocus()
-            Qt.callLater(function() {
-                viewport.enableFreeCamera()
-            })
         }
         function onPoseChanged() {
             window.synchronizeRunPoses()
@@ -504,7 +501,24 @@ ApplicationWindow {
                     property bool freeCamera: false
                     property vector3d freeCameraPosition:
                         Qt.vector3d(0, 0, 0)
+                    readonly property bool carCameraActive:
+                        !freeCamera && !cuboidFocused
+                        && window.viewer.carCameraAvailable
+                        && window.viewer.runCount > 0
                     readonly property vector3d cameraForward: {
+                        if (carCameraActive) {
+                            const dx = window.viewer.carCameraTarget.x
+                                     - window.viewer.carCameraPosition.x
+                            const dy = window.viewer.carCameraTarget.y
+                                     - window.viewer.carCameraPosition.y
+                            const dz = window.viewer.carCameraTarget.z
+                                     - window.viewer.carCameraPosition.z
+                            const length = Math.sqrt(dx * dx + dy * dy
+                                                   + dz * dz)
+                            if (length > 0.000001)
+                                return Qt.vector3d(dx / length, dy / length,
+                                                   dz / length)
+                        }
                         const yaw = orbitYaw * Math.PI / 180
                         const pitch = orbitPitch * Math.PI / 180
                         const pitchCos = Math.cos(pitch)
@@ -532,10 +546,13 @@ ApplicationWindow {
                     readonly property vector3d cameraTarget:
                         freeCamera ? freeCameraTarget
                         : cuboidFocused ? cuboidFocusCenter
-                                         : window.viewer.carPosition
+                        : carCameraActive
+                          ? window.viewer.carCameraTarget
+                          : window.viewer.carPosition
                     readonly property string cameraFocusMode:
                         freeCamera ? "free"
-                        : cuboidFocused ? "object" : "car"
+                        : cuboidFocused ? "object"
+                        : carCameraActive ? "preset" : "car"
                     property bool freeMoveForward: false
                     property bool freeMoveBackward: false
                     property bool freeMoveLeft: false
@@ -629,6 +646,32 @@ ApplicationWindow {
                         if (key === Qt.Key_C)
                             return "down"
                         return ""
+                    }
+
+                    function handleCameraPresetKey(event, active) {
+                        let preset = 0
+                        if (event.key === Qt.Key_1)
+                            preset = 1
+                        else if (event.key === Qt.Key_2)
+                            preset = 2
+                        else if (event.key === Qt.Key_3)
+                            preset = 3
+                        else if (event.key === Qt.Key_7) {
+                            event.accepted = true
+                            if (active && !event.isAutoRepeat)
+                                enableFreeCamera()
+                            return true
+                        } else {
+                            return false
+                        }
+                        event.accepted = true
+                        if (active && !event.isAutoRepeat
+                                && window.viewer.runCount > 0
+                                && window.viewer.carCameraAvailable) {
+                            window.viewer.cameraPreset = preset
+                            focusCurrentCar()
+                        }
+                        return true
                     }
 
                     function handleFreeCameraKey(event, active) {
@@ -726,6 +769,8 @@ ApplicationWindow {
                     }
 
                     function updateViewRotation(deltaX, deltaY) {
+                        if (carCameraActive)
+                            return
                         if (!freeCamera) {
                             orbitYaw -= deltaX
                             orbitPitch = Math.max(
@@ -766,16 +811,35 @@ ApplicationWindow {
                     }
 
                     function enableFreeCamera() {
-                        beginViewRotation()
+                        const wasCarCamera = carCameraActive
+                        const forward = cameraForward
                         const position = freeCamera
                             ? freeCameraPosition
-                            : Qt.vector3d(
-                                  cameraTarget.x
-                                      - cameraForward.x * orbitDistance,
-                                  cameraTarget.y
-                                      - cameraForward.y * orbitDistance,
-                                  cameraTarget.z
-                                      - cameraForward.z * orbitDistance)
+                            : wasCarCamera
+                              ? window.viewer.carCameraPosition
+                              : Qt.vector3d(
+                                    cameraTarget.x
+                                        - forward.x * orbitDistance,
+                                    cameraTarget.y
+                                        - forward.y * orbitDistance,
+                                    cameraTarget.z
+                                        - forward.z * orbitDistance)
+                        if (wasCarCamera) {
+                            const dx = window.viewer.carCameraTarget.x
+                                     - position.x
+                            const dy = window.viewer.carCameraTarget.y
+                                     - position.y
+                            const dz = window.viewer.carCameraTarget.z
+                                     - position.z
+                            orbitDistance = Math.max(
+                                0.1, Math.sqrt(dx * dx + dy * dy + dz * dz))
+                            orbitPitch = Math.asin(
+                                Math.max(-1, Math.min(1, forward.y)))
+                                * 180 / Math.PI
+                            orbitYaw = Math.atan2(-forward.x, -forward.z)
+                                * 180 / Math.PI
+                        }
+                        beginViewRotation()
                         freeCameraPosition = Qt.vector3d(
                             position.x, position.y, position.z)
                         exactWhiteboardBoardIndex = -1
@@ -1958,28 +2022,46 @@ ApplicationWindow {
                         }
 
                         Node {
-                            position: viewport.freeCamera
-                                      ? viewport.freeCameraPosition
-                                      : viewport.cameraTarget
-                            eulerRotation.x: viewport.orbitPitch
-                            eulerRotation.y: viewport.orbitYaw
+                            position: viewport.carCameraActive
+                                      ? window.viewer.carCameraPosition
+                                      : viewport.freeCamera
+                                        ? viewport.freeCameraPosition
+                                        : viewport.cameraTarget
+                            rotation: viewport.carCameraActive
+                                      ? window.viewer.carCameraRotation
+                                      : Qt.quaternion(1, 0, 0, 0)
 
-                            PerspectiveCamera {
-                                id: viewCamera
-                                objectName: "viewCamera"
-                                readonly property var dynamicClipPlanes:
-                                    window.viewer.cameraClipPlanes(
-                                        scenePosition,
-                                        viewport.orbitDistance)
+                            Node {
+                                eulerRotation.x: viewport.carCameraActive
+                                                 ? 0 : viewport.orbitPitch
+                                eulerRotation.y: viewport.carCameraActive
+                                                 ? 0 : viewport.orbitYaw
 
-                                z: viewport.freeCamera
-                                   ? 0 : viewport.orbitDistance
-                                clipNear: dynamicClipPlanes.x
-                                clipFar: dynamicClipPlanes.y
-                                fieldOfView:
-                                    viewport.cameraFieldOfView
-                                fieldOfViewOrientation:
-                                    PerspectiveCamera.Vertical
+                                PerspectiveCamera {
+                                    id: viewCamera
+                                    objectName: "viewCamera"
+                                    readonly property real clipDistance:
+                                        viewport.carCameraActive
+                                        ? window.viewer.carCameraPosition
+                                                .minus(window.viewer
+                                                       .carCameraTarget)
+                                                .length()
+                                        : viewport.orbitDistance
+                                    readonly property var dynamicClipPlanes:
+                                        window.viewer.cameraClipPlanes(
+                                            scenePosition, clipDistance)
+
+                                    z: viewport.carCameraActive
+                                       || viewport.freeCamera
+                                       ? 0 : viewport.orbitDistance
+                                    clipNear: dynamicClipPlanes.x
+                                    clipFar: dynamicClipPlanes.y
+                                    fieldOfView: viewport.carCameraActive
+                                        ? window.viewer.carCameraFieldOfView
+                                        : viewport.cameraFieldOfView
+                                    fieldOfViewOrientation:
+                                        PerspectiveCamera.Vertical
+                                }
                             }
                         }
 
@@ -2172,6 +2254,9 @@ ApplicationWindow {
                                 required property var runGeometry
 
                                 objectName: "runCarRoot"
+                                visible: !(runSelected
+                                    && viewport.carCameraActive
+                                    && window.viewer.hideSelectedCar)
                                 position: runPosition
                                 rotation: runRotation
 
@@ -2264,26 +2349,37 @@ ApplicationWindow {
                         }
 
                         Node {
-                            position: viewport.freeCamera
-                                      ? viewport.freeCameraPosition
-                                      : viewport.cameraTarget
-                            eulerRotation.x: viewport.orbitPitch
-                            eulerRotation.y: viewport.orbitYaw
+                            position: viewport.carCameraActive
+                                      ? window.viewer.carCameraPosition
+                                      : viewport.freeCamera
+                                        ? viewport.freeCameraPosition
+                                        : viewport.cameraTarget
+                            rotation: viewport.carCameraActive
+                                      ? window.viewer.carCameraRotation
+                                      : Qt.quaternion(1, 0, 0, 0)
 
-                            PerspectiveCamera {
-                                id: rayTracingOverlayCamera
-                                readonly property var dynamicClipPlanes:
-                                    window.viewer.cameraClipPlanes(
-                                        scenePosition,
-                                        viewport.orbitDistance)
+                            Node {
+                                eulerRotation.x: viewport.carCameraActive
+                                                 ? 0 : viewport.orbitPitch
+                                eulerRotation.y: viewport.carCameraActive
+                                                 ? 0 : viewport.orbitYaw
 
-                                z: viewport.freeCamera
-                                   ? 0 : viewport.orbitDistance
-                                clipNear: dynamicClipPlanes.x
-                                clipFar: dynamicClipPlanes.y
-                                fieldOfView: viewCamera.fieldOfView
-                                fieldOfViewOrientation:
-                                    PerspectiveCamera.Vertical
+                                PerspectiveCamera {
+                                    id: rayTracingOverlayCamera
+                                    readonly property var dynamicClipPlanes:
+                                        window.viewer.cameraClipPlanes(
+                                            scenePosition,
+                                            viewCamera.clipDistance)
+
+                                    z: viewport.carCameraActive
+                                       || viewport.freeCamera
+                                       ? 0 : viewport.orbitDistance
+                                    clipNear: dynamicClipPlanes.x
+                                    clipFar: dynamicClipPlanes.y
+                                    fieldOfView: viewCamera.fieldOfView
+                                    fieldOfViewOrientation:
+                                        PerspectiveCamera.Vertical
+                                }
                             }
                         }
 
@@ -2330,7 +2426,7 @@ ApplicationWindow {
                         z: 1.75
                         model: window.viewer.whiteboard
                         cameraTarget: viewport.cameraTarget
-                        cameraPosition: viewport.freeCameraPosition
+                        cameraPosition: viewCamera.scenePosition
                         freeCamera: viewport.freeCamera
                         orbitYaw: viewport.orbitYaw
                         orbitPitch: viewport.orbitPitch
@@ -2380,12 +2476,16 @@ ApplicationWindow {
 
                         Keys.priority: Keys.BeforeItem
                         Keys.onPressed: event => {
-                            window.handleManualKey(event, true)
+                            viewport.handleCameraPresetKey(event, true)
+                            if (!event.accepted)
+                                window.handleManualKey(event, true)
                             if (!event.accepted)
                                 viewport.handleFreeCameraKey(event, true)
                         }
                         Keys.onReleased: event => {
-                            window.handleManualKey(event, false)
+                            viewport.handleCameraPresetKey(event, false)
+                            if (!event.accepted)
+                                window.handleManualKey(event, false)
                             if (!event.accepted)
                                 viewport.handleFreeCameraKey(event, false)
                         }
@@ -2605,9 +2705,9 @@ ApplicationWindow {
 
                             ThemedButton {
                                 objectName: "freeCameraButton"
-                                Layout.preferredWidth: 58
+                                Layout.preferredWidth: 62
                                 Layout.preferredHeight: 32
-                                text: qsTr("Free")
+                                text: qsTr("7 Free")
                                 highlighted: viewport.freeCamera
                                 Accessible.name: qsTr("Free camera")
                                 onClicked: {
@@ -2621,20 +2721,65 @@ ApplicationWindow {
 
                             ThemedButton {
                                 objectName: "focusCarButton"
-                                Layout.preferredWidth: 52
+                                Layout.preferredWidth: 58
                                 Layout.preferredHeight: 32
-                                text: qsTr("Car")
+                                text: qsTr("1 Far")
                                 enabled: window.viewer.runCount > 0
-                                highlighted: enabled && !viewport.freeCamera
-                                             && !viewport.cuboidFocused
-                                Accessible.name: qsTr("Focus current car")
+                                         && window.viewer.carCameraAvailable
+                                highlighted: enabled
+                                    && viewport.carCameraActive
+                                    && window.viewer.cameraPreset === 1
+                                Accessible.name: qsTr("Far car camera")
                                 onClicked: {
+                                    window.viewer.cameraPreset = 1
                                     viewport.focusCurrentCar()
                                     manualInputFocus.forceActiveFocus()
                                 }
                                 ToolTip.visible: hovered
                                 ToolTip.delay: 350
-                                ToolTip.text: qsTr("Focus current car")
+                                ToolTip.text: qsTr("Far car camera (1)")
+                            }
+
+                            ThemedButton {
+                                objectName: "nearCameraButton"
+                                Layout.preferredWidth: 66
+                                Layout.preferredHeight: 32
+                                text: qsTr("2 Near")
+                                enabled: window.viewer.runCount > 0
+                                         && window.viewer.carCameraAvailable
+                                highlighted: enabled
+                                    && viewport.carCameraActive
+                                    && window.viewer.cameraPreset === 2
+                                Accessible.name: qsTr("Near car camera")
+                                onClicked: {
+                                    window.viewer.cameraPreset = 2
+                                    viewport.focusCurrentCar()
+                                    manualInputFocus.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr("Near car camera (2)")
+                            }
+
+                            ThemedButton {
+                                objectName: "internalCameraButton"
+                                Layout.preferredWidth: 82
+                                Layout.preferredHeight: 32
+                                text: qsTr("3 Internal")
+                                enabled: window.viewer.runCount > 0
+                                         && window.viewer.carCameraAvailable
+                                highlighted: enabled
+                                    && viewport.carCameraActive
+                                    && window.viewer.cameraPreset === 3
+                                Accessible.name: qsTr("Internal car camera")
+                                onClicked: {
+                                    window.viewer.cameraPreset = 3
+                                    viewport.focusCurrentCar()
+                                    manualInputFocus.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr("Internal car camera (3)")
                             }
 
                             ThemedButton {

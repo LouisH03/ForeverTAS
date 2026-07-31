@@ -12,6 +12,7 @@
 #include <QFont>
 #include <QImage>
 #include <QInputDevice>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QMetaProperty>
 #include <QPalette>
@@ -357,6 +358,8 @@ int main(int argc, char **argv) {
     bool completed = false;
     bool verificationScheduled = false;
     bool editorStructure = false;
+    bool manualActionKeysValid = false;
+    bool cameraShortcutKeysValid = false;
     QObject::connect(
             &engine,
             &QQmlApplicationEngine::objectCreationFailed,
@@ -885,6 +888,12 @@ int main(int argc, char **argv) {
                     QObject *const focusCarButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("focusCarButton"));
+                    QObject *const nearCameraButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("nearCameraButton"));
+                    QObject *const internalCameraButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("internalCameraButton"));
                     QObject *const focusObjectButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("focusObjectButton"));
@@ -1289,24 +1298,75 @@ int main(int argc, char **argv) {
                     }
                     bool freeCameraUiValid =
                             viewer.loaded() &&
+                            viewer.carCameraAvailable() &&
+                            viewer.cameraPreset() == 1 &&
                             viewport != nullptr &&
                             cameraFocusToolbar != nullptr &&
                             cameraFocusToolbar->isVisible() &&
                             freeCameraButton != nullptr &&
                             focusCarButton != nullptr &&
+                            nearCameraButton != nullptr &&
+                            internalCameraButton != nullptr &&
                             focusObjectButton != nullptr &&
-                            viewport->property("freeCamera").toBool() &&
+                            !viewport->property("freeCamera").toBool() &&
+                            viewport->property("carCameraActive").toBool() &&
                             viewport->property("cameraFocusMode")
                                             .toString() ==
-                                    QStringLiteral("free") &&
-                            freeCameraButton->property("highlighted").toBool() &&
+                                    QStringLiteral("preset") &&
+                            !freeCameraButton->property("highlighted").toBool() &&
                             focusCarButton->property("enabled").toBool() &&
-                            !focusCarButton->property("highlighted").toBool() &&
+                            focusCarButton->property("highlighted").toBool() &&
+                            nearCameraButton->property("enabled").toBool() &&
+                            internalCameraButton->property("enabled").toBool() &&
                             !focusObjectButton->property("enabled").toBool();
+                    if (!freeCameraUiValid) {
+                        std::cerr
+                                << "camera UI initial state: loaded="
+                                << viewer.loaded()
+                                << ", available="
+                                << viewer.carCameraAvailable()
+                                << ", preset=" << viewer.cameraPreset()
+                                << ", free="
+                                << (viewport != nullptr
+                                            ? viewport->property("freeCamera")
+                                                      .toBool()
+                                            : false)
+                                << ", active="
+                                << (viewport != nullptr
+                                            ? viewport->property("carCameraActive")
+                                                      .toBool()
+                                            : false)
+                                << ", mode="
+                                << (viewport != nullptr
+                                            ? viewport->property("cameraFocusMode")
+                                                      .toString()
+                                                      .toStdString()
+                                            : std::string("missing"))
+                                << ", buttons="
+                                << (freeCameraButton != nullptr) << '/'
+                                << (focusCarButton != nullptr) << '/'
+                                << (nearCameraButton != nullptr) << '/'
+                                << (internalCameraButton != nullptr)
+                                << ", highlights="
+                                << (freeCameraButton != nullptr
+                                            ? freeCameraButton
+                                                      ->property("highlighted")
+                                                      .toBool()
+                                            : false)
+                                << '/'
+                                << (focusCarButton != nullptr
+                                            ? focusCarButton
+                                                      ->property("highlighted")
+                                                      .toBool()
+                                            : false)
+                                << '\n';
+                    }
                     if (freeCameraUiValid) {
                         const QVector3D carTargetBeforeFree =
                                 viewport->property("cameraTarget")
                                         .value<QVector3D>();
+                        const QVector3D carCameraPositionBeforeFree =
+                                viewer.carCameraPosition();
                         freeCameraUiValid &=
                                 QMetaObject::invokeMethod(
                                         viewport,
@@ -1318,6 +1378,11 @@ int main(int argc, char **argv) {
                                 (viewport->property("cameraTarget")
                                          .value<QVector3D>() -
                                  carTargetBeforeFree)
+                                                .lengthSquared() <
+                                        0.0001f &&
+                                (viewport->property("freeCameraPosition")
+                                         .value<QVector3D>() -
+                                 carCameraPositionBeforeFree)
                                                 .lengthSquared() <
                                         0.0001f;
                         const QVector3D freePositionBeforeLook =
@@ -1611,11 +1676,25 @@ int main(int argc, char **argv) {
                                 !viewport->property("freeCamera").toBool() &&
                                 !viewport->property("cuboidFocused")
                                          .toBool() &&
+                                viewport->property("cameraFocusMode")
+                                                .toString() ==
+                                        QStringLiteral("preset") &&
                                 viewport->property("cameraTarget")
                                                 .value<QVector3D>() ==
-                                        viewer.carPosition();
+                                        viewer.carCameraTarget();
                     }
-                    bool manualActionKeysValid = false;
+                    if (freeCameraUiValid) {
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        viewport, "enableFreeCamera") &&
+                                viewport->property("freeCamera").toBool();
+                        viewport->setProperty("orbitYaw", 35.0);
+                        viewport->setProperty("orbitPitch", -20.0);
+                        viewport->setProperty("orbitDistance", 38.0);
+                        QMetaObject::invokeMethod(
+                                viewport, "beginViewRotation");
+                        QCoreApplication::processEvents();
+                    }
                     const bool manualDrivingUi =
                             playbackDock != nullptr &&
                             playbackDock->width() >= 285.0 &&
@@ -5980,6 +6059,115 @@ int main(int argc, char **argv) {
                                                 return invoked &&
                                                         handled.toBool();
                                             };
+                                    QObject *const currentViewport =
+                                            currentRoot->findChild<QObject *>(
+                                                    QStringLiteral(
+                                                            "raceViewport"));
+                                    auto *const currentManualInputFocus =
+                                            qobject_cast<QQuickItem *>(
+                                                    currentRoot->findChild<QObject *>(
+                                                            QStringLiteral(
+                                                                    "manualInputFocus")));
+                                    const auto sendCameraKey =
+                                            [currentManualInputFocus](
+                                                    int key,
+                                                    Qt::KeyboardModifiers modifiers) {
+                                                if (currentManualInputFocus ==
+                                                    nullptr) {
+                                                    return false;
+                                                }
+                                                QKeyEvent press(
+                                                        QEvent::KeyPress,
+                                                        key,
+                                                        modifiers);
+                                                QCoreApplication::sendEvent(
+                                                        currentManualInputFocus,
+                                                        &press);
+                                                QKeyEvent release(
+                                                        QEvent::KeyRelease,
+                                                        key,
+                                                        modifiers);
+                                                QCoreApplication::sendEvent(
+                                                        currentManualInputFocus,
+                                                        &release);
+                                                QCoreApplication::processEvents();
+                                                return press.isAccepted() &&
+                                                        release.isAccepted();
+                                            };
+                                    if (currentViewport != nullptr &&
+                                        currentManualInputFocus != nullptr) {
+                                        QMetaObject::invokeMethod(
+                                                currentManualInputFocus,
+                                                "forceActiveFocus");
+                                        QCoreApplication::processEvents();
+                                        const bool rowNear =
+                                                sendCameraKey(
+                                                        Qt::Key_2,
+                                                        Qt::NoModifier) &&
+                                                viewer.cameraPreset() == 2 &&
+                                                !currentViewport
+                                                         ->property("freeCamera")
+                                                         .toBool() &&
+                                                currentViewport
+                                                        ->property(
+                                                                "carCameraActive")
+                                                        .toBool();
+                                        const bool keypadInternal =
+                                                sendCameraKey(
+                                                        Qt::Key_3,
+                                                        Qt::KeypadModifier) &&
+                                                viewer.cameraPreset() == 3 &&
+                                                viewer.hideSelectedCar() &&
+                                                !currentViewport
+                                                         ->property("freeCamera")
+                                                         .toBool();
+                                        const bool keypadFar =
+                                                sendCameraKey(
+                                                        Qt::Key_1,
+                                                        Qt::KeypadModifier) &&
+                                                viewer.cameraPreset() == 1 &&
+                                                !viewer.hideSelectedCar() &&
+                                                !currentViewport
+                                                         ->property("freeCamera")
+                                                         .toBool();
+                                        const bool firstFree =
+                                                sendCameraKey(
+                                                        Qt::Key_7,
+                                                        Qt::NoModifier) &&
+                                                currentViewport
+                                                        ->property("freeCamera")
+                                                        .toBool();
+                                        const QVector3D repeatedFreePosition =
+                                                currentViewport
+                                                        ->property(
+                                                                "freeCameraPosition")
+                                                        .value<QVector3D>();
+                                        const bool repeatedFree =
+                                                sendCameraKey(
+                                                        Qt::Key_7,
+                                                        Qt::NoModifier) &&
+                                                currentViewport
+                                                        ->property("freeCamera")
+                                                        .toBool() &&
+                                                currentViewport
+                                                                ->property(
+                                                                        "freeCameraPosition")
+                                                                .value<QVector3D>() ==
+                                                        repeatedFreePosition;
+                                        viewer.setCameraPreset(1);
+                                        const bool restoredFar =
+                                                QMetaObject::invokeMethod(
+                                                        currentViewport,
+                                                        "focusCurrentCar") &&
+                                                viewer.cameraPreset() == 1 &&
+                                                !currentViewport
+                                                         ->property("freeCamera")
+                                                         .toBool();
+                                        cameraShortcutKeysValid =
+                                                rowNear && keypadInternal &&
+                                                keypadFar && firstFree &&
+                                                repeatedFree && restoredFar;
+                                    }
                                     QObject *const currentManualDriveButton =
                                             currentRoot->findChild<QObject *>(
                                                     QStringLiteral(
@@ -5990,10 +6178,6 @@ int main(int argc, char **argv) {
                                                     currentManualDriveButton,
                                                     "clicked");
                                     QCoreApplication::processEvents();
-                                    QObject *const currentViewport =
-                                            currentRoot->findChild<QObject *>(
-                                                    QStringLiteral(
-                                                            "raceViewport"));
                                     const bool driveFocusedRealCar =
                                             driveClicked &&
                                             viewer.manualDriving() &&
@@ -6007,7 +6191,11 @@ int main(int argc, char **argv) {
                                                             ->property(
                                                                     "cameraFocusMode")
                                                             .toString() ==
-                                                    QStringLiteral("car");
+                                                    QStringLiteral("preset") &&
+                                            currentViewport
+                                                    ->property(
+                                                            "carCameraActive")
+                                                    .toBool();
                                     const bool enterRespawn =
                                             invokeCurrentManualKey(
                                                     Qt::Key_Enter, true);
@@ -6066,6 +6254,7 @@ int main(int argc, char **argv) {
                                     viewer.stopManualDrive();
                                     QCoreApplication::processEvents();
                                     manualActionKeysValid =
+                                            cameraShortcutKeysValid &&
                                             driveFocusedRealCar &&
                                             enterRespawn &&
                                             enterRespawnExecuted &&
@@ -6098,6 +6287,7 @@ int main(int argc, char **argv) {
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
                                                         editorStructure &&
+                                                        cameraShortcutKeysValid &&
                                                         manualActionKeysValid &&
                                                         whiteboardIntegrated &&
                                                         fullBackgroundExportValid &&
@@ -6312,6 +6502,8 @@ int main(int argc, char **argv) {
                                                         .toBool())
                                             << ", editorStructure="
                                             << editorStructure
+                                            << ", cameraShortcutKeys="
+                                            << cameraShortcutKeysValid
                                             << ", manualActionKeys="
                                             << manualActionKeysValid << '\n';
                                 }
