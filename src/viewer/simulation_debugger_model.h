@@ -17,6 +17,7 @@ class SimulationDebuggerModel final : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(bool available READ available NOTIFY stateChanged)
+    Q_PROPERTY(bool preparing READ preparing NOTIFY stateChanged)
     Q_PROPERTY(bool active READ active NOTIFY stateChanged)
     Q_PROPERTY(bool running READ running NOTIFY stateChanged)
     Q_PROPERTY(bool stepping READ stepping NOTIFY stateChanged)
@@ -25,29 +26,28 @@ class SimulationDebuggerModel final : public QObject {
     Q_PROPERTY(bool canStepTick READ canStepTick NOTIFY stateChanged)
     Q_PROPERTY(QString backendName READ backendName NOTIFY stateChanged)
     Q_PROPERTY(QVariantList fileEntries READ fileEntries NOTIFY filesChanged)
-    Q_PROPERTY(
-            QString selectedFilePath READ selectedFilePath NOTIFY
-                    selectionChanged)
+    Q_PROPERTY(QString selectedFilePath READ selectedFilePath NOTIFY
+                       selectionChanged)
     Q_PROPERTY(QVariantList lines READ lines NOTIFY linesChanged)
     Q_PROPERTY(int activeLine READ activeLine NOTIFY executionChanged)
     Q_PROPERTY(
             QString activeFilePath READ activeFilePath NOTIFY executionChanged)
     Q_PROPERTY(QVariantList variables READ variables NOTIFY variablesChanged)
-    Q_PROPERTY(
-            QVariantList pinnedVariables READ pinnedVariables NOTIFY
-                    variablesChanged)
+    Q_PROPERTY(QVariantList pinnedVariables READ pinnedVariables NOTIFY
+                       variablesChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(QString editError READ editError NOTIFY linesChanged)
     Q_PROPERTY(bool hasEdits READ hasEdits NOTIFY filesChanged)
     Q_PROPERTY(qint64 executionTick READ executionTick NOTIFY executionChanged)
-    Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
-                       themeChanged)
+    Q_PROPERTY(
+            bool darkMode READ darkMode WRITE setDarkMode NOTIFY themeChanged)
 
   public:
     explicit SimulationDebuggerModel(QObject *parent = nullptr);
     ~SimulationDebuggerModel() override;
 
     bool available() const;
+    bool preparing() const;
     bool active() const;
     bool running() const;
     bool stepping() const;
@@ -106,6 +106,9 @@ class SimulationDebuggerModel final : public QObject {
         QString absolutePath;
         QStringList originalLines;
         QStringList currentLines;
+        QStringList highlightedLight;
+        QStringList highlightedDark;
+        QStringList inlineValueLines;
         QHash<int, SourceEdit> edits;
         QSet<int> breakpoints;
         QSet<int> executableLines;
@@ -142,6 +145,20 @@ class SimulationDebuggerModel final : public QObject {
         int line = 0;
     };
 
+    struct ProcessedDebuggerOutput {
+        QString rawOutput;
+        QString diagnostics;
+        QString stopPath;
+        QStringList workerErrors;
+        QVariantList frames;
+        QVariantList parsedVariables;
+        QHash<QString, QStringList> inlineValuesBySource;
+        quint64 sourceRevision = 0;
+        int stopLine = -1;
+        bool commandFailed = false;
+        bool tickBoundary = false;
+    };
+
     enum class StepMode {
         None,
         Substep,
@@ -149,7 +166,13 @@ class SimulationDebuggerModel final : public QObject {
         Tick,
     };
 
-    QString syntaxHighlighted(const QString &text) const;
+    static QString syntaxHighlighted(const QString &text, bool darkMode);
+    static ProcessedDebuggerOutput
+    processDebuggerOutput(const QString &output, bool parseVariables,
+                          bool parseStopLocation);
+    static QHash<QString, QStringList>
+    buildInlineValueCache(const QVariantList &variables,
+                          const QHash<QString, QStringList> &sourceLines);
     static QString fileName(const QString &path);
     static int depth(const QString &path);
     static QString lldbExecutablePath();
@@ -173,25 +196,27 @@ class SimulationDebuggerModel final : public QObject {
     void saveBreakpoints() const;
     void syncSourceBreakpoints(SourceFile &source);
     void installSourceBreakpoint(SourceFile &source, int line);
-    void queueCommand(
-            CommandKind kind,
-            const QString &text,
-            const QString &sourcePath = {},
-            int line = 0);
+    void queueCommand(CommandKind kind, const QString &text,
+                      const QString &sourcePath = {}, int line = 0);
     void sendNextCommand();
     void readDebuggerOutput();
     void consumeDebuggerPrompts();
-    void
-    handleCommandResult(const DebuggerCommand &command, const QString &output);
-    void handleSourceBreakpointResult(
-            const DebuggerCommand &command, const QString &output);
-    void handleDebuggerStop(const QString &output);
+    void processCommandOutputAsync(const DebuggerCommand &command,
+                                   const QString &output);
+    void handleCommandResult(const DebuggerCommand &command,
+                             const ProcessedDebuggerOutput &output);
+    void handleSourceBreakpointResult(const DebuggerCommand &command,
+                                      const QString &output);
+    void handleDebuggerStop(const ProcessedDebuggerOutput &output);
     void handleSourceStop(const QString &absolutePath, int line);
-    void parseWorkerOutput(const QString &output);
-    void parseVariables(const QString &output);
+    void applyWorkerFrame(const QVariantMap &frame);
+    void applyParsedVariables(const ProcessedDebuggerOutput &output);
+    void applyInlineValueCache(
+            const QHash<QString, QStringList> &inlineValuesBySource);
+    void refreshInlineValueCacheAsync(const QVariantList &variables);
+    void clearVariables();
     bool debuggerCommandFailed(const QString &output) const;
     void setStatus(const QString &status);
-    void handleWorkerState(const QByteArray &json);
     void scheduleAdvance();
     void advanceExecution();
     void applyCurrentEdit();
@@ -203,6 +228,8 @@ class SimulationDebuggerModel final : public QObject {
     void clearExecutionLocation();
     void failSession(const QString &message);
     void setRunning(bool value);
+    void beginPendingSession();
+    void stopSessionProcess(bool keepPendingStart);
 
     std::vector<SourceFile> sources_;
     std::vector<Variable> variables_;
@@ -221,12 +248,15 @@ class SimulationDebuggerModel final : public QObject {
     QString debuggerBuffer_;
     QString packsDirectory_;
     QString replayPath_;
+    QString pendingPacksDirectory_;
+    QString pendingReplayPath_;
     QString currentLineKey_;
     int activeLine_ = -1;
     QString activeFilePath_;
     qint64 executionTick_ = 0;
     QString lastBreakpointKey_;
     bool available_ = false;
+    bool preparing_ = false;
     bool active_ = false;
     bool running_ = false;
     bool stepping_ = false;
@@ -239,10 +269,17 @@ class SimulationDebuggerModel final : public QObject {
     bool pauseRequested_ = false;
     bool editInterruptRequested_ = false;
     bool handlingDebuggerOutput_ = false;
+    bool outputProcessing_ = false;
     bool atTickBoundary_ = false;
     bool workerReady_ = false;
     bool stopping_ = false;
+    bool pendingStart_ = false;
     bool darkMode_ = false;
+    quint64 sourceLoadGeneration_ = 0;
+    quint64 sessionGeneration_ = 0;
+    quint64 shutdownGeneration_ = 0;
+    quint64 sourceRevision_ = 0;
+    quint64 inlineCacheGeneration_ = 0;
     StepMode stepMode_ = StepMode::None;
 };
 

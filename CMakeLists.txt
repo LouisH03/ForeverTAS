@@ -36,6 +36,7 @@ set(FOREVERTAS_APP_ID "dev.skycrafter.forevertas")
 set(FOREVERTAS_DISPLAY_NAME "ForeverTAS")
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
+    Concurrent
     Core
     Gui
     Qml
@@ -225,6 +226,7 @@ target_include_directories(forevertas_gui PUBLIC
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(forevertas_gui PUBLIC
     forevertas_core
+    Qt6::Concurrent
     Qt6::Core
     Qt6::Gui
     Qt6::Quick

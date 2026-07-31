@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -13,6 +14,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QVariantMap>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <cmath>
@@ -64,25 +66,29 @@ SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
     expandedFolders_.insert(QStringLiteral("src/engine"));
     expandedFolders_.insert(QStringLiteral("src/engine/physics"));
     debugger_.setProcessChannelMode(QProcess::MergedChannels);
-    connect(&debugger_,
-            &QProcess::readyReadStandardOutput,
-            this,
+    connect(&debugger_, &QProcess::readyReadStandardOutput, this,
             &SimulationDebuggerModel::readDebuggerOutput);
-    connect(&debugger_,
-            &QProcess::errorOccurred,
-            this,
+    connect(&debugger_, &QProcess::errorOccurred, this,
             [this](QProcess::ProcessError) {
                 if (!stopping_ && active_) {
-                    failSession(QStringLiteral(
-                            "LLDB could not run the reference "
-                            "simulation."));
+                    failSession(
+                            QStringLiteral("LLDB could not run the reference "
+                                           "simulation."));
                 }
             });
     connect(&debugger_,
-            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
-            this,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
             [this](int exitCode, QProcess::ExitStatus status) {
-                if (stopping_ || !active_) {
+                if (stopping_) {
+                    stopping_ = false;
+                    if (pendingStart_) {
+                        QTimer::singleShot(
+                                0, this,
+                                &SimulationDebuggerModel::beginPendingSession);
+                    }
+                    return;
+                }
+                if (!active_) {
                     return;
                 }
                 setRunning(false);
@@ -94,9 +100,9 @@ SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
                             QStringLiteral("Reference simulation completed."));
                     emit sessionFinished();
                 } else {
-                    failSession(QStringLiteral(
-                            "The reference simulation debugger "
-                            "stopped unexpectedly."));
+                    failSession(
+                            QStringLiteral("The reference simulation debugger "
+                                           "stopped unexpectedly."));
                 }
                 emit stateChanged();
             });
@@ -105,10 +111,17 @@ SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
 
 SimulationDebuggerModel::~SimulationDebuggerModel() {
     stopSession();
+    if (debugger_.state() != QProcess::NotRunning) {
+        debugger_.disconnect(this);
+        debugger_.kill();
+    }
 }
 
 bool SimulationDebuggerModel::available() const {
     return available_;
+}
+bool SimulationDebuggerModel::preparing() const {
+    return preparing_;
 }
 bool SimulationDebuggerModel::active() const {
     return active_;
@@ -166,9 +179,8 @@ void SimulationDebuggerModel::setDarkMode(bool value) {
 
 bool SimulationDebuggerModel::hasEdits() const {
     return std::any_of(
-            sources_.begin(), sources_.end(), [](const SourceFile &source) {
-                return !source.edits.isEmpty();
-            });
+            sources_.begin(), sources_.end(),
+            [](const SourceFile &source) { return !source.edits.isEmpty(); });
 }
 
 QVariantList SimulationDebuggerModel::fileEntries() const {
@@ -191,28 +203,27 @@ QVariantList SimulationDebuggerModel::lines() const {
                                 !trimmed.startsWith(QLatin1Char('#')) &&
                                 trimmed != QStringLiteral("{") &&
                                 trimmed != QStringLiteral("}");
-        result.push_back(
-                QVariantMap{
-                        {QStringLiteral("number"), line},
-                        {QStringLiteral("text"), text},
-                        {QStringLiteral("original"),
-                         source->originalLines[index]},
-                        {QStringLiteral("highlighted"),
-                         syntaxHighlighted(text)},
-                        {QStringLiteral("active"),
-                         active_ && source->path == activeFilePath_ &&
-                                 line == activeLine_},
-                        {QStringLiteral("breakpoint"),
-                         source->breakpoints.contains(line)},
-                        {QStringLiteral("modified"),
-                         source->edits.contains(line)},
-                        {QStringLiteral("editable"), sourceLine},
-                        {QStringLiteral("executable"),
-                         source->executableLines.contains(line) ||
-                                 source->breakpoints.contains(line) ||
-                                 (source->path == activeFilePath_ &&
-                                  line == activeLine_)},
-                        {QStringLiteral("inlineValue"), inlineValues(text)}});
+        result.push_back(QVariantMap{
+                {QStringLiteral("number"), line},
+                {QStringLiteral("text"), text},
+                {QStringLiteral("original"), source->originalLines[index]},
+                {QStringLiteral("highlighted"),
+                 (darkMode_ ? source->highlightedDark
+                            : source->highlightedLight)[index]},
+                {QStringLiteral("active"),
+                 active_ && source->path == activeFilePath_ &&
+                         line == activeLine_},
+                {QStringLiteral("breakpoint"),
+                 source->breakpoints.contains(line)},
+                {QStringLiteral("modified"), source->edits.contains(line)},
+                {QStringLiteral("editable"), sourceLine},
+                {QStringLiteral("executable"),
+                 source->executableLines.contains(line) ||
+                         source->breakpoints.contains(line) ||
+                         (source->path == activeFilePath_ &&
+                          line == activeLine_)},
+                {QStringLiteral("inlineValue"),
+                 source->inlineValueLines[index]}});
     }
     return result;
 }
@@ -221,13 +232,11 @@ QVariantList SimulationDebuggerModel::variables() const {
     QVariantList result;
     result.reserve(static_cast<qsizetype>(variables_.size()));
     for (const Variable &variable : variables_) {
-        result.push_back(
-                QVariantMap{
-                        {QStringLiteral("name"), variable.name},
-                        {QStringLiteral("value"), variable.value},
-                        {QStringLiteral("type"), variable.type},
-                        {QStringLiteral("pinned"),
-                         pinnedNames_.contains(variable.name)}});
+        result.push_back(QVariantMap{{QStringLiteral("name"), variable.name},
+                                     {QStringLiteral("value"), variable.value},
+                                     {QStringLiteral("type"), variable.type},
+                                     {QStringLiteral("pinned"),
+                                      pinnedNames_.contains(variable.name)}});
     }
     return result;
 }
@@ -237,21 +246,17 @@ QVariantList SimulationDebuggerModel::pinnedVariables() const {
     QStringList names(pinnedNames_.begin(), pinnedNames_.end());
     std::sort(names.begin(), names.end());
     for (const QString &name : names) {
-        const auto found = std::find_if(
-                variables_.begin(),
-                variables_.end(),
-                [&name](const Variable &variable) {
-                    return variable.name == name;
-                });
-        result.push_back(
-                QVariantMap{
-                        {QStringLiteral("name"), name},
-                        {QStringLiteral("value"),
-                         found == variables_.end()
-                                 ? QStringLiteral("out of scope")
-                                 : found->value},
-                        {QStringLiteral("type"),
-                         found == variables_.end() ? QString() : found->type}});
+        const auto found = std::find_if(variables_.begin(), variables_.end(),
+                                        [&name](const Variable &variable) {
+                                            return variable.name == name;
+                                        });
+        result.push_back(QVariantMap{
+                {QStringLiteral("name"), name},
+                {QStringLiteral("value"),
+                 found == variables_.end() ? QStringLiteral("out of scope")
+                                           : found->value},
+                {QStringLiteral("type"),
+                 found == variables_.end() ? QString() : found->type}});
     }
     return result;
 }
@@ -284,8 +289,7 @@ bool SimulationDebuggerModel::updateLine(int lineNumber, const QString &text) {
         lineNumber > source->currentLines.size()) {
         return false;
     }
-    if (text.contains(QLatin1Char('\n')) ||
-        text.contains(QLatin1Char('\r'))) {
+    if (text.contains(QLatin1Char('\n')) || text.contains(QLatin1Char('\r'))) {
         editError_ = QStringLiteral(
                 "A live edit must contain exactly one source line.");
         emit linesChanged();
@@ -296,6 +300,10 @@ bool SimulationDebuggerModel::updateLine(int lineNumber, const QString &text) {
         return true;
     }
     source->currentLines[index] = text;
+    ++sourceRevision_;
+    source->highlightedLight[index] = syntaxHighlighted(text, false);
+    source->highlightedDark[index] = syntaxHighlighted(text, true);
+    source->inlineValueLines[index] = inlineValues(text);
     if (text == source->originalLines[index]) {
         source->edits.remove(lineNumber);
     } else {
@@ -318,16 +326,15 @@ bool SimulationDebuggerModel::updateLine(int lineNumber, const QString &text) {
     }
     emit filesChanged();
     emit linesChanged();
-    setStatus(
-            source->edits.contains(lineNumber)
-                    ? QStringLiteral("Native edit queued for tick %1.")
-                              .arg(source->edits[lineNumber].effectiveTick)
-                    : QStringLiteral("Source line restored."));
+    setStatus(source->edits.contains(lineNumber)
+                      ? QStringLiteral("Native edit queued for tick %1.")
+                                .arg(source->edits[lineNumber].effectiveTick)
+                      : QStringLiteral("Source line restored."));
     return true;
 }
 
-bool SimulationDebuggerModel::toggleBreakpoint(
-        const QString &path, int lineNumber) {
+bool SimulationDebuggerModel::toggleBreakpoint(const QString &path,
+                                               int lineNumber) {
     const int index = sourceIndex(path);
     if (index < 0 || lineNumber <= 0 ||
         lineNumber >
@@ -359,12 +366,10 @@ bool SimulationDebuggerModel::toggleBreakpoint(
 }
 
 bool SimulationDebuggerModel::togglePinned(const QString &name) {
-    const auto found = std::find_if(
-            variables_.begin(),
-            variables_.end(),
-            [&name](const Variable &variable) {
-                return variable.name == name;
-            });
+    const auto found = std::find_if(variables_.begin(), variables_.end(),
+                                    [&name](const Variable &variable) {
+                                        return variable.name == name;
+                                    });
     if (found == variables_.end() && !pinnedNames_.contains(name)) {
         return false;
     }
@@ -378,9 +383,27 @@ bool SimulationDebuggerModel::togglePinned(const QString &name) {
 }
 
 void SimulationDebuggerModel::resetEdits() {
+    bool changed = false;
     for (SourceFile &source : sources_) {
-        source.currentLines = source.originalLines;
+        for (auto edit = source.edits.cbegin(); edit != source.edits.cend();
+             ++edit) {
+            const int index = edit.key() - 1;
+            if (index < 0 || index >= source.originalLines.size()) {
+                continue;
+            }
+            source.currentLines[index] = source.originalLines[index];
+            changed = true;
+            source.highlightedLight[index] =
+                    syntaxHighlighted(source.originalLines[index], false);
+            source.highlightedDark[index] =
+                    syntaxHighlighted(source.originalLines[index], true);
+            source.inlineValueLines[index] =
+                    inlineValues(source.originalLines[index]);
+        }
         source.edits.clear();
+    }
+    if (changed) {
+        ++sourceRevision_;
     }
     editError_.clear();
     emit filesChanged();
@@ -407,17 +430,47 @@ void SimulationDebuggerModel::configure(const QString &backendName) {
     emit stateChanged();
 }
 
-bool SimulationDebuggerModel::startSession(
-        const QString &packsDirectory, const QString &replayPath) {
-    if (!available_ || packsDirectory.trimmed().isEmpty() ||
-        replayPath.trimmed().isEmpty()) {
-        setStatus(QStringLiteral(
-                "Load a replay and Packs directory before "
-                "starting native source debugging."));
+bool SimulationDebuggerModel::startSession(const QString &packsDirectory,
+                                           const QString &replayPath) {
+    if (packsDirectory.trimmed().isEmpty() || replayPath.trimmed().isEmpty()) {
+        setStatus(QStringLiteral("Load a replay and Packs directory before "
+                                 "starting native source debugging."));
         return false;
     }
-    stopSession();
+    pendingPacksDirectory_ = QDir::toNativeSeparators(packsDirectory);
+    pendingReplayPath_ = QDir::toNativeSeparators(replayPath);
+    pendingStart_ = true;
+    if (preparing_) {
+        setStatus(
+                QStringLiteral("Waiting for reference source preparation..."));
+        return true;
+    }
+    if (!available_) {
+        pendingStart_ = false;
+        setStatus(QStringLiteral("Native source debugging is not available."));
+        return false;
+    }
+    if (active_ || debugger_.state() != QProcess::NotRunning) {
+        stopSessionProcess(true);
+    } else {
+        beginPendingSession();
+    }
+    return true;
+}
+
+void SimulationDebuggerModel::beginPendingSession() {
+    if (!pendingStart_ || preparing_ || !available_) {
+        return;
+    }
+    if (debugger_.state() != QProcess::NotRunning) {
+        stopSessionProcess(true);
+        return;
+    }
+    packsDirectory_ = pendingPacksDirectory_;
+    replayPath_ = pendingReplayPath_;
+    pendingStart_ = false;
     stopping_ = false;
+    const quint64 generation = ++sessionGeneration_;
     commandQueue_.clear();
     debuggerBuffer_.clear();
     editError_.clear();
@@ -436,39 +489,46 @@ bool SimulationDebuggerModel::startSession(
     pauseRequested_ = false;
     editInterruptRequested_ = false;
     handlingDebuggerOutput_ = false;
+    outputProcessing_ = false;
     atTickBoundary_ = false;
     workerReady_ = false;
-    packsDirectory_ = QDir::toNativeSeparators(packsDirectory);
-    replayPath_ = QDir::toNativeSeparators(replayPath);
     active_ = true;
     setRunning(false);
     setStatus(QStringLiteral("Starting the real reference physics engine..."));
     emit stateChanged();
     debugger_.setWorkingDirectory(QCoreApplication::applicationDirPath());
-    const QString debuggerCommand =
-            quoteShellArgument(lldbExecutablePath()) +
-            QStringLiteral(" --no-lldbinit");
-    debugger_.start(
-            scriptExecutablePath(),
-            {QStringLiteral("-qefc"),
-             debuggerCommand,
-             QStringLiteral("/dev/null")});
-    if (!debugger_.waitForStarted(5000)) {
-        active_ = false;
-        failSession(QStringLiteral("LLDB could not be started."));
-        return false;
-    }
-    return true;
+    const QString debuggerCommand = quoteShellArgument(lldbExecutablePath()) +
+                                    QStringLiteral(" --no-lldbinit");
+    debugger_.start(scriptExecutablePath(),
+                    {QStringLiteral("-qefc"), debuggerCommand,
+                     QStringLiteral("/dev/null")});
+    QTimer::singleShot(5000, this, [this, generation]() {
+        if (generation == sessionGeneration_ && active_ &&
+            debugger_.state() != QProcess::Running) {
+            failSession(QStringLiteral("LLDB could not be started."));
+        }
+    });
 }
 
 void SimulationDebuggerModel::stopSession() {
+    stopSessionProcess(false);
+}
+
+void SimulationDebuggerModel::stopSessionProcess(bool keepPendingStart) {
     const bool wasActive = active_;
-    stopping_ = true;
+    if (!keepPendingStart) {
+        pendingStart_ = false;
+        pendingPacksDirectory_.clear();
+        pendingReplayPath_.clear();
+    }
+    ++sessionGeneration_;
     setRunning(false);
     active_ = false;
     compiling_ = false;
     commandInFlight_ = false;
     advanceScheduled_ = false;
+    outputProcessing_ = false;
+    handlingDebuggerOutput_ = false;
     cancelStep();
     atTickBoundary_ = false;
     commandQueue_.clear();
@@ -477,21 +537,33 @@ void SimulationDebuggerModel::stopSession() {
     installedBreakpointIds_.clear();
     clearExecutionLocation();
     if (debugger_.state() != QProcess::NotRunning) {
+        stopping_ = true;
+        const quint64 shutdown = ++shutdownGeneration_;
         debugger_.write("quit\n");
         debugger_.closeWriteChannel();
-        if (!debugger_.waitForFinished(1500)) {
-            debugger_.terminate();
-            if (!debugger_.waitForFinished(1000)) {
-                debugger_.kill();
-                debugger_.waitForFinished(1000);
+        QTimer::singleShot(250, this, [this, shutdown]() {
+            if (shutdown == shutdownGeneration_ &&
+                debugger_.state() != QProcess::NotRunning) {
+                debugger_.terminate();
             }
-        }
+        });
+        QTimer::singleShot(750, this, [this, shutdown]() {
+            if (shutdown == shutdownGeneration_ &&
+                debugger_.state() != QProcess::NotRunning) {
+                debugger_.kill();
+            }
+        });
+    } else {
+        stopping_ = false;
     }
-    stopping_ = false;
     if (wasActive) {
         setStatus(QStringLiteral("Native source debugging stopped."));
         emit stateChanged();
         emit sessionFinished();
+    }
+    if (!stopping_ && keepPendingStart && pendingStart_) {
+        QTimer::singleShot(0, this,
+                           &SimulationDebuggerModel::beginPendingSession);
     }
 }
 
@@ -520,17 +592,17 @@ void SimulationDebuggerModel::pause() {
             "Pausing at the next native source-line boundary..."));
     if (!commandInFlight_ && activeLine_ > 0) {
         pauseRequested_ = false;
-        variables_.clear();
-        queueCommand(
-                CommandKind::Variables,
-                QStringLiteral("frame variable --show-types"));
+        clearVariables();
+        queueCommand(CommandKind::Variables,
+                     QStringLiteral("frame variable --show-types"));
         setStatus(QStringLiteral("Paused at a native source-line boundary."));
     } else if (!commandInFlight_ && atTickBoundary_) {
         queueCommand(CommandKind::Continue, QStringLiteral("continue"));
     }
 }
 
-QString SimulationDebuggerModel::syntaxHighlighted(const QString &text) const {
+QString SimulationDebuggerModel::syntaxHighlighted(const QString &text,
+                                                   bool darkMode) {
     QString escaped = HtmlEscape(text);
     static const QRegularExpression stringPattern(
             QStringLiteral("(\".*?\"|'.*?')"));
@@ -544,35 +616,214 @@ QString SimulationDebuggerModel::syntaxHighlighted(const QString &text) const {
             "switch|template|this|throw|true|try|typename|using|"
             "void|while)\\b"));
     const QString stringColor =
-            darkMode_ ? QStringLiteral("#e9b86c") : QStringLiteral("#8a4f27");
+            darkMode ? QStringLiteral("#e9b86c") : QStringLiteral("#8a4f27");
     const QString numberColor =
-            darkMode_ ? QStringLiteral("#d9a0e8") : QStringLiteral("#8b3fa3");
+            darkMode ? QStringLiteral("#d9a0e8") : QStringLiteral("#8b3fa3");
     const QString keywordColor =
-            darkMode_ ? QStringLiteral("#80b9ef") : QStringLiteral("#235f9e");
+            darkMode ? QStringLiteral("#80b9ef") : QStringLiteral("#235f9e");
     const QString commentColor =
-            darkMode_ ? QStringLiteral("#91a092") : QStringLiteral("#6b786b");
-    escaped.replace(
-            stringPattern,
-            QStringLiteral("<span style=\"color:%1\">\\1</span>")
-                    .arg(stringColor));
-    escaped.replace(
-            numberPattern,
-            QStringLiteral("<span style=\"color:%1\">\\1</span>")
-                    .arg(numberColor));
-    escaped.replace(
-            keywordPattern,
-            QStringLiteral(
-                    "<span style=\"color:%1;font-weight:600\">"
-                    "\\1</span>")
-                    .arg(keywordColor));
+            darkMode ? QStringLiteral("#91a092") : QStringLiteral("#6b786b");
+    escaped.replace(stringPattern,
+                    QStringLiteral("<span style=\"color:%1\">\\1</span>")
+                            .arg(stringColor));
+    escaped.replace(numberPattern,
+                    QStringLiteral("<span style=\"color:%1\">\\1</span>")
+                            .arg(numberColor));
+    escaped.replace(keywordPattern,
+                    QStringLiteral("<span style=\"color:%1;font-weight:600\">"
+                                   "\\1</span>")
+                            .arg(keywordColor));
     const qsizetype comment = escaped.indexOf(QStringLiteral("//"));
     if (comment >= 0) {
-        escaped = escaped.left(comment) +
-                  QStringLiteral("<span style=\"color:%1\">")
-                          .arg(commentColor) +
-                  escaped.mid(comment) + QStringLiteral("</span>");
+        escaped =
+                escaped.left(comment) +
+                QStringLiteral("<span style=\"color:%1\">").arg(commentColor) +
+                escaped.mid(comment) + QStringLiteral("</span>");
     }
     return escaped;
+}
+
+SimulationDebuggerModel::ProcessedDebuggerOutput
+SimulationDebuggerModel::processDebuggerOutput(const QString &output,
+                                               bool parseVariables,
+                                               bool parseStopLocation) {
+    ProcessedDebuggerOutput result;
+    result.rawOutput = output;
+    result.diagnostics = TrimDebuggerNoise(output);
+    static const QRegularExpression errorPattern(
+            QStringLiteral("(error:|Errors occurred while evaluating|"
+                           "<user expression [^>]*>:\\d+:\\d+: error:)"),
+            QRegularExpression::CaseInsensitiveOption);
+    result.commandFailed = errorPattern.match(result.diagnostics).hasMatch();
+
+    const QString marker = QStringLiteral("@FOREVERTAS_STATE ");
+    const QString workerErrorMarker = QStringLiteral("@FOREVERTAS_ERROR ");
+    static const QRegularExpression variablePattern(
+            QStringLiteral("^\\s*\\(([^)]*)\\)\\s+([^\\s=]+)\\s+=\\s+(.*)$"));
+    for (const QString &line : output.split(QLatin1Char('\n'))) {
+        if (line.startsWith(marker)) {
+            QJsonParseError error;
+            const QJsonDocument document = QJsonDocument::fromJson(
+                    line.mid(marker.size()).toUtf8(), &error);
+            if (error.error != QJsonParseError::NoError ||
+                !document.isObject()) {
+                result.workerErrors.push_back(QStringLiteral(
+                        "Reference worker emitted an invalid state."));
+                continue;
+            }
+            const QJsonObject state = document.object();
+            QVariantMap frame;
+            frame.insert(
+                    QStringLiteral("tick"),
+                    static_cast<qint64>(
+                            state.value(QStringLiteral("tick")).toDouble()));
+            frame.insert(
+                    QStringLiteral("timeMs"),
+                    static_cast<qint64>(
+                            state.value(QStringLiteral("timeMs")).toDouble()));
+            frame.insert(QStringLiteral("durationMs"),
+                         static_cast<qint64>(
+                                 state.value(QStringLiteral("durationMs"))
+                                         .toDouble()));
+            frame.insert(QStringLiteral("position"),
+                         JsonVector(state.value(QStringLiteral("position"))));
+            frame.insert(QStringLiteral("rotation"),
+                         JsonVector(state.value(QStringLiteral("rotation"))));
+            frame.insert(
+                    QStringLiteral("linearSpeed"),
+                    JsonVector(state.value(QStringLiteral("linearSpeed"))));
+            frame.insert(
+                    QStringLiteral("angularSpeed"),
+                    JsonVector(state.value(QStringLiteral("angularSpeed"))));
+            frame.insert(QStringLiteral("force"),
+                         JsonVector(state.value(QStringLiteral("force"))));
+            frame.insert(QStringLiteral("torque"),
+                         JsonVector(state.value(QStringLiteral("torque"))));
+            frame.insert(QStringLiteral("accelerate"),
+                         state.value(QStringLiteral("accelerate")).toDouble());
+            frame.insert(QStringLiteral("brake"),
+                         state.value(QStringLiteral("brake")).toDouble());
+            frame.insert(QStringLiteral("steering"),
+                         state.value(QStringLiteral("steering")).toDouble());
+            frame.insert(QStringLiteral("checkpointsCollected"),
+                         state.value(QStringLiteral("checkpointsCollected"))
+                                 .toInt());
+            frame.insert(
+                    QStringLiteral("checkpointsTotal"),
+                    state.value(QStringLiteral("checkpointsTotal")).toInt());
+            frame.insert(QStringLiteral("completedLaps"),
+                         state.value(QStringLiteral("completedLaps")).toInt());
+            frame.insert(QStringLiteral("totalLaps"),
+                         state.value(QStringLiteral("totalLaps")).toInt());
+            frame.insert(QStringLiteral("raceCompleted"),
+                         state.value(QStringLiteral("raceCompleted")).toBool());
+            if (state.value(QStringLiteral("finishTimeMs")).isDouble()) {
+                frame.insert(QStringLiteral("finishTimeMs"),
+                             static_cast<qint64>(
+                                     state.value(QStringLiteral("finishTimeMs"))
+                                             .toDouble()));
+            }
+            result.frames.push_back(frame);
+            continue;
+        }
+        if (line.startsWith(workerErrorMarker)) {
+            const QJsonDocument error = QJsonDocument::fromJson(
+                    line.mid(workerErrorMarker.size()).toUtf8());
+            result.workerErrors.push_back(
+                    error.object()
+                            .value(QStringLiteral("message"))
+                            .toString(QStringLiteral(
+                                    "Reference worker failed.")));
+            continue;
+        }
+        if (parseVariables && result.parsedVariables.size() < 512) {
+            const QRegularExpressionMatch match = variablePattern.match(line);
+            if (match.hasMatch()) {
+                result.parsedVariables.push_back(QVariantMap{
+                        {QStringLiteral("name"), match.captured(2)},
+                        {QStringLiteral("value"), match.captured(3).trimmed()},
+                        {QStringLiteral("type"), match.captured(1).trimmed()}});
+            }
+        }
+    }
+    if (parseVariables) {
+        std::sort(result.parsedVariables.begin(), result.parsedVariables.end(),
+                  [](const QVariant &left, const QVariant &right) {
+                      return left.toMap()
+                                     .value(QStringLiteral("name"))
+                                     .toString() <
+                             right.toMap()
+                                     .value(QStringLiteral("name"))
+                                     .toString();
+                  });
+    }
+
+    if (parseStopLocation) {
+        result.tickBoundary = output.contains(
+                QStringLiteral("forevertas_debugger_tick_boundary"));
+        static const QRegularExpression locationPattern(
+                QStringLiteral("\\bat (.+?):(\\d+)(?::\\d+)?\\s*$"),
+                QRegularExpression::MultilineOption);
+        QRegularExpressionMatchIterator matches =
+                locationPattern.globalMatch(output);
+        QRegularExpressionMatch last;
+        while (matches.hasNext()) {
+            last = matches.next();
+        }
+        if (last.hasMatch()) {
+            result.stopPath = QDir::cleanPath(last.captured(1).trimmed());
+            result.stopLine = last.captured(2).toInt();
+        }
+    }
+    return result;
+}
+
+QHash<QString, QStringList> SimulationDebuggerModel::buildInlineValueCache(
+        const QVariantList &variables,
+        const QHash<QString, QStringList> &sourceLines) {
+    struct InlineVariable {
+        QString display;
+        QRegularExpression pattern;
+    };
+    std::vector<InlineVariable> patterns;
+    patterns.reserve(static_cast<std::size_t>(variables.size()));
+    for (const QVariant &value : variables) {
+        const QVariantMap variable = value.toMap();
+        const QString name = variable.value(QStringLiteral("name")).toString();
+        if (name.isEmpty() || name == QStringLiteral("this")) {
+            continue;
+        }
+        patterns.push_back(InlineVariable{
+                name + QStringLiteral(" = ") +
+                        variable.value(QStringLiteral("value")).toString(),
+                QRegularExpression(
+                        QStringLiteral("(^|[^A-Za-z0-9_])%1"
+                                       "([^A-Za-z0-9_]|$)")
+                                .arg(QRegularExpression::escape(name)))});
+    }
+
+    QHash<QString, QStringList> result;
+    result.reserve(sourceLines.size());
+    for (auto source = sourceLines.cbegin(); source != sourceLines.cend();
+         ++source) {
+        QStringList valuesByLine;
+        valuesByLine.reserve(source.value().size());
+        for (const QString &line : source.value()) {
+            QStringList values;
+            for (const InlineVariable &variable : patterns) {
+                if (!variable.pattern.match(line).hasMatch()) {
+                    continue;
+                }
+                values.push_back(variable.display);
+                if (values.size() == 3) {
+                    break;
+                }
+            }
+            valuesByLine.push_back(values.join(QStringLiteral("   ")));
+        }
+        result.insert(source.key(), std::move(valuesByLine));
+    }
+    return result;
 }
 
 QString SimulationDebuggerModel::fileName(const QString &path) {
@@ -638,8 +889,7 @@ QString SimulationDebuggerModel::quoteShellArgument(const QString &value) {
 
 int SimulationDebuggerModel::sourceIndex(const QString &path) const {
     const auto found = std::find_if(
-            sources_.begin(),
-            sources_.end(),
+            sources_.begin(), sources_.end(),
             [&path](const SourceFile &source) { return source.path == path; });
     return found == sources_.end()
                    ? -1
@@ -685,54 +935,46 @@ QVariantList SimulationDebuggerModel::visibleFileEntries() const {
             continue;
         }
         const QString prefix = directory + QLatin1Char('/');
-        const bool modified = std::any_of(
-                sources_.begin(),
-                sources_.end(),
-                [&prefix](const SourceFile &source) {
-                    return source.path.startsWith(prefix) &&
-                           !source.edits.isEmpty();
-                });
-        const bool breakpoint = std::any_of(
-                sources_.begin(),
-                sources_.end(),
-                [&prefix](const SourceFile &source) {
-                    return source.path.startsWith(prefix) &&
-                           !source.breakpoints.isEmpty();
-                });
+        const bool modified =
+                std::any_of(sources_.begin(), sources_.end(),
+                            [&prefix](const SourceFile &source) {
+                                return source.path.startsWith(prefix) &&
+                                       !source.edits.isEmpty();
+                            });
+        const bool breakpoint =
+                std::any_of(sources_.begin(), sources_.end(),
+                            [&prefix](const SourceFile &source) {
+                                return source.path.startsWith(prefix) &&
+                                       !source.breakpoints.isEmpty();
+                            });
         result.push_back(
-                QVariantMap{
-                        {QStringLiteral("path"), directory},
-                        {QStringLiteral("name"), fileName(directory)},
-                        {QStringLiteral("depth"), depth(directory)},
-                        {QStringLiteral("directory"), true},
-                        {QStringLiteral("expanded"),
-                         expandedFolders_.contains(directory)},
-                        {QStringLiteral("modified"), modified},
-                        {QStringLiteral("breakpoint"), breakpoint},
-                        {QStringLiteral("selected"), false}});
+                QVariantMap{{QStringLiteral("path"), directory},
+                            {QStringLiteral("name"), fileName(directory)},
+                            {QStringLiteral("depth"), depth(directory)},
+                            {QStringLiteral("directory"), true},
+                            {QStringLiteral("expanded"),
+                             expandedFolders_.contains(directory)},
+                            {QStringLiteral("modified"), modified},
+                            {QStringLiteral("breakpoint"), breakpoint},
+                            {QStringLiteral("selected"), false}});
     }
     for (const SourceFile &source : sources_) {
         if (!visible(source.path)) {
             continue;
         }
-        result.push_back(
-                QVariantMap{
-                        {QStringLiteral("path"), source.path},
-                        {QStringLiteral("name"), fileName(source.path)},
-                        {QStringLiteral("depth"), depth(source.path)},
-                        {QStringLiteral("directory"), false},
-                        {QStringLiteral("expanded"), false},
-                        {QStringLiteral("modified"), !source.edits.isEmpty()},
-                        {QStringLiteral("breakpoint"),
-                         !source.breakpoints.isEmpty()},
-                        {QStringLiteral("selected"),
-                         source.path == selectedFilePath_},
-                        {QStringLiteral("active"),
-                         source.path == activeFilePath_}});
+        result.push_back(QVariantMap{
+                {QStringLiteral("path"), source.path},
+                {QStringLiteral("name"), fileName(source.path)},
+                {QStringLiteral("depth"), depth(source.path)},
+                {QStringLiteral("directory"), false},
+                {QStringLiteral("expanded"), false},
+                {QStringLiteral("modified"), !source.edits.isEmpty()},
+                {QStringLiteral("breakpoint"), !source.breakpoints.isEmpty()},
+                {QStringLiteral("selected"), source.path == selectedFilePath_},
+                {QStringLiteral("active"), source.path == activeFilePath_}});
     }
     std::sort(
-            result.begin(),
-            result.end(),
+            result.begin(), result.end(),
             [](const QVariant &left, const QVariant &right) {
                 const QVariantMap leftMap = left.toMap();
                 const QVariantMap rightMap = right.toMap();
@@ -767,8 +1009,8 @@ QString SimulationDebuggerModel::inlineValues(const QString &line) const {
                 QStringLiteral("(^|[^A-Za-z0-9_])%1([^A-Za-z0-9_]|$)")
                         .arg(QRegularExpression::escape(variable.name)));
         if (pattern.match(line).hasMatch()) {
-            values.push_back(
-                    variable.name + QStringLiteral(" = ") + variable.value);
+            values.push_back(variable.name + QStringLiteral(" = ") +
+                             variable.value);
             if (values.size() == 3) {
                 break;
             }
@@ -812,8 +1054,8 @@ QString SimulationDebuggerModel::lineKey(const QString &path, int line) const {
     return path + QLatin1Char(':') + QString::number(line);
 }
 
-int SimulationDebuggerModel::statementEndLine(
-        const SourceFile &source, int line) const {
+int SimulationDebuggerModel::statementEndLine(const SourceFile &source,
+                                              int line) const {
     int parentheses = 0;
     int brackets = 0;
     bool sawDelimiter = false;
@@ -860,71 +1102,123 @@ int SimulationDebuggerModel::statementEndLine(
     return line;
 }
 
-bool SimulationDebuggerModel::editApplies(
-        const SourceFile &source, int line) const {
+bool SimulationDebuggerModel::editApplies(const SourceFile &source,
+                                          int line) const {
     const auto found = source.edits.constFind(line);
     return found != source.edits.cend() &&
            found->effectiveTick <= executionTick_;
 }
 
 void SimulationDebuggerModel::loadSources() {
-    sources_.clear();
-    const QString root = sourceRootPath();
-    for (const std::string_view entry : kSimulationDebugSourcePaths) {
-        const QString path = QString::fromUtf8(
-                entry.data(), static_cast<qsizetype>(entry.size()));
-        QFile file(QStringLiteral(":/simulation-debug/") + path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            continue;
-        }
-        QString content = QString::fromUtf8(file.readAll());
-        content.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-        content.replace(QLatin1Char('\r'), QLatin1Char('\n'));
-        QStringList lines = content.split(QLatin1Char('\n'));
-        if (!lines.isEmpty() && lines.back().isEmpty()) {
-            lines.removeLast();
-        }
-        sources_.push_back(
-                SourceFile{
-                        path,
-                        QDir(root).filePath(path),
-                        lines,
-                        lines,
-                        {},
-                        {},
-                        {}});
-    }
-    std::sort(
-            sources_.begin(),
-            sources_.end(),
-            [](const SourceFile &left, const SourceFile &right) {
-                return left.path < right.path;
-            });
-    const QString preferred = QStringLiteral(
-            "src/simulation/runtime/replay_simulation_runtime.cpp");
-    selectedFilePath_ =
-            sourceIndex(preferred) >= 0
-                    ? preferred
-                    : (sources_.empty() ? QString() : sources_.front().path);
-    available_ = !sources_.empty() &&
-                 QFileInfo::exists(workerExecutablePath()) &&
-                 QFileInfo::exists(lldbExecutablePath()) &&
-                 QFileInfo::exists(scriptExecutablePath());
-    restoreBreakpoints();
+    const quint64 generation = ++sourceLoadGeneration_;
+    preparing_ = true;
+    available_ = false;
     statusText_ =
-            available_
-                    ? QStringLiteral("Real reference engine source is ready.")
-                    : QStringLiteral(
-                              "Native source debugging requires the reference "
-                              "worker, LLDB, and a terminal bridge.");
+            QStringLiteral("Preparing the real reference engine source...");
+    emit stateChanged();
+
+    const QString root = sourceRootPath();
+    const QString workerPath = workerExecutablePath();
+    const QString lldbPath = lldbExecutablePath();
+    const QString scriptPath = scriptExecutablePath();
+    using SourcePreparation = std::pair<std::vector<SourceFile>, bool>;
+    auto *const watcher = new QFutureWatcher<SourcePreparation>(this);
+    connect(watcher, &QFutureWatcher<SourcePreparation>::finished, this,
+            [this, watcher, generation]() {
+                SourcePreparation prepared = watcher->result();
+                watcher->deleteLater();
+                if (generation != sourceLoadGeneration_) {
+                    return;
+                }
+                sources_ = std::move(prepared.first);
+                ++sourceRevision_;
+                const QString preferred =
+                        QStringLiteral("src/simulation/runtime/"
+                                       "replay_simulation_runtime.cpp");
+                selectedFilePath_ =
+                        sourceIndex(preferred) >= 0
+                                ? preferred
+                                : (sources_.empty() ? QString()
+                                                    : sources_.front().path);
+                available_ = prepared.second && !sources_.empty();
+                preparing_ = false;
+                restoreBreakpoints();
+                statusText_ =
+                        available_
+                                ? QStringLiteral(
+                                          "Real reference engine source is "
+                                          "ready.")
+                                : QStringLiteral(
+                                          "Native source debugging requires "
+                                          "the reference worker, LLDB, and a "
+                                          "terminal bridge.");
+                emit selectionChanged();
+                emit filesChanged();
+                emit linesChanged();
+                emit stateChanged();
+                if (pendingStart_ && available_ &&
+                    debugger_.state() == QProcess::NotRunning) {
+                    beginPendingSession();
+                } else if (pendingStart_ && !available_) {
+                    pendingStart_ = false;
+                }
+            });
+    watcher->setFuture(QtConcurrent::run([root, workerPath, lldbPath,
+                                          scriptPath]() {
+        std::vector<SourceFile> sources;
+        sources.reserve(kSimulationDebugSourcePaths.size());
+        for (const std::string_view entry : kSimulationDebugSourcePaths) {
+            const QString path = QString::fromUtf8(
+                    entry.data(), static_cast<qsizetype>(entry.size()));
+            QFile file(QStringLiteral(":/simulation-debug/") + path);
+            if (!file.open(QIODevice::ReadOnly)) {
+                continue;
+            }
+            QString content = QString::fromUtf8(file.readAll());
+            content.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+            content.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+            QStringList lines = content.split(QLatin1Char('\n'));
+            if (!lines.isEmpty() && lines.back().isEmpty()) {
+                lines.removeLast();
+            }
+            QStringList highlightedLight;
+            QStringList highlightedDark;
+            QStringList inlineValueLines;
+            highlightedLight.reserve(lines.size());
+            highlightedDark.reserve(lines.size());
+            inlineValueLines.resize(lines.size());
+            for (const QString &line : lines) {
+                highlightedLight.push_back(syntaxHighlighted(line, false));
+                highlightedDark.push_back(syntaxHighlighted(line, true));
+            }
+            sources.push_back(SourceFile{path,
+                                         QDir(root).filePath(path),
+                                         lines,
+                                         lines,
+                                         highlightedLight,
+                                         highlightedDark,
+                                         inlineValueLines,
+                                         {},
+                                         {},
+                                         {}});
+        }
+        std::sort(sources.begin(), sources.end(),
+                  [](const SourceFile &left, const SourceFile &right) {
+                      return left.path < right.path;
+                  });
+        const bool toolsAvailable = QFileInfo::exists(workerPath) &&
+                                    QFileInfo::exists(lldbPath) &&
+                                    QFileInfo::exists(scriptPath);
+        return SourcePreparation{std::move(sources), toolsAvailable};
+    }));
 }
 
 void SimulationDebuggerModel::restoreBreakpoints() {
-    const QStringList persisted = QSettings()
-                                          .value(QStringLiteral(
-                                                  "simulationDebugger/"
-                                                  "breakpointsV1"))
-                                          .toStringList();
+    const QStringList persisted =
+            QSettings()
+                    .value(QStringLiteral("simulationDebugger/"
+                                          "breakpointsV1"))
+                    .toStringList();
     for (const QString &key : persisted) {
         const qsizetype separator = key.lastIndexOf(QLatin1Char(':'));
         bool lineValid = false;
@@ -950,8 +1244,8 @@ void SimulationDebuggerModel::saveBreakpoints() const {
         }
     }
     std::sort(persisted.begin(), persisted.end());
-    QSettings().setValue(
-            QStringLiteral("simulationDebugger/breakpointsV1"), persisted);
+    QSettings().setValue(QStringLiteral("simulationDebugger/breakpointsV1"),
+                         persisted);
 }
 
 void SimulationDebuggerModel::syncSourceBreakpoints(SourceFile &source) {
@@ -977,8 +1271,7 @@ void SimulationDebuggerModel::syncSourceBreakpoints(SourceFile &source) {
             queueCommand(
                     CommandKind::SourceBreakpointRemove,
                     QStringLiteral("breakpoint delete %1").arg(breakpointId),
-                    key,
-                    breakpointId);
+                    key, breakpointId);
         }
     }
     QList<int> sorted(lines.begin(), lines.end());
@@ -988,28 +1281,25 @@ void SimulationDebuggerModel::syncSourceBreakpoints(SourceFile &source) {
     }
 }
 
-void SimulationDebuggerModel::installSourceBreakpoint(
-        SourceFile &source, int line) {
+void SimulationDebuggerModel::installSourceBreakpoint(SourceFile &source,
+                                                      int line) {
     const QString key = lineKey(source.path, line);
     if (!active_ || installedBreakpointKeys_.contains(key)) {
         return;
     }
     installedBreakpointKeys_.insert(key);
     source.executableLines.insert(line);
-    queueCommand(
-            CommandKind::SourceBreakpoint,
-            QStringLiteral("breakpoint set --file %1 --line %2")
-                    .arg(quoteDebuggerArgument(source.absolutePath))
-                    .arg(line),
-            source.path,
-            line);
+    queueCommand(CommandKind::SourceBreakpoint,
+                 QStringLiteral("breakpoint set --file %1 --line %2")
+                         .arg(quoteDebuggerArgument(source.absolutePath))
+                         .arg(line),
+                 source.path, line);
 }
 
-void SimulationDebuggerModel::queueCommand(
-        CommandKind kind,
-        const QString &text,
-        const QString &sourcePath,
-        int line) {
+void SimulationDebuggerModel::queueCommand(CommandKind kind,
+                                           const QString &text,
+                                           const QString &sourcePath,
+                                           int line) {
     if (!active_ || debugger_.state() == QProcess::NotRunning) {
         return;
     }
@@ -1018,8 +1308,8 @@ void SimulationDebuggerModel::queueCommand(
 }
 
 void SimulationDebuggerModel::sendNextCommand() {
-    if (!active_ || hasCurrentCommand_ || commandQueue_.isEmpty() ||
-        debugger_.state() != QProcess::Running) {
+    if (!active_ || hasCurrentCommand_ || outputProcessing_ ||
+        commandQueue_.isEmpty() || debugger_.state() != QProcess::Running) {
         return;
     }
     currentCommand_ = commandQueue_.dequeue();
@@ -1036,26 +1326,26 @@ void SimulationDebuggerModel::readDebuggerOutput() {
 }
 
 void SimulationDebuggerModel::consumeDebuggerPrompts() {
+    if (outputProcessing_) {
+        return;
+    }
     static const QString prompt = QStringLiteral("(lldb) ");
     qsizetype promptPosition = debuggerBuffer_.indexOf(prompt);
     while (promptPosition >= 0) {
         handlingDebuggerOutput_ = true;
         const QString output = debuggerBuffer_.left(promptPosition);
         debuggerBuffer_.remove(0, promptPosition + prompt.size());
-        parseWorkerOutput(output);
         if (startupPromptsRemaining_ > 0) {
             --startupPromptsRemaining_;
             if (startupPromptsRemaining_ == 0 && !setupQueued_) {
                 setupQueued_ = true;
+                queueCommand(CommandKind::Setting,
+                             QStringLiteral("target create %1")
+                                     .arg(quoteDebuggerArgument(
+                                             workerExecutablePath())));
                 queueCommand(
                         CommandKind::Setting,
-                        QStringLiteral("target create %1")
-                                .arg(quoteDebuggerArgument(
-                                        workerExecutablePath())));
-                queueCommand(
-                        CommandKind::Setting,
-                        QStringLiteral(
-                                "settings set -- target.run-args %1 %2")
+                        QStringLiteral("settings set -- target.run-args %1 %2")
                                 .arg(quoteDebuggerArgument(packsDirectory_))
                                 .arg(quoteDebuggerArgument(replayPath_)));
                 queueCommand(
@@ -1063,17 +1353,14 @@ void SimulationDebuggerModel::consumeDebuggerPrompts() {
                         QStringLiteral(
                                 "settings set symbols.enable-external-lookup "
                                 "false"));
-                queueCommand(
-                        CommandKind::Setting,
-                        QStringLiteral(
-                                "settings set "
-                                "target.inline-breakpoint-strategy "
-                                "always"));
+                queueCommand(CommandKind::Setting,
+                             QStringLiteral("settings set "
+                                            "target.inline-breakpoint-strategy "
+                                            "always"));
                 queueCommand(
                         CommandKind::FunctionBreakpoint,
-                        QStringLiteral(
-                                "breakpoint set --name "
-                                "forevertas_debugger_tick_boundary"));
+                        QStringLiteral("breakpoint set --name "
+                                       "forevertas_debugger_tick_boundary"));
                 queueCommand(
                         CommandKind::FunctionBreakpoint,
                         QStringLiteral("breakpoint set --method AdvanceTicks"));
@@ -1085,7 +1372,8 @@ void SimulationDebuggerModel::consumeDebuggerPrompts() {
             const DebuggerCommand completed = currentCommand_;
             hasCurrentCommand_ = false;
             commandInFlight_ = false;
-            handleCommandResult(completed, output);
+            processCommandOutputAsync(completed, output);
+            return;
         }
         handlingDebuggerOutput_ = false;
         sendNextCommand();
@@ -1093,29 +1381,83 @@ void SimulationDebuggerModel::consumeDebuggerPrompts() {
     }
 }
 
-void SimulationDebuggerModel::handleCommandResult(
+void SimulationDebuggerModel::processCommandOutputAsync(
         const DebuggerCommand &command, const QString &output) {
+    const bool parseVariables = command.kind == CommandKind::Variables;
+    const bool parseStopLocation =
+            command.kind == CommandKind::Run ||
+            command.kind == CommandKind::Continue ||
+            command.kind == CommandKind::Substep ||
+            command.kind == CommandKind::SourceLineStep ||
+            command.kind == CommandKind::RefreshLocation;
+    QHash<QString, QStringList> sourceLines;
+    if (parseVariables) {
+        sourceLines.reserve(static_cast<qsizetype>(sources_.size()));
+        for (const SourceFile &source : sources_) {
+            sourceLines.insert(source.path, source.currentLines);
+        }
+    }
+    const quint64 sourceRevision = sourceRevision_;
+    const quint64 generation = sessionGeneration_;
+    outputProcessing_ = true;
+    auto *const watcher = new QFutureWatcher<ProcessedDebuggerOutput>(this);
+    connect(watcher, &QFutureWatcher<ProcessedDebuggerOutput>::finished, this,
+            [this, watcher, command, generation]() {
+                ProcessedDebuggerOutput output = watcher->result();
+                watcher->deleteLater();
+                if (generation != sessionGeneration_) {
+                    return;
+                }
+                if (!output.workerErrors.isEmpty()) {
+                    failSession(output.workerErrors.constFirst());
+                } else if (active_) {
+                    for (const QVariant &frame : output.frames) {
+                        applyWorkerFrame(frame.toMap());
+                    }
+                    handleCommandResult(command, output);
+                }
+                outputProcessing_ = false;
+                handlingDebuggerOutput_ = false;
+                sendNextCommand();
+                consumeDebuggerPrompts();
+            });
+    watcher->setFuture(QtConcurrent::run(
+            [output, parseVariables, parseStopLocation, sourceRevision,
+             sourceLines = std::move(sourceLines)]() {
+                ProcessedDebuggerOutput processed = processDebuggerOutput(
+                        output, parseVariables, parseStopLocation);
+                if (parseVariables) {
+                    processed.sourceRevision = sourceRevision;
+                    processed.inlineValuesBySource = buildInlineValueCache(
+                            processed.parsedVariables, sourceLines);
+                }
+                return processed;
+            }));
+}
+
+void SimulationDebuggerModel::handleCommandResult(
+        const DebuggerCommand &command, const ProcessedDebuggerOutput &output) {
     switch (command.kind) {
     case CommandKind::Setting:
     case CommandKind::FunctionBreakpoint:
-        if (debuggerCommandFailed(output)) {
+        if (output.commandFailed) {
             failSession(
                     QStringLiteral("LLDB rejected required debugger setup: %1")
-                            .arg(TrimDebuggerNoise(output)));
+                            .arg(output.diagnostics));
         }
         break;
     case CommandKind::SourceBreakpoint:
-        handleSourceBreakpointResult(command, output);
+        handleSourceBreakpointResult(command, output.rawOutput);
         scheduleAdvance();
         break;
     case CommandKind::SourceBreakpointRemove:
-        if (debuggerCommandFailed(output)) {
+        if (output.commandFailed) {
             installedBreakpointKeys_.insert(command.sourcePath);
             installedBreakpointIds_.insert(command.sourcePath, command.line);
             editError_ =
                     QStringLiteral("Could not remove native breakpoint %1: %2")
                             .arg(command.line)
-                            .arg(TrimDebuggerNoise(output));
+                            .arg(output.diagnostics);
             emit linesChanged();
         }
         scheduleAdvance();
@@ -1128,7 +1470,7 @@ void SimulationDebuggerModel::handleCommandResult(
         handleDebuggerStop(output);
         break;
     case CommandKind::Variables:
-        parseVariables(output);
+        applyParsedVariables(output);
         if (running_) {
             scheduleAdvance();
         }
@@ -1136,12 +1478,12 @@ void SimulationDebuggerModel::handleCommandResult(
     case CommandKind::EvaluateEdit: {
         compiling_ = false;
         emit stateChanged();
-        QString diagnostic = TrimDebuggerNoise(output);
+        QString diagnostic = output.diagnostics;
         if (diagnostic.startsWith(command.text)) {
             diagnostic.remove(0, command.text.size());
             diagnostic = diagnostic.trimmed();
         }
-        if (debuggerCommandFailed(diagnostic)) {
+        if (output.commandFailed) {
             cancelStep();
             editError_ = diagnostic;
             if (editError_.isEmpty()) {
@@ -1157,12 +1499,12 @@ void SimulationDebuggerModel::handleCommandResult(
         break;
     }
     case CommandKind::JumpAfterEdit:
-        if (debuggerCommandFailed(output)) {
+        if (output.commandFailed) {
             cancelStep();
-            editError_ = QStringLiteral(
-                                 "The debugger could not skip the original "
-                                 "source statement: %1")
-                                 .arg(TrimDebuggerNoise(output));
+            editError_ =
+                    QStringLiteral("The debugger could not skip the original "
+                                   "source statement: %1")
+                            .arg(output.diagnostics);
             setRunning(false);
             compiling_ = false;
             emit linesChanged();
@@ -1170,12 +1512,11 @@ void SimulationDebuggerModel::handleCommandResult(
             executedLinesThisTick_.insert(currentLineKey_);
             if (stepping_) {
                 if (stepMode_ == StepMode::Tick) {
-                    queueCommand(
-                            CommandKind::Continue, QStringLiteral("continue"));
+                    queueCommand(CommandKind::Continue,
+                                 QStringLiteral("continue"));
                 } else {
-                    queueCommand(
-                            CommandKind::RefreshLocation,
-                            QStringLiteral("frame info"));
+                    queueCommand(CommandKind::RefreshLocation,
+                                 QStringLiteral("frame info"));
                 }
             } else {
                 scheduleAdvance();
@@ -1220,12 +1561,10 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
 
     const bool unresolved =
             resolvedLine <= 0 ||
-            output.contains(
-                    QStringLiteral("no locations (pending)"),
-                    Qt::CaseInsensitive) ||
-            output.contains(
-                    QStringLiteral("Unable to resolve breakpoint"),
-                    Qt::CaseInsensitive);
+            output.contains(QStringLiteral("no locations (pending)"),
+                            Qt::CaseInsensitive) ||
+            output.contains(QStringLiteral("Unable to resolve breakpoint"),
+                            Qt::CaseInsensitive);
     if (debuggerCommandFailed(output) || unresolved) {
         installedBreakpointKeys_.remove(requestedKey);
         installedBreakpointIds_.remove(requestedKey);
@@ -1233,8 +1572,7 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
             queueCommand(
                     CommandKind::SourceBreakpointRemove,
                     QStringLiteral("breakpoint delete %1").arg(breakpointId),
-                    requestedKey,
-                    breakpointId);
+                    requestedKey, breakpointId);
         }
         if (source.breakpoints.remove(command.line)) {
             saveBreakpoints();
@@ -1260,8 +1598,7 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
             queueCommand(
                     CommandKind::SourceBreakpointRemove,
                     QStringLiteral("breakpoint delete %1").arg(breakpointId),
-                    requestedKey,
-                    breakpointId);
+                    requestedKey, breakpointId);
         }
         return;
     }
@@ -1291,11 +1628,12 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
     }
 }
 
-void SimulationDebuggerModel::handleDebuggerStop(const QString &output) {
+void SimulationDebuggerModel::handleDebuggerStop(
+        const ProcessedDebuggerOutput &output) {
     if (!active_) {
         return;
     }
-    if (output.contains(QStringLiteral("forevertas_debugger_tick_boundary"))) {
+    if (output.tickBoundary) {
         if (!currentLineKey_.isEmpty()) {
             executedLinesThisTick_.insert(currentLineKey_);
         }
@@ -1329,23 +1667,12 @@ void SimulationDebuggerModel::handleDebuggerStop(const QString &output) {
         }
         return;
     }
-    static const QRegularExpression locationPattern(
-            QStringLiteral("\\bat (.+?):(\\d+)(?::\\d+)?\\s*$"),
-            QRegularExpression::MultilineOption);
-    QRegularExpressionMatchIterator matches =
-            locationPattern.globalMatch(output);
-    QRegularExpressionMatch last;
-    while (matches.hasNext()) {
-        last = matches.next();
-    }
-    if (last.hasMatch()) {
-        handleSourceStop(
-                QDir::cleanPath(last.captured(1).trimmed()),
-                last.captured(2).toInt());
+    if (!output.stopPath.isEmpty() && output.stopLine > 0) {
+        handleSourceStop(output.stopPath, output.stopLine);
         return;
     }
-    if (output.contains(QStringLiteral("exited with status")) ||
-        output.contains(QStringLiteral("Process 0 exited"))) {
+    if (output.rawOutput.contains(QStringLiteral("exited with status")) ||
+        output.rawOutput.contains(QStringLiteral("Process 0 exited"))) {
         return;
     }
     if (editInterruptRequested_) {
@@ -1368,8 +1695,8 @@ void SimulationDebuggerModel::handleDebuggerStop(const QString &output) {
     }
 }
 
-void SimulationDebuggerModel::handleSourceStop(
-        const QString &absolutePath, int line) {
+void SimulationDebuggerModel::handleSourceStop(const QString &absolutePath,
+                                               int line) {
     const QString relative = relativeSourcePath(absolutePath);
     if (!workerReady_) {
         queueCommand(CommandKind::Continue, QStringLiteral("continue"));
@@ -1445,78 +1772,109 @@ void SimulationDebuggerModel::handleSourceStop(
                                   .arg(fileName(relative))
                                   .arg(line);
         finishStep(status);
-        variables_.clear();
-        queueCommand(
-                CommandKind::Variables,
-                QStringLiteral("frame variable --show-types"));
+        clearVariables();
+        queueCommand(CommandKind::Variables,
+                     QStringLiteral("frame variable --show-types"));
     } else if (!running_ && !editApplies(source, line)) {
         if (!userBreakpoint) {
             setStatus(QStringLiteral("Paused at %1:%2.")
                               .arg(fileName(relative))
                               .arg(line));
         }
-        variables_.clear();
-        queueCommand(
-                CommandKind::Variables,
-                QStringLiteral("frame variable --show-types"));
+        clearVariables();
+        queueCommand(CommandKind::Variables,
+                     QStringLiteral("frame variable --show-types"));
     } else if (running_) {
         scheduleAdvance();
     }
 }
 
-void SimulationDebuggerModel::parseWorkerOutput(const QString &output) {
-    const QString marker = QStringLiteral("@FOREVERTAS_STATE ");
-    const QString errorMarker = QStringLiteral("@FOREVERTAS_ERROR ");
-    for (const QString &line : output.split(QLatin1Char('\n'))) {
-        if (line.startsWith(marker)) {
-            handleWorkerState(line.mid(marker.size()).toUtf8());
-        } else if (line.startsWith(errorMarker)) {
-            const QJsonDocument error = QJsonDocument::fromJson(
-                    line.mid(errorMarker.size()).toUtf8());
-            failSession(error.object()
-                                .value(QStringLiteral("message"))
-                                .toString(QStringLiteral(
-                                        "Reference worker failed.")));
+void SimulationDebuggerModel::applyParsedVariables(
+        const ProcessedDebuggerOutput &output) {
+    ++inlineCacheGeneration_;
+    variables_.clear();
+    variables_.reserve(static_cast<std::size_t>(output.parsedVariables.size()));
+    for (const QVariant &value : output.parsedVariables) {
+        const QVariantMap entry = value.toMap();
+        const QString name = entry.value(QStringLiteral("name")).toString();
+        if (name.isEmpty()) {
+            continue;
+        }
+        variables_.push_back(Variable{
+                name, entry.value(QStringLiteral("value")).toString(),
+                entry.value(QStringLiteral("type")).toString(), name, 0});
+    }
+    if (output.sourceRevision == sourceRevision_) {
+        applyInlineValueCache(output.inlineValuesBySource);
+    } else {
+        refreshInlineValueCacheAsync(output.parsedVariables);
+    }
+    emit variablesChanged();
+    emit linesChanged();
+}
+
+void SimulationDebuggerModel::applyInlineValueCache(
+        const QHash<QString, QStringList> &inlineValuesBySource) {
+    for (SourceFile &source : sources_) {
+        source.inlineValueLines = inlineValuesBySource.value(source.path);
+        if (source.inlineValueLines.size() != source.currentLines.size()) {
+            source.inlineValueLines.clear();
+            source.inlineValueLines.resize(source.currentLines.size());
         }
     }
 }
 
-void SimulationDebuggerModel::parseVariables(const QString &output) {
-    variables_.clear();
-    static const QRegularExpression variablePattern(
-            QStringLiteral("^\\s*\\(([^)]*)\\)\\s+([^\\s=]+)\\s+=\\s+(.*)$"));
-    for (const QString &line : output.split(QLatin1Char('\n'))) {
-        const QRegularExpressionMatch match = variablePattern.match(line);
-        if (!match.hasMatch()) {
-            continue;
-        }
-        variables_.push_back(
-                Variable{
-                        match.captured(2),
-                        match.captured(3).trimmed(),
-                        match.captured(1).trimmed(),
-                        match.captured(2),
-                        0});
-        if (variables_.size() >= 512u) {
-            break;
-        }
+void SimulationDebuggerModel::refreshInlineValueCacheAsync(
+        const QVariantList &values) {
+    QHash<QString, QStringList> sourceLines;
+    sourceLines.reserve(static_cast<qsizetype>(sources_.size()));
+    for (const SourceFile &source : sources_) {
+        sourceLines.insert(source.path, source.currentLines);
     }
-    std::sort(
-            variables_.begin(),
-            variables_.end(),
-            [](const Variable &left, const Variable &right) {
-                return left.name < right.name;
+    const quint64 generation = ++inlineCacheGeneration_;
+    const quint64 sourceRevision = sourceRevision_;
+    auto *const watcher = new QFutureWatcher<QHash<QString, QStringList>>(this);
+    connect(watcher, &QFutureWatcher<QHash<QString, QStringList>>::finished,
+            this, [this, watcher, generation, sourceRevision, values]() {
+                const QHash<QString, QStringList> cache = watcher->result();
+                watcher->deleteLater();
+                if (generation != inlineCacheGeneration_) {
+                    return;
+                }
+                if (sourceRevision != sourceRevision_) {
+                    refreshInlineValueCacheAsync(values);
+                    return;
+                }
+                applyInlineValueCache(cache);
+                emit linesChanged();
             });
-    emit variablesChanged();
-    emit linesChanged();
+    watcher->setFuture(
+            QtConcurrent::run([values, sourceLines = std::move(sourceLines)]() {
+                return buildInlineValueCache(values, sourceLines);
+            }));
+}
+
+void SimulationDebuggerModel::clearVariables() {
+    ++inlineCacheGeneration_;
+    variables_.clear();
+    for (SourceFile &source : sources_) {
+        source.inlineValueLines.clear();
+        source.inlineValueLines.resize(source.currentLines.size());
+    }
+}
+
+void SimulationDebuggerModel::applyWorkerFrame(const QVariantMap &frame) {
+    workerReady_ = true;
+    executionTick_ = frame.value(QStringLiteral("tick")).toLongLong();
+    emit frameProduced(frame);
+    emit executionChanged();
 }
 
 bool SimulationDebuggerModel::debuggerCommandFailed(
         const QString &output) const {
     static const QRegularExpression errorPattern(
-            QStringLiteral(
-                    "(error:|Errors occurred while evaluating|"
-                    "<user expression [^>]*>:\\d+:\\d+: error:)"),
+            QStringLiteral("(error:|Errors occurred while evaluating|"
+                           "<user expression [^>]*>:\\d+:\\d+: error:)"),
             QRegularExpression::CaseInsensitiveOption);
     return errorPattern.match(output).hasMatch();
 }
@@ -1527,81 +1885,6 @@ void SimulationDebuggerModel::setStatus(const QString &status) {
     }
     statusText_ = status;
     emit stateChanged();
-}
-
-void SimulationDebuggerModel::handleWorkerState(const QByteArray &json) {
-    QJsonParseError error;
-    const QJsonDocument document = QJsonDocument::fromJson(json, &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject()) {
-        failSession(
-                QStringLiteral("Reference worker emitted an invalid state."));
-        return;
-    }
-    const QJsonObject state = document.object();
-    workerReady_ = true;
-    executionTick_ =
-            static_cast<qint64>(state.value(QStringLiteral("tick")).toDouble());
-    QVariantMap frame;
-    frame.insert(QStringLiteral("tick"), executionTick_);
-    frame.insert(
-            QStringLiteral("timeMs"),
-            static_cast<qint64>(
-                    state.value(QStringLiteral("timeMs")).toDouble()));
-    frame.insert(
-            QStringLiteral("durationMs"),
-            static_cast<qint64>(
-                    state.value(QStringLiteral("durationMs")).toDouble()));
-    frame.insert(
-            QStringLiteral("position"),
-            JsonVector(state.value(QStringLiteral("position"))));
-    frame.insert(
-            QStringLiteral("rotation"),
-            JsonVector(state.value(QStringLiteral("rotation"))));
-    frame.insert(
-            QStringLiteral("linearSpeed"),
-            JsonVector(state.value(QStringLiteral("linearSpeed"))));
-    frame.insert(
-            QStringLiteral("angularSpeed"),
-            JsonVector(state.value(QStringLiteral("angularSpeed"))));
-    frame.insert(
-            QStringLiteral("force"),
-            JsonVector(state.value(QStringLiteral("force"))));
-    frame.insert(
-            QStringLiteral("torque"),
-            JsonVector(state.value(QStringLiteral("torque"))));
-    frame.insert(
-            QStringLiteral("accelerate"),
-            state.value(QStringLiteral("accelerate")).toDouble());
-    frame.insert(
-            QStringLiteral("brake"),
-            state.value(QStringLiteral("brake")).toDouble());
-    frame.insert(
-            QStringLiteral("steering"),
-            state.value(QStringLiteral("steering")).toDouble());
-    frame.insert(
-            QStringLiteral("checkpointsCollected"),
-            state.value(QStringLiteral("checkpointsCollected")).toInt());
-    frame.insert(
-            QStringLiteral("checkpointsTotal"),
-            state.value(QStringLiteral("checkpointsTotal")).toInt());
-    frame.insert(
-            QStringLiteral("completedLaps"),
-            state.value(QStringLiteral("completedLaps")).toInt());
-    frame.insert(
-            QStringLiteral("totalLaps"),
-            state.value(QStringLiteral("totalLaps")).toInt());
-    frame.insert(
-            QStringLiteral("raceCompleted"),
-            state.value(QStringLiteral("raceCompleted")).toBool());
-    if (state.value(QStringLiteral("finishTimeMs")).isDouble()) {
-        frame.insert(
-                QStringLiteral("finishTimeMs"),
-                static_cast<qint64>(
-                        state.value(QStringLiteral("finishTimeMs"))
-                                .toDouble()));
-    }
-    emit frameProduced(frame);
-    emit executionChanged();
 }
 
 void SimulationDebuggerModel::scheduleAdvance() {
@@ -1649,9 +1932,8 @@ void SimulationDebuggerModel::queueStepCommand() {
         break;
     case StepMode::SourceLine:
         setStatus(QStringLiteral("Advancing one source line..."));
-        queueCommand(
-                CommandKind::SourceLineStep,
-                QStringLiteral("thread step-over"));
+        queueCommand(CommandKind::SourceLineStep,
+                     QStringLiteral("thread step-over"));
         break;
     case StepMode::Tick:
         setStatus(QStringLiteral("Advancing one physics tick..."));
@@ -1716,10 +1998,8 @@ void SimulationDebuggerModel::applyCurrentEdit() {
     }
     editError_.clear();
     QString expression = source.currentLines[activeLine_ - 1].trimmed();
-    if (expression.isEmpty() ||
-        expression.startsWith(QStringLiteral("//"))) {
-        setStatus(QStringLiteral(
-                "Skipping the removed C++ source statement."));
+    if (expression.isEmpty() || expression.startsWith(QStringLiteral("//"))) {
+        setStatus(QStringLiteral("Skipping the removed C++ source statement."));
         jumpPastCurrentStatement();
         return;
     }

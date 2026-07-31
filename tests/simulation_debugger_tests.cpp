@@ -1,6 +1,8 @@
 #include "viewer/race_viewer_controller.h"
 #include "viewer/simulation_debugger_model.h"
 
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QHash>
 #include <QSettings>
@@ -8,6 +10,7 @@
 #include <QTimer>
 #include <QVariantMap>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -29,10 +32,8 @@ bool Check(bool condition, const char *message) {
     return condition;
 }
 
-QString SourceLine(
-        forevertas::viewer::SimulationDebuggerModel &model,
-        const QString &path,
-        int line) {
+QString SourceLine(forevertas::viewer::SimulationDebuggerModel &model,
+                   const QString &path, int line) {
     if (!model.selectFile(path)) {
         return {};
     }
@@ -45,8 +46,8 @@ QString SourceLine(
                    : QString();
 }
 
-double
-VectorComponent(const QVariantMap &frame, const QString &name, int component) {
+double VectorComponent(const QVariantMap &frame, const QString &name,
+                       int component) {
     const QVariantList values = frame.value(name).toList();
     return component >= 0 && component < values.size()
                    ? values[component].toDouble()
@@ -68,9 +69,8 @@ bool HasRealEngineTree(forevertas::viewer::SimulationDebuggerModel &model) {
     return physics && runtime && !synthetic;
 }
 
-bool HasModifiedEntry(
-        forevertas::viewer::SimulationDebuggerModel &model,
-        const QString &path) {
+bool HasModifiedEntry(forevertas::viewer::SimulationDebuggerModel &model,
+                      const QString &path) {
     for (const QVariant &entry : model.fileEntries()) {
         const QVariantMap data = entry.toMap();
         if (data.value(QStringLiteral("path")).toString() == path) {
@@ -80,9 +80,8 @@ bool HasModifiedEntry(
     return false;
 }
 
-QVariantMap FileEntry(
-        forevertas::viewer::SimulationDebuggerModel &model,
-        const QString &path) {
+QVariantMap FileEntry(forevertas::viewer::SimulationDebuggerModel &model,
+                      const QString &path) {
     for (const QVariant &entry : model.fileEntries()) {
         const QVariantMap data = entry.toMap();
         if (data.value(QStringLiteral("path")).toString() == path) {
@@ -106,6 +105,34 @@ bool ActiveLineIsSelectedAndMarked(
                    .toBool();
 }
 
+bool WaitForPreparation(forevertas::viewer::SimulationDebuggerModel &model,
+                        int *pulseCount = nullptr) {
+    QEventLoop loop;
+    QTimer pulse;
+    QTimer timeout;
+    int pulses = 0;
+    pulse.setInterval(1);
+    QObject::connect(&pulse, &QTimer::timeout, &loop, [&]() { ++pulses; });
+    QObject::connect(&model,
+                     &forevertas::viewer::SimulationDebuggerModel::stateChanged,
+                     &loop, [&]() {
+                         if (!model.preparing()) {
+                             loop.quit();
+                         }
+                     });
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    pulse.start();
+    timeout.start(10000);
+    if (model.preparing()) {
+        loop.exec();
+    }
+    if (pulseCount != nullptr) {
+        *pulseCount = pulses;
+    }
+    return !model.preparing() && model.available();
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -122,11 +149,25 @@ int main(int argc, char **argv) {
     auto *const model = viewer.simulationDebugger();
     bool okay = true;
     okay &= Check(
-            model->toggleBreakpoint(
-                    QString::fromLatin1(kVehicleSource), kApplyControlsLine),
-            "persistent breakpoint setup failed");
+            model->preparing(),
+            "reference source preparation completed synchronously on the UI "
+            "thread");
+    int preparationPulses = 0;
+    okay &= Check(WaitForPreparation(*model, &preparationPulses) &&
+                          preparationPulses > 0,
+                  "reference source preparation blocked the UI event loop");
+    okay &= Check(model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
+                                          kApplyControlsLine),
+                  "persistent breakpoint setup failed");
     {
         forevertas::viewer::SimulationDebuggerModel restored;
+        int restoredPreparationPulses = 0;
+        okay &= Check(
+                restored.preparing() &&
+                        WaitForPreparation(restored,
+                                           &restoredPreparationPulses) &&
+                        restoredPreparationPulses > 0,
+                "reconstructed source model did not prepare asynchronously");
         const QVariantMap restoredEntry =
                 FileEntry(restored, QString::fromLatin1(kVehicleSource));
         okay &= Check(
@@ -141,12 +182,10 @@ int main(int argc, char **argv) {
                 "line and file breakpoint state did not survive model "
                 "reconstruction");
     }
-    okay &= Check(
-            model->toggleBreakpoint(
-                    QString::fromLatin1(kVehicleSource), kApplyControlsLine),
-            "persistent breakpoint cleanup failed");
-    okay &=
-            Check(!viewer.startSimulationDebugger(),
+    okay &= Check(model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
+                                          kApplyControlsLine),
+                  "persistent breakpoint cleanup failed");
+    okay &= Check(!viewer.startSimulationDebugger(),
                   "debugger started without a loaded replay");
 
     enum class Phase {
@@ -177,22 +216,38 @@ int main(int argc, char **argv) {
     int sourceStepLine = -1;
     QString heldInspectionFile;
     int selectionChangesWhileRunning = 0;
+    QElapsedTimer responsivenessClock;
+    qint64 lastUiPulse = 0;
+    qint64 maximumUiGap = 0;
+    int maximumUiGapPhase = -1;
+    QString maximumUiGapStatus;
+    int uiPulseCount = 0;
+    QTimer uiPulse;
+    uiPulse.setInterval(10);
+    QObject::connect(&uiPulse, &QTimer::timeout, &application, [&]() {
+        const qint64 now = responsivenessClock.elapsed();
+        const qint64 gap = now - lastUiPulse;
+        if (gap > maximumUiGap) {
+            maximumUiGap = gap;
+            maximumUiGapPhase = static_cast<int>(phase);
+            maximumUiGapStatus = model->statusText();
+        }
+        lastUiPulse = now;
+        ++uiPulseCount;
+    });
 
     QObject::connect(
             model,
             &forevertas::viewer::SimulationDebuggerModel::selectionChanged,
-            &application,
-            [&]() {
+            &application, [&]() {
                 if (model->running()) {
                     ++selectionChangesWhileRunning;
                 }
             });
 
     QObject::connect(
-            model,
-            &forevertas::viewer::SimulationDebuggerModel::frameProduced,
-            &application,
-            [&](const QVariantMap &frame) {
+            model, &forevertas::viewer::SimulationDebuggerModel::frameProduced,
+            &application, [&](const QVariantMap &frame) {
                 const qint64 tick =
                         frame.value(QStringLiteral("tick")).toLongLong();
                 frames.insert(tick, frame);
@@ -239,15 +294,12 @@ int main(int argc, char **argv) {
                             restored > previous + 0.05,
                             "past-line restoration did not take effect on the "
                             "next tick");
-                    okay &=
-                            Check(VectorComponent(
-                                          frames.value(1),
-                                          QStringLiteral("linearSpeed"),
-                                          2) < 0.02,
+                    okay &= Check(VectorComponent(frames.value(1),
+                                                  QStringLiteral("linearSpeed"),
+                                                  2) < 0.02,
                                   "a later source edit changed a past "
                                   "simulated tick");
-                    okay &=
-                            Check(model->toggleBreakpoint(
+                    okay &= Check(model->toggleBreakpoint(
                                           QString::fromLatin1(kVehicleSource),
                                           kApplyControlsLine),
                                   "invalid-edit breakpoint was rejected");
@@ -291,29 +343,39 @@ int main(int argc, char **argv) {
                     "source-line step could not execute the pending edited "
                     "line");
             phase = Phase::WaitingEditedSourceStep;
-        } else if (
-                phase == Phase::WaitingEditedSourceStep && !model->stepping() &&
-                model->activeLine() > 0) {
-            okay &= Check(
+        } else if (phase == Phase::WaitingEditedSourceStep &&
+                   !model->stepping() && model->activeLine() > 0) {
+            const bool editedStepSettled =
                     model->executionTick() == stepTick &&
-                            viewer.tickCount() == framesBeforeSteps &&
-                            ActiveLineIsSelectedAndMarked(*model) &&
-                            model->statusText().startsWith(QStringLiteral(
-                                    "Source-line step completed")),
+                    viewer.tickCount() == framesBeforeSteps &&
+                    ActiveLineIsSelectedAndMarked(*model) &&
+                    model->statusText().startsWith(
+                            QStringLiteral("Source-line step completed"));
+            if (!editedStepSettled) {
+                std::cerr << "edited-step details: expectedTick=" << stepTick
+                          << ", actualTick=" << model->executionTick()
+                          << ", expectedFrames=" << framesBeforeSteps
+                          << ", actualFrames=" << viewer.tickCount()
+                          << ", active=" << model->activeLine() << ", selected="
+                          << model->selectedFilePath().toStdString()
+                          << ", activeFile="
+                          << model->activeFilePath().toStdString()
+                          << ", status=" << model->statusText().toStdString()
+                          << '\n';
+            }
+            okay &= Check(
+                    editedStepSettled,
                     "edited source-line step advanced a physics tick or did "
                     "not settle at the next source location");
-            okay &=
-                    Check(model->toggleBreakpoint(
-                                  QString::fromLatin1(kVehicleSource),
-                                  kApplyControlsLine),
-                          "initial execution breakpoint could not be removed");
-            okay &=
-                    Check(model->canStepSource() && model->stepSubstep(),
+            okay &= Check(
+                    model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
+                                            kApplyControlsLine),
+                    "initial execution breakpoint could not be removed");
+            okay &= Check(model->canStepSource() && model->stepSubstep(),
                           "native substep could not start");
             phase = Phase::WaitingSubstep;
-        } else if (
-                phase == Phase::WaitingSubstep && !model->stepping() &&
-                model->activeLine() > 0) {
+        } else if (phase == Phase::WaitingSubstep && !model->stepping() &&
+                   model->activeLine() > 0) {
             okay &= Check(
                     model->executionTick() == stepTick &&
                             viewer.tickCount() == framesBeforeSteps &&
@@ -324,13 +386,11 @@ int main(int argc, char **argv) {
                     "location");
             sourceStepFile = model->activeFilePath();
             sourceStepLine = model->activeLine();
-            okay &=
-                    Check(model->canStepSource() && model->stepSourceLine(),
+            okay &= Check(model->canStepSource() && model->stepSourceLine(),
                           "native source-line step could not start");
             phase = Phase::WaitingSourceLineStep;
-        } else if (
-                phase == Phase::WaitingSourceLineStep && !model->stepping() &&
-                model->activeLine() > 0) {
+        } else if (phase == Phase::WaitingSourceLineStep &&
+                   !model->stepping() && model->activeLine() > 0) {
             okay &= Check(
                     model->executionTick() == stepTick &&
                             viewer.tickCount() == framesBeforeSteps &&
@@ -338,33 +398,28 @@ int main(int argc, char **argv) {
                             (model->activeFilePath() != sourceStepFile ||
                              model->activeLine() != sourceStepLine),
                     "source-line step did not advance to a new source line");
-            okay &=
-                    Check(model->canStepTick() && model->stepTick(),
+            okay &= Check(model->canStepTick() && model->stepTick(),
                           "one-tick step could not start");
             phase = Phase::WaitingTickStep;
-        } else if (
-                phase == Phase::WaitingTickStep && !model->stepping() &&
-                model->executionTick() == stepTick + 1) {
+        } else if (phase == Phase::WaitingTickStep && !model->stepping() &&
+                   model->executionTick() == stepTick + 1) {
+            okay &= Check(viewer.tickCount() == framesBeforeSteps + 1 &&
+                                  frames.contains(stepTick + 1) &&
+                                  model->statusText() ==
+                                          QStringLiteral("Advanced exactly "
+                                                         "one physics tick."),
+                          "one-tick step did not produce exactly one new tick");
             okay &= Check(
-                    viewer.tickCount() == framesBeforeSteps + 1 &&
-                            frames.contains(stepTick + 1) &&
-                            model->statusText() == QStringLiteral(
-                                                           "Advanced exactly "
-                                                           "one physics tick."),
-                    "one-tick step did not produce exactly one new tick");
-            okay &=
-                    Check(model->toggleBreakpoint(
-                                  QString::fromLatin1(kVehicleSource),
-                                  kPreparedBodyLine),
-                          "future real-source breakpoint was rejected");
+                    model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
+                                            kPreparedBodyLine),
+                    "future real-source breakpoint was rejected");
             phase = Phase::WaitingPastLine;
             viewer.play();
-        } else if (
-                phase == Phase::WaitingPastLine && !model->running() &&
-                model->activeFilePath() ==
-                        QString::fromLatin1(kVehicleSource) &&
-                model->activeLine() == kPreparedBodyLine &&
-                !model->variables().isEmpty()) {
+        } else if (phase == Phase::WaitingPastLine && !model->running() &&
+                   model->activeFilePath() ==
+                           QString::fromLatin1(kVehicleSource) &&
+                   model->activeLine() == kPreparedBodyLine &&
+                   !model->variables().isEmpty()) {
             QString pinName;
             for (const QVariant &value : model->variables()) {
                 const QString name =
@@ -374,8 +429,7 @@ int main(int argc, char **argv) {
                     break;
                 }
             }
-            okay &=
-                    Check(!pinName.isEmpty() && model->togglePinned(pinName) &&
+            okay &= Check(!pinName.isEmpty() && model->togglePinned(pinName) &&
                                   !model->pinnedVariables().isEmpty(),
                           "native variable pinning failed");
             okay &= Check(
@@ -391,30 +445,27 @@ int main(int argc, char **argv) {
                     model->updateLine(kApplyControlsLine, originalApplyLine) &&
                             !model->hasEdits(),
                     "restoring a past line failed");
-            model->toggleBreakpoint(
-                    QString::fromLatin1(kVehicleSource), kPreparedBodyLine);
+            model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
+                                    kPreparedBodyLine);
             phase = Phase::WaitingDeferredTick;
             viewer.play();
-        } else if (
-                phase == Phase::WaitingInvalidLine && !model->running() &&
-                model->activeFilePath() ==
-                        QString::fromLatin1(kVehicleSource) &&
-                model->activeLine() == kApplyControlsLine) {
+        } else if (phase == Phase::WaitingInvalidLine && !model->running() &&
+                   model->activeFilePath() ==
+                           QString::fromLatin1(kVehicleSource) &&
+                   model->activeLine() == kApplyControlsLine) {
             firstBreakpointTick = model->executionTick();
             phase = Phase::WaitingRepeatedBreakpoint;
             viewer.play();
-        } else if (
-                phase == Phase::WaitingRepeatedBreakpoint &&
-                !model->running() &&
-                model->activeFilePath() ==
-                        QString::fromLatin1(kVehicleSource) &&
-                model->activeLine() == kApplyControlsLine &&
-                model->executionTick() > firstBreakpointTick) {
-            okay &=
-                    Check(model->executionTick() > firstBreakpointTick,
+        } else if (phase == Phase::WaitingRepeatedBreakpoint &&
+                   !model->running() &&
+                   model->activeFilePath() ==
+                           QString::fromLatin1(kVehicleSource) &&
+                   model->activeLine() == kApplyControlsLine &&
+                   model->executionTick() > firstBreakpointTick) {
+            okay &= Check(model->executionTick() > firstBreakpointTick,
                           "breakpoint did not stop again on the next tick");
-            model->toggleBreakpoint(
-                    QString::fromLatin1(kVehicleSource), kApplyControlsLine);
+            model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
+                                    kApplyControlsLine);
             okay &= Check(
                     model->selectFile(QString::fromLatin1(kVehicleSource)) &&
                             model->updateLine(
@@ -424,31 +475,46 @@ int main(int argc, char **argv) {
             frameCountBeforeInvalid = viewer.tickCount();
             phase = Phase::WaitingCompileFailure;
             viewer.play();
-        } else if (
-                phase == Phase::WaitingCompileFailure && !model->running() &&
-                !model->editError().isEmpty()) {
-            okay &=
-                    Check(viewer.tickCount() == frameCountBeforeInvalid,
+        } else if (phase == Phase::WaitingCompileFailure && !model->running() &&
+                   !model->editError().isEmpty()) {
+            okay &= Check(viewer.tickCount() == frameCountBeforeInvalid,
                           "invalid native C++ advanced the simulation");
             model->resetEdits();
-            okay &=
-                    Check(!model->hasEdits() && model->editError().isEmpty(),
+            okay &= Check(!model->hasEdits() && model->editError().isEmpty(),
                           "in-memory source edit reset failed");
             phase = Phase::WaitingPauseStop;
             viewer.play();
-            QTimer::singleShot(2, &application, [&viewer]() {
-                viewer.pause();
-            });
-        } else if (
-                phase == Phase::WaitingPauseStop && !model->running() &&
-                model->activeLine() > 0 && !model->variables().isEmpty() &&
-                model->statusText().startsWith(QStringLiteral("Paused"))) {
-            okay &= Check(
-                    !model->activeFilePath().isEmpty() &&
-                            ActiveLineIsSelectedAndMarked(*model) &&
-                            selectionChangesWhileRunning == 0,
-                    "normal pause did not settle at a real source line");
+            QTimer::singleShot(2, &application,
+                               [&viewer]() { viewer.pause(); });
+        } else if (phase == Phase::WaitingPauseStop && !model->running() &&
+                   model->activeLine() > 0 && !model->variables().isEmpty() &&
+                   model->statusText().startsWith(QStringLiteral("Paused"))) {
+            okay &= Check(!model->activeFilePath().isEmpty() &&
+                                  ActiveLineIsSelectedAndMarked(*model) &&
+                                  selectionChangesWhileRunning == 0,
+                          "normal pause did not settle at a real source line");
+            QElapsedTimer stopTimer;
+            stopTimer.start();
             viewer.stopSimulationDebugger();
+            okay &= Check(stopTimer.elapsed() < 100,
+                          "stopping the debugger blocked the UI thread");
+            const qint64 finalGap = responsivenessClock.elapsed() - lastUiPulse;
+            if (finalGap > maximumUiGap) {
+                maximumUiGap = finalGap;
+                maximumUiGapPhase = static_cast<int>(phase);
+                maximumUiGapStatus = model->statusText();
+            }
+            if (uiPulseCount <= 50 || maximumUiGap >= 500) {
+                std::cerr << "responsiveness details: pulses=" << uiPulseCount
+                          << ", maxGapMs=" << maximumUiGap
+                          << ", phase=" << maximumUiGapPhase
+                          << ", status=" << maximumUiGapStatus.toStdString()
+                          << '\n';
+            }
+            okay &= Check(
+                    uiPulseCount > 50 && maximumUiGap < 500,
+                    "debugger preparation, execution, errors, or timeline "
+                    "updates stalled the UI event loop");
             phase = Phase::Finished;
             poll.stop();
             application.exit(okay ? 0 : 1);
@@ -456,38 +522,32 @@ int main(int argc, char **argv) {
     });
 
     QObject::connect(
-            &viewer,
-            &forevertas::viewer::RaceViewerController::stateChanged,
-            &application,
-            [&]() {
+            &viewer, &forevertas::viewer::RaceViewerController::stateChanged,
+            &application, [&]() {
                 if (phase != Phase::Loading || viewer.loading() ||
                     !viewer.loaded()) {
                     return;
                 }
-                okay &=
-                        Check(model->available() && HasRealEngineTree(*model),
+                okay &= Check(model->available() && HasRealEngineTree(*model),
                               "source tree is not the real adaptive reference "
                               "engine");
-                originalApplyLine = SourceLine(
-                        *model,
-                        QString::fromLatin1(kVehicleSource),
-                        kApplyControlsLine);
+                originalApplyLine =
+                        SourceLine(*model, QString::fromLatin1(kVehicleSource),
+                                   kApplyControlsLine);
                 okay &= Check(
                         !model->updateLine(
                                 kApplyControlsLine,
                                 originalApplyLine +
                                         QStringLiteral("\ninvalid")) &&
-                                SourceLine(
-                                        *model,
-                                        QString::fromLatin1(kVehicleSource),
-                                        kApplyControlsLine) ==
+                                SourceLine(*model,
+                                           QString::fromLatin1(kVehicleSource),
+                                           kApplyControlsLine) ==
                                         originalApplyLine,
                         "multi-line input escaped the source-line edit "
                         "boundary");
                 const QVariantMap functionLine = model->lines().at(28).toMap();
                 const QString lightHighlight =
-                        functionLine
-                                .value(QStringLiteral("highlighted"))
+                        functionLine.value(QStringLiteral("highlighted"))
                                 .toString();
                 model->setDarkMode(true);
                 const QString darkHighlight =
@@ -496,12 +556,12 @@ int main(int argc, char **argv) {
                                 .toMap()
                                 .value(QStringLiteral("highlighted"))
                                 .toString();
-                okay &= Check(
-                        model->darkMode() && darkHighlight != lightHighlight &&
-                                darkHighlight.contains(
-                                        QStringLiteral("#80b9ef")),
-                        "source syntax colors did not switch to the dark "
-                        "theme");
+                okay &= Check(model->darkMode() &&
+                                      darkHighlight != lightHighlight &&
+                                      darkHighlight.contains(
+                                              QStringLiteral("#80b9ef")),
+                              "source syntax colors did not switch to the dark "
+                              "theme");
                 model->setDarkMode(false);
                 okay &= Check(
                         !originalApplyLine.isEmpty() &&
@@ -544,9 +604,27 @@ int main(int argc, char **argv) {
                         "combined line edit and persistent file breakpoint "
                         "tracking failed");
                 phase = Phase::WaitingInitialFrame;
+                responsivenessClock.start();
+                lastUiPulse = 0;
+                maximumUiGap = 0;
+                maximumUiGapPhase = -1;
+                maximumUiGapStatus.clear();
+                uiPulseCount = 0;
+                uiPulse.start();
+                QElapsedTimer startTimer;
+                startTimer.start();
+                okay &= Check(model->hasEdits() &&
+                                      viewer.startSimulationDebugger(),
+                              "native reference debugger did not start");
+                okay &= Check(startTimer.elapsed() < 100,
+                              "starting the debugger blocked the UI thread");
+                QElapsedTimer restartTimer;
+                restartTimer.start();
                 okay &= Check(
-                        model->hasEdits() && viewer.startSimulationDebugger(),
-                        "native reference debugger did not start");
+                        viewer.startSimulationDebugger() &&
+                                restartTimer.elapsed() < 100,
+                        "replacing a starting debugger session blocked or "
+                        "lost the pending restart");
                 poll.start();
             });
 
@@ -562,9 +640,8 @@ int main(int argc, char **argv) {
         application.exit(1);
     });
 
-    viewer.loadMap(
-            QString::fromLocal8Bit(argv[1]),
-            QString::fromLocal8Bit(argv[2]),
-            QStringLiteral("reference"));
+    viewer.loadMap(QString::fromLocal8Bit(argv[1]),
+                   QString::fromLocal8Bit(argv[2]),
+                   QStringLiteral("reference"));
     return application.exec();
 }

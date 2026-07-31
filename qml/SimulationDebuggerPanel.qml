@@ -124,13 +124,15 @@ Item {
 
                 Label {
                     Layout.fillWidth: true
-                    text: root.debuggerModel.running
-                          ? qsTr("native execution running")
-                          : (root.debuggerModel.stepping
-                             ? qsTr("native execution stepping")
-                             : (root.debuggerModel.compiling
-                                ? qsTr("compiling edited C++")
-                                : qsTr("native execution paused")))
+                    text: root.debuggerModel.preparing
+                          ? qsTr("preparing native source")
+                          : (root.debuggerModel.running
+                             ? qsTr("native execution running")
+                             : (root.debuggerModel.stepping
+                                ? qsTr("native execution stepping")
+                                : (root.debuggerModel.compiling
+                                   ? qsTr("compiling edited C++")
+                                   : qsTr("native execution paused"))))
                     font.family: "monospace"
                     font.pixelSize: 10
                     color: AppTheme.textMuted
