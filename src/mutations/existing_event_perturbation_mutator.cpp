@@ -148,6 +148,12 @@ public:
         return settings_.window.minimumTimeMs;
     }
 
+    MutationTimeRange AffectedTimeRange() const override {
+        return MutationTimeRange{
+                settings_.window.minimumTimeMs,
+                settings_.window.maximumTimeMs};
+    }
+
 private:
     void PrepareWindow(
             const std::vector<SandboxInputEvent> &baseline) const {

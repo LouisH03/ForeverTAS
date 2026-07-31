@@ -1105,6 +1105,7 @@ SearchResult BasicBruteForceSearch::Run(
             : context.control->iterationIndexStride;
     std::vector<PhysicsSandboxInputEvent> mutationBaselineInputs =
             baselineInputs;
+    std::uint64_t mutationBaselineGeneration = 0u;
     while (!StopRequested(context.control) &&
            !IterationLimitReached(context.control, iterations)) {
         BeginIteration(context.control);
@@ -1116,7 +1117,8 @@ SearchResult BasicBruteForceSearch::Run(
                  0u,
                  context.tickDurationMs,
                  earliestMutationTimeMs,
-                 true});
+                 true,
+                 mutationBaselineGeneration});
         CheckCancellation(context.control);
         ++iterations;
         bool improved = false;
@@ -1153,8 +1155,10 @@ SearchResult BasicBruteForceSearch::Run(
             if (sharedBaseline) {
                 mutationBaselineInputs =
                         std::move(*sharedBaseline);
+                ++mutationBaselineGeneration;
             } else if (improved) {
                 mutationBaselineInputs = best.inputs;
+                ++mutationBaselineGeneration;
             }
         }
         reportLive(false);

@@ -52,6 +52,10 @@ public:
         return 10;
     }
 
+    forevertas::MutationTimeRange AffectedTimeRange() const override {
+        return {10, 10};
+    }
+
     mutable std::vector<forevertas::AnalogInputState>
             observedBaselines;
 };

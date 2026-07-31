@@ -20,6 +20,12 @@ struct MutationRequest {
     std::int64_t mutableFromTimeMs =
             std::numeric_limits<std::int64_t>::min();
     bool preferWindowPatch = false;
+    std::uint64_t baselineGeneration = 0u;
+};
+
+struct MutationTimeRange {
+    std::int64_t minimumTimeMs = 0;
+    std::int64_t maximumTimeMs = 0;
 };
 
 struct MutationWindowPatch {
@@ -49,6 +55,7 @@ public:
     virtual ~InputMutator() = default;
     virtual MutationResult Mutate(const MutationRequest &request) const = 0;
     virtual std::int64_t EarliestMutationTimeMs() const = 0;
+    virtual MutationTimeRange AffectedTimeRange() const = 0;
 };
 
 }  // namespace forevertas

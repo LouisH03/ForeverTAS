@@ -120,4 +120,9 @@ std::int64_t RandomSteeringMutator::EarliestMutationTimeMs() const {
     return settings_.minimumTimeMs;
 }
 
+MutationTimeRange RandomSteeringMutator::AffectedTimeRange() const {
+    return MutationTimeRange{
+            settings_.minimumTimeMs, settings_.maximumTimeMs};
+}
+
 }  // namespace forevertas

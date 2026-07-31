@@ -218,6 +218,44 @@ std::size_t EffectiveInputChangeCount(
     return count;
 }
 
+std::size_t EffectiveInputChangeCount(
+        const std::vector<SandboxInputEvent> &baseline,
+        const MutationWindowPatch &patch) {
+    const auto first = std::lower_bound(
+            baseline.begin(), baseline.end(), patch.minimumTimeMs,
+            [](const SandboxInputEvent &event, std::int64_t timeMs) {
+                return event.timeMs < timeMs;
+            });
+    const auto last = std::upper_bound(
+            first, baseline.end(), patch.maximumTimeMs,
+            [](std::int64_t timeMs, const SandboxInputEvent &event) {
+                return timeMs < event.timeMs;
+            });
+    const std::size_t prefixCount = static_cast<std::size_t>(
+            first - baseline.begin());
+    const std::size_t replacedCount = static_cast<std::size_t>(last - first);
+    const std::size_t resultSize =
+            baseline.size() - replacedCount + patch.events.size();
+    const std::size_t common = std::min(baseline.size(), resultSize);
+    std::size_t count = baseline.size() > resultSize
+            ? baseline.size() - resultSize
+            : resultSize - baseline.size();
+    for (std::size_t index = prefixCount; index < common; ++index) {
+        const SandboxInputEvent *iterationEvent = nullptr;
+        const std::size_t patchOffset = index - prefixCount;
+        if (patchOffset < patch.events.size()) {
+            iterationEvent = &patch.events[patchOffset];
+        } else {
+            const std::size_t baselineIndex =
+                    static_cast<std::size_t>(last - baseline.begin()) +
+                    patchOffset - patch.events.size();
+            iterationEvent = &baseline[baselineIndex];
+        }
+        if (!SameInputEvent(baseline[index], *iterationEvent)) ++count;
+    }
+    return count;
+}
+
 std::vector<SandboxInputEvent> ApplyInputWindowPatch(
         const std::vector<SandboxInputEvent> &baseline,
         const MutationWindowPatch &patch) {
@@ -239,6 +277,41 @@ std::vector<SandboxInputEvent> ApplyInputWindowPatch(
     result.insert(result.end(), patch.events.begin(), patch.events.end());
     result.insert(result.end(), last, baseline.end());
     return result;
+}
+
+bool InputEventsAreCanonical(
+        const std::vector<SandboxInputEvent> &events,
+        std::uint32_t tickDurationMs) {
+    using forevervalidator::experimental::PhysicsSandboxInputValueKind;
+    using forevervalidator::experimental::PhysicsSandboxSwitchState;
+    std::int64_t previousTimeMs = std::numeric_limits<std::int64_t>::min();
+    std::size_t groupBegin = 0u;
+    for (std::size_t index = 0u; index < events.size(); ++index) {
+        const SandboxInputEvent &event = events[index];
+        if (event.timeMs < previousTimeMs ||
+            AlignInputTime(event.timeMs, tickDurationMs) != event.timeMs) {
+            return false;
+        }
+        if (event.value.kind == PhysicsSandboxInputValueKind::Analog &&
+            !forevervalidator::IsAnalogInputStateValid(event.value.analog)) {
+            return false;
+        }
+        if (event.value.kind == PhysicsSandboxInputValueKind::Switch &&
+            event.value.switchState != PhysicsSandboxSwitchState::Released &&
+            event.value.switchState != PhysicsSandboxSwitchState::Pressed) {
+            return false;
+        }
+        if (index == 0u || event.timeMs != previousTimeMs) {
+            groupBegin = index;
+        } else {
+            for (std::size_t previous = groupBegin;
+                 previous < index; ++previous) {
+                if (events[previous].action == event.action) return false;
+            }
+        }
+        previousTimeMs = event.timeMs;
+    }
+    return true;
 }
 
 AnalogInputState SteeringStateAt(

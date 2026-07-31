@@ -32,6 +32,7 @@ public:
 
     MutationResult Mutate(const MutationRequest &request) const override;
     std::int64_t EarliestMutationTimeMs() const override;
+    MutationTimeRange AffectedTimeRange() const override;
 
 private:
     RandomSteeringSettings settings_;
