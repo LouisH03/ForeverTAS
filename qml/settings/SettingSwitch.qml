@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 RowLayout {
     id: root
@@ -19,7 +20,7 @@ RowLayout {
         wrapMode: Text.WordWrap
     }
 
-    Switch {
+    ThemeControls.ThemedSwitch {
         checked: root.checked
         enabled: !root.running
         onToggled: root.toggled(checked)

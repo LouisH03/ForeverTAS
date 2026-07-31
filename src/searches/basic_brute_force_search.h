@@ -21,7 +21,12 @@ std::unique_ptr<SearchAlgorithm> CreateBasicBruteForceSearch(
 
 class BasicBruteForceSearch final : public SearchAlgorithm {
 public:
+    explicit BasicBruteForceSearch(bool autoPromoteBest);
+
     SearchResult Run(const SearchExecutionContext &context) const override;
+
+private:
+    bool autoPromoteBest_ = false;
 };
 
 }  // namespace forevertas

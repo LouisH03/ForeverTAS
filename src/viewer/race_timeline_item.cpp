@@ -2,6 +2,7 @@
 
 #include "app/panel_wheel_redirector.h"
 #include "viewer/gpu_ray_tracing_view.h"
+#include "viewer/whiteboard_canvas_item.h"
 
 #include "time_format.h"
 
@@ -19,6 +20,7 @@ namespace {
 
 constexpr qreal kMinimumPixelsPerTick = 1.0;
 constexpr qreal kMaximumPixelsPerTick = 12.0;
+constexpr int kScrubUpdateIntervalMs = 16;
 
 struct TimelineScale {
     qint64 majorTicks = 100;
@@ -57,9 +59,13 @@ QColor InterpolateColor(const QColor &start,
             start.alphaF() + (end.alphaF() - start.alphaF()) * progress);
 }
 
-QColor CentisecondTickColor(qreal pixelsPerTick) {
-    const QColor microColor(QStringLiteral("#343b37"));
-    const QColor minorColor(QStringLiteral("#59635d"));
+QColor CentisecondTickColor(qreal pixelsPerTick, bool darkMode) {
+    const QColor microColor(
+            darkMode ? QStringLiteral("#343b37")
+                     : QStringLiteral("#cbd1c8"));
+    const QColor minorColor(
+            darkMode ? QStringLiteral("#59635d")
+                     : QStringLiteral("#aeb8b0"));
     if (pixelsPerTick <= 7.0) {
         QColor color = microColor;
         color.setAlphaF(InterpolationProgress(pixelsPerTick, 5.0, 7.0));
@@ -105,6 +111,12 @@ RaceTimelineItem::RaceTimelineItem(QQuickItem *parent)
     setAntialiasing(false);
     setOpaquePainting(true);
     setCursor(QCursor(Qt::SizeVerCursor));
+    scrubUpdateTimer_.setSingleShot(true);
+    scrubUpdateTimer_.setTimerType(Qt::PreciseTimer);
+    connect(&scrubUpdateTimer_,
+            &QTimer::timeout,
+            this,
+            &RaceTimelineItem::applyPendingScrub);
 }
 
 RaceViewerController *RaceTimelineItem::viewer() const {
@@ -115,6 +127,10 @@ void RaceTimelineItem::setViewer(RaceViewerController *viewer) {
     if (viewer_ == viewer) {
         return;
     }
+    scrubUpdateTimer_.stop();
+    hasPendingScrub_ = false;
+    dragMode_ = DragMode::None;
+    lastScrubUpdate_.invalidate();
     disconnectViewer();
     viewer_ = viewer;
     if (viewer_ != nullptr) {
@@ -158,13 +174,31 @@ void RaceTimelineItem::setPixelsPerTick(qreal value) {
     emit pixelsPerTickChanged();
 }
 
+bool RaceTimelineItem::darkMode() const {
+    return darkMode_;
+}
+
+void RaceTimelineItem::setDarkMode(bool value) {
+    if (darkMode_ == value) {
+        return;
+    }
+    darkMode_ = value;
+    update();
+    emit darkModeChanged();
+}
+
 void RaceTimelineItem::paint(QPainter *painter) {
     const QRectF area = boundingRect();
-    painter->fillRect(area, QColor(QStringLiteral("#101412")));
+    painter->fillRect(
+            area,
+            QColor(darkMode_ ? QStringLiteral("#101412")
+                             : QStringLiteral("#f4f5f2")));
 
     if (viewer_ == nullptr || !viewer_->loaded() ||
         viewer_->tickCount() <= 0) {
-        painter->setPen(QColor(QStringLiteral("#778079")));
+        painter->setPen(
+                QColor(darkMode_ ? QStringLiteral("#778079")
+                                 : QStringLiteral("#667064")));
         painter->drawText(
                 area.adjusted(18.0, 18.0, -18.0, -18.0),
                 Qt::AlignCenter | Qt::TextWordWrap,
@@ -188,15 +222,21 @@ void RaceTimelineItem::paint(QPainter *painter) {
 
     painter->fillRect(
             QRectF(0.0, 0.0, rulerWidth, area.height()),
-            QColor(QStringLiteral("#0c100e")));
-    painter->setPen(QColor(QStringLiteral("#2b332f")));
+            QColor(darkMode_ ? QStringLiteral("#0c100e")
+                             : QStringLiteral("#eef2ed")));
+    painter->setPen(
+            QColor(darkMode_ ? QStringLiteral("#2b332f")
+                             : QStringLiteral("#cbd1c8")));
     painter->drawLine(QPointF(rulerRight, 0.0),
                       QPointF(rulerRight, area.height()));
 
     painter->fillRect(
             QRectF(controlLeft, 0.0, controlWidth, area.height()),
-            QColor(QStringLiteral("#171d1a")));
-    painter->setPen(QColor(QStringLiteral("#29312c")));
+            QColor(darkMode_ ? QStringLiteral("#171d1a")
+                             : QStringLiteral("#e1e5df")));
+    painter->setPen(
+            QColor(darkMode_ ? QStringLiteral("#29312c")
+                             : QStringLiteral("#cbd1c8")));
     painter->drawLine(QPointF(controlLeft, 0.0),
                       QPointF(controlLeft, area.height()));
     painter->drawLine(QPointF(controlLeft + brakeWidth, 0.0),
@@ -290,15 +330,20 @@ void RaceTimelineItem::paint(QPainter *painter) {
     const qint64 lastScaleTick = std::min<qint64>(
             viewer_->tickCount(), lastVisible + 1);
 
-    QPen majorTickPen(QColor(QStringLiteral("#9aa69e")));
+    QPen majorTickPen(
+            QColor(darkMode_ ? QStringLiteral("#9aa69e")
+                             : QStringLiteral("#667064")));
     majorTickPen.setCosmetic(true);
     majorTickPen.setWidthF(1.0);
-    QPen minorTickPen(QColor(QStringLiteral("#59635d")));
+    QPen minorTickPen(
+            QColor(darkMode_ ? QStringLiteral("#59635d")
+                             : QStringLiteral("#aeb8b0")));
     minorTickPen.setCosmetic(true);
     minorTickPen.setWidthF(1.0);
     const qreal centisecondTickLength =
             CentisecondTickLength(pixelsPerTick_);
-    QPen centisecondTickPen(CentisecondTickColor(pixelsPerTick_));
+    QPen centisecondTickPen(
+            CentisecondTickColor(pixelsPerTick_, darkMode_));
     centisecondTickPen.setCosmetic(true);
     centisecondTickPen.setWidthF(1.0);
 
@@ -334,7 +379,9 @@ void RaceTimelineItem::paint(QPainter *painter) {
                           QPointF(rulerRight, alignedY));
 
         if (majorTick) {
-            painter->setPen(QColor(QStringLiteral("#aeb8b0")));
+            painter->setPen(
+                    QColor(darkMode_ ? QStringLiteral("#aeb8b0")
+                                     : QStringLiteral("#667064")));
             painter->drawText(
                     QRectF(2.0, alignedY - 8.0, 34.0, 16.0),
                     Qt::AlignRight | Qt::AlignVCenter,
@@ -342,10 +389,13 @@ void RaceTimelineItem::paint(QPainter *painter) {
         }
     }
 
-    painter->setPen(QPen(QColor(QStringLiteral("#f3c85b")), 2.0));
+    const QColor currentTickColor(
+            darkMode_ ? QStringLiteral("#f3c85b")
+                      : QStringLiteral("#9a5b28"));
+    painter->setPen(QPen(currentTickColor, 2.0));
     painter->drawLine(QPointF(0.0, centerY),
                       QPointF(area.width(), centerY));
-    painter->setBrush(QColor(QStringLiteral("#f3c85b")));
+    painter->setBrush(currentTickColor);
     painter->setPen(Qt::NoPen);
     painter->drawPolygon(QPolygonF{
             QPointF(area.width() - 1.0, centerY),
@@ -383,15 +433,19 @@ void RaceTimelineItem::mouseMoveEvent(QMouseEvent *event) {
     } else {
         const qreal deltaTimeMs =
                 deltaY / pixelsPerTick_ * viewer_->tickDurationMs();
-        viewer_->setTimeMs(static_cast<qint64>(std::llround(
+        queueScrub(static_cast<qint64>(std::llround(
                 static_cast<qreal>(dragAnchorTimeMs_) - deltaTimeMs)));
     }
     event->accept();
 }
 
 void RaceTimelineItem::mouseReleaseEvent(QMouseEvent *event) {
-    dragMode_ = DragMode::None;
+    finishScrub();
     event->accept();
+}
+
+void RaceTimelineItem::mouseUngrabEvent() {
+    finishScrub();
 }
 
 void RaceTimelineItem::wheelEvent(QWheelEvent *event) {
@@ -412,6 +466,52 @@ void RaceTimelineItem::wheelEvent(QWheelEvent *event) {
     event->accept();
 }
 
+void RaceTimelineItem::queueScrub(qint64 timeMs) {
+    pendingScrubTimeMs_ =
+            viewer_ == nullptr
+            ? 0
+            : std::clamp<qint64>(
+                      timeMs, 0, viewer_->timelineSeekLimitMs());
+    hasPendingScrub_ = true;
+    if (!lastScrubUpdate_.isValid() ||
+        lastScrubUpdate_.elapsed() >= kScrubUpdateIntervalMs) {
+        applyPendingScrub();
+        return;
+    }
+    if (!scrubUpdateTimer_.isActive()) {
+        scrubUpdateTimer_.start(std::max(
+                1,
+                kScrubUpdateIntervalMs -
+                        static_cast<int>(lastScrubUpdate_.elapsed())));
+    }
+}
+
+void RaceTimelineItem::applyPendingScrub() {
+    if (!hasPendingScrub_) {
+        return;
+    }
+    hasPendingScrub_ = false;
+    if (viewer_ != nullptr) {
+        viewer_->setTimeMs(pendingScrubTimeMs_);
+    }
+    if (lastScrubUpdate_.isValid()) {
+        lastScrubUpdate_.restart();
+    } else {
+        lastScrubUpdate_.start();
+    }
+}
+
+void RaceTimelineItem::finishScrub() {
+    scrubUpdateTimer_.stop();
+    if (dragMode_ == DragMode::Scrub) {
+        applyPendingScrub();
+    } else {
+        hasPendingScrub_ = false;
+    }
+    dragMode_ = DragMode::None;
+    lastScrubUpdate_.invalidate();
+}
+
 void RaceTimelineItem::disconnectViewer() {
     if (viewer_ != nullptr) {
         disconnect(viewer_, nullptr, this, nullptr);
@@ -427,9 +527,13 @@ void RegisterRaceViewerQmlTypes() {
     static const int rayTracingTypeId =
             qmlRegisterType<GpuRayTracingView>(
                     "ForeverTAS.Viewer", 1, 0, "GpuRayTracingView");
+    static const int whiteboardCanvasTypeId =
+            qmlRegisterType<WhiteboardCanvasItem>(
+                    "ForeverTAS.Viewer", 1, 0, "WhiteboardCanvasItem");
     Q_UNUSED(timelineTypeId);
     Q_UNUSED(wheelTypeId);
     Q_UNUSED(rayTracingTypeId);
+    Q_UNUSED(whiteboardCanvasTypeId);
 }
 
 }  // namespace forevertas::viewer

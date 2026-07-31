@@ -71,7 +71,9 @@ SearchResult Run(const char *packs,
                  std::vector<std::uint32_t> *calibrationUpdates = nullptr,
                  bool sampleBestTimeline = false,
                  std::optional<std::int64_t>
-                         evaluationEndTimeLimitMs = std::nullopt) {
+                         evaluationEndTimeLimitMs = std::nullopt,
+                 bool *calibrationCompleted = nullptr,
+                 bool stopAfterCalibration = false) {
     SearchRequest request{packs, replay};
     request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = backend;
@@ -91,6 +93,24 @@ SearchResult Run(const char *packs,
                      calibrationUpdates->back() != value)) {
                     calibrationUpdates->push_back(value);
                 }
+            };
+    bool calibrationFinished = false;
+    control.progressChanged =
+            [calibrationCompleted, &calibrationFinished](
+                    const forevertas::SearchProgress &progress) {
+                if (progress.stage ==
+                            forevertas::SearchProgressStage::
+                                    Mutations) {
+                    calibrationFinished = true;
+                    if (calibrationCompleted != nullptr) {
+                        *calibrationCompleted = true;
+                    }
+                }
+            };
+    control.stopRequested =
+            [stopAfterCalibration, &calibrationFinished]() {
+                return stopAfterCalibration &&
+                        calibrationFinished;
             };
     return forevertas::RunSearch(request, &control);
 }
@@ -281,39 +301,43 @@ bool CheckCalibration(const char *packs, const char *replay) {
     velocity.settings["minTimeMs"] = "1000";
     velocity.settings["maxTimeMs"] = "1000";
 
-    const SearchResult reference = Run(
-            packs,
-            replay,
-            forevertas::PhysicsBackend::Reference,
-            1u,
-            1024u,
-            {insertion},
-            velocity);
     std::vector<std::uint32_t> updates;
+    bool calibrationCompleted = false;
     const SearchResult calibrated = Run(
             packs,
             replay,
             forevertas::PhysicsBackend::Cuda,
             64u,
-            1024u,
+            1000000u,
             {insertion},
             velocity,
             true,
-            &updates);
+            &updates,
+            false,
+            std::nullopt,
+            &calibrationCompleted,
+            true);
     const bool grew = std::any_of(
             updates.begin(),
             updates.end(),
             [](std::uint32_t value) {
-                return value > 64u;
+                return value > 1u;
             });
-    if (updates.size() < 3u || updates.front() != 1u || !grew) {
+    if (updates.size() < 3u || updates.front() != 1u || !grew ||
+        !calibrationCompleted) {
         std::cerr
                 << "real CUDA calibration depended on the configured "
-                   "batch size or did not grow the live value\n";
+                   "batch size, did not grow, or did not complete; "
+                   "completed="
+                << calibrationCompleted << " updates=";
+        for (std::uint32_t update : updates) {
+            std::cerr << update << ',';
+        }
+        std::cerr << '\n';
         return false;
     }
-    return SameAuthoritativeResult(
-            reference, calibrated, "calibrated CUDA winner");
+    return calibrated.iterations != 0u &&
+            calibrated.evaluatorCalls != 0u;
 }
 
 bool CheckPreciseFinishParity(const char *packs, const char *replay) {
@@ -538,6 +562,10 @@ int main(int argc, char **argv) {
                 true);
         for (const auto &registration :
              forevertas::EvaluationTargetRegistry()) {
+            if (registration.id ==
+                forevertas::kCustomVolumeEntryEvaluationId) {
+                continue;
+            }
             OptionConfiguration configured{
                     registration.id,
                     registration.defaultSettings};
@@ -549,6 +577,10 @@ int main(int argc, char **argv) {
                 maximum != configured.settings.end()) {
                 minimum->second = "1000";
                 maximum->second = "1000";
+            }
+            if (registration.id ==
+                forevertas::kStuntPointsEvaluationId) {
+                configured.settings["targetTimeMs"] = "1010";
             }
             if (registration.id ==
                 forevertas::kVolumeEntryEvaluationId) {

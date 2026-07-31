@@ -22,17 +22,51 @@ enum class SearchWinnerSource : std::uint8_t {
     Mutation,
 };
 
+enum class SearchIterationPhase : std::uint8_t {
+    Pending,
+    Started,
+    Cancelled,
+};
+
 enum class SearchProgressStage : std::uint8_t {
+    OpeningPacksDirectory,
+    ReadingReplay,
+    CreatingSimulation,
+    LoadingReplay,
+    RestoringSimulation,
+    ApplyingBaselineInputs,
+    PreparingSearch,
     Baseline,
     Calibration,
     Mutations,
+    FinalSamplingSetup,
     FinalSampling,
 };
 
 struct SearchProgress {
-    SearchProgressStage stage = SearchProgressStage::Baseline;
+    SearchProgressStage stage = SearchProgressStage::OpeningPacksDirectory;
     std::uint64_t completedWork = 0u;
     std::uint64_t totalWork = 0u;
+};
+
+struct SearchTimelineFrame {
+    std::int64_t timeMs = 0;
+    float positionX = 0.0f;
+    float positionY = 0.0f;
+    float positionZ = 0.0f;
+    float rotationX = 0.0f;
+    float rotationY = 0.0f;
+    float rotationZ = 0.0f;
+    float rotationW = 1.0f;
+    float accelerate = 0.0f;
+    float brake = 0.0f;
+    float steering = 0.0f;
+    std::uint32_t checkpointsCollected = 0u;
+    std::uint32_t checkpointsTotal = 0u;
+    std::uint32_t completedLaps = 0u;
+    std::uint32_t totalLaps = 1u;
+    bool raceCompleted = false;
+    std::optional<std::uint32_t> finishTimeMs;
 };
 
 struct SearchLiveUpdate {
@@ -51,16 +85,22 @@ struct SearchLiveUpdate {
     std::chrono::steady_clock::duration elapsed{};
     std::optional<std::chrono::steady_clock::duration>
             lastImprovementElapsed;
+    std::vector<SearchTimelineFrame> bestTimeline;
 };
 
 struct SearchRunControl {
     std::function<bool()> stopRequested;
     std::function<bool()> cancellationRequested;
     std::function<void(const SearchProgress &)> progressChanged;
+    std::function<bool()> beginIteration;
     std::function<void(const SearchLiveUpdate &)> liveChanged;
     std::function<void(std::uint32_t)> cudaBatchSizeChanged;
+    std::function<std::optional<std::vector<SandboxInputEvent>>()>
+            promotedBaselineInputs;
     std::optional<std::uint64_t> iterationLimit;
     std::optional<std::int64_t> evaluationEndTimeLimitMs;
+    std::uint64_t iterationIndexOffset = 0u;
+    std::uint64_t iterationIndexStride = 1u;
     bool sampleBestTimeline = true;
     bool reuseLoadedSandbox = false;
 };
@@ -85,20 +125,6 @@ struct SearchExecutionContext {
             *cudaModifiers = nullptr;
     const forevervalidator::experimental::PhysicsSandboxCudaEvaluator
             *cudaEvaluator = nullptr;
-};
-
-struct SearchTimelineFrame {
-    std::int64_t timeMs = 0;
-    float positionX = 0.0f;
-    float positionY = 0.0f;
-    float positionZ = 0.0f;
-    float rotationX = 0.0f;
-    float rotationY = 0.0f;
-    float rotationZ = 0.0f;
-    float rotationW = 1.0f;
-    float accelerate = 0.0f;
-    float brake = 0.0f;
-    float steering = 0.0f;
 };
 
 struct SearchResult {

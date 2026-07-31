@@ -26,11 +26,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 include(CTest)
 include(GNUInstallDirs)
+find_package(Git REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(ZLIB REQUIRED)
+find_program(FOREVERTAS_LLDB_EXECUTABLE NAMES lldb)
+find_program(FOREVERTAS_SCRIPT_EXECUTABLE NAMES script)
 
 set(FOREVERTAS_APP_ID "dev.skycrafter.forevertas")
 set(FOREVERTAS_DISPLAY_NAME "ForeverTAS")
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
+    Concurrent
     Core
     Gui
     Qml
@@ -58,13 +64,29 @@ FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
     GIT_TAG 696d8355795b40f1adf6b56772e8da21c86f3fab
-    GIT_SHALLOW FALSE)
+    GIT_SHALLOW FALSE
+    PATCH_COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-stunt-points.patch"
+        "-DSOURCE_DIR=<SOURCE_DIR>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake"
+        COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-map-name.patch"
+        "-DSOURCE_DIR=<SOURCE_DIR>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake")
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
     src/input_timeline_time.h
     src/physics_backend.h
+    src/replay_file_io.cpp
+    src/replay_file_io.h
     src/evaluators/iteration_evaluator.h
+    src/evaluators/custom_volume_entry_evaluator.cpp
+    src/evaluators/custom_volume_entry_evaluator.h
     src/evaluators/evaluator_utils.h
     src/evaluators/precise_finish_time_evaluator.cpp
     src/evaluators/precise_finish_time_evaluator.h
@@ -72,6 +94,8 @@ add_library(forevertas_core STATIC
     src/evaluators/point_target_evaluator.h
     src/evaluators/pose_target_evaluator.cpp
     src/evaluators/pose_target_evaluator.h
+    src/evaluators/stunt_points_evaluator.cpp
+    src/evaluators/stunt_points_evaluator.h
     src/evaluators/velocity_evaluator.cpp
     src/evaluators/velocity_evaluator.h
     src/evaluators/volume_entry_evaluator.cpp
@@ -104,6 +128,8 @@ add_library(forevertas_core STATIC
     src/searches/basic_brute_force_search.h
     src/searches/cuda_batch_calibrator.cpp
     src/searches/cuda_batch_calibrator.h
+    src/searches/cuda_calibration_safety.cpp
+    src/searches/cuda_calibration_safety.h
     src/searches/cuda_search_configuration.cpp
     src/searches/cuda_search_configuration.h
     src/searches/search_runner.cpp
@@ -118,6 +144,8 @@ target_link_libraries(forevertas_core PUBLIC
 add_library(forevertas_gui STATIC
     src/viewer/gpu_ray_tracing_view.cpp
     src/viewer/gpu_ray_tracing_view.h
+    src/viewer/custom_volume_geometry.cpp
+    src/viewer/custom_volume_geometry.h
     src/viewer/material_classifier.cpp
     src/viewer/material_classifier.h
     src/viewer/race_geometry.cpp
@@ -128,10 +156,22 @@ add_library(forevertas_gui STATIC
     src/viewer/race_timeline_item.h
     src/viewer/race_viewer_controller.cpp
     src/viewer/race_viewer_controller.h
+    src/viewer/simulation_debugger_model.cpp
+    src/viewer/simulation_debugger_model.h
     src/viewer/visual_scene_pipeline.cpp
     src/viewer/visual_scene_pipeline.h
+    src/viewer/whiteboard_canvas_item.cpp
+    src/viewer/whiteboard_canvas_item.h
+    src/viewer/whiteboard_model.cpp
+    src/viewer/whiteboard_model.h
     src/app/search_configuration_model.cpp
     src/app/search_configuration_model.h
+    src/app/cuboid_target_model.cpp
+    src/app/cuboid_target_model.h
+    src/app/custom_volume_target_model.cpp
+    src/app/custom_volume_target_model.h
+    src/app/pose_target_model.cpp
+    src/app/pose_target_model.h
     src/app/search_completion.h
     src/app/search_controller.cpp
     src/app/search_controller.h
@@ -142,15 +182,104 @@ add_library(forevertas_gui STATIC
     src/app/rolling_throughput.h
     src/app/search_worker.cpp
     src/app/search_worker.h)
+
+file(GLOB_RECURSE FOREVERTAS_SIMULATION_DEBUG_SOURCE_FILES
+    CONFIGURE_DEPENDS
+    "${forevervalidator_SOURCE_DIR}/src/engine/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/engine/*.h"
+    "${forevervalidator_SOURCE_DIR}/src/simulation/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/simulation/*.h"
+    "${forevervalidator_SOURCE_DIR}/src/validation/api/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/validation/api/*.h")
+list(SORT FOREVERTAS_SIMULATION_DEBUG_SOURCE_FILES)
+set(FOREVERTAS_SIMULATION_DEBUG_SOURCE_ENTRIES "")
+foreach(debug_source IN LISTS FOREVERTAS_SIMULATION_DEBUG_SOURCE_FILES)
+    file(RELATIVE_PATH debug_source_path
+        "${forevervalidator_SOURCE_DIR}" "${debug_source}")
+    string(REPLACE "\\" "/" debug_source_path "${debug_source_path}")
+    string(APPEND FOREVERTAS_SIMULATION_DEBUG_SOURCE_ENTRIES
+        "    \"${debug_source_path}\",\n")
+    set_source_files_properties("${debug_source}" PROPERTIES
+        QT_RESOURCE_ALIAS "${debug_source_path}")
+endforeach()
+list(LENGTH FOREVERTAS_SIMULATION_DEBUG_SOURCE_FILES
+    FOREVERTAS_SIMULATION_DEBUG_SOURCE_COUNT)
+configure_file(
+    cmake/SimulationDebugSources.h.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/simulation_debug_sources.h"
+    @ONLY)
+qt_add_resources(forevertas_gui "simulation_debug_sources"
+    PREFIX "/simulation-debug"
+    FILES ${FOREVERTAS_SIMULATION_DEBUG_SOURCE_FILES})
+if(FOREVERTAS_LLDB_EXECUTABLE)
+    target_compile_definitions(forevertas_gui PRIVATE
+        FOREVERTAS_LLDB_EXECUTABLE="${FOREVERTAS_LLDB_EXECUTABLE}")
+endif()
+if(FOREVERTAS_SCRIPT_EXECUTABLE)
+    target_compile_definitions(forevertas_gui PRIVATE
+        FOREVERTAS_SCRIPT_EXECUTABLE="${FOREVERTAS_SCRIPT_EXECUTABLE}")
+endif()
+target_compile_definitions(forevertas_gui PRIVATE
+    FOREVERTAS_SIMULATION_DEBUG_SOURCE_ROOT="${forevervalidator_SOURCE_DIR}")
 target_include_directories(forevertas_gui PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(forevertas_gui PUBLIC
     forevertas_core
+    Qt6::Concurrent
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
     Qt6::Quick3D
     Qt6::Widgets)
+
+# The live-code worker is a separate, unoptimized instance of the real
+# ForeverValidator reference engine. Running it out of process keeps native
+# source stepping and injected edits from ever blocking the UI process.
+file(GLOB_RECURSE FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES
+    CONFIGURE_DEPENDS
+    "${forevervalidator_SOURCE_DIR}/src/engine/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/format/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/simulation/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/validation/api/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/validation/evaluation/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/validation/planning/*.cpp"
+    "${forevervalidator_SOURCE_DIR}/src/platform/native/*.cpp")
+add_executable(forevertas-simulation-debug-worker
+    src/debugger/simulation_debug_worker.cpp
+    ${FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES})
+target_include_directories(forevertas-simulation-debug-worker PRIVATE
+    "${forevervalidator_SOURCE_DIR}/include"
+    "${forevervalidator_SOURCE_DIR}/src")
+target_link_libraries(forevertas-simulation-debug-worker PRIVATE
+    OpenSSL::Crypto
+    ZLIB::ZLIB)
+if(WIN32)
+    target_link_libraries(forevertas-simulation-debug-worker PRIVATE
+        ws2_32
+        gdi32
+        crypt32)
+endif()
+target_compile_definitions(forevertas-simulation-debug-worker PRIVATE
+    NOMINMAX
+    OPENSSL_SUPPRESS_DEPRECATED)
+if(MSVC)
+    target_compile_options(forevertas-simulation-debug-worker PRIVATE
+        /W4 /Od /Zi /Ob0 /Oy- /fp:strict)
+else()
+    target_compile_options(forevertas-simulation-debug-worker PRIVATE
+        -Wall
+        -Wextra
+        -Wno-deprecated-declarations
+        -O0
+        -g2
+        -gdwarf-4
+        -fno-inline
+        -fno-omit-frame-pointer
+        -ffp-contract=off)
+endif()
+set_target_properties(forevertas-simulation-debug-worker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
 if(TARGET Qt6::GuiPrivate AND TARGET Qt6::ShaderTools)
     target_compile_definitions(forevertas_gui PUBLIC
         FOREVERTAS_GPU_RAY_TRACING=1)
@@ -162,6 +291,7 @@ endif()
 
 qt_add_executable(forevertas
     src/app/main.cpp)
+add_dependencies(forevertas forevertas-simulation-debug-worker)
 
 set(forevertas_icon_svg
     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/${FOREVERTAS_APP_ID}.svg")
@@ -197,11 +327,26 @@ set_target_properties(forevertas PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "${FOREVERTAS_APP_ID}"
     MACOSX_BUNDLE_ICON_FILE "ForeverTAS.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+set_source_files_properties(qml/AppTheme.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(forevertas
     URI ForeverTAS
     VERSION 1.0
     QML_FILES
+        qml/AppTheme.qml
         qml/Main.qml
+        qml/SimulationDebuggerPanel.qml
+        qml/SliderValueField.qml
+        qml/ThemedButton.qml
+        qml/ThemedCheckBox.qml
+        qml/ThemedItemDelegate.qml
+        qml/ThemedMenuItem.qml
+        qml/ThemedSlider.qml
+        qml/ThemedSwitch.qml
+        qml/ThemedTabButton.qml
+        qml/ThemedToolButton.qml
+        qml/WhiteboardOverlay.qml
+        qml/WhiteboardPlanes.qml
         qml/settings/AlgorithmSelector.qml
         qml/settings/BasicBruteForceSearchSettings.qml
         qml/settings/ConfigurationSection.qml
@@ -219,6 +364,7 @@ qt_add_qml_module(forevertas
         qml/settings/SettingSwitch.qml
         qml/settings/SettingTextField.qml
         qml/settings/SmoothSteeringSettings.qml
+        qml/settings/StuntPointsEvaluationSettings.qml
         qml/settings/StyledComboBox.qml
         qml/settings/TimeWindowSettings.qml
         qml/settings/Vector3Settings.qml
@@ -266,6 +412,15 @@ endif()
 install(TARGETS forevertas
     BUNDLE DESTINATION .
     RUNTIME DESTINATION "${forevertas_runtime_destination}")
+if(APPLE)
+    set(forevertas_debug_worker_destination
+        "${FOREVERTAS_DISPLAY_NAME}.app/Contents/MacOS")
+else()
+    set(forevertas_debug_worker_destination
+        "${forevertas_runtime_destination}")
+endif()
+install(TARGETS forevertas-simulation-debug-worker
+    RUNTIME DESTINATION "${forevertas_debug_worker_destination}")
 
 if(WIN32 OR APPLE)
     set(forevertas_deploy_options NO_TRANSLATIONS)
@@ -448,12 +603,25 @@ if(BUILD_TESTING)
         forevertas_gui
         Qt6::Gui)
 
+    add_executable(forevertas-whiteboard-tests
+        tests/whiteboard_tests.cpp)
+    target_compile_definitions(forevertas-whiteboard-tests PRIVATE
+        FOREVERTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(forevertas-whiteboard-tests PRIVATE
+        forevertas_gui
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2)
+
     if(FOREVERTAS_WARNING_OPTIONS)
         target_compile_options(forevertas-strategy-tests PRIVATE
             ${FOREVERTAS_WARNING_OPTIONS})
         target_compile_options(forevertas-controller-tests PRIVATE
             ${FOREVERTAS_WARNING_OPTIONS})
         target_compile_options(forevertas-renderer-tests PRIVATE
+            ${FOREVERTAS_WARNING_OPTIONS})
+        target_compile_options(forevertas-whiteboard-tests PRIVATE
             ${FOREVERTAS_WARNING_OPTIONS})
     endif()
 
@@ -463,7 +631,11 @@ if(BUILD_TESTING)
              COMMAND forevertas-controller-tests)
     add_test(NAME forevertas-renderer
              COMMAND forevertas-renderer-tests)
+    add_test(NAME forevertas-whiteboard
+             COMMAND forevertas-whiteboard-tests)
     set_tests_properties(forevertas-renderer PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    set_tests_properties(forevertas-whiteboard PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME forevertas-qml-smoke
              COMMAND forevertas --qml-smoke-test)
@@ -533,7 +705,7 @@ if(BUILD_TESTING)
             set_tests_properties(forevertas-cuda-calibration PROPERTIES
                 LABELS "cuda;calibration;parity;stadium"
                 RESOURCE_LOCK cuda
-                TIMEOUT 120)
+                TIMEOUT 600)
         endif()
         add_test(NAME forevertas-controller-lifecycle
                  COMMAND forevertas-controller-tests
@@ -600,6 +772,24 @@ if(BUILD_TESTING)
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
         set_tests_properties(forevertas-viewer PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 180)
+
+        add_executable(forevertas-simulation-debugger-tests
+            tests/simulation_debugger_tests.cpp)
+        target_link_libraries(forevertas-simulation-debugger-tests PRIVATE
+            forevertas_gui
+            Qt6::Gui)
+        if(FOREVERTAS_WARNING_OPTIONS)
+            target_compile_options(
+                forevertas-simulation-debugger-tests PRIVATE
+                ${FOREVERTAS_WARNING_OPTIONS})
+        endif()
+        add_test(NAME forevertas-simulation-debugger
+                 COMMAND forevertas-simulation-debugger-tests
+                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                     "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-simulation-debugger PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 180)
 

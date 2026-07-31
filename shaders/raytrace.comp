@@ -25,7 +25,6 @@ struct BvhNode {
 };
 
 struct Material {
-    vec4 baseColor;
     vec4 parameters;
 };
 
@@ -290,11 +289,10 @@ void triangleSurface(Hit hit,
             materialTextures,
             vec3(fract(uv), float(materialIndex)),
             textureLodValue).rgb;
-    bool usesVertexColor =
-            materialIndex > 3u && materialIndex != 15u;
+    parameters = materials[materialIndex].parameters;
+    bool usesVertexColor = parameters.w > 0.5;
     baseColor = textureColor *
                 (usesVertexColor ? vertexColor.rgb : vec3(1.0));
-    parameters = materials[materialIndex].parameters;
 }
 
 void surfaceData(Hit hit,
@@ -344,7 +342,7 @@ vec3 reflectedSurfaceColor(Hit hit,
                 parameters);
     vec3 environment = environmentColor(normal);
     return baseColor * (0.12 + environment * 0.32) +
-           baseColor * max(parameters.w, 0.0) * 2.0;
+           baseColor * max(parameters.z, 0.0) * 2.0;
 }
 
 vec3 realTimeRayTrace(vec3 origin, vec3 direction) {
@@ -364,7 +362,7 @@ vec3 realTimeRayTrace(vec3 origin, vec3 direction) {
     vec3 environment = environmentColor(normal);
     vec3 radiance =
             baseColor * (0.11 + environment * 0.30) +
-            baseColor * max(parameters.w, 0.0) * 2.0;
+            baseColor * max(parameters.z, 0.0) * 2.0;
 
     float sunCosine =
             max(dot(normal, camera.sunDirection.xyz), 0.0);

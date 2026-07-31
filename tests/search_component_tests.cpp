@@ -4,17 +4,25 @@
 #include "mutations/composite_input_mutator.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/input_event_utils.h"
+#include "replay_file_io.h"
 #include "searches/algorithm_registry.h"
 #include "searches/basic_brute_force_search.h"
 #include "searches/cuda_batch_calibrator.h"
+#include "searches/cuda_calibration_safety.h"
 #include "searches/cuda_search_configuration.h"
 #include "searches/option_settings_utils.h"
 #include "searches/search_runner.h"
 #include "time_format.h"
 
+#include <algorithm>
+#include <array>
 #include <clocale>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <iostream>
 #include <memory>
@@ -166,7 +174,7 @@ std::unique_ptr<forevertas::IterationEvaluator> Evaluator(
 }
 
 
-bool TestUserTimelineTimeOrigin() {
+bool TestInputOnlyTimelineTimeOrigin() {
     const auto firstInput =
             forevertas::SimulationTimelineTimeFromUserTime(
                     0, forevertas::kInputTimelineTickDurationMs);
@@ -190,7 +198,7 @@ bool TestUserTimelineTimeOrigin() {
                                 {"radiusMs", "200"},
                                 {"maxSteerHoldMs", "300"}};
     const auto converted =
-            forevertas::SimulationSettingsFromUserTimeline(
+            forevertas::SimulationInputSettingsFromUserTimeline(
                     sample, forevertas::kInputTimelineTickDurationMs);
     okay &= Check(converted && converted->at("minTimeMs") == "10" &&
                               converted->at("maxTimeMs") == "1010" &&
@@ -199,9 +207,9 @@ bool TestUserTimelineTimeOrigin() {
                               converted->at("maxSteerHoldMs") == "300",
                       "timeline conversion changed a duration setting");
 
-    const auto verifySettings = [&okay](const OptionSettings &settings) {
+    const auto verifyInputSettings = [&okay](const OptionSettings &settings) {
         const auto simulation =
-                forevertas::SimulationSettingsFromUserTimeline(
+                forevertas::SimulationInputSettingsFromUserTimeline(
                         settings,
                         forevertas::kInputTimelineTickDurationMs);
         if (!simulation) {
@@ -210,7 +218,7 @@ bool TestUserTimelineTimeOrigin() {
             return;
         }
         for (const auto &[key, value] : settings) {
-            if (forevertas::IsUserTimelineTimeSetting(key)) {
+            if (forevertas::IsInputTimelineTimeSetting(key)) {
                 const auto parsed = forevertas::ParseSignedDecimal(value);
                 okay &= Check(parsed &&
                                       simulation->at(key) ==
@@ -222,15 +230,45 @@ bool TestUserTimelineTimeOrigin() {
             }
         }
     };
-    for (const auto &registration : forevertas::SearchAlgorithmRegistry()) {
-        verifySettings(registration.defaultSettings);
-    }
     for (const auto &registration : forevertas::ModifierRegistry()) {
-        verifySettings(registration.defaultSettings);
+        verifyInputSettings(registration.defaultSettings);
     }
-    for (const auto &registration : forevertas::EvaluationTargetRegistry()) {
-        verifySettings(registration.defaultSettings);
-    }
+
+    const std::string largestAlignedTime =
+            "9223372036854775800";
+    const auto *const stuntRegistration =
+            forevertas::FindEvaluationTarget(
+                    forevertas::kStuntPointsEvaluationId);
+    OptionSettings evaluationSettings =
+            stuntRegistration->defaultSettings;
+    evaluationSettings["targetTimeMs"] = largestAlignedTime;
+    okay &= Check(
+            !stuntRegistration->validateSettings(
+                    evaluationSettings,
+                    forevertas::kInputTimelineTickDurationMs),
+            "a large non-input evaluation time was treated as an offset input "
+            "time");
+    const auto largeTimeEvaluator = stuntRegistration->create(
+            evaluationSettings,
+            forevertas::kInputTimelineTickDurationMs);
+    const forevertas::EvaluationPlan largeTimePlan =
+            largeTimeEvaluator->Plan(10000, 1010, 10u);
+    okay &= Check(
+            largeTimePlan.startTimeMs == 10000 &&
+                    largeTimePlan.endTimeMs == 10000,
+            "a large non-input evaluation time was not preserved");
+
+    const auto *const modifierRegistration = forevertas::FindModifier(
+            forevertas::kRandomSteeringModifierId);
+    OptionSettings inputSettings = modifierRegistration->defaultSettings;
+    inputSettings["minTimeMs"] = largestAlignedTime;
+    inputSettings["maxTimeMs"] = largestAlignedTime;
+    okay &= Check(
+            modifierRegistration->validateSettings(
+                    inputSettings,
+                    forevertas::kInputTimelineTickDurationMs)
+                    .has_value(),
+            "an overflowing input time offset was accepted");
     return okay;
 }
 
@@ -265,6 +303,19 @@ bool TestHumanDurationFormatting() {
                     3723000000004u) ==
                     "1:02:03.000000004",
             "hour nanosecond formatting was incorrect");
+    okay &= Check(
+            forevertas::FormatSignificantDurationMilliseconds(0u) == "0" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            14500u) == "14.5" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            741000u) == "12:21" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            3723450u) == "1:02:03.45" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            5u) == "0.005" &&
+                    forevertas::FormatSignificantDurationMilliseconds(
+                            10u) == "0.01",
+            "significant duration formatting was incorrect");
     return okay;
 }
 
@@ -304,6 +355,33 @@ bool TestMutableSuffixNormalization() {
 
 bool TestEvaluationTargets() {
     bool okay = true;
+
+    {
+        constexpr std::array<const char *, 3> windowTargetIds{
+                forevertas::kVelocityEvaluationId,
+                forevertas::kPointTargetEvaluationId,
+                forevertas::kPoseTargetEvaluationId};
+        for (const char *const id : windowTargetIds) {
+            const auto *const registration =
+                    forevertas::FindEvaluationTarget(id);
+            OptionSettings settings = registration->defaultSettings;
+            settings["minTimeMs"] = "0";
+            settings["maxTimeMs"] = "20";
+            std::unique_ptr<forevertas::IterationEvaluator> evaluator =
+                    registration->create(settings, 10u);
+            const forevertas::EvaluationPlan plan =
+                    evaluator->Plan(10000, 0, 10u);
+            okay &= Check(
+                    plan.startTimeMs == 0 &&
+                            plan.endTimeMs == 20,
+                    "an evaluation time frame received the input one-tick "
+                    "offset");
+            settings["minTimeMs"] = "-10";
+            okay &= Check(
+                    registration->validateSettings(settings, 10u).has_value(),
+                    "a negative evaluation time frame was accepted");
+        }
+    }
 
     {
         auto evaluator = Evaluator(forevertas::kVelocityEvaluationId);
@@ -390,6 +468,59 @@ bool TestEvaluationTargets() {
     }
 
     {
+        OptionSettings settings =
+                forevertas::FindEvaluationTarget(
+                        forevertas::kCustomVolumeEntryEvaluationId)
+                        ->defaultSettings;
+        auto evaluator = Evaluator(
+                forevertas::kCustomVolumeEntryEvaluationId, &settings);
+        auto session = evaluator->CreateSession();
+        PhysicsSandboxStateView previous;
+        previous.timeMs = 100u;
+        previous.car.position = {-10.0f, 1.0f, 0.0f};
+        PhysicsSandboxStateView current = previous;
+        current.timeMs = 110u;
+        current.car.position = {10.0f, 1.0f, 0.0f};
+        const auto sample = session->Observe(previous, current);
+        okay &= Check(
+                sample && std::abs(sample->timeMs - 103.75) < 1e-9,
+                "custom volume outside-to-outside interpolation was "
+                "incorrect");
+        settings["plane"] = "xy";
+        settings["polygon"] = "-1,-1;1,-1;1,1;-1,1";
+        settings["depth"] = "2";
+        evaluator = Evaluator(
+                forevertas::kCustomVolumeEntryEvaluationId, &settings);
+        session = evaluator->CreateSession();
+        previous.car.position = {0.0f, 0.0f, -1.0f};
+        current.car.position = {0.0f, 0.0f, 3.0f};
+        const auto xySample = session->Observe(previous, current);
+        okay &= Check(
+                xySample && std::abs(xySample->timeMs - 102.5) < 1e-9,
+                "custom XY volume interpolation was incorrect");
+        settings["plane"] = "yz";
+        evaluator = Evaluator(
+                forevertas::kCustomVolumeEntryEvaluationId, &settings);
+        session = evaluator->CreateSession();
+        previous.car.position = {-1.0f, 0.0f, 0.0f};
+        current.car.position = {3.0f, 0.0f, 0.0f};
+        const auto yzSample = session->Observe(previous, current);
+        okay &= Check(
+                yzSample && std::abs(yzSample->timeMs - 102.5) < 1e-9,
+                "custom YZ volume interpolation was incorrect");
+        settings["polygon"] = "0,0;4,4;0,4;4,0";
+        const auto *const registration = forevertas::FindEvaluationTarget(
+                forevertas::kCustomVolumeEntryEvaluationId);
+        okay &= Check(
+                registration->validateSettings(settings, 10u).has_value(),
+                "self-intersecting custom polygon was accepted");
+        settings["polygon"] = "0,0;10000001,0;0,1";
+        okay &= Check(
+                registration->validateSettings(settings, 10u).has_value(),
+                "out-of-range custom polygon was accepted");
+    }
+
+    {
         auto evaluator = Evaluator(
                 forevertas::kPreciseFinishTimeEvaluationId);
         auto session = evaluator->CreateSession();
@@ -430,6 +561,53 @@ bool TestEvaluationTargets() {
         okay &= Check(
                 !tickOnlySession->Observe(previous, current),
                 "precise finish target fell back to tick time");
+    }
+
+    {
+        OptionSettings settings =
+                forevertas::FindEvaluationTarget(
+                        forevertas::kStuntPointsEvaluationId)->defaultSettings;
+        settings["targetTimeMs"] = "2500";
+        auto evaluator = Evaluator(
+                forevertas::kStuntPointsEvaluationId, &settings);
+        const forevertas::EvaluationPlan plan =
+                evaluator->Plan(10000, 1010, 10u);
+        auto session = evaluator->CreateSession();
+        PhysicsSandboxStateView previous;
+        previous.timeMs = 2490u;
+        previous.stuntsScore = 999u;
+        PhysicsSandboxStateView current = previous;
+        current.timeMs = 2500u;
+        current.stuntsScore = 250u;
+        const auto sample = session->Observe(previous, current);
+        EvaluationSample incumbent{249.0, 2500.0, {}};
+        okay &= Check(
+                plan.startTimeMs == 2500 &&
+                        plan.endTimeMs == 2500,
+                "stunt target time received the input one-tick offset");
+        okay &= Check(
+                sample && sample->score == 250.0 &&
+                        sample->timeMs == 2500.0 &&
+                        sample->description.find("Stunt points: 250") == 0u,
+                "stunt target did not use the deadline's monotonic score");
+        okay &= Check(
+                sample && evaluator->IsBetter(*sample, incumbent) &&
+                        !evaluator->IsBetter(incumbent, *sample),
+                "stunt target did not rank the highest score first");
+        current.stuntsScore.reset();
+        const auto noPoints = evaluator->CreateSession()->Observe(
+                previous, current);
+        okay &= Check(
+                noPoints && noPoints->score == 0.0 &&
+                        noPoints->description.find("Stunt points: 0") == 0u,
+                "an absent stunt score was not treated as zero points");
+        settings["targetTimeMs"] = "2501";
+        const auto *const registration =
+                forevertas::FindEvaluationTarget(
+                        forevertas::kStuntPointsEvaluationId);
+        okay &= Check(
+                registration->validateSettings(settings, 10u).has_value(),
+                "stunt target accepted a time between physics ticks");
     }
 
     return okay;
@@ -505,7 +683,9 @@ bool TestModifierDeterminism() {
     const MutationResult repeated = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult otherIteration = modifier->Mutate(
             {baseline, 8u, 0u, 10u});
-    bool okay = Check(SameEvents(first.inputs, repeated.inputs),
+    bool okay = Check(modifier->EarliestMutationTimeMs() == 1010,
+                      "an input modifier did not receive the one-tick offset");
+    okay &= Check(SameEvents(first.inputs, repeated.inputs),
                       "same seed and iteration index were not deterministic");
     okay &= Check(!SameEvents(first.inputs, otherIteration.inputs),
                   "different iteration indices produced identical inputs");
@@ -685,6 +865,80 @@ bool TestAnalogInputRepresentation() {
     return okay;
 }
 
+bool TestKeyboardSteeringConversion() {
+    std::vector<SandboxInputEvent> events{
+            Switch(0, SandboxInputAction::SteerLeft, true),
+            Switch(0, SandboxInputAction::SteerRight, true),
+            Switch(0, SandboxInputAction::Accelerate, true),
+            Switch(10, SandboxInputAction::SteerLeft, false),
+            Steering(20, -32768),
+            Switch(20, SandboxInputAction::SteerRight, true),
+            Switch(30, SandboxInputAction::SteerLeft, true),
+            Switch(40, SandboxInputAction::SteerLeft, false),
+            Switch(50, SandboxInputAction::SteerRight, false),
+            Steering(50, 500),
+            Switch(60, SandboxInputAction::SteerRight, false),
+            Steering(60, 656),
+            Switch(70, SandboxInputAction::SteerLeft, true),
+            Switch(70, SandboxInputAction::SteerRight, true),
+            Switch(80, SandboxInputAction::SteerLeft, false),
+            Switch(90, SandboxInputAction::SteerRight, false)};
+    forevertas::ConvertKeyboardSteeringToAnalog(events);
+
+    const std::vector<SandboxInputEvent> expected{
+            Switch(0, SandboxInputAction::Accelerate, true),
+            Steering(0, -65536),
+            Steering(10, 65536),
+            Steering(20, 65536),
+            Steering(30, -65536),
+            Steering(40, 65536),
+            Steering(50, 0),
+            Steering(60, 656),
+            Steering(70, -65536),
+            Steering(80, 65536),
+            Steering(90, 0)};
+    bool okay = Check(
+            SameEvents(events, expected),
+            "keyboard steering did not follow engine priority semantics");
+    okay &= Check(
+            std::none_of(
+                    events.begin(),
+                    events.end(),
+                    [](const SandboxInputEvent &event) {
+                        return event.action ==
+                                       SandboxInputAction::SteerLeft ||
+                                event.action ==
+                                       SandboxInputAction::SteerRight;
+                    }),
+            "keyboard steering actions remained after analog conversion");
+
+    std::vector<SandboxInputEvent> unsorted{
+            Switch(30, SandboxInputAction::SteerRight, false),
+            Switch(10, SandboxInputAction::SteerRight, true),
+            Steering(20, -16384)};
+    forevertas::ConvertKeyboardSteeringToAnalog(unsorted);
+    okay &= Check(
+            SameEvents(
+                    unsorted,
+                    {Steering(10, 65536),
+                     Steering(20, -16384),
+                     Steering(30, 0)}),
+            "unsorted mixed steering inputs were not converted chronologically");
+
+    std::vector<SandboxInputEvent> invalid{
+            Steering(10, 70000),
+            Switch(20, SandboxInputAction::SteerLeft, true)};
+    forevertas::ConvertKeyboardSteeringToAnalog(invalid);
+    okay &= Check(
+            invalid.size() == 2u &&
+                    invalid[0].action == SandboxInputAction::Steer &&
+                    invalid[0].value.analog == 70000 &&
+                    invalid[1].action == SandboxInputAction::Steer &&
+                    invalid[1].value.analog == -65536,
+            "keyboard conversion concealed an invalid analog input");
+    return okay;
+}
+
 bool TestAllModifierAnalogInvariants() {
     const std::vector<SandboxInputEvent> baseline{
             Steering(1000, -32768),
@@ -742,7 +996,7 @@ bool TestRegistries() {
     }
     okay &= Check(forevertas::ModifierRegistry().size() == 5u,
                   "not all required modifiers are registered");
-    okay &= Check(forevertas::EvaluationTargetRegistry().size() == 5u,
+    okay &= Check(forevertas::EvaluationTargetRegistry().size() == 7u,
                   "not all required evaluation targets are registered");
     return okay;
 }
@@ -832,16 +1086,26 @@ bool TestLocaleIndependentFloatingPointSettings() {
 }
 
 bool TestSearchControl() {
+    const OptionSettings defaults =
+            forevertas::DefaultBasicBruteForceOptionSettings();
     bool okay = Check(
-            !forevertas::ValidateBasicBruteForceOptionSettings({}, 10u),
-            "parameterless Basic search settings were rejected");
+            defaults.at("autoPromoteBest") == "false" &&
+                    !forevertas::ValidateBasicBruteForceOptionSettings(
+                            defaults, 10u),
+            "default Basic search settings were rejected");
     okay &= Check(
             forevertas::ValidateBasicBruteForceOptionSettings(
                     {{"unexpected", "1"}}, 10u)
                     .has_value(),
             "an unexpected Basic search setting was accepted");
     okay &= Check(
-            forevertas::ValidateBasicBruteForceOptionSettings({}, 0u)
+            forevertas::ValidateBasicBruteForceOptionSettings(
+                    {{"autoPromoteBest", "yes"}}, 10u)
+                    .has_value(),
+            "an invalid auto-promote setting was accepted");
+    okay &= Check(
+            forevertas::ValidateBasicBruteForceOptionSettings(
+                    defaults, 0u)
                     .has_value(),
             "zero tick duration was accepted");
 
@@ -902,7 +1166,7 @@ bool TestCudaBatchCalibrationStrategy() {
                         std::chrono::duration<double>(
                                 static_cast<double>(batchSize) /
                                 throughput));
-        for (int sample = 0; sample < 5; ++sample) {
+        for (int sample = 0; sample < 7; ++sample) {
             calibrator->Observe(batchSize, elapsed);
         }
     };
@@ -990,6 +1254,193 @@ bool TestCudaBatchCalibrationStrategy() {
                     capacityLimited.BestBatchSize() > 4096u &&
                     capacityLimited.BestBatchSize() < 8192u,
             "CUDA calibration did not approach its measured capacity");
+
+    const auto slowlyIncreasing = [](std::uint32_t batchSize) {
+        return 1000.0 + std::log2(
+                                static_cast<double>(batchSize));
+    };
+    const auto boundaryMaximizer =
+            calibrate(slowlyIncreasing, 128u);
+    okay &= Check(
+            boundaryMaximizer.Complete() &&
+                    boundaryMaximizer.BestBatchSize() > 120u,
+            "CUDA calibration stopped on a throughput plateau instead "
+            "of maximizing the measured safe range");
+
+    forevertas::CudaBatchCalibrator isolatedFastPass;
+    const auto observeSamples = [](
+                                        forevertas::CudaBatchCalibrator
+                                                *candidate,
+                                        const std::vector<double>
+                                                &throughputs) {
+        const std::uint32_t size =
+                candidate->CurrentBatchSize();
+        for (double throughput : throughputs) {
+            const auto elapsed =
+                    std::chrono::duration_cast<
+                            std::chrono::steady_clock::duration>(
+                            std::chrono::duration<double>(
+                                    static_cast<double>(size) /
+                                    throughput));
+            candidate->Observe(size, elapsed);
+        }
+    };
+    observeSamples(
+            &isolatedFastPass,
+            {100.0, 100.0,
+             100.0, 100.0, 100.0, 100.0, 100.0});
+    observeSamples(
+            &isolatedFastPass,
+            {100.0, 100.0,
+             100.0, 100.0, 100.0, 100.0, 1000.0});
+    okay &= Check(
+            isolatedFastPass.BestBatchSize() == 1u,
+            "CUDA calibration selected an isolated fast pass");
+
+    forevertas::CudaBatchCalibrator unstable;
+    observeSamples(
+            &unstable,
+            {100.0, 100.0,
+             100.0, 1000.0, 100.0, 1000.0, 100.0,
+             1000.0, 100.0, 1000.0, 100.0});
+    okay &= Check(
+            unstable.Complete() &&
+                    !unstable.HasReliableMeasurement(),
+            "CUDA calibration accepted irrepeatable throughput");
+    return okay;
+}
+
+bool TestCudaCalibrationSafety() {
+    using forevertas::CudaCalibrationBatchProfile;
+    using forevertas::CudaCalibrationDeviceLimits;
+    using forevertas::CudaCalibrationSafetyPlanner;
+
+    constexpr std::uint64_t gib = 1024ull * 1024ull * 1024ull;
+    CudaCalibrationDeviceLimits limits;
+    limits.totalMemoryBytes = 8u * gib;
+    limits.freeMemoryBytes = 6u * gib;
+    limits.maximumThreadsPerBlock = 1024u;
+    limits.maximumGridDimensionX = 1000000u;
+    limits.registersPerBlock = 65536u;
+    limits.registersPerMultiprocessor = 65536u;
+    limits.maximumThreadsPerMultiprocessor = 2048u;
+    limits.maximumBlocksPerMultiprocessor = 32u;
+    limits.multiprocessorCount = 32u;
+
+    CudaCalibrationBatchProfile first;
+    first.batchSize = 1u;
+    first.batchCapacity = 1u;
+    first.residentDeviceBytes = 100u * 1024u * 1024u;
+    first.kernelMilliseconds = 1.0;
+    first.simulationThreadsPerBlock = 256u;
+    first.simulationRegistersPerThread = 32u;
+    first.simulationActiveBlocksPerMultiprocessor = 8u;
+    first.simulationTheoreticalOccupancy = 1.0;
+
+    CudaCalibrationSafetyPlanner planner;
+    bool okay = Check(
+            !planner.Evaluate(1u, 1u, limits).safe,
+            "CUDA calibration accepted an unprofiled device");
+    planner.Observe(first);
+    okay &= Check(
+            planner.Evaluate(2u, 1u, limits).safe,
+            "CUDA calibration rejected a safe measured growth step");
+
+    CudaCalibrationBatchProfile second = first;
+    second.batchSize = 2u;
+    second.batchCapacity = 2u;
+    second.residentDeviceBytes = 110u * 1024u * 1024u;
+    second.kernelMilliseconds = 2.0;
+    planner.Observe(second);
+
+    CudaCalibrationDeviceLimits memoryLimited = limits;
+    memoryLimited.freeMemoryBytes = 2u * gib;
+    const auto memoryDecision =
+            planner.Evaluate(100u, 2u, memoryLimited);
+    okay &= Check(
+            !memoryDecision.safe &&
+                    memoryDecision.requiredTransientBytes > 0u &&
+                    memoryDecision.reservedMemoryHeadroomBytes >=
+                            512u * 1024u * 1024u,
+            "CUDA calibration crossed the reserved memory headroom");
+
+    CudaCalibrationDeviceLimits launchLimited = limits;
+    launchLimited.maximumGridDimensionX = 10u;
+    okay &= Check(
+            !planner.Evaluate(2560u, 2u, launchLimited).safe,
+            "CUDA calibration approached the grid launch limit");
+
+    CudaCalibrationDeviceLimits watchdog = limits;
+    watchdog.kernelExecutionTimeoutEnabled = true;
+    okay &= Check(
+            !planner.Evaluate(300u, 2u, watchdog).safe,
+            "CUDA calibration approached the kernel watchdog limit");
+
+    CudaCalibrationDeviceLimits occupancyLimited = limits;
+    occupancyLimited.registersPerMultiprocessor = 32768u;
+    okay &= Check(
+            !planner.Evaluate(2u, 2u, occupancyLimited).safe,
+            "CUDA calibration exceeded multiprocessor occupancy limits");
+
+    CudaCalibrationSafetyPlanner measuredWatchdog;
+    CudaCalibrationBatchProfile nearWatchdog = first;
+    nearWatchdog.batchSize = 32u;
+    nearWatchdog.batchCapacity = 32u;
+    nearWatchdog.kernelMilliseconds = 210.0;
+    measuredWatchdog.Observe(nearWatchdog);
+    watchdog.freeMemoryBytes = limits.freeMemoryBytes;
+    const auto measuredWatchdogDecision =
+            measuredWatchdog.Evaluate(32u, 32u, watchdog);
+    okay &= Check(
+            !measuredWatchdogDecision.safe &&
+                    measuredWatchdogDecision
+                            .predictedKernelMilliseconds > 250.0,
+            "CUDA calibration accepted a measured kernel too close "
+            "to the watchdog limit");
+
+    CudaCalibrationBatchProfile slowerSameBatch = nearWatchdog;
+    slowerSameBatch.batchCapacity = 64u;
+    slowerSameBatch.kernelMilliseconds = 220.0;
+    measuredWatchdog.Observe(slowerSameBatch);
+    const auto duplicateBatchDecision =
+            measuredWatchdog.Evaluate(64u, 64u, watchdog);
+    okay &= Check(
+            !duplicateBatchDecision.safe &&
+                    duplicateBatchDecision
+                            .predictedKernelMilliseconds >= 550.0,
+            "CUDA calibration ignored the slowest profile for a batch "
+            "measured under multiple capacities");
+
+    CudaCalibrationSafetyPlanner decreasingKernel;
+    CudaCalibrationBatchProfile slowerSmall = nearWatchdog;
+    slowerSmall.batchSize = 2u;
+    slowerSmall.batchCapacity = 2u;
+    CudaCalibrationBatchProfile fasterLarge = nearWatchdog;
+    fasterLarge.batchSize = 4u;
+    fasterLarge.batchCapacity = 4u;
+    fasterLarge.kernelMilliseconds = 100.0;
+    decreasingKernel.Observe(slowerSmall);
+    decreasingKernel.Observe(fasterLarge);
+    const auto decreasingKernelDecision =
+            decreasingKernel.Evaluate(3u, 4u, watchdog);
+    okay &= Check(
+            !decreasingKernelDecision.safe &&
+                    decreasingKernelDecision
+                            .predictedKernelMilliseconds >= 262.5,
+            "CUDA calibration underestimated a noisy decreasing kernel "
+            "measurement");
+
+    CudaCalibrationSafetyPlanner localMemory;
+    CudaCalibrationBatchProfile localHeavy = first;
+    localHeavy.simulationLocalBytesPerThread =
+            4u * 1024u * 1024u;
+    localMemory.Observe(localHeavy);
+    CudaCalibrationDeviceLimits localLimited = limits;
+    localLimited.freeMemoryBytes = 1400u * 1024u * 1024u;
+    okay &= Check(
+            !localMemory.Evaluate(512u, 512u, localLimited).safe,
+            "CUDA calibration ignored the kernel local-memory "
+            "working set");
     return okay;
 }
 
@@ -1005,6 +1456,23 @@ bool TestCudaConfigurationCoverage() {
             okay &= Check(
                     modifiers.size() == 1u,
                     "a registered modifier was not translated for CUDA");
+            if (modifiers.size() == 1u) {
+                const auto window = std::visit(
+                        [](const auto &modifier) {
+                            return modifier.window;
+                        },
+                        modifiers.front());
+                const auto minimum = forevertas::ParseSignedDecimal(
+                        registration.defaultSettings.at("minTimeMs"));
+                const auto maximum = forevertas::ParseSignedDecimal(
+                        registration.defaultSettings.at("maxTimeMs"));
+                okay &= Check(
+                        minimum && maximum &&
+                                window.minimumTimeMs == *minimum + 10 &&
+                                window.maximumTimeMs == *maximum + 10,
+                        "a CUDA input modifier did not receive the one-tick "
+                        "offset");
+            }
         } catch (...) {
             okay &= Check(
                     false,
@@ -1013,11 +1481,28 @@ bool TestCudaConfigurationCoverage() {
     }
     for (const auto &registration :
          forevertas::EvaluationTargetRegistry()) {
+        if (registration.id ==
+            forevertas::kCustomVolumeEntryEvaluationId) {
+            try {
+                static_cast<void>(forevertas::BuildCudaEvaluator(
+                        {registration.id, registration.defaultSettings},
+                        10u));
+                okay &= Check(
+                        false,
+                        "custom volume unexpectedly used an inexact CUDA "
+                        "evaluator");
+            } catch (const std::invalid_argument &) {
+            }
+            continue;
+        }
         try {
-            static_cast<void>(forevertas::BuildCudaEvaluator(
+            const auto evaluator = forevertas::BuildCudaEvaluator(
                     {registration.id,
                      registration.defaultSettings},
-                    10u));
+                    10u);
+            okay &= Check(
+                    evaluator.has_value(),
+                    "a registered evaluator skipped CUDA batching");
         } catch (...) {
             okay &= Check(
                     false,
@@ -1043,10 +1528,96 @@ bool TestCudaConfigurationCoverage() {
     return okay;
 }
 
+bool TestReplayPathRobustness() {
+    namespace fs = std::filesystem;
+
+    const auto nonce = std::chrono::steady_clock::now()
+                               .time_since_epoch()
+                               .count();
+    const fs::path directory =
+            fs::temp_directory_path() /
+            fs::u8path("ForeverTAS replay paths #[]&' " +
+                       std::to_string(nonce));
+    struct DirectoryCleanup final {
+        fs::path path;
+        ~DirectoryCleanup() {
+            std::error_code ignored;
+            fs::remove_all(path, ignored);
+        }
+    } cleanup{directory};
+
+    std::error_code error;
+    fs::create_directories(directory, error);
+    bool okay = Check(
+            !error, "special-character replay directory creation failed");
+    if (error) {
+        return false;
+    }
+
+    const std::string fileName =
+            "run with spaces #[]&' - "
+            "\xE6\xB5\x8B\xE8\xAF\x95 - "
+            "\xF0\x9F\x8F\x81.Replay.Gbx";
+    const fs::path replayPath = directory / fs::u8path(fileName);
+    constexpr std::array<std::byte, 8> payload{
+            std::byte{0u},
+            std::byte{1u},
+            std::byte{2u},
+            std::byte{127u},
+            std::byte{128u},
+            std::byte{200u},
+            std::byte{254u},
+            std::byte{255u}};
+    {
+        std::ofstream replay(replayPath, std::ios::binary);
+        replay.write(
+                reinterpret_cast<const char *>(payload.data()),
+                static_cast<std::streamsize>(payload.size()));
+        okay &= Check(
+                replay.good(),
+                "special-character replay file creation failed");
+    }
+
+    const std::string replayPathUtf8 = replayPath.u8string();
+    const forevervalidator::ReplayIdentity identity{replayPathUtf8};
+    auto result =
+            forevertas::ReadReplayFileUtf8(replayPathUtf8, identity);
+    okay &= Check(
+            result &&
+                    result.Value().size() == payload.size() &&
+                    std::equal(
+                            result.Value().begin(),
+                            result.Value().end(),
+                            payload.begin()),
+            "UTF-8 replay path did not preserve the file contents");
+
+    auto empty = forevertas::ReadReplayFileUtf8({}, {});
+    okay &= Check(
+            !empty &&
+                    empty.Error().reason ==
+                            forevervalidator::ValidationFailureReason::
+                                    EmptyReplayPath,
+            "empty replay path did not retain its validation error");
+
+    const std::string missingPath =
+            (directory / fs::u8path("missing # \xE2\x98\x83.Gbx"))
+                    .u8string();
+    auto missing = forevertas::ReadReplayFileUtf8(
+            missingPath, {missingPath});
+    okay &= Check(
+            !missing &&
+                    missing.Error().reason ==
+                            forevervalidator::ValidationFailureReason::
+                                    ReplayFileOpenFailed &&
+                    missing.Error().relatedAsset == missingPath,
+            "failed UTF-8 replay path did not retain its diagnostic path");
+    return okay;
+}
+
 }  // namespace
 
 int main() {
-    const bool okay = TestUserTimelineTimeOrigin() &&
+    const bool okay = TestInputOnlyTimelineTimeOrigin() &&
             TestHumanDurationFormatting() &&
             TestMutableSuffixNormalization() &&
             TestEvaluationTargets() &&
@@ -1055,12 +1626,15 @@ int main() {
             TestInputScriptFormatting() &&
             TestInputScriptParsingAndBaseline() &&
             TestAnalogInputRepresentation() &&
+            TestKeyboardSteeringConversion() &&
             TestAllModifierAnalogInvariants() &&
             TestRegistries() &&
             TestLocaleIndependentFloatingPointSettings() &&
             TestSearchControl() &&
             TestRollingThroughput() &&
             TestCudaBatchCalibrationStrategy() &&
-            TestCudaConfigurationCoverage();
+            TestCudaCalibrationSafety() &&
+            TestCudaConfigurationCoverage() &&
+            TestReplayPathRobustness();
     return okay ? 0 : 1;
 }

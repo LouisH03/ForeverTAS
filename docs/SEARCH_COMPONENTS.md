@@ -223,6 +223,12 @@ convention is explicit: negative steering is left, positive steering is right;
 analog gas uses negative values for accelerate and positive values for brake. Replay decoding converts the game's signed-24
 storage representation directly into this canonical form.
 
+Before a search starts, keyboard left/right events are collapsed into canonical
+analog steering events. The conversion mirrors the engine's timestamp
+arbitration, same-tick analog dead zone, and left-over-right priority, so mixed
+keyboard and analog scripts produce the same physics while modifiers see one
+steering channel.
+
 Modifier settings remain normalized decimal strings in `[-1, 1]` for UI and
 persistence compatibility. `ParseNormalizedAnalogInput` quantizes each setting
 once to an integer state. Mutators subsequently use integer sampling, addition,
@@ -253,16 +259,18 @@ across all passes.
 All UI and persisted input timeline values are zero-based. The simulation's
 first actionable input occurs one physics tick later, so user `0 ms` maps to
 simulation `10 ms` at the current 100 Hz rate. This translation is centralized
-in `input_timeline_time.h` and applied exactly once by the public registry
-validation and factory methods before their simulation-native implementation
-hooks are called.
+in `input_timeline_time.h` and applied exactly once by the public modifier
+registry validation and factory methods before their simulation-native
+implementation hooks are called.
 
-The naming contract is deliberate: every absolute timeline setting key ends in
-`TimeMs` and is shifted by one tick. Relative durations must use a more specific
-suffix such as `HoldMs`, `ShiftMs`, or `RadiusMs` and are never shifted. Registry
-coverage tests apply this rule to every current option, while input-script
-serialization uses the same inverse conversion. Components must not add local
-time offsets.
+The naming contract is deliberate: every absolute input timeline setting key
+ends in `TimeMs` and is shifted by one tick. Relative durations use a more
+specific suffix such as `HoldMs`, `ShiftMs`, or `RadiusMs` and are never shifted.
+Only modifier settings pass through this conversion; evaluation frames and
+search-policy settings use the entered simulation time directly. Registry
+coverage tests enforce this boundary for every current option, while
+input-script serialization uses the same inverse conversion. Components must
+not add local time offsets.
 
 ### Composition
 

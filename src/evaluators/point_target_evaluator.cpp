@@ -95,7 +95,8 @@ std::optional<std::string> ValidatePointTargetOptionSettings(
     return ValidateTimeWindow(parsed->minimumTimeMs,
                               parsed->maximumTimeMs,
                               tickDurationMs,
-                              "evaluation");
+                              "evaluation",
+                              true);
 }
 
 std::unique_ptr<IterationEvaluator> CreatePointTargetEvaluator(

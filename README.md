@@ -45,9 +45,9 @@ adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
 The pinned dependency is extended by
-`cmake/patches/forevervalidator-race-viewer.patch`. The patch is produced from
-a worktree at the pinned revision and adds the immutable visual render-scene
-API without requiring a local Validator checkout at build time.
+`cmake/patches/forevervalidator-stunt-points.patch`. It adds the native CUDA
+stunt-points batch evaluator without requiring a local Validator checkout at
+build time.
 
 ## Desktop application
 
@@ -72,6 +72,9 @@ iteration applies the configured modifier passes in order, preserves the
 script-derived input prefix before the mutation branch exactly, normalizes only
 the mutable suffix, and evaluates it with the selected target. Whenever a new
 global best is found, its copy-ready input script is shown immediately.
+The optional **Promote each best result to baseline** mode turns the search
+into iterative refinement: after an improvement, later mutations start from
+that best input sequence instead of the original script-derived baseline.
 Iteration count, iterations per second, elapsed time, and time since the last
 improvement continue refreshing while the search runs. Pressing Stop
 finishes the current
@@ -85,12 +88,37 @@ first actionable input, which is simulation time `10 ms` at 100 Hz. Absolute
 setting keys ending in `TimeMs` are translated by one physics tick exactly once
 when a registry creates a simulation component; stored values and relative
 durations remain user-facing.
-Built-in targets cover precise finish time, cuboid entry time, velocity,
-point distance, and weighted pose error. Precise finish search ranks the
-inclusive upper bound of ForeverValidator's one-nanosecond transition bracket
-and displays all nine fractional digits.
+Built-in targets cover precise finish time, stunt points by a chosen deadline,
+cuboid entry time, velocity, point distance, and weighted pose error. The stunt
+target observes only the chosen deadline because the score is monotonic.
+Volume-entry targets are managed as a persistent named cuboid collection. The
+selected cuboid is the active brute-force target; the evaluation panel can add,
+duplicate, remove, rename, and directly edit every cuboid or focus the viewer
+camera on it. Every cuboid is visible in both viewer renderers, and the selected
+one exposes color-coded 3D axis bars for movement plus endpoint handles for
+resizing.
+Custom polygon volumes share the same shape-target menu. A target stores a
+drawing plane, editable 2D vertices, and an independent extrusion depth. Users
+can select an axis plane in the viewer, redraw the polygon directly against
+that plane, drag its vertex and depth handles, edit the same values in the
+settings list, and focus the camera on the finished prism. The selected custom
+volume is evaluated exactly by the Reference and optimized CPU backends; the UI
+reports that CUDA is unavailable rather than substituting an inexact cuboid.
+Pose targets are managed as a persistent named collection of complete car
+positions and orientations. The selected pose is the weighted pose-error goal
+for every brute-force backend. Users can add a pose from the viewer car,
+duplicate, remove, rename, and edit it in the evaluation panel, or translate
+and rotate it with color-coded handles on its visible car model in either
+viewer renderer. The Focus action frames the selected pose in the camera.
+Precise finish search ranks the inclusive upper bound of ForeverValidator's
+one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering
 deformation, input insertion, input deletion, and random steering.
+
+The multi-threaded CPU backend assigns a disjoint mutation sequence to each
+worker. Every worker owns an independent optimized-CPU simulation, while live
+metrics and best results are reduced into one deterministic aggregate. The
+worker count is configurable and persists between sessions.
 
 The complete visible settings pane owns vertical wheel scrolling, including
 areas occupied by sliders, dropdowns, and the best-input preview. Nested
@@ -107,11 +135,47 @@ active timeline and camera focus between `Best` and future run types, while
 every run remains visible as a separate car in the 3D preview. Car colors are
 baked into separate flat-shaded vertex-color meshes.
 
+After a map is loaded, **Drive** starts a live 100 Hz physics run in the viewer.
+Arrow keys and QWERTY `WASD` control full acceleration, braking, and steering;
+`ZQSD` provides the equivalent bindings on AZERTY layouts. Simultaneous
+digital inputs retain ForeverValidator's in-game priority rules, including
+left steering over right. Losing keyboard focus releases held controls, and a
+completed manual session remains available as the `Manual` viewer run.
+
+**Copy current race** in the base-input section replaces the search input with
+the selected viewer run through its current timeline position. Events after
+that position are deliberately excluded, so a partial manual or scripted run
+can become the exact starting point for the next search.
+
+**Save trajectory** (or `Ctrl+S`) simulates the current base-input script and
+adds its exact path to the 3D viewer as a persistent reference for the loaded
+map. Semantically identical scripts are deduplicated, so repeated saves do not
+stack duplicate paths.
+
+While a search is running, every published best-run improvement is sampled
+through the full replay and added to the viewer as an amber trajectory. The
+newest path is emphasized while older improvement paths remain visible at
+reduced opacity.
+
 The default viewport is the textured Qt Quick 3D renderer. On Qt 6.7 or newer
 with ShaderTools, the `Textured (RT)` render mode enables the real-time QRhi
 compute renderer with GPU BVH traversal, ray-traced shadows and reflections,
 and immediate noise-free output. Qt 6.5 and 6.6 keep the full raster renderer
 and omit only that optional mode.
+
+The viewer's **Whiteboard** mode draws directly over either renderer without
+replacing the map, cars, targets, or trajectories. Pen strokes, lines,
+rectangles, ellipses, and editable vector text are independent movable and
+resizable items. Drawing color and stroke size are adjustable, and the eraser
+removes pixels only from the selected item. Leaving whiteboard mode restores
+normal 3D camera interaction while keeping the overlay visible.
+
+**Place** turns the current overlay into a static whiteboard plane at the
+current camera angle. The Drawings list restores each saved viewpoint, toggles
+that plane for the current map without deleting it, and keeps multiple
+map-specific drawings across application sessions. Complete drawing sets can
+also be exported to, or imported from, a location selected with the native
+file picker.
 
 ## Portable bundles
 

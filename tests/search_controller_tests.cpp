@@ -1,6 +1,10 @@
+#include "app/cuboid_target_model.h"
+#include "app/custom_volume_target_model.h"
+#include "app/pose_target_model.h"
 #include "app/packs_directory_finder.h"
 #include "app/search_configuration_model.h"
 #include "app/search_controller.h"
+#include "app/search_worker.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -17,11 +21,15 @@
 #include <clocale>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
 
 using forevertas::app::SearchController;
+using forevertas::app::CuboidTargetModel;
+using forevertas::app::CustomVolumeTargetModel;
+using forevertas::app::PoseTargetModel;
 
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
@@ -100,6 +108,508 @@ bool HasBackendOption(const QVariantList &options,
         }
     }
     return false;
+}
+
+bool TestCuboidTargetModel() {
+    QSettings().clear();
+    const QVariantMap legacy{
+            {QStringLiteral("centerX"), QStringLiteral("1.5")},
+            {QStringLiteral("centerY"), QStringLiteral("-2")},
+            {QStringLiteral("centerZ"), QStringLiteral("3")},
+            {QStringLiteral("sizeX"), QStringLiteral("4")},
+            {QStringLiteral("sizeY"), QStringLiteral("5")},
+            {QStringLiteral("sizeZ"), QStringLiteral("6")}};
+    CuboidTargetModel model(legacy);
+    bool okay = Check(model.count() == 1 && model.selectedIndex() == 0,
+                      "cuboid model did not create its legacy target");
+    QVariantMap selected = model.selectedTarget();
+    okay &= Check(selected.value(QStringLiteral("centerX")).toString() ==
+                                  QStringLiteral("1.5") &&
+                          selected.value(QStringLiteral("sizeZ")).toString() ==
+                                  QStringLiteral("6"),
+                  "cuboid model did not migrate legacy dimensions");
+    okay &= Check(model.addTarget(
+                              std::numeric_limits<double>::infinity(),
+                              0.0,
+                              0.0) == -1 &&
+                          !model.setCenterComponent(
+                                  0,
+                                  QStringLiteral("x"),
+                                  QStringLiteral("nan")) &&
+                          !model.setCenterComponent(
+                                  0,
+                                  QStringLiteral("x"),
+                                  QStringLiteral("1e300")) &&
+                          !model.setSizeComponent(
+                                  0,
+                                  QStringLiteral("x"),
+                                  QStringLiteral("0")),
+                  "cuboid model accepted non-finite or non-positive values");
+
+    const int added = model.addTarget(10.0, 20.0, 30.0);
+    okay &= Check(added == 1 && model.selectedIndex() == 1 &&
+                          model.count() == 2,
+                  "cuboid placement did not add and select a target");
+    okay &= Check(model.setName(added, QStringLiteral("  Finish box  ")) &&
+                          model.setCenterComponent(
+                                  added,
+                                  QStringLiteral("y"),
+                                  QStringLiteral("21.25")) &&
+                          model.setSizeComponent(
+                                  added,
+                                  QStringLiteral("z"),
+                                  QStringLiteral("2.5")) &&
+                          model.translateSelected(1.0, -1.0, 2.0) &&
+                          model.resizeSelected(
+                                  QStringLiteral("x"), -9.5),
+                  "cuboid direct or 3D-style edits failed");
+    selected = model.selectedTarget();
+    okay &= Check(selected.value(QStringLiteral("name")).toString() ==
+                                  QStringLiteral("Finish box") &&
+                          selected.value(QStringLiteral("centerX")).toString() ==
+                                  QStringLiteral("11") &&
+                          selected.value(QStringLiteral("centerY")).toString() ==
+                                  QStringLiteral("20.25") &&
+                          selected.value(QStringLiteral("sizeX")).toString() ==
+                                  QStringLiteral("0.5"),
+                  "cuboid edits produced incorrect properties");
+    const int duplicate = model.duplicateSelected();
+    okay &= Check(duplicate == 2 && model.count() == 3 &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("centerX"))
+                                          .toString() ==
+                                  QStringLiteral("12"),
+                  "cuboid duplication did not offset and select the copy");
+    okay &= Check(model.removeTarget(1) && model.count() == 2 &&
+                          model.selectedIndex() == 1,
+                  "cuboid removal did not preserve the selected copy");
+
+    const QString selectedId =
+            model.selectedTarget().value(QStringLiteral("id")).toString();
+    CuboidTargetModel restored;
+    okay &= Check(restored.count() == 2 &&
+                          restored.selectedTarget()
+                                          .value(QStringLiteral("id"))
+                                          .toString() == selectedId,
+                  "cuboid collection or selection did not persist");
+    okay &= Check(restored.removeTarget(0) && restored.count() == 1 &&
+                          !restored.removeTarget(0),
+                  "cuboid model allowed removal of the final target");
+    restored.setEditingEnabled(false);
+    okay &= Check(!restored.editingEnabled() &&
+                          restored.addTarget(0.0, 0.0, 0.0) == -1 &&
+                          !restored.setName(
+                                  0, QStringLiteral("Locked")) &&
+                          !restored.translateSelected(1.0, 0.0, 0.0),
+                  "cuboid edits were not frozen for a running search");
+
+    QSettings().setValue(
+            QStringLiteral("targets/cuboids"),
+            QByteArrayLiteral("{\"version\":1,\"targets\":["
+                              "{\"id\":\"bad\",\"name\":\"Bad\","
+                              "\"center\":[0,0,0],\"size\":[1,0,1]}]}"));
+    CuboidTargetModel recovered(legacy);
+    okay &= Check(recovered.count() == 1 &&
+                          recovered.selectedTarget()
+                                          .value(QStringLiteral("sizeY"))
+                                          .toString() ==
+                                  QStringLiteral("5"),
+                  "corrupt cuboid persistence did not recover safely");
+    return okay;
+}
+
+bool TestCuboidControllerSynchronization() {
+    QSettings().clear();
+    SearchController controller;
+    controller.setEvaluationTargetId(QStringLiteral("volume-entry-time"));
+    CuboidTargetModel *const cuboids = controller.cuboidTargets();
+    bool okay = Check(cuboids != nullptr && cuboids->count() == 1,
+                      "controller did not expose its cuboid collection");
+    const int second = cuboids->addTarget(7.0, 8.0, 9.0);
+    okay &= Check(second == 1 &&
+                          controller.evaluationTargetSettings()
+                                          .value(QStringLiteral("centerX"))
+                                          .toString() ==
+                                  QStringLiteral("7") &&
+                          controller.evaluationTargetSettings()
+                                          .value(QStringLiteral("sizeX"))
+                                          .toString() ==
+                                  QStringLiteral("10"),
+                  "selected cuboid did not become the active search target");
+    okay &= Check(cuboids->setSizeComponent(
+                              second,
+                              QStringLiteral("y"),
+                              QStringLiteral("3.25")) &&
+                          controller.evaluationTargetSettings()
+                                          .value(QStringLiteral("sizeY"))
+                                          .toString() ==
+                                  QStringLiteral("3.25"),
+                  "cuboid property edit did not update evaluation settings");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("centerZ"), QStringLiteral("12.5"));
+    okay &= Check(cuboids->selectedTarget()
+                                  .value(QStringLiteral("centerZ"))
+                                  .toString() == QStringLiteral("12.5"),
+                  "legacy setting edit did not update the selected cuboid");
+    cuboids->selectTarget(0);
+    okay &= Check(controller.evaluationTargetSettings()
+                                  .value(QStringLiteral("centerX"))
+                                  .toString() == QStringLiteral("0"),
+                  "cuboid selection did not switch the active target");
+    return okay;
+}
+
+bool TestCustomVolumeTargets() {
+    QSettings().clear();
+    CustomVolumeTargetModel model;
+    QObject *const initialGeometry =
+            model.selectedTarget()
+                    .value(QStringLiteral("geometry"))
+                    .value<QObject *>();
+    bool okay = Check(model.count() == 1 &&
+                              model.selectedTarget()
+                                      .value(QStringLiteral("valid"))
+                                      .toBool(),
+                      "custom volume model did not create a valid target");
+    const QString originalPolygon =
+            model.selectedTarget()
+                    .value(QStringLiteral("polygon"))
+                    .toString();
+    okay &= Check(model.setPlane(0, QStringLiteral("xy")) &&
+                          model.setDepth(0, QStringLiteral("7.5")) &&
+                          model.setVertex(
+                                  0,
+                                  0,
+                                  QStringLiteral("u"),
+                                  QStringLiteral("-6")),
+                  "custom volume property edits failed");
+    const QString editedPolygon =
+            model.selectedTarget()
+                    .value(QStringLiteral("polygon"))
+                    .toString();
+    QObject *const editedGeometry =
+            model.selectedTarget()
+                    .value(QStringLiteral("geometry"))
+                    .value<QObject *>();
+    okay &= Check(editedPolygon != originalPolygon &&
+                          initialGeometry != nullptr &&
+                          editedGeometry != nullptr &&
+                          editedGeometry != initialGeometry &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("depth"))
+                                          .toString() ==
+                                  QStringLiteral("7.5"),
+                  "polygon and extrusion geometry did not update");
+    okay &= Check(model.beginDrawing() && model.drawing() &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("vertexCount"))
+                                          .toInt() == 0 &&
+                          model.addVertexWorld(0.0, 0.0, 0.0) &&
+                          model.addVertexWorld(4.0, 0.0, 0.0) &&
+                          model.addVertexWorld(0.0, 4.0, 0.0) &&
+                          model.finishDrawing() && !model.drawing() &&
+                          model.setVertex(
+                                  0,
+                                  0,
+                                  QStringLiteral("u"),
+                                  QStringLiteral("1.23456789")),
+                  "3D polygon drawing lifecycle failed");
+    const QString drawnPolygon =
+            model.selectedTarget()
+                    .value(QStringLiteral("polygon"))
+                    .toString();
+    const QVariantMap displayedVertex =
+            model.selectedTarget()
+                    .value(QStringLiteral("vertices"))
+                    .toList()
+                    .front()
+                    .toMap();
+    okay &= Check(
+            displayedVertex.value(QStringLiteral("u")).toString() ==
+                    QStringLiteral("1.235"),
+            "custom volume vertex properties were not display-formatted");
+    okay &= Check(model.resizeDepthSelected(1.0) &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("polygon"))
+                                          .toString() == drawnPolygon,
+                  "extrusion editing changed the 2D polygon");
+    okay &= Check(!model.setDepth(0, QStringLiteral("10000001")) &&
+                          !model.translateSelected(
+                                  10000001.0, 0.0, 0.0),
+                  "custom volume accepted out-of-range geometry");
+    okay &= Check(model.beginDrawing() &&
+                          model.addVertexWorld(1.0, 1.0, 0.0),
+                  "custom volume redraw did not start");
+    model.cancelDrawing();
+    okay &= Check(!model.drawing() &&
+                          model.selectedTarget()
+                                          .value(QStringLiteral("polygon"))
+                                          .toString() == drawnPolygon,
+                  "cancel drawing did not restore the polygon");
+    okay &= Check(model.beginDrawing() &&
+                          model.addVertexWorld(0.0, 0.0, 0.0) &&
+                          model.addVertexWorld(4.0, 4.0, 0.0) &&
+                          model.addVertexWorld(0.0, 4.0, 0.0) &&
+                          model.addVertexWorld(4.0, 0.0, 0.0) &&
+                          !model.finishDrawing() && model.drawing(),
+                  "self-intersecting drawn polygon was accepted");
+    model.cancelDrawing();
+    okay &= Check(
+            model.setOriginComponent(
+                    0, QStringLiteral("x"), QStringLiteral("10000000")) &&
+                    model.setOriginComponent(
+                            0,
+                            QStringLiteral("z"),
+                            QStringLiteral("10000000")) &&
+                    model.duplicateSelected() == 1 &&
+                    std::abs(
+                            model.selectedTarget()
+                                    .value(QStringLiteral("origin"))
+                                    .value<QVector3D>()
+                                    .x()) <= 10000000.0F &&
+                    std::abs(
+                            model.selectedTarget()
+                                    .value(QStringLiteral("origin"))
+                                    .value<QVector3D>()
+                                    .z()) <= 10000000.0F,
+            "custom volume duplication exceeded coordinate limits");
+    model.selectTarget(0);
+    CustomVolumeTargetModel restored;
+    okay &= Check(restored.selectedTarget()
+                                  .value(QStringLiteral("polygon"))
+                                  .toString() == drawnPolygon,
+                  "custom volume did not persist");
+    QSettings().setValue(
+            QStringLiteral("targets/customVolumes"),
+            QByteArrayLiteral("{not valid json"));
+    CustomVolumeTargetModel recovered;
+    okay &= Check(recovered.count() == 1 &&
+                          recovered.selectedTarget()
+                                  .value(QStringLiteral("valid"))
+                                  .toBool(),
+                  "custom volume did not recover from corrupt persistence");
+
+    QSettings().clear();
+    SearchController controller;
+    controller.setEvaluationTargetId(
+            QStringLiteral("custom-volume-entry-time"));
+    CustomVolumeTargetModel *const targets =
+            controller.customVolumeTargets();
+    targets->setDepth(0, QStringLiteral("8"));
+    okay &= Check(controller.evaluationTargetSettings()
+                                  .value(QStringLiteral("depth"))
+                                  .toString() == QStringLiteral("8"),
+                  "custom volume did not synchronize with search settings");
+    return okay;
+}
+
+bool TestPoseTargets() {
+    QSettings().clear();
+    PoseTargetModel model;
+    bool okay = Check(
+            model.count() == 1 &&
+                    model.selectedTarget()
+                                    .value(QStringLiteral("name"))
+                                    .toString() ==
+                            QStringLiteral("Car pose 1"),
+            "pose target model did not create its default target");
+    okay &= Check(
+            model.setPositionComponent(
+                    0, QStringLiteral("x"), QStringLiteral("12.5")) &&
+                    model.setPositionComponent(
+                            0, QStringLiteral("y"), QStringLiteral("3")) &&
+                    model.setPositionComponent(
+                            0, QStringLiteral("z"), QStringLiteral("-4")) &&
+                    model.setRotationComponent(
+                            0, QStringLiteral("yaw"), QStringLiteral("90")) &&
+                    model.setRotationComponent(
+                            0,
+                            QStringLiteral("pitch"),
+                            QStringLiteral("-20")) &&
+                    model.setRotationComponent(
+                            0,
+                            QStringLiteral("roll"),
+                            QStringLiteral("45")),
+            "pose target property edits failed");
+    const QQuaternion expected = QQuaternion::fromEulerAngles(
+            45.0F, -20.0F, 90.0F);
+    const QQuaternion actual = model.selectedTarget()
+                                       .value(QStringLiteral("rotation"))
+                                       .value<QQuaternion>();
+    okay &= Check(
+            std::abs(QQuaternion::dotProduct(
+                    expected.normalized(), actual.normalized())) > 0.9999F,
+            "pose target Euler properties produced the wrong orientation");
+    okay &= Check(
+            model.translateSelected(1.0, 0.0, 0.0) &&
+                    model.rotateSelected(QStringLiteral("yaw"), 300.0) &&
+                    model.selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("30"),
+            "pose target direct manipulation failed");
+    const QVariantMap edited = model.selectedTarget();
+    okay &= Check(
+            model.duplicateSelected() == 1 &&
+                    model.selectedTarget()
+                                    .value(QStringLiteral("name"))
+                                    .toString() ==
+                            QStringLiteral("Car pose 2") &&
+                    model.selectTarget(0),
+            "pose target list operations failed");
+    PoseTargetModel restored;
+    okay &= Check(
+            restored.selectedTarget()
+                            .value(QStringLiteral("position"))
+                            .value<QVector3D>() ==
+                    edited.value(QStringLiteral("position"))
+                            .value<QVector3D>() &&
+                    restored.selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("30"),
+            "pose targets did not persist");
+    model.setEditingEnabled(false);
+    okay &= Check(
+            !model.translateSelected(1.0, 0.0, 0.0) &&
+                    !model.rotateSelected(QStringLiteral("yaw"), 1.0) &&
+                    !model.selectTarget(1) &&
+                    !model.setPositionComponent(
+                            0,
+                            QStringLiteral("x"),
+                            QStringLiteral("10000001")),
+            "pose target editing lock or bounds were bypassed");
+    model.setEditingEnabled(true);
+    const QVariantMap lockedTarget = model.selectedTarget();
+    okay &= Check(
+            !model.setPositionComponent(
+                    0, QStringLiteral("x"), QStringLiteral("nan")) &&
+                    !model.setPositionComponent(
+                            0,
+                            QStringLiteral("z"),
+                            QStringLiteral("10000001")) &&
+                    !model.setRotationComponent(
+                            0, QStringLiteral("spin"), QStringLiteral("5")) &&
+                    !model.setRotationComponent(
+                            0,
+                            QStringLiteral("yaw"),
+                            QStringLiteral("-10000001")) &&
+                    !model.translateSelected(
+                            std::numeric_limits<double>::infinity(),
+                            0.0,
+                            0.0) &&
+                    !model.rotateSelected(
+                            QStringLiteral("pitch"),
+                            std::numeric_limits<double>::quiet_NaN()) &&
+                    model.addTarget(
+                            0.0,
+                            0.0,
+                            0.0,
+                            QQuaternion(
+                                    std::numeric_limits<float>::max(),
+                                    std::numeric_limits<float>::max(),
+                                    0.0F,
+                                    0.0F)) == -1 &&
+                    model.addTarget(
+                            0.0,
+                            0.0,
+                            0.0,
+                            QQuaternion(0.0F, 0.0F, 0.0F, 0.0F)) == -1 &&
+                    !model.setName(0, QStringLiteral("   ")) &&
+                    !model.removeTarget(99) &&
+                    model.selectedTarget() == lockedTarget,
+            "invalid pose target edits changed model state");
+    okay &= Check(
+            model.removeTarget(1) &&
+                    model.count() == 1 &&
+                    !model.removeTarget(0),
+            "pose target removal did not preserve a usable final target");
+
+    QSettings().setValue(
+            QStringLiteral("targets/poses"),
+            QByteArrayLiteral(
+                    "{\"version\":1,\"selectedId\":\"missing\","
+                    "\"targets\":[{\"id\":\"\",\"name\":\"Broken\","
+                    "\"position\":[0,0,0],\"rotation\":[0,0,0]},"
+                    "{\"id\":\"valid\",\"name\":\"Recovered\","
+                    "\"position\":[1,2,3],\"rotation\":[450,-540,720]},"
+                    "{\"id\":\"valid\",\"name\":\"Duplicate\","
+                    "\"position\":[4,5,6],\"rotation\":[0,0,0]}]}"));
+    PoseTargetModel recovered;
+    okay &= Check(
+            recovered.count() == 1 &&
+                    recovered.selectedIndex() == 0 &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("name"))
+                                    .toString() ==
+                            QStringLiteral("Recovered") &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("90") &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("pitchDegrees"))
+                                    .toString() ==
+                            QStringLiteral("-180") &&
+                    recovered.selectedTarget()
+                                    .value(QStringLiteral("rollDegrees"))
+                                    .toString() ==
+                            QStringLiteral("0"),
+            "pose target persistence did not reject or normalize bad data");
+
+    QSettings().clear();
+    SearchController controller;
+    controller.setEvaluationTargetId(QStringLiteral("pose-target"));
+    PoseTargetModel *const targets = controller.poseTargets();
+    targets->setPositionComponent(
+            0, QStringLiteral("x"), QStringLiteral("18"));
+    targets->setRotationComponent(
+            0, QStringLiteral("yaw"), QStringLiteral("75"));
+    okay &= Check(
+            controller.evaluationTargetSettings()
+                            .value(QStringLiteral("x"))
+                            .toString() == QStringLiteral("18") &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("yawDegrees"))
+                                    .toString() ==
+                            QStringLiteral("75"),
+            "selected pose target did not synchronize search settings");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("rollDegrees"), QStringLiteral("-35"));
+    okay &= Check(
+            targets->selectedTarget()
+                            .value(QStringLiteral("rollDegrees"))
+                                    .toString() == QStringLiteral("-35"),
+            "pose search setting did not synchronize the selected target");
+    const int alternateIndex = targets->addTarget(
+            -8.0,
+            4.0,
+            6.0,
+            QQuaternion::fromEulerAngles(15.0F, 25.0F, 35.0F));
+    okay &= Check(
+            alternateIndex == 1 &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("x"))
+                                    .toString() ==
+                            QStringLiteral("-8") &&
+                    std::abs(
+                            controller.evaluationTargetSettings()
+                                            .value(
+                                                    QStringLiteral(
+                                                            "yawDegrees"))
+                                            .toDouble() -
+                            35.0) < 0.001 &&
+                    targets->selectTarget(0) &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("x"))
+                                    .toString() ==
+                            QStringLiteral("18") &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("rollDegrees"))
+                                    .toString() ==
+                            QStringLiteral("-35"),
+            "pose target selection did not switch the brute-force goal");
+    return okay;
 }
 
 QVariantMap Pass(const SearchController &controller, int index) {
@@ -207,8 +717,9 @@ bool TestUserTimelineConfigurationBoundary() {
     const forevertas::EvaluationPlan plan = evaluator->Plan(
             1000, modifier->EarliestMutationTimeMs(), 10u);
     okay &= Check(modifier->EarliestMutationTimeMs() == 10 &&
-                          plan.startTimeMs == 10 && plan.endTimeMs == 30,
-                  "registry did not apply exactly one timeline tick");
+                          plan.startTimeMs == 10 && plan.endTimeMs == 20,
+                  "registry did not limit the one-tick offset to input "
+                  "settings");
     return okay;
 }
 
@@ -233,13 +744,21 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           controller.baseInputScriptError().contains(
                                   QStringLiteral("Line 1")),
                   "invalid base input script did not disable Start");
+    okay &= Check(controller.canUndoBaseInputScript() &&
+                          controller.undoBaseInputScript() &&
+                          controller.baseInputScript() ==
+                                  QStringLiteral(
+                                          "0.00 press up\n0.20 steer 32768") &&
+                          controller.baseInputScriptError().isEmpty(),
+                  "script undo did not restore a non-manual replacement");
+    controller.setBaseInputScript(QStringLiteral("0.001 press up"));
     controller.setBaseInputScript({});
     okay &= Check(controller.canStart(),
                   "empty base input script did not restore Start");
 #if FOREVERVALIDATOR_HAS_CUDA
-    constexpr qsizetype expectedBackendCount = 3;
+    constexpr qsizetype expectedBackendCount = 4;
 #else
-    constexpr qsizetype expectedBackendCount = 2;
+    constexpr qsizetype expectedBackendCount = 3;
 #endif
     okay &= Check(controller.simulationBackendOptions().size() ==
                           expectedBackendCount,
@@ -259,8 +778,20 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                                   QStringLiteral(
                                           "Faster runtime optimized for "
                                           "Stadium, may break compatibility "
-                                          "in other environments")),
+                                          "in other environments")) &&
+                          HasBackendOption(
+                                  controller.simulationBackendOptions(),
+                                  QStringLiteral("multi-threaded-cpu"),
+                                  QStringLiteral("CPU Multi-threaded"),
+                                  QStringLiteral(
+                                          "Runs independent optimized CPU "
+                                          "simulations across multiple "
+                                          "worker threads")),
                   "physics backend metadata was not exposed");
+    okay &= Check(
+            controller.cpuWorkerCount() ==
+                    QString::number(forevertas::DefaultCpuWorkerCount()),
+            "unexpected default CPU worker count");
 #if FOREVERVALIDATOR_HAS_CUDA
     okay &= Check(HasBackendOption(
                           controller.simulationBackendOptions(),
@@ -280,9 +811,14 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                   "CUDA calibration was unexpectedly enabled by default");
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
+    okay &= Check(
+            controller.searchAlgorithmSettings()
+                            .value(QStringLiteral("autoPromoteBest"))
+                            .toString() == QStringLiteral("false"),
+            "auto-promote search mode was unexpectedly enabled by default");
     okay &= Check(controller.modifierOptions().size() == 5,
                   "required modifier options were not exposed");
-    okay &= Check(controller.evaluationTargetOptions().size() == 5,
+    okay &= Check(controller.evaluationTargetOptions().size() == 7,
                   "required evaluation targets were not exposed");
     okay &= Check(
             HasOption(controller.modifierOptions(),
@@ -315,6 +851,16 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                       QStringLiteral("volume-entry-time"),
                       QStringLiteral("VolumeEntryEvaluationSettings.qml")),
             "volume target metadata was not exposed");
+    okay &= Check(
+            HasOption(controller.evaluationTargetOptions(),
+                      QStringLiteral("custom-volume-entry-time"),
+                      QStringLiteral("VolumeEntryEvaluationSettings.qml")),
+            "custom volume target metadata was not exposed");
+    okay &= Check(
+            HasOption(controller.evaluationTargetOptions(),
+                      QStringLiteral("stunt-points"),
+                      QStringLiteral("StuntPointsEvaluationSettings.qml")),
+            "stunt points target metadata was not exposed");
     okay &= Check(controller.modifierPasses().size() == 1 &&
                           PassId(controller, 0) ==
                                   QStringLiteral("random-steering"),
@@ -325,6 +871,22 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                           QStringLiteral("optimized-cpu") &&
                           controller.canStart(),
                   "CPU Optimized backend was not selectable");
+    controller.setSimulationBackendId(
+            QStringLiteral("multi-threaded-cpu"));
+    okay &= Check(controller.simulationBackendId() ==
+                          QStringLiteral("multi-threaded-cpu") &&
+                          controller.canStart(),
+                  "CPU Multi-threaded backend was not selectable");
+    controller.setCpuWorkerCount(QStringLiteral("0"));
+    okay &= Check(!controller.canStart(),
+                  "zero CPU workers enabled Start");
+    controller.setCpuWorkerCount(QStringLiteral("257"));
+    okay &= Check(!controller.canStart(),
+                  "excessive CPU workers enabled Start");
+    controller.setCpuWorkerCount(QStringLiteral("2"));
+    okay &= Check(controller.canStart(),
+                  "valid CPU worker count did not enable Start");
+    controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
 #if FOREVERVALIDATOR_HAS_CUDA
     controller.setSimulationBackendId(QStringLiteral("cuda"));
     okay &= Check(controller.simulationBackendId() ==
@@ -387,6 +949,30 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
             QStringLiteral("precise-finish-time"));
     okay &= Check(controller.canStart(),
                   "precise finish target defaults did not validate");
+    controller.setEvaluationTargetId(QStringLiteral("stunt-points"));
+    okay &= Check(
+            controller.canStart() &&
+                    controller.evaluationTargetSettings()
+                                    .value(QStringLiteral("targetTimeMs"))
+                                    .toString() == QStringLiteral("6000"),
+            "stunt target defaults did not validate");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("6001"));
+    okay &= Check(!controller.canStart(),
+                  "unaligned stunt target time enabled Start");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("4320"));
+    okay &= Check(controller.canStart(),
+                  "valid stunt target time did not enable Start");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("500"));
+    okay &= Check(
+            !controller.canStart() &&
+                    controller.validationMessage().contains(
+                            QStringLiteral("first modifier time")),
+            "stunt target accepted a deadline before any mutation");
+    controller.setEvaluationTargetSetting(
+            QStringLiteral("targetTimeMs"), QStringLiteral("4320"));
     controller.setEvaluationTargetId(QStringLiteral("missing-target"));
     okay &= Check(!controller.canStart(),
                   "unknown evaluation target enabled Start");
@@ -443,6 +1029,10 @@ bool TestPersistence(const QString &packsDirectory,
     QSettings().clear();
     {
         SearchController controller;
+        if (!Check(!controller.darkMode(),
+                   "light appearance was not the default theme")) {
+            return false;
+        }
         SetValidPaths(controller, packsDirectory, replayPath);
         controller.setModifierPassSetting(
                 0, QStringLiteral("seed"), QStringLiteral("321"));
@@ -451,19 +1041,30 @@ bool TestPersistence(const QString &packsDirectory,
                 1, QStringLiteral("steerMaxCount"), QStringLiteral("4"));
         controller.moveModifierPass(1, 0);
         controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
+        controller.setCpuWorkerCount(QStringLiteral("6"));
         controller.setCudaParallelSampleCount(QStringLiteral("384"));
         controller.setCudaCalibrationEnabled(true);
+        controller.setDarkMode(true);
+        controller.setSearchAlgorithmSetting(
+                QStringLiteral("autoPromoteBest"),
+                QStringLiteral("true"));
         controller.setEvaluationTargetId(QStringLiteral("point-target"));
         controller.setEvaluationTargetSetting(
                 QStringLiteral("x"), QStringLiteral("12.5"));
+        controller.setEvaluationTargetId(QStringLiteral("stunt-points"));
+        controller.setEvaluationTargetSetting(
+                QStringLiteral("targetTimeMs"), QStringLiteral("4320"));
         controller.setBaseInputScript(
                 QStringLiteral("0.00 press up\n0.50 steer -16384"));
         QSettings().sync();
     }
 
     SearchController restored;
-    bool okay = Check(restored.searchAlgorithmSettings().isEmpty(),
-                      "parameterless search exposed persisted settings");
+    bool okay = Check(
+            restored.searchAlgorithmSettings()
+                            .value(QStringLiteral("autoPromoteBest"))
+                            .toString() == QStringLiteral("true"),
+            "auto-promote search mode was not persisted");
     okay &= Check(
             restored.baseInputScript() ==
                     QStringLiteral("0.00 press up\n0.50 steer -16384") &&
@@ -475,8 +1076,21 @@ bool TestPersistence(const QString &packsDirectory,
     okay &= Check(restored.cudaParallelSampleCount() ==
                           QStringLiteral("384"),
                   "CUDA parallel sample count was not persisted");
+    okay &= Check(restored.cpuWorkerCount() == QStringLiteral("6"),
+                  "CPU worker count was not persisted");
     okay &= Check(restored.cudaCalibrationEnabled(),
                   "CUDA calibration mode was not persisted");
+    okay &= Check(restored.darkMode(),
+                  "dark appearance mode was not persisted");
+    QSignalSpy darkModeSpy(&restored, &SearchController::darkModeChanged);
+    restored.setDarkMode(false);
+    restored.setDarkMode(false);
+    okay &= Check(!restored.darkMode() && darkModeSpy.count() == 1 &&
+                          !QSettings()
+                                   .value(QStringLiteral(
+                                           "appearance/darkMode"))
+                                   .toBool(),
+                  "dark appearance mode did not update atomically");
     okay &= Check(restored.modifierPasses().size() == 2,
                   "modifier pass count was not persisted");
     okay &= Check(PassId(restored, 0) == QStringLiteral("input-deletion") &&
@@ -491,10 +1105,10 @@ bool TestPersistence(const QString &packsDirectory,
                                           .toString() == QStringLiteral("321"),
                   "second modifier pass was not persisted");
     okay &= Check(restored.evaluationTargetId() ==
-                          QStringLiteral("point-target") &&
+                          QStringLiteral("stunt-points") &&
                           restored.evaluationTargetSettings()
-                                          .value(QStringLiteral("x"))
-                                          .toString() == QStringLiteral("12.5"),
+                                          .value(QStringLiteral("targetTimeMs"))
+                                          .toString() == QStringLiteral("4320"),
                   "evaluation target configuration was not persisted");
     okay &= Check(QSettings().contains(
                           QStringLiteral("composition/modifiers")),
@@ -509,6 +1123,10 @@ bool TestPersistence(const QString &packsDirectory,
                                   "backends/cuda/parallelSampleCount"))
                                   .toString() == QStringLiteral("384"),
                   "CUDA parallel sample count was not stored canonically");
+    okay &= Check(QSettings().value(QStringLiteral(
+                                  "backends/cpu/workerCount"))
+                                  .toString() == QStringLiteral("6"),
+                  "CPU worker count was not stored canonically");
     okay &= Check(QSettings().value(QStringLiteral(
                                   "backends/cuda/calibrationEnabled"))
                                   .toBool(),
@@ -549,6 +1167,135 @@ bool TestExtractionWorkerShutdown(const QString &packsDirectory,
     }
     return Check(elapsed.elapsed() < 5000,
                  "input extraction worker did not stop during shutdown");
+}
+
+bool TestDescriptiveSearchStageStatuses() {
+    using forevertas::SearchProgressStage;
+    using forevertas::app::SearchStageStatus;
+
+    bool okay = Check(
+            SearchStageStatus(
+                    SearchProgressStage::OpeningPacksDirectory,
+                    "reference") ==
+                    QStringLiteral("Opening Packs directory..."),
+            "Packs loading stage was not descriptive");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::ReadingReplay,
+                    "reference") ==
+                    QStringLiteral("Reading replay file..."),
+            "replay reading stage was not descriptive");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::CreatingSimulation,
+                    "optimized-cpu")
+                    .contains(QStringLiteral("optimized CPU")),
+            "optimized CPU initialization was not identified");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::PreparingSearch,
+                    "multi-threaded-cpu")
+                            .contains(QStringLiteral(
+                                    "independent optimized CPU workers")) &&
+                    SearchStageStatus(
+                            SearchProgressStage::Mutations,
+                            "multi-threaded-cpu")
+                            .contains(QStringLiteral(
+                                    "across optimized CPU workers")),
+            "multi-threaded CPU stages did not identify worker aggregation");
+    const QString cudaInitialization = SearchStageStatus(
+            SearchProgressStage::CreatingSimulation,
+            "cuda");
+    const QString cudaReplayLoad = SearchStageStatus(
+            SearchProgressStage::LoadingReplay,
+            "cuda");
+    const QString cudaBaseline = SearchStageStatus(
+            SearchProgressStage::Baseline,
+            "cuda");
+    const QString cudaCalibration = SearchStageStatus(
+            SearchProgressStage::Calibration,
+            "cuda");
+    const QString cudaMutations = SearchStageStatus(
+            SearchProgressStage::Mutations,
+            "cuda");
+    okay &= Check(
+            cudaInitialization.contains(QStringLiteral("CUDA")) &&
+                    cudaInitialization.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaReplayLoad.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaBaseline.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaCalibration.contains(
+                            QStringLiteral("GPU availability")) &&
+                    cudaMutations.contains(
+                            QStringLiteral("GPU availability")),
+            "CUDA wait-prone stages did not explain GPU availability waits");
+    okay &= Check(
+            SearchStageStatus(
+                    SearchProgressStage::FinalSamplingSetup,
+                    "reference")
+                    .contains(QStringLiteral("final best-run sampling")),
+            "final sampling setup was not identified");
+    return okay;
+}
+
+bool TestIterationBoundaryArbitration() {
+    using forevertas::SearchIterationPhase;
+    using forevertas::app::TryBeginSearchIteration;
+    using forevertas::app::TryCancelBeforeSearchIteration;
+
+    auto cancelled =
+            std::make_shared<std::atomic<SearchIterationPhase>>(
+                    SearchIterationPhase::Pending);
+    bool okay = Check(
+            TryCancelBeforeSearchIteration(cancelled) &&
+                    !TryBeginSearchIteration(cancelled) &&
+                    cancelled->load(std::memory_order_acquire) ==
+                            SearchIterationPhase::Cancelled,
+            "a pre-iteration cancellation did not win the boundary");
+
+    auto started =
+            std::make_shared<std::atomic<SearchIterationPhase>>(
+                    SearchIterationPhase::Pending);
+    okay &= Check(
+            TryBeginSearchIteration(started) &&
+                    !TryCancelBeforeSearchIteration(started) &&
+                    TryBeginSearchIteration(started) &&
+                    started->load(std::memory_order_acquire) ==
+                            SearchIterationPhase::Started,
+            "a started iteration did not retain the boundary");
+    return okay;
+}
+
+bool TestStopAbortsBeforeFirstIteration(const QString &packsDirectory,
+                                        const QString &replayPath) {
+    QSettings().clear();
+    SearchController controller;
+    SetValidPaths(controller, packsDirectory, replayPath);
+    QSignalSpy completionSpy(
+            &controller, &SearchController::searchCompleted);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    controller.startSearch();
+    controller.stopSearch();
+    bool okay = Check(
+            controller.running() && controller.stopping() &&
+                    controller.statusText() ==
+                            QStringLiteral("Aborting search startup..."),
+            "Stop did not request an immediate startup abort");
+    okay &= Check(
+            WaitUntil([&controller]() { return !controller.running(); }, 5000),
+            "startup abort did not terminate promptly");
+    okay &= Check(
+            elapsed.elapsed() < 5000 &&
+                    controller.statusText() ==
+                            QStringLiteral("Search aborted") &&
+                    completionSpy.isEmpty() &&
+                    controller.resultText().isEmpty(),
+            "startup abort ran or completed a search iteration");
+    return okay;
 }
 
 bool TestLocaleIndependentPersistedDecimals(const QString &packsDirectory,
@@ -726,6 +1473,8 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
 
     QSignalSpy completionSpy(
             &controller, &SearchController::searchCompleted);
+    QSignalSpy improvementSpy(
+            &controller, &SearchController::searchImprovement);
     controller.startSearch();
     bool okay = Check(controller.running() && !controller.canStart(),
                       "Start did not enter the running state");
@@ -760,6 +1509,44 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
                     30000),
             "live iteration metrics were not shown while running");
     if (!okay) {
+        return false;
+    }
+    okay &= Check(
+            WaitUntil(
+                    [&improvementSpy]() {
+                        return improvementSpy.count() > 0;
+                    },
+                    10000),
+            "search did not publish a best-run improvement trajectory");
+    std::uint64_t searchId = 0u;
+    std::uint64_t improvementNumber = 0u;
+    for (const QList<QVariant> &arguments : improvementSpy) {
+        const auto improvement =
+                qvariant_cast<forevertas::app::SearchImprovementPtr>(
+                        arguments.at(0));
+        const bool complete =
+                improvement != nullptr &&
+                improvement->searchId != 0u &&
+                improvement->improvementNumber > improvementNumber &&
+                improvement->packsDirectory == packsDirectory &&
+                improvement->replayPath == replayPath &&
+                improvement->simulationBackendId ==
+                        QStringLiteral("optimized-cpu") &&
+                !improvement->timeline.empty() &&
+                improvement->timeline.front().timeMs == 0 &&
+                improvement->timeline.back().timeMs > 0;
+        if (improvement != nullptr) {
+            if (searchId == 0u) {
+                searchId = improvement->searchId;
+            }
+            improvementNumber = improvement->improvementNumber;
+        }
+        okay &= Check(complete && improvement->searchId == searchId,
+                      "published improvement trajectory was incomplete");
+    }
+    if (!okay) {
+        controller.stopSearch();
+        WaitUntil([&controller]() { return !controller.running(); }, 30000);
         return false;
     }
     const QString firstElapsed = controller.elapsedText();
@@ -885,11 +1672,19 @@ int main(int argc, char **argv) {
     replay.write("test");
     replay.close();
 
-    bool okay = TestAutomaticPacksDetection() &&
+    bool okay = TestCuboidTargetModel() &&
+            TestCuboidControllerSynchronization() &&
+            TestCustomVolumeTargets() &&
+            TestPoseTargets() &&
+            TestAutomaticPacksDetection() &&
+            TestDescriptiveSearchStageStatuses() &&
+            TestIterationBoundaryArbitration() &&
             TestUserTimelineConfigurationBoundary() &&
             TestRegistryAndValidation(packsDirectory.path(), replayPath) &&
             TestCompositionEditing(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath) &&
+            TestStopAbortsBeforeFirstIteration(
+                    packsDirectory.path(), replayPath) &&
             TestExtractionFailurePreservesDraft(
                     packsDirectory.path(), replayPath) &&
             TestExtractionWorkerShutdown(

@@ -10,6 +10,7 @@ ColumnLayout {
     property var options: []
     property string selectedId
     property var controller
+    property var viewer
     readonly property var selectedOption:
         optionCombo.currentIndex >= 0
         && optionCombo.currentIndex < options.length
@@ -18,6 +19,8 @@ ColumnLayout {
     readonly property bool settingsLoaded:
         settingsLoader.status === Loader.Ready
         && settingsLoader.item !== null
+    readonly property var settingsItem:
+        settingsLoaded ? settingsLoader.item : null
     readonly property string settingsObjectName:
         settingsLoaded ? settingsLoader.item.objectName : ""
 
@@ -56,13 +59,18 @@ ColumnLayout {
         id: settingsLoader
         objectName: root.comboObjectName + "SettingsLoader"
         Layout.fillWidth: true
+        Layout.preferredHeight: settingsLoaded
+                                ? settingsLoader.item.implicitHeight : 0
         visible: active
         active: root.selectedOption !== null
                 && root.selectedOption.settingsComponent.length > 0
         source: active ? root.selectedOption.settingsComponent : ""
         onLoaded: {
-            if (item)
+            if (item) {
                 item.controller = root.controller
+                if ("viewer" in item)
+                    item.viewer = root.viewer
+            }
         }
     }
 }

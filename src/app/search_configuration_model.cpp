@@ -8,6 +8,9 @@
 #include <QJsonObject>
 #include <QSettings>
 
+#include <algorithm>
+#include <limits>
+#include <memory>
 #include <utility>
 
 namespace forevertas::app {
@@ -205,6 +208,14 @@ QVariantMap SearchConfigurationModel::evaluationTargetSettings() const {
     return evaluationTargetSettings_;
 }
 
+QVariantMap SearchConfigurationModel::evaluationTargetSettingsFor(
+        const QString &id) const {
+    const EvaluationTargetRegistration *const registration =
+            FindEvaluationTarget(id.toStdString());
+    if (registration == nullptr) return {};
+    return LoadOptionSettings(QStringLiteral("evaluation"), *registration);
+}
+
 bool SearchConfigurationModel::setSearchAlgorithmId(const QString &value) {
     const SearchAlgorithmRegistration *const registration =
             FindSearchAlgorithm(value.toStdString());
@@ -363,6 +374,8 @@ SearchConfigurationValidation SearchConfigurationModel::validate(
     }
 
     std::vector<OptionConfiguration> modifiers;
+    std::int64_t earliestMutationTimeMs =
+            std::numeric_limits<std::int64_t>::max();
     modifiers.reserve(static_cast<std::size_t>(modifierPasses_.size()));
     for (qsizetype index = 0; index < modifierPasses_.size(); ++index) {
         const QVariantMap pass = modifierPasses_.at(index).toMap();
@@ -381,7 +394,26 @@ SearchConfigurationValidation SearchConfigurationModel::validate(
                                 .arg(index + 1)
                                 .arg(QString::fromStdString(*error))};
         }
+        earliestMutationTimeMs = std::min(
+                earliestMutationTimeMs,
+                registration->create(settings, tickDurationMs)
+                        ->EarliestMutationTimeMs());
         modifiers.push_back({registration->id, settings});
+    }
+    if (evaluationRegistration->id == kStuntPointsEvaluationId) {
+        const std::unique_ptr<IterationEvaluator> evaluator =
+                evaluationRegistration->create(
+                        evaluationSettings, tickDurationMs);
+        const EvaluationPlan plan = evaluator->Plan(
+                std::numeric_limits<std::int64_t>::max(),
+                earliestMutationTimeMs,
+                tickDurationMs);
+        if (plan.startTimeMs < earliestMutationTimeMs) {
+            return {{},
+                    QStringLiteral(
+                            "Stunt points target time must not precede the "
+                            "first modifier time.")};
+        }
     }
 
     return {SearchComponentConfiguration{

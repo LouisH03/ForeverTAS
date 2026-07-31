@@ -2,6 +2,7 @@
 
 #include "evaluators/evaluator_utils.h"
 #include "searches/cuda_batch_calibrator.h"
+#include "searches/cuda_calibration_safety.h"
 #include "searches/option_settings_utils.h"
 
 #include <algorithm>
@@ -14,6 +15,10 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if FOREVERVALIDATOR_HAS_CUDA
+#include <cuda_runtime_api.h>
+#endif
 
 namespace forevertas {
 namespace {
@@ -77,6 +82,14 @@ bool SameState(const PhysicsSandboxStateView &left,
 void CheckCancellation(const SearchRunControl *control) {
     if (control != nullptr && control->cancellationRequested &&
         control->cancellationRequested()) {
+        throw SearchCancelled();
+    }
+}
+
+void BeginIteration(const SearchRunControl *control) {
+    CheckCancellation(control);
+    if (control != nullptr && control->beginIteration &&
+        !control->beginIteration()) {
         throw SearchCancelled();
     }
 }
@@ -186,6 +199,126 @@ void ReportCudaBatchProfile(
               << '\n'
               << std::flush;
 }
+
+CudaCalibrationDeviceLimits QueryCudaCalibrationDeviceLimits() {
+    int device = 0;
+    cudaDeviceProp properties{};
+    std::size_t freeMemory = 0u;
+    std::size_t totalMemory = 0u;
+    int kernelExecutionTimeoutEnabled = 0;
+    cudaError_t error = cudaGetDevice(&device);
+    if (error == cudaSuccess) {
+        error = cudaGetDeviceProperties(&properties, device);
+    }
+    if (error == cudaSuccess) {
+        error = cudaMemGetInfo(&freeMemory, &totalMemory);
+    }
+    if (error == cudaSuccess) {
+        error = cudaDeviceGetAttribute(
+                &kernelExecutionTimeoutEnabled,
+                cudaDevAttrKernelExecTimeout,
+                device);
+    }
+    if (error != cudaSuccess) {
+        throw std::runtime_error(
+                std::string("querying CUDA calibration safety limits "
+                            "failed: ") +
+                cudaGetErrorString(error));
+    }
+
+    CudaCalibrationDeviceLimits limits;
+    limits.totalMemoryBytes = totalMemory;
+    limits.freeMemoryBytes = freeMemory;
+    limits.maximumThreadsPerBlock =
+            static_cast<std::uint32_t>(
+                    properties.maxThreadsPerBlock);
+    limits.maximumGridDimensionX =
+            static_cast<std::uint32_t>(
+                    properties.maxGridSize[0]);
+    limits.registersPerBlock =
+            static_cast<std::uint32_t>(
+                    properties.regsPerBlock);
+    limits.registersPerMultiprocessor =
+            static_cast<std::uint32_t>(
+                    properties.regsPerMultiprocessor);
+    limits.maximumThreadsPerMultiprocessor =
+            static_cast<std::uint32_t>(
+                    properties.maxThreadsPerMultiProcessor);
+    limits.maximumBlocksPerMultiprocessor =
+            static_cast<std::uint32_t>(
+                    properties.maxBlocksPerMultiProcessor);
+    limits.multiprocessorCount =
+            static_cast<std::uint32_t>(
+                    properties.multiProcessorCount);
+    limits.kernelExecutionTimeoutEnabled =
+            kernelExecutionTimeoutEnabled != 0;
+    return limits;
+}
+
+CudaCalibrationBatchProfile CudaCalibrationProfile(
+        const forevervalidator::experimental::
+                PhysicsSandboxCudaSearchBatch &batch,
+        std::uint32_t batchCapacity) {
+    CudaCalibrationBatchProfile profile;
+    profile.batchSize = std::max(batch.candidateCount, 1u);
+    profile.batchCapacity = batchCapacity;
+    profile.residentDeviceBytes =
+            batch.metrics.residentDeviceBytes;
+    profile.kernelMilliseconds = std::max(
+            {batch.metrics.scoreInitializationKernelMilliseconds,
+             batch.metrics.mutationKernelMilliseconds,
+             batch.metrics.simulationKernelMilliseconds,
+             batch.metrics.finishRefinementKernelMilliseconds,
+             batch.metrics.winnerKernelMilliseconds,
+             batch.metrics.winnerReductionKernelMilliseconds,
+             batch.metrics.winnerStateCaptureKernelMilliseconds,
+             batch.metrics.finalizationKernelMilliseconds});
+    profile.simulationThreadsPerBlock =
+            batch.metrics.simulationThreadsPerBlock;
+    profile.simulationRegistersPerThread =
+            batch.metrics.simulationRegistersPerThread;
+    profile.simulationLocalBytesPerThread =
+            batch.metrics.simulationLocalBytesPerThread;
+    profile.simulationActiveBlocksPerMultiprocessor =
+            batch.metrics
+                    .simulationActiveBlocksPerMultiprocessor;
+    profile.simulationTheoreticalOccupancy =
+            batch.metrics.simulationTheoreticalOccupancy;
+    return profile;
+}
+
+void ReportRejectedCudaCalibrationBatch(
+        std::uint32_t batchSize,
+        const CudaCalibrationSafetyDecision &decision) {
+    std::clog << "forevertas_cuda_calibration_rejected"
+              << " candidates=" << batchSize
+              << " reason=\"" << decision.reason << '"'
+              << " transient_mib="
+              << static_cast<double>(
+                         decision.requiredTransientBytes) /
+                         (1024.0 * 1024.0)
+              << " reserved_headroom_mib="
+              << static_cast<double>(
+                         decision.reservedMemoryHeadroomBytes) /
+                         (1024.0 * 1024.0)
+              << " predicted_kernel_ms="
+              << decision.predictedKernelMilliseconds
+              << '\n'
+              << std::flush;
+}
+
+void ReportCudaCalibrationSelection(
+        const CudaBatchCalibrator &calibrator) {
+    std::clog << "forevertas_cuda_calibration_selected"
+              << " candidates="
+              << calibrator.BestBatchSize()
+              << " sustained_iterations_per_second="
+              << calibrator.BestThroughput()
+              << " reliable_candidates="
+              << calibrator.ReliableMeasurementCount()
+              << '\n'
+              << std::flush;
+}
 #endif
 
 std::uint64_t TickCount(std::uint64_t durationMs,
@@ -263,7 +396,8 @@ void ReportLive(
             mutationImprovementCount,
             totalMutationCount,
             elapsed,
-            lastImprovementElapsed});
+            lastImprovementElapsed,
+            {}});
 }
 
 #if FOREVERVALIDATOR_HAS_CUDA
@@ -315,6 +449,16 @@ std::string CudaEvaluationDescription(
                                              PhysicsSandboxCudaVolumeEntryEvaluator>) {
                     return TimeMetricDescription(
                             "Volume entry time", batch.bestTimeMs);
+                } else if constexpr (std::is_same_v<
+                                             T,
+                                             PhysicsSandboxCudaStuntPointsEvaluator>) {
+                    return "Stunt points: " +
+                            std::to_string(
+                                    static_cast<std::uint32_t>(
+                                            batch.bestScore)) +
+                            " at " +
+                            FormatHumanDurationMilliseconds(
+                                    batch.bestTimeMs);
                 } else {
                     return "Precise finish time: " +
                             FormatHumanDurationNanoseconds(
@@ -329,6 +473,10 @@ SearchResult RunCudaBasicBruteForce(
         const SearchExecutionContext &context,
         const EvaluationPlan &evaluationPlan,
         std::int64_t earliestMutationTimeMs,
+        const PhysicsSandboxState &branch,
+        const std::vector<PhysicsSandboxInputEvent>
+                &originalBaselineInputs,
+        bool autoPromoteBest,
         std::chrono::steady_clock::time_point started) {
     using namespace forevervalidator::experimental;
     if (context.cudaModifiers == nullptr ||
@@ -351,11 +499,13 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
     configuration.modifiers = *context.cudaModifiers;
     configuration.evaluator = *context.cudaEvaluator;
-    PhysicsSandboxCudaSearchSession session = Require(
+    std::optional<PhysicsSandboxCudaSearchSession> session;
+    session.emplace(Require(
             CreatePhysicsSandboxCudaSearchSession(
                     context.sandbox, configuration),
-            "creating resident CUDA search session");
+            "creating resident CUDA search session"));
     std::optional<CudaBatchCalibrator> calibrator;
+    CudaCalibrationSafetyPlanner calibrationSafety;
     if (context.calibrateCudaBatchSize) {
         calibrator.emplace();
     }
@@ -415,7 +565,7 @@ SearchResult RunCudaBasicBruteForce(
     ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
     const auto baselineStarted = std::chrono::steady_clock::now();
     PhysicsSandboxCudaSearchBatch baseline = Require(
-            session.EvaluateBaseline(
+            session->EvaluateBaseline(
                     [control = context.control]() {
                         return control != nullptr &&
                                 control->cancellationRequested &&
@@ -427,6 +577,11 @@ SearchResult RunCudaBasicBruteForce(
             baseline,
             timelineTickCount,
             std::chrono::steady_clock::now() - baselineStarted);
+    if (calibrator) {
+        calibrationSafety.Observe(
+                CudaCalibrationProfile(
+                        baseline, sessionCapacity));
+    }
     if (baseline.cancelled) {
         throw SearchCancelled();
     }
@@ -450,11 +605,50 @@ SearchResult RunCudaBasicBruteForce(
         std::uint32_t batchSize = calibrator
                 ? calibrator->CurrentBatchSize()
                 : context.cudaBatchSize;
+        if (calibrator &&
+            (!calibrator->Complete() ||
+             batchSize > sessionCapacity)) {
+            const CudaCalibrationSafetyDecision decision =
+                    calibrationSafety.Evaluate(
+                            batchSize,
+                            sessionCapacity,
+                            QueryCudaCalibrationDeviceLimits());
+            if (!decision.safe) {
+                ReportRejectedCudaCalibrationBatch(
+                        batchSize, decision);
+                if (calibrator->Complete()) {
+                    throw std::runtime_error(
+                            "the selected CUDA calibration batch is no "
+                            "longer inside verified safe limits: " +
+                            decision.reason);
+                }
+                if (batchSize == 1u) {
+                    throw std::runtime_error(
+                            "no CUDA calibration batch is inside "
+                            "verified safe limits: " +
+                            decision.reason);
+                }
+                calibrator->RejectUnsafeCurrent();
+                ReportCudaBatchSize(
+                        context.control,
+                        calibrator->CurrentBatchSize());
+                if (calibrator->Complete()) {
+                    ReportCudaCalibrationSelection(
+                            *calibrator);
+                    ReportProgress(
+                            context.control,
+                            SearchProgressStage::Mutations,
+                            iterations);
+                }
+                continue;
+            }
+        }
         if (batchSize > sessionCapacity) {
             PhysicsSandboxResult<std::uint32_t> reserved =
-                    session.ReserveBatchCapacity(batchSize);
+                    session->ReserveBatchCapacity(batchSize);
             if (!reserved) {
                 if (!calibrator ||
+                    calibrator->Complete() ||
                     reserved.Error().code !=
                             PhysicsSandboxErrorCode::AllocationFailed) {
                     std::string message =
@@ -469,6 +663,8 @@ SearchResult RunCudaBasicBruteForce(
                         context.control,
                         calibrator->CurrentBatchSize());
                 if (calibrator->Complete()) {
+                    ReportCudaCalibrationSelection(
+                            *calibrator);
                     ReportProgress(
                             context.control,
                             SearchProgressStage::Mutations,
@@ -497,8 +693,9 @@ SearchResult RunCudaBasicBruteForce(
                     iterationIndex + 1u);
         }
         const auto batchStarted = std::chrono::steady_clock::now();
+        BeginIteration(context.control);
         PhysicsSandboxCudaSearchBatch batch = Require(
-                session.RunBatch(
+                session->RunBatch(
                         iterationIndex,
                         batchSize,
                         [control = context.control]() {
@@ -511,6 +708,20 @@ SearchResult RunCudaBasicBruteForce(
                 std::chrono::steady_clock::now() - batchStarted;
         ReportCudaBatchProfile(
                 "mutations", batch, timelineTickCount, batchElapsed);
+        std::optional<CudaCalibrationSafetyDecision>
+                executedCalibrationSafety;
+        if (calibrator) {
+            calibrationSafety.Observe(
+                    CudaCalibrationProfile(
+                            batch, sessionCapacity));
+            if (!calibrator->Complete()) {
+                executedCalibrationSafety =
+                        calibrationSafety.Evaluate(
+                                batch.candidateCount,
+                                sessionCapacity,
+                                QueryCudaCalibrationDeviceLimits());
+            }
+        }
         if (batch.cancelled) {
             throw SearchCancelled();
         }
@@ -519,8 +730,107 @@ SearchResult RunCudaBasicBruteForce(
         totalMutationCount += batch.totalMutationCount;
         mutationImprovementCount +=
                 batch.mutationImprovementCount;
-        if (batch.bestSnapshot) {
+        const bool promote =
+                autoPromoteBest &&
+                batch.mutationImprovementCount != 0u &&
+                batch.bestSnapshot.has_value();
+        if (batch.bestChanged && batch.bestSnapshot) {
             adoptBest(batch);
+            if (autoPromoteBest) {
+                best.mutationCount = EffectiveInputChangeCount(
+                        originalBaselineInputs, best.inputs);
+            }
+        }
+        if (calibrator && !calibrator->Complete()) {
+            if (executedCalibrationSafety &&
+                !executedCalibrationSafety->safe) {
+                ReportRejectedCudaCalibrationBatch(
+                        batch.candidateCount,
+                        *executedCalibrationSafety);
+                if (batch.candidateCount == 1u) {
+                    throw std::runtime_error(
+                            "the minimum CUDA calibration batch "
+                            "exceeded verified safe limits: " +
+                            executedCalibrationSafety->reason);
+                }
+                calibrator->RejectUnsafeCurrent();
+            } else {
+                calibrator->Observe(
+                        batch.candidateCount, batchElapsed);
+            }
+            if (calibrator->Complete() &&
+                !calibrator->HasReliableMeasurement()) {
+                throw std::runtime_error(
+                        "CUDA calibration could not obtain a "
+                        "repeatable throughput measurement");
+            }
+            ReportCudaBatchSize(
+                    context.control, calibrator->CurrentBatchSize());
+            if (calibrator->Complete()) {
+                ReportCudaCalibrationSelection(*calibrator);
+                ReportProgress(
+                        context.control,
+                        SearchProgressStage::Mutations,
+                        iterations);
+            }
+        }
+        if (promote) {
+            session.reset();
+            Require(context.sandbox.RestoreState(branch),
+                    "restoring CUDA branch for promoted baseline");
+            Require(context.sandbox.ReplaceInputs(best.inputs),
+                    "promoting CUDA best inputs to baseline");
+            const std::uint32_t recreatedCapacity =
+                    calibrator
+                    ? (calibrator->Complete()
+                               ? calibrator->BestBatchSize()
+                               : calibrationInitialBatchSize)
+                    : sessionCapacity;
+            if (calibrator) {
+                const CudaCalibrationSafetyDecision decision =
+                        calibrationSafety.Evaluate(
+                                recreatedCapacity,
+                                0u,
+                                QueryCudaCalibrationDeviceLimits());
+                if (!decision.safe) {
+                    throw std::runtime_error(
+                            "recreating the promoted CUDA baseline would "
+                            "leave verified safe limits: " +
+                            decision.reason);
+                }
+            }
+            configuration.maximumBatchSize = recreatedCapacity;
+            session.emplace(Require(
+                    CreatePhysicsSandboxCudaSearchSession(
+                            context.sandbox, configuration),
+                    "recreating promoted CUDA search session"));
+            sessionCapacity = recreatedCapacity;
+            PhysicsSandboxCudaSearchBatch promotedBaseline = Require(
+                    session->EvaluateBaseline(
+                            [control = context.control]() {
+                                return control != nullptr &&
+                                        control->cancellationRequested &&
+                                        control->cancellationRequested();
+                            }),
+                    "evaluating promoted CUDA baseline");
+            if (promotedBaseline.cancelled) {
+                throw SearchCancelled();
+            }
+            if (calibrator) {
+                calibrationSafety.Observe(
+                        CudaCalibrationProfile(
+                                promotedBaseline,
+                                sessionCapacity));
+            }
+            evaluatorCalls += promotedBaseline.evaluatorCalls;
+            if (!promotedBaseline.bestSnapshot ||
+                !best.evaluation ||
+                promotedBaseline.bestScore != best.evaluation->score ||
+                promotedBaseline.bestTimeMs != best.evaluation->timeMs) {
+                throw std::runtime_error(
+                        "promoted CUDA baseline does not match the "
+                        "global best");
+            }
         }
         if (batch.mutationImprovementCount != 0u) {
             lastImprovementElapsed =
@@ -528,17 +838,6 @@ SearchResult RunCudaBasicBruteForce(
             reportLive(true);
         } else {
             reportLive(false);
-        }
-        if (calibrator && !calibrator->Complete()) {
-            calibrator->Observe(batch.candidateCount, batchElapsed);
-            ReportCudaBatchSize(
-                    context.control, calibrator->CurrentBatchSize());
-            if (calibrator->Complete()) {
-                ReportProgress(
-                        context.control,
-                        SearchProgressStage::Mutations,
-                        iterations);
-            }
         }
         if (exhaustsSequence) {
             throw std::overflow_error("iteration sequence exhausted");
@@ -588,7 +887,7 @@ SearchResult RunCudaBasicBruteForce(
 }  // namespace
 
 OptionSettings DefaultBasicBruteForceOptionSettings() {
-    return {};
+    return {{"autoPromoteBest", "false"}};
 }
 
 std::optional<std::string> ValidateBasicBruteForceOptionSettings(
@@ -597,6 +896,9 @@ std::optional<std::string> ValidateBasicBruteForceOptionSettings(
     if (const auto keyError = ValidateOptionSettingKeys(
                 settings, DefaultBasicBruteForceOptionSettings())) {
         return keyError;
+    }
+    if (!ParseBoolean(settings.at("autoPromoteBest"))) {
+        return "auto-promote best must be true or false";
     }
     if (tickDurationMs == 0u) {
         return "tick duration must be greater than zero";
@@ -611,15 +913,19 @@ std::unique_ptr<SearchAlgorithm> CreateBasicBruteForceSearch(
                 ValidateBasicBruteForceOptionSettings(settings, tickDurationMs)) {
         throw std::invalid_argument(*error);
     }
-    return std::make_unique<BasicBruteForceSearch>();
+    return std::make_unique<BasicBruteForceSearch>(
+            *ParseBoolean(settings.at("autoPromoteBest")));
 }
+
+BasicBruteForceSearch::BasicBruteForceSearch(bool autoPromoteBest)
+    : autoPromoteBest_(autoPromoteBest) {}
 
 SearchResult BasicBruteForceSearch::Run(
         const SearchExecutionContext &context) const {
     const auto started = std::chrono::steady_clock::now();
-    if (const auto error = ValidateBasicBruteForceOptionSettings(
-                {}, context.tickDurationMs)) {
-        throw std::invalid_argument(*error);
+    if (context.tickDurationMs == 0u) {
+        throw std::invalid_argument(
+                "tick duration must be greater than zero");
     }
 
     const std::int64_t earliestMutationTimeMs =
@@ -685,6 +991,9 @@ SearchResult BasicBruteForceSearch::Run(
                 context,
                 evaluationPlan,
                 earliestMutationTimeMs,
+                branch,
+                baselineInputs,
+                autoPromoteBest_,
                 started);
     }
 #endif
@@ -725,6 +1034,7 @@ SearchResult BasicBruteForceSearch::Run(
     const auto evaluateTimeline = [&](SearchWinnerSource source,
                                       std::optional<std::uint64_t> iterationIndex,
                                       std::size_t mutationCount) {
+        bool improved = false;
         PhysicsSandboxStateView state = AdvanceTo(
                 context.sandbox,
                 branchTimeMs,
@@ -764,6 +1074,7 @@ SearchResult BasicBruteForceSearch::Run(
                                     "capturing improved state");
             best.inputs = Require(context.sandbox.ReadInputs(),
                                   "reading improved inputs");
+            improved = true;
             if (source == SearchWinnerSource::Mutation) {
                 ++mutationImprovementCount;
                 lastImprovementElapsed =
@@ -773,6 +1084,7 @@ SearchResult BasicBruteForceSearch::Run(
                 reportLive(false);
             }
         }
+        return improved;
     };
 
     ReportProgress(context.control, SearchProgressStage::Baseline, 0u);
@@ -780,33 +1092,67 @@ SearchResult BasicBruteForceSearch::Run(
     reportLive(true);
     ReportProgress(context.control, SearchProgressStage::Mutations, 0u);
 
-    std::uint64_t iterationIndex = 0u;
+    if (context.control != nullptr &&
+        context.control->iterationIndexStride == 0u) {
+        throw std::invalid_argument(
+                "iteration index stride must be greater than zero");
+    }
+    std::uint64_t iterationIndex = context.control == nullptr
+            ? 0u
+            : context.control->iterationIndexOffset;
+    const std::uint64_t iterationIndexStride = context.control == nullptr
+            ? 1u
+            : context.control->iterationIndexStride;
+    std::vector<PhysicsSandboxInputEvent> mutationBaselineInputs =
+            baselineInputs;
     while (!StopRequested(context.control) &&
            !IterationLimitReached(context.control, iterations)) {
-        CheckCancellation(context.control);
+        BeginIteration(context.control);
         Require(context.sandbox.RestoreState(branch),
                 "restoring branch state");
         MutationResult mutation = context.mutator.Mutate(
-                {baselineInputs,
+                {mutationBaselineInputs,
                  iterationIndex,
                  0u,
                  context.tickDurationMs,
                  earliestMutationTimeMs});
         CheckCancellation(context.control);
         ++iterations;
+        bool improved = false;
         if (mutation.mutationCount != 0u) {
             totalMutationCount += mutation.mutationCount;
+            const std::size_t overallMutationCount =
+                    EffectiveInputChangeCount(
+                            baselineInputs, mutation.inputs);
             Require(context.sandbox.ReplaceInputs(std::move(mutation.inputs)),
                     "replacing iteration inputs");
-            evaluateTimeline(SearchWinnerSource::Mutation,
-                             iterationIndex,
-                             mutation.mutationCount);
+            improved = evaluateTimeline(
+                    SearchWinnerSource::Mutation,
+                    iterationIndex,
+                    overallMutationCount);
+        }
+        if (autoPromoteBest_) {
+            std::optional<std::vector<PhysicsSandboxInputEvent>>
+                    sharedBaseline;
+            if (context.control != nullptr &&
+                context.control->promotedBaselineInputs) {
+                sharedBaseline =
+                        context.control->promotedBaselineInputs();
+            }
+            if (sharedBaseline) {
+                mutationBaselineInputs =
+                        std::move(*sharedBaseline);
+            } else if (improved) {
+                mutationBaselineInputs = best.inputs;
+            }
         }
         reportLive(false);
-        if (iterationIndex == std::numeric_limits<std::uint64_t>::max()) {
+        if (iterationIndex >
+            std::numeric_limits<std::uint64_t>::max() -
+                    iterationIndexStride) {
             throw std::overflow_error("iteration sequence exhausted");
         }
-        ++iterationIndex;
+        iterationIndex += iterationIndexStride;
     }
 
     CheckCancellation(context.control);

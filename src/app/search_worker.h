@@ -9,16 +9,27 @@
 
 #include <atomic>
 #include <memory>
+#include <string_view>
 
 namespace forevertas::app {
+
+QString SearchStageStatus(SearchProgressStage stage,
+                          std::string_view backendId);
+bool TryBeginSearchIteration(
+        const std::shared_ptr<std::atomic<SearchIterationPhase>> &phase);
+bool TryCancelBeforeSearchIteration(
+        const std::shared_ptr<std::atomic<SearchIterationPhase>> &phase);
 
 class SearchWorker final : public QObject {
     Q_OBJECT
 
 public:
     SearchWorker(SearchRequest request,
+                 std::uint64_t searchId,
                  std::shared_ptr<std::atomic_bool> stopRequested,
-                 std::shared_ptr<std::atomic_bool> cancellationRequested);
+                 std::shared_ptr<std::atomic_bool> cancellationRequested,
+                 std::shared_ptr<std::atomic<SearchIterationPhase>>
+                         iterationPhase);
 
 public slots:
     void run();
@@ -31,6 +42,8 @@ signals:
                         const QString &elapsedText);
     void cudaBatchSizeChanged(std::uint32_t batchSize);
     void bestChanged(const QString &summary, const QString &inputsText);
+    void improvementFound(
+            forevertas::app::SearchImprovementPtr improvement);
     void succeeded(forevertas::app::SearchCompletionPtr completion);
     void cancelled();
     void failed(const QString &message);
@@ -38,8 +51,10 @@ signals:
 
 private:
     SearchRequest request_;
+    std::uint64_t searchId_ = 0u;
     std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
+    std::shared_ptr<std::atomic<SearchIterationPhase>> iterationPhase_;
 };
 
 }  // namespace forevertas::app

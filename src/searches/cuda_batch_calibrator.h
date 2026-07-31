@@ -14,10 +14,14 @@ public:
 
     std::uint32_t CurrentBatchSize() const noexcept;
     std::uint32_t BestBatchSize() const noexcept;
+    double BestThroughput() const noexcept;
+    std::size_t ReliableMeasurementCount() const noexcept;
     bool Complete() const noexcept;
+    bool HasReliableMeasurement() const noexcept;
     void Observe(std::uint32_t candidateCount,
                  std::chrono::steady_clock::duration elapsed);
     void CapacityUnavailable();
+    void RejectUnsafeCurrent();
 
 private:
     enum class Phase : std::uint8_t {
@@ -32,7 +36,8 @@ private:
         double throughput = 0.0;
     };
 
-    void FinishMeasurement(double throughput);
+    void FinishMeasurement(double sustainedThroughput);
+    void RejectCurrent(bool upperBound);
     void BeginGrowth();
     void BeginRefinement();
     void BeginRefinementRound();
@@ -43,12 +48,11 @@ private:
     std::uint32_t currentBatchSize_ = 1u;
     std::uint32_t bestBatchSize_ = 1u;
     double bestThroughput_ = 0.0;
-    double previousGrowthThroughput_ = 0.0;
     std::uint32_t growthSteps_ = 0u;
-    std::uint32_t plateauSteps_ = 0u;
     std::uint32_t declineSteps_ = 0u;
     Phase phase_ = Phase::Seed;
     std::vector<double> samples_;
+    std::size_t warmupSamplesRemaining_ = 2u;
     std::vector<Measurement> measurements_;
     std::vector<std::uint32_t> refinementQueue_;
     std::size_t refinementIndex_ = 0u;

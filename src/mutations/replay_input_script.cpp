@@ -2,6 +2,7 @@
 
 #include "input_timeline_time.h"
 #include "mutations/input_event_formatter.h"
+#include "replay_file_io.h"
 
 #include <stdexcept>
 #include <utility>
@@ -39,7 +40,7 @@ std::string ExtractReplayInputScript(
             OpenInstalledPackDirectory(packsDirectory),
             "opening Packs directory");
     AssetBytes replay = Require(
-            ReadNativeReplayFile(replayPath, identity),
+            ReadReplayFileUtf8(replayPath, identity),
             "reading replay");
     PhysicsSandboxOptions options;
     options.backend = SimulationBackend::Reference;

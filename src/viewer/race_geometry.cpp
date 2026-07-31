@@ -22,6 +22,7 @@ void RaceGeometry::setMesh(QByteArray vertexData,
                      static_cast<int>(3u * sizeof(float)),
                      Attribute::F32Type);
     }
+    update();
 }
 
 void RaceGeometry::setIndexedMesh(
@@ -85,6 +86,7 @@ void RaceGeometry::setIndexedMesh(
                   boundsMax,
                   QStringLiteral("material_%1").arg(index));
     }
+    update();
 }
 
 void RaceGeometry::clearMesh() {
@@ -92,6 +94,7 @@ void RaceGeometry::clearMesh() {
     setVertexData({});
     setIndexData({});
     setBounds({}, {});
+    update();
 }
 
 }  // namespace forevertas::viewer

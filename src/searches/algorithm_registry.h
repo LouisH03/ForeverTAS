@@ -23,7 +23,10 @@ inline constexpr char kInputDeletionModifierId[] = "input-deletion";
 inline constexpr char kVelocityEvaluationId[] = "velocity";
 inline constexpr char kPreciseFinishTimeEvaluationId[] =
         "precise-finish-time";
+inline constexpr char kStuntPointsEvaluationId[] = "stunt-points";
 inline constexpr char kVolumeEntryEvaluationId[] = "volume-entry-time";
+inline constexpr char kCustomVolumeEntryEvaluationId[] =
+        "custom-volume-entry-time";
 inline constexpr char kPointTargetEvaluationId[] = "point-target";
 inline constexpr char kPoseTargetEvaluationId[] = "pose-target";
 
@@ -35,8 +38,8 @@ struct SearchAlgorithmRegistration {
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
 
-    // Internal hooks receive settings after the user timeline origin has been
-    // translated. Application code must use validateSettings() and create().
+    // Search-policy settings do not receive the input-timeline offset.
+    // Application code must use validateSettings() and create().
     std::optional<std::string> (*validateSimulationSettings)(
             const OptionSettings &, std::uint32_t);
     std::unique_ptr<SearchAlgorithm> (*createFromSimulationSettings)(
@@ -58,8 +61,9 @@ struct ModifierRegistration {
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
 
-    // Internal hooks receive settings after the user timeline origin has been
-    // translated. Application code must use validateSettings() and create().
+    // Internal hooks receive input timing settings after the user timeline
+    // origin has been translated. Application code must use validateSettings()
+    // and create().
     std::optional<std::string> (*validateSimulationSettings)(
             const OptionSettings &, std::uint32_t);
     std::unique_ptr<InputMutator> (*createFromSimulationSettings)(
@@ -81,8 +85,9 @@ struct EvaluationTargetRegistration {
     OptionSettings defaultSettings;
     OptionSettings legacyPersistenceKeys;
 
-    // Internal hooks receive settings after the user timeline origin has been
-    // translated. Application code must use validateSettings() and create().
+    // Evaluation settings use their entered simulation times directly and do
+    // not receive the input-timeline offset. Application code must use
+    // validateSettings() and create().
     std::optional<std::string> (*validateSimulationSettings)(
             const OptionSettings &, std::uint32_t);
     std::unique_ptr<IterationEvaluator> (*createFromSimulationSettings)(

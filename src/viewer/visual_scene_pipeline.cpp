@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -178,12 +179,9 @@ struct BatchKey {
             PhysicsSandboxScenePurpose::Environment;
     bool vertexColors = false;
     bool defaultVisible = false;
-    int transparentCellX = 0;
-    int transparentCellZ = 0;
 
     auto asTuple() const {
-        return std::tie(materialClass, purpose, vertexColors, defaultVisible,
-                        transparentCellX, transparentCellZ);
+        return std::tie(materialClass, purpose, vertexColors, defaultVisible);
     }
 };
 
@@ -200,24 +198,10 @@ struct BatchAccumulator {
     std::uint64_t sourceInstanceCount = 0u;
 };
 
-bool IsTransparent(ReplacementMaterialClass materialClass) {
-    return materialClass == ReplacementMaterialClass::Glass ||
-           materialClass == ReplacementMaterialClass::Water;
-}
-
 BatchKey MakeBatchKey(ReplacementMaterialClass materialClass,
                       PhysicsSandboxScenePurpose purpose, bool vertexColors,
-                      bool defaultVisible,
-                      const PhysicsSandboxTransform &transform) {
-    BatchKey key{materialClass, purpose, vertexColors, defaultVisible, 0, 0};
-    if (IsTransparent(materialClass)) {
-        constexpr float CellSize = 64.0f;
-        key.transparentCellX = static_cast<int>(
-                std::floor(transform.translation.x / CellSize));
-        key.transparentCellZ = static_cast<int>(
-                std::floor(transform.translation.z / CellSize));
-    }
-    return key;
+                      bool defaultVisible) {
+    return {materialClass, purpose, vertexColors, defaultVisible};
 }
 
 struct DuplicateInstanceKey {
@@ -1033,11 +1017,8 @@ StaticVisualBatchResult
 BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
     StaticVisualBatchResult result;
     result.sourceMeshCount = scene.meshes.size();
-    std::vector<std::vector<VisualVertex>> preparedMeshes;
-    preparedMeshes.reserve(scene.meshes.size());
-    for (const PhysicsSandboxRenderMesh &mesh : scene.meshes) {
-        preparedMeshes.push_back(PrepareMesh(mesh));
-    }
+    std::vector<std::optional<std::vector<VisualVertex>>> preparedMeshes(
+            scene.meshes.size());
 
     std::map<BatchKey, BatchAccumulator> accumulators;
     std::map<BatchKey, TerrainCoverage> terrainCoverage;
@@ -1087,12 +1068,15 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                 instance.purpose, instance.provenance.blockName);
         const BatchKey key =
                 MakeBatchKey(materialClass, instance.purpose,
-                             mesh.hasVertexColors, defaultVisible,
-                             instance.worldTransform);
+                             mesh.hasVertexColors, defaultVisible);
+        auto &preparedMesh = preparedMeshes[instance.meshIndex];
+        if (!preparedMesh.has_value()) {
+            preparedMesh.emplace(PrepareMesh(mesh));
+        }
         if (materialClass == ReplacementMaterialClass::Grass ||
             materialClass == ReplacementMaterialClass::Dirt) {
             AppendRandomizedTiledInstance(
-                    accumulators[key], preparedMeshes[instance.meshIndex],
+                    accumulators[key], *preparedMesh,
                     mesh.indices, instance.worldTransform,
                     replacement.worldUvScale,
                     instance.purpose == PhysicsSandboxScenePurpose::Clip
@@ -1100,7 +1084,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                             : nullptr);
         } else {
             AppendInstance(accumulators[key],
-                           preparedMeshes[instance.meshIndex], mesh.indices,
+                           *preparedMesh, mesh.indices,
                            instance.worldTransform, replacement.worldUvScale);
         }
 

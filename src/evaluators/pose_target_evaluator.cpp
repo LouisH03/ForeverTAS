@@ -155,7 +155,8 @@ std::optional<std::string> ValidatePoseTargetOptionSettings(
     return ValidateTimeWindow(parsed->minimumTimeMs,
                               parsed->maximumTimeMs,
                               tickDurationMs,
-                              "evaluation");
+                              "evaluation",
+                              true);
 }
 
 std::unique_ptr<IterationEvaluator> CreatePoseTargetEvaluator(

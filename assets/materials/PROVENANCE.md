@@ -2,23 +2,22 @@
 
 All Poly Haven assets below are CC0 and were downloaded through the official
 Poly Haven API at 1K, then resized to the committed 512 x 512 PNGs. The asset
-library publishes photo-scanned, seamless PBR material sets with OpenGL normal
-maps.
+library publishes photo-scanned, seamless PBR material sets.
 
-| ForeverTAS material | Source | Imported maps |
+| ForeverTAS material | Source | Imported map |
 | --- | --- | --- |
-| Asphalt | [Asphalt Track](https://polyhaven.com/a/asphalt_track) | Diffuse, `nor_gl` |
-| Dirt | [Dirt](https://polyhaven.com/a/dirt) | Diffuse, `nor_gl` |
-| Metal | [Metal Plate 02](https://polyhaven.com/a/metal_plate_02) | Diffuse, `nor_gl` |
-| Painted metal | [Blue Metal Plate](https://polyhaven.com/a/blue_metal_plate) | Diffuse, `nor_gl` |
-| Rubber | [Rubber Tiles](https://polyhaven.com/a/rubber_tiles) | Diffuse, `nor_gl` |
+| Asphalt | [Asphalt Track](https://polyhaven.com/a/asphalt_track) | Diffuse |
+| Dirt | [Dirt](https://polyhaven.com/a/dirt) | Diffuse |
+| Metal | [Metal Plate 02](https://polyhaven.com/a/metal_plate_02) | Diffuse |
+| Painted metal | [Blue Metal Plate](https://polyhaven.com/a/blue_metal_plate) | Diffuse |
+| Rubber | [Rubber Tiles](https://polyhaven.com/a/rubber_tiles) | Diffuse |
 
 License: [Poly Haven CC0](https://polyhaven.com/license).
 
 Grass ground cover uses ambientCG's CC0
-[Grass 001](https://ambientcg.com/view?id=Grass001) Color and NormalGL maps.
-Grass blades are intentionally not rendered; every grass appearance uses this
-opaque ground material.
+[Grass 001](https://ambientcg.com/view?id=Grass001) Color map. Grass blades are
+intentionally not rendered; every grass appearance uses this opaque ground
+material.
 
 License: [ambientCG CC0](https://ambientcg.com/license).
 
@@ -45,12 +44,9 @@ watermarks, baked directional light, or cast shadows.
 
 The listed source images remain under
 `/home/mikael/.codex/generated_images/019f9782-1b58-71b1-a2ba-8ccd3c0aafe4/`.
-The committed files are resized copies under `assets/materials`. Their matching
-normal maps are derived from luminance with periodic central differences so the
-normal vectors remain continuous at repeated tile boundaries.
+The committed files are resized copies under `assets/materials`.
 
 ## Intentional flat concrete
 
-`concrete_base.png` is a uniform `#a4a69f`; `concrete_normal.png` is a flat
-OpenGL normal (`#8080ff`). This preserves the requested clean, spot-free gray
-concrete instead of reintroducing aggregate or painted noise.
+`concrete_base.png` is a uniform `#a4a69f`. This preserves the requested clean,
+spot-free gray concrete instead of reintroducing aggregate or painted noise.

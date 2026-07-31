@@ -2,8 +2,10 @@
 
 #include "input_timeline_time.h"
 #include "evaluators/precise_finish_time_evaluator.h"
+#include "evaluators/custom_volume_entry_evaluator.h"
 #include "evaluators/point_target_evaluator.h"
 #include "evaluators/pose_target_evaluator.h"
+#include "evaluators/stunt_points_evaluator.h"
 #include "evaluators/velocity_evaluator.h"
 #include "evaluators/volume_entry_evaluator.h"
 #include "mutations/existing_event_perturbation_mutator.h"
@@ -22,20 +24,34 @@ namespace {
 using SettingsValidator = std::optional<std::string> (*)(
         const OptionSettings &, std::uint32_t);
 
+enum class SettingsEffect {
+    SearchPolicy,
+    Input,
+    Evaluation
+};
+
 template<typename Product>
 using SettingsFactory = std::unique_ptr<Product> (*)(
         const OptionSettings &, std::uint32_t);
 
+std::optional<OptionSettings> PrepareConfiguredSettings(
+        const OptionSettings &settings,
+        std::uint32_t tickDurationMs,
+        SettingsEffect effect) {
+    if (effect != SettingsEffect::Input) return settings;
+    return SimulationInputSettingsFromUserTimeline(settings, tickDurationMs);
+}
+
 std::optional<std::string> ValidateConfiguredSettings(
         const OptionSettings &userSettings,
         std::uint32_t tickDurationMs,
+        SettingsEffect effect,
         SettingsValidator validateSimulationSettings) {
     if (tickDurationMs == 0u) {
         return "tick duration must be greater than zero";
     }
     const std::optional<OptionSettings> simulationSettings =
-            SimulationSettingsFromUserTimeline(
-                    userSettings, tickDurationMs);
+            PrepareConfiguredSettings(userSettings, tickDurationMs, effect);
     if (!simulationSettings) {
         return "timeline time is too large";
     }
@@ -46,6 +62,7 @@ template<typename Product>
 std::unique_ptr<Product> CreateConfiguredComponent(
         const OptionSettings &userSettings,
         std::uint32_t tickDurationMs,
+        SettingsEffect effect,
         SettingsValidator validateSimulationSettings,
         SettingsFactory<Product> createFromSimulationSettings) {
     if (tickDurationMs == 0u) {
@@ -53,8 +70,7 @@ std::unique_ptr<Product> CreateConfiguredComponent(
                 "tick duration must be greater than zero");
     }
     const std::optional<OptionSettings> simulationSettings =
-            SimulationSettingsFromUserTimeline(
-                    userSettings, tickDurationMs);
+            PrepareConfiguredSettings(userSettings, tickDurationMs, effect);
     if (!simulationSettings) {
         throw std::invalid_argument("timeline time is too large");
     }
@@ -88,7 +104,10 @@ std::optional<std::string> SearchAlgorithmRegistration::validateSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) const {
     return ValidateConfiguredSettings(
-            settings, tickDurationMs, validateSimulationSettings);
+            settings,
+            tickDurationMs,
+            SettingsEffect::SearchPolicy,
+            validateSimulationSettings);
 }
 
 std::unique_ptr<SearchAlgorithm> SearchAlgorithmRegistration::create(
@@ -97,6 +116,7 @@ std::unique_ptr<SearchAlgorithm> SearchAlgorithmRegistration::create(
     return CreateConfiguredComponent<SearchAlgorithm>(
             settings,
             tickDurationMs,
+            SettingsEffect::SearchPolicy,
             validateSimulationSettings,
             createFromSimulationSettings);
 }
@@ -105,7 +125,10 @@ std::optional<std::string> ModifierRegistration::validateSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) const {
     return ValidateConfiguredSettings(
-            settings, tickDurationMs, validateSimulationSettings);
+            settings,
+            tickDurationMs,
+            SettingsEffect::Input,
+            validateSimulationSettings);
 }
 
 std::unique_ptr<InputMutator> ModifierRegistration::create(
@@ -114,6 +137,7 @@ std::unique_ptr<InputMutator> ModifierRegistration::create(
     return CreateConfiguredComponent<InputMutator>(
             settings,
             tickDurationMs,
+            SettingsEffect::Input,
             validateSimulationSettings,
             createFromSimulationSettings);
 }
@@ -122,7 +146,10 @@ std::optional<std::string> EvaluationTargetRegistration::validateSettings(
         const OptionSettings &settings,
         std::uint32_t tickDurationMs) const {
     return ValidateConfiguredSettings(
-            settings, tickDurationMs, validateSimulationSettings);
+            settings,
+            tickDurationMs,
+            SettingsEffect::Evaluation,
+            validateSimulationSettings);
 }
 
 std::unique_ptr<IterationEvaluator> EvaluationTargetRegistration::create(
@@ -131,6 +158,7 @@ std::unique_ptr<IterationEvaluator> EvaluationTargetRegistration::create(
     return CreateConfiguredComponent<IterationEvaluator>(
             settings,
             tickDurationMs,
+            SettingsEffect::Evaluation,
             validateSimulationSettings,
             createFromSimulationSettings);
 }
@@ -205,6 +233,14 @@ const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
              {},
              &ValidateVelocityOptionSettings,
              &CreateVelocityEvaluator},
+            {kStuntPointsEvaluationId,
+             {},
+             "Stunt points",
+             "StuntPointsEvaluationSettings.qml",
+             DefaultStuntPointsOptionSettings(),
+             {},
+             &ValidateStuntPointsOptionSettings,
+             &CreateStuntPointsEvaluator},
             {kPreciseFinishTimeEvaluationId,
              {"finish-time"},
              "Precise finish time",
@@ -221,6 +257,14 @@ const std::vector<EvaluationTargetRegistration> &EvaluationTargetRegistry() {
              {},
              &ValidateVolumeEntryOptionSettings,
              &CreateVolumeEntryEvaluator},
+            {kCustomVolumeEntryEvaluationId,
+             {},
+             "Custom volume entry time",
+             "VolumeEntryEvaluationSettings.qml",
+             DefaultCustomVolumeEntryOptionSettings(),
+             {},
+             &ValidateCustomVolumeEntryOptionSettings,
+             &CreateCustomVolumeEntryEvaluator},
             {kPointTargetEvaluationId,
              {},
              "Point target",

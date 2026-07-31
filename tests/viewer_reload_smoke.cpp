@@ -33,20 +33,34 @@ int main(int argc, char **argv) {
                 if (viewer.loading()) {
                     loadInProgress = true;
                     if (completedLoads > 0) {
-                        preservedSceneDuringReload &= viewer.loaded() &&
+                        const bool preserved = viewer.loaded() &&
                                 viewer.ellipsoidCount() > 0 &&
-                                viewer.runCount() == 0;
+                                viewer.visualBatchCount() > 0;
+                        preservedSceneDuringReload &= preserved;
+                        if (!preserved) {
+                            std::cerr
+                                    << "scene changed while reload was pending: "
+                                    << "loaded=" << viewer.loaded()
+                                    << ", ellipsoids="
+                                    << viewer.ellipsoidCount()
+                                    << ", runs=" << viewer.runCount() << '\n';
+                        }
                     }
                     return;
                 }
-                if (!loadInProgress || !viewer.loaded()) return;
+                if (!loadInProgress || !viewer.loaded() ||
+                    viewer.runCount() == 0) {
+                    return;
+                }
                 loadInProgress = false;
 
                 const bool sceneValid =
-                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 0 &&
-                        viewer.tickCount() == 0 &&
-                        viewer.durationMs() == 0 &&
-                        viewer.selectedRunId().isEmpty() &&
+                        viewer.ellipsoidCount() > 0 && viewer.runCount() == 1 &&
+                        viewer.tickCount() > 1 &&
+                        viewer.durationMs() > 0 &&
+                        viewer.selectedRunId() == QStringLiteral("preview") &&
+                        viewer.trajectoryCount() ==
+                                (completedLoads == 0 ? 2 : 1) &&
                         viewer.visualTriangleCount() > 0 &&
                         viewer.visualMeshCount() > 0 &&
                         !viewer.visualMaterials().isEmpty() &&
@@ -97,7 +111,22 @@ int main(int argc, char **argv) {
         std::cerr << "replay reload timed out\n";
         application.quit();
     });
-    viewer.loadMap(packs, replays[0]);
+    std::vector<forevertas::SearchTimelineFrame> improvementFrames(3u);
+    for (std::size_t index = 0u;
+         index < improvementFrames.size();
+         ++index) {
+        improvementFrames[index].timeMs =
+                static_cast<std::int64_t>(index * 10u);
+        improvementFrames[index].positionX =
+                static_cast<float>(index);
+    }
+    viewer.addSearchImprovement(
+            packs,
+            replays[0],
+            improvementFrames,
+            QStringLiteral("optimized-cpu"),
+            1u,
+            1u);
     application.exec();
     return exitCode;
 }

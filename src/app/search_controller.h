@@ -3,6 +3,9 @@
 
 #include "app/search_configuration_model.h"
 #include "app/search_completion.h"
+#include "app/cuboid_target_model.h"
+#include "app/custom_volume_target_model.h"
+#include "app/pose_target_model.h"
 
 #include <QObject>
 #include <QString>
@@ -33,6 +36,8 @@ class SearchController final : public QObject {
                        setBaseInputScript NOTIFY baseInputScriptChanged)
     Q_PROPERTY(QString baseInputScriptError READ baseInputScriptError NOTIFY
                        baseInputScriptChanged)
+    Q_PROPERTY(bool canUndoBaseInputScript READ canUndoBaseInputScript NOTIFY
+                       baseInputScriptChanged)
     Q_PROPERTY(bool extractingReplayInputs READ extractingReplayInputs NOTIFY
                        replayInputStateChanged)
     Q_PROPERTY(bool canExtractReplayInputs READ canExtractReplayInputs NOTIFY
@@ -43,12 +48,16 @@ class SearchController final : public QObject {
                        simulationBackendOptions CONSTANT)
     Q_PROPERTY(QString simulationBackendId READ simulationBackendId WRITE
                        setSimulationBackendId NOTIFY simulationBackendIdChanged)
+    Q_PROPERTY(QString cpuWorkerCount READ cpuWorkerCount WRITE
+                       setCpuWorkerCount NOTIFY cpuWorkerCountChanged)
     Q_PROPERTY(QString cudaParallelSampleCount READ cudaParallelSampleCount WRITE
                        setCudaParallelSampleCount NOTIFY
                        cudaParallelSampleCountChanged)
     Q_PROPERTY(bool cudaCalibrationEnabled READ cudaCalibrationEnabled WRITE
                        setCudaCalibrationEnabled NOTIFY
                        cudaCalibrationEnabledChanged)
+    Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
+                       darkModeChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
                        CONSTANT)
     Q_PROPERTY(QVariantList modifierOptions READ modifierOptions CONSTANT)
@@ -65,6 +74,14 @@ class SearchController final : public QObject {
     Q_PROPERTY(QVariantMap evaluationTargetSettings READ
                        evaluationTargetSettings NOTIFY
                        evaluationTargetSettingsChanged)
+    Q_PROPERTY(forevertas::app::CuboidTargetModel* cuboidTargets READ
+                       cuboidTargets CONSTANT)
+    Q_PROPERTY(forevertas::app::CustomVolumeTargetModel*
+                       customVolumeTargets READ customVolumeTargets CONSTANT)
+    Q_PROPERTY(bool customVolumeDrawing READ customVolumeDrawing NOTIFY
+                       customVolumeDrawingChanged)
+    Q_PROPERTY(forevertas::app::PoseTargetModel* poseTargets READ
+                       poseTargets CONSTANT)
 
     Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
@@ -95,13 +112,16 @@ public:
     QString replayPath() const;
     QString baseInputScript() const;
     QString baseInputScriptError() const;
+    bool canUndoBaseInputScript() const;
     bool extractingReplayInputs() const;
     bool canExtractReplayInputs() const;
     QString replayInputStatusText() const;
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
+    QString cpuWorkerCount() const;
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
+    bool darkMode() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
     QVariantList evaluationTargetOptions() const;
@@ -110,6 +130,10 @@ public:
     QVariantMap searchAlgorithmSettings() const;
     QVariantList modifierPasses() const;
     QVariantMap evaluationTargetSettings() const;
+    CuboidTargetModel *cuboidTargets();
+    CustomVolumeTargetModel *customVolumeTargets();
+    bool customVolumeDrawing() const;
+    PoseTargetModel *poseTargets();
 
     bool canStart() const;
     bool running() const;
@@ -130,8 +154,10 @@ public slots:
     void setReplayPath(const QString &value);
     void setBaseInputScript(const QString &value);
     void setSimulationBackendId(const QString &value);
+    void setCpuWorkerCount(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
+    void setDarkMode(bool value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
 
@@ -139,6 +165,7 @@ public slots:
     Q_INVOKABLE void applyAutoDetectedPacksDirectory();
     Q_INVOKABLE void browseForReplay();
     Q_INVOKABLE void extractReplayInputs();
+    Q_INVOKABLE bool undoBaseInputScript();
     Q_INVOKABLE void setSearchAlgorithmSetting(const QString &key,
                                                const QString &value);
     Q_INVOKABLE void addModifierPass(const QString &id);
@@ -150,6 +177,12 @@ public slots:
                                             const QString &value);
     Q_INVOKABLE void setEvaluationTargetSetting(const QString &key,
                                                 const QString &value);
+    Q_INVOKABLE void focusSelectedCuboid();
+    Q_INVOKABLE void focusSelectedCustomVolume();
+    Q_INVOKABLE void beginCustomVolumeDrawing();
+    Q_INVOKABLE void finishCustomVolumeDrawing();
+    Q_INVOKABLE void cancelCustomVolumeDrawing();
+    Q_INVOKABLE void focusSelectedPoseTarget();
     Q_INVOKABLE void startSearch();
     Q_INVOKABLE void stopSearch();
 
@@ -160,8 +193,10 @@ signals:
     void baseInputScriptChanged();
     void replayInputStateChanged();
     void simulationBackendIdChanged();
+    void cpuWorkerCountChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
+    void darkModeChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
     void searchAlgorithmSettingsChanged();
@@ -175,7 +210,16 @@ signals:
     void statusChanged();
     void metricsChanged();
     void resultChanged();
+    void searchImprovement(
+            forevertas::app::SearchImprovementPtr improvement);
     void searchCompleted(forevertas::app::SearchCompletionPtr completion);
+    void cuboidFocusRequested(const QVector3D &center,
+                              const QVector3D &size);
+    void customVolumeFocusRequested(const QVector3D &center,
+                                    const QVector3D &size);
+    void customVolumeDrawingChanged();
+    void poseTargetFocusRequested(const QVector3D &center,
+                                  const QVector3D &size);
 
 private:
     struct ValidationResult {
@@ -204,19 +248,35 @@ private:
     void clearAutoDetectedPacksDirectory();
     void persist(const char *key, const QString &value);
     void waitForWorker();
+    void synchronizeSelectedCuboid();
+    void synchronizeCuboidSetting(const QString &key,
+                                   const QString &value);
+    void synchronizeSelectedCustomVolume();
+    void synchronizeCustomVolumeSetting(const QString &key,
+                                        const QString &value);
+    void synchronizeSelectedPoseTarget();
+    void synchronizePoseTargetSetting(const QString &key,
+                                      const QString &value);
+    void applyBaseInputScript(const QString &value, bool recordUndo);
 
     QString packsDirectory_;
     QString autoDetectedPacksDirectory_;
     QString replayPath_;
     QString baseInputScript_;
     QString baseInputScriptError_;
+    std::vector<QString> baseInputScriptUndoHistory_;
     QString replayInputStatusText_;
     std::vector<ParsedInputCommand> parsedBaseInputCommands_;
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
+    QString cpuWorkerCount_ = QString::number(DefaultCpuWorkerCount());
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);
     bool cudaCalibrationEnabled_ = false;
+    bool darkMode_ = false;
     SearchConfigurationModel configuration_;
+    CuboidTargetModel cuboidTargets_;
+    CustomVolumeTargetModel customVolumeTargets_;
+    PoseTargetModel poseTargets_;
     QString validationMessage_;
     QString statusText_ = QStringLiteral("Ready");
     QString iterationCountText_;
@@ -238,7 +298,9 @@ private:
     bool extractingReplayInputs_ = false;
     std::shared_ptr<std::atomic_bool> stopRequested_;
     std::shared_ptr<std::atomic_bool> cancellationRequested_;
+    std::shared_ptr<std::atomic<SearchIterationPhase>> iterationPhase_;
     SearchCompletionPtr lastCompletion_;
+    std::uint64_t searchSerial_ = 0u;
 };
 
 }  // namespace forevertas::app

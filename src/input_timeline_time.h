@@ -16,16 +16,16 @@ namespace forevertas {
 inline constexpr std::uint32_t kInputTimelineTickDurationMs = 10u;
 
 // The simulation records the first actionable input one physics tick after the
-// user-visible timeline origin. Absolute option keys ending in "TimeMs" are
-// user timeline values at the public component-registry boundary and are
-// translated here exactly once before simulation-native code receives them.
-inline constexpr std::string_view kUserTimelineTimeSettingSuffix = "TimeMs";
+// user-visible timeline origin. Absolute input-setting keys ending in "TimeMs"
+// are translated here exactly once. Evaluation and search-policy settings use
+// simulation time directly and must never pass through this conversion.
+inline constexpr std::string_view kInputTimelineTimeSettingSuffix = "TimeMs";
 
-inline bool IsUserTimelineTimeSetting(std::string_view key) {
-    return key.size() >= kUserTimelineTimeSettingSuffix.size() &&
-            key.compare(key.size() - kUserTimelineTimeSettingSuffix.size(),
-                        kUserTimelineTimeSettingSuffix.size(),
-                        kUserTimelineTimeSettingSuffix) == 0;
+inline bool IsInputTimelineTimeSetting(std::string_view key) {
+    return key.size() >= kInputTimelineTimeSettingSuffix.size() &&
+            key.compare(key.size() - kInputTimelineTimeSettingSuffix.size(),
+                        kInputTimelineTimeSettingSuffix.size(),
+                        kInputTimelineTimeSettingSuffix) == 0;
 }
 
 inline std::optional<std::int64_t> SimulationTimelineTimeFromUserTime(
@@ -57,13 +57,13 @@ inline std::int64_t UserTimelineTimeFromSimulationTime(
     return std::max<std::int64_t>(0, simulationTimeMs - firstInputTime);
 }
 
-inline std::optional<OptionSettings> SimulationSettingsFromUserTimeline(
+inline std::optional<OptionSettings> SimulationInputSettingsFromUserTimeline(
         const OptionSettings &userSettings,
         std::uint32_t tickDurationMs) {
     if (tickDurationMs == 0u) return std::nullopt;
     OptionSettings simulationSettings = userSettings;
     for (auto &[key, value] : simulationSettings) {
-        if (!IsUserTimelineTimeSetting(key)) continue;
+        if (!IsInputTimelineTimeSetting(key)) continue;
         const std::optional<std::int64_t> userTime = ParseSignedDecimal(value);
         if (!userTime) continue;
         const std::optional<std::int64_t> simulationTime =

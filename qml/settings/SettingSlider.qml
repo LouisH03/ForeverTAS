@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import ".." as ThemeControls
 
 RowLayout {
     id: root
@@ -9,6 +10,8 @@ RowLayout {
     property string value
     property bool running: false
     property string sliderObjectName: ""
+    property string fieldObjectName:
+        sliderObjectName.length > 0 ? sliderObjectName + "ValueField" : ""
     property real from: 0
     property real to: 100
     property real stepSize: 1
@@ -42,7 +45,7 @@ RowLayout {
         wrapMode: Text.WordWrap
     }
 
-    Slider {
+    ThemeControls.ThemedSlider {
         id: slider
 
         objectName: root.sliderObjectName
@@ -57,10 +60,15 @@ RowLayout {
         onMoved: root.edited(root.formatNumber(value))
     }
 
-    Label {
-        Layout.preferredWidth: 52
-        horizontalAlignment: Text.AlignRight
-        text: root.formatNumber(root.numericValue) + root.suffix
-        font.family: "monospace"
+    ThemeControls.SliderValueField {
+        objectName: root.fieldObjectName
+        Layout.preferredWidth: root.suffix.length > 0 ? 82 : 70
+        value: root.value
+        from: root.from
+        to: root.to
+        suffix: root.suffix
+        accessibleName: qsTr("%1 exact value").arg(root.label)
+        enabled: !root.running
+        onEdited: value => root.edited(value)
     }
 }

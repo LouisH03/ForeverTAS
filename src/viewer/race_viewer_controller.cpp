@@ -1,15 +1,20 @@
 #include "viewer/race_viewer_controller.h"
 
+#include "mutations/input_event_formatter.h"
+#include "mutations/input_event_utils.h"
+#include "replay_file_io.h"
 #include "time_format.h"
 #include "viewer/material_classifier.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QThread>
 #include <QVariantMap>
+#include <QtEndian>
 
 #include <algorithm>
 #include <array>
@@ -20,10 +25,42 @@
 #include <utility>
 
 namespace forevertas::viewer {
+
+class ManualDriveRuntime {
+public:
+    ManualDriveRuntime(
+            forevervalidator::experimental::PhysicsSandbox sandboxValue,
+            forevervalidator::experimental::PhysicsSandboxState initialValue,
+            std::vector<
+                    forevervalidator::experimental::PhysicsSandboxInputEvent>
+                    fixedValue,
+            forevervalidator::experimental::PhysicsSandboxStateView stateValue)
+        : sandbox(std::move(sandboxValue)),
+          initialState(std::move(initialValue)),
+          fixedInputs(std::move(fixedValue)),
+          state(stateValue) {}
+
+    forevervalidator::experimental::PhysicsSandbox sandbox;
+    forevervalidator::experimental::PhysicsSandboxState initialState;
+    std::vector<
+            forevervalidator::experimental::PhysicsSandboxInputEvent>
+            fixedInputs;
+    std::vector<
+            forevervalidator::experimental::PhysicsSandboxInputEvent>
+            driverInputs;
+    forevervalidator::experimental::PhysicsSandboxStateView state{};
+};
+
 namespace {
 
 using forevervalidator::DiscriminatedResult;
 using forevervalidator::experimental::PhysicsSandboxCollisionTriangle;
+using forevervalidator::experimental::PhysicsSandboxInputAction;
+using forevervalidator::experimental::PhysicsSandboxInputEvent;
+using forevervalidator::experimental::PhysicsSandboxInputValueKind;
+using forevervalidator::experimental::PhysicsSandboxState;
+using forevervalidator::experimental::PhysicsSandboxStateView;
+using forevervalidator::experimental::PhysicsSandboxSwitchState;
 
 constexpr std::uint32_t kViewerTickDurationMs = 10u;
 
@@ -42,6 +79,162 @@ T Require(DiscriminatedResult<T, Error> result, const char *operation) {
 
 QVector3D ToQt(const forevervalidator::Vector3 &value) {
     return {value.x, value.y, value.z};
+}
+
+QString CollisionSceneKey(
+        const forevervalidator::experimental::PhysicsSandboxSceneView &scene) {
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QByteArray chunk;
+    chunk.reserve(64 * 1024);
+    const auto flush = [&hash, &chunk]() {
+        if (!chunk.isEmpty()) {
+            hash.addData(QByteArrayView(chunk));
+            chunk.clear();
+        }
+    };
+    const auto appendU32 = [&chunk, &flush](std::uint32_t value) {
+        const quint32 bigEndian = qToBigEndian(static_cast<quint32>(value));
+        chunk.append(
+                reinterpret_cast<const char *>(&bigEndian),
+                sizeof(bigEndian));
+        if (chunk.size() >= 64 * 1024) {
+            flush();
+        }
+    };
+    const auto appendFloat = [&appendU32](float value) {
+        std::uint32_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        appendU32(bits);
+    };
+
+    const std::uint64_t triangleCount = scene.collisionTriangles.size();
+    appendU32(static_cast<std::uint32_t>(triangleCount >> 32u));
+    appendU32(static_cast<std::uint32_t>(triangleCount));
+    for (const PhysicsSandboxCollisionTriangle &triangle :
+         scene.collisionTriangles) {
+        const auto appendVertex =
+                [&appendFloat](
+                        const forevervalidator::Vector3 &vertex) {
+            appendFloat(vertex.x);
+            appendFloat(vertex.y);
+            appendFloat(vertex.z);
+        };
+        appendVertex(triangle.a);
+        appendVertex(triangle.b);
+        appendVertex(triangle.c);
+    }
+    flush();
+    return QStringLiteral("collision-sha256:")
+            + QString::fromLatin1(hash.result().toHex());
+}
+
+bool IsDriverInput(PhysicsSandboxInputAction action) {
+    return action == PhysicsSandboxInputAction::Accelerate ||
+            action == PhysicsSandboxInputAction::Gas ||
+            action == PhysicsSandboxInputAction::Brake ||
+            action == PhysicsSandboxInputAction::Steer ||
+            action == PhysicsSandboxInputAction::SteerLeft ||
+            action == PhysicsSandboxInputAction::SteerRight ||
+            action == PhysicsSandboxInputAction::Respawn;
+}
+
+bool IsSteeringInput(PhysicsSandboxInputAction action) {
+    return action == PhysicsSandboxInputAction::Steer ||
+            action == PhysicsSandboxInputAction::SteerLeft ||
+            action == PhysicsSandboxInputAction::SteerRight;
+}
+
+bool IsLongitudinalInput(PhysicsSandboxInputAction action) {
+    return action == PhysicsSandboxInputAction::Accelerate ||
+            action == PhysicsSandboxInputAction::Gas ||
+            action == PhysicsSandboxInputAction::Brake;
+}
+
+bool SwitchInputActiveAt(
+        const std::vector<PhysicsSandboxInputEvent> &events,
+        PhysicsSandboxInputAction action,
+        std::int32_t timeMs) {
+    bool active = false;
+    for (const PhysicsSandboxInputEvent &event : events) {
+        if (event.timeMs > timeMs) {
+            break;
+        }
+        if (event.action == action &&
+            event.value.kind == PhysicsSandboxInputValueKind::Switch) {
+            active = event.value.switchState !=
+                    PhysicsSandboxSwitchState::Released;
+        }
+    }
+    return active;
+}
+
+forevervalidator::AnalogInputState AnalogInputAt(
+        const std::vector<PhysicsSandboxInputEvent> &events,
+        PhysicsSandboxInputAction action,
+        std::int32_t timeMs) {
+    forevervalidator::AnalogInputState value = 0;
+    for (const PhysicsSandboxInputEvent &event : events) {
+        if (event.timeMs > timeMs) {
+            break;
+        }
+        if (event.action == action &&
+            event.value.kind == PhysicsSandboxInputValueKind::Analog) {
+            value = event.value.analog;
+        }
+    }
+    return value;
+}
+
+PhysicsSandboxInputEvent ManualSwitchEvent(
+        std::int32_t timeMs,
+        PhysicsSandboxInputAction action,
+        bool active) {
+    PhysicsSandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Switch;
+    event.value.switchState = active
+            ? PhysicsSandboxSwitchState::Pressed
+            : PhysicsSandboxSwitchState::Released;
+    return event;
+}
+
+PhysicsSandboxInputEvent ManualAnalogInputEvent(
+        std::int32_t timeMs,
+        PhysicsSandboxInputAction action,
+        forevervalidator::AnalogInputState value) {
+    PhysicsSandboxInputEvent event;
+    event.timeMs = timeMs;
+    event.action = action;
+    event.value.kind = PhysicsSandboxInputValueKind::Analog;
+    event.value.analog = value;
+    return event;
+}
+
+QString SandboxErrorText(
+        const forevervalidator::experimental::PhysicsSandboxError &error) {
+    return error.diagnostic.empty()
+            ? QStringLiteral("physics simulation failed")
+            : QString::fromUtf8(error.diagnostic);
+}
+
+std::vector<PhysicsSandboxInputEvent> ViewerFixedInputs(
+        const std::vector<PhysicsSandboxInputEvent> &replayInputs) {
+    std::vector<PhysicsSandboxInputEvent> fixedInputs;
+    fixedInputs.reserve(replayInputs.size());
+    std::copy_if(
+            replayInputs.begin(),
+            replayInputs.end(),
+            std::back_inserter(fixedInputs),
+            [](const PhysicsSandboxInputEvent &event) {
+                // Inputs before race time zero have already affected the
+                // captured start state and are immutable in the sandbox.
+                // Keep them even when they are driver controls, then let the
+                // preview/manual script replace controls from zero.
+                return event.timeMs < 0 || !IsDriverInput(event.action);
+            });
+    return fixedInputs;
 }
 
 struct FilledVertex {
@@ -178,25 +371,163 @@ RaceViewerMeshBuffers BuildMeshBuffers(
     return result;
 }
 
+RaceViewerMeshBuffers BuildTrajectoryMesh(
+        const std::vector<RaceViewerFrame> &frames,
+        float radius) {
+    std::vector<ViewerTriangle> triangles;
+    if (frames.empty()) {
+        return {};
+    }
+    if (frames.size() - 1u > triangles.max_size() / 12u) {
+        throw std::length_error("trajectory geometry is too large");
+    }
+    triangles.reserve(std::max<std::size_t>(1u, frames.size() - 1u) * 12u);
+    const auto addQuad = [&triangles](const QVector3D &a,
+                                     const QVector3D &b,
+                                     const QVector3D &c,
+                                     const QVector3D &d) {
+        triangles.push_back({a, b, c});
+        triangles.push_back({a, c, d});
+    };
+    for (std::size_t index = 1u; index < frames.size(); ++index) {
+        const QVector3D start = frames[index - 1u].position;
+        const QVector3D end = frames[index].position;
+        QVector3D direction = end - start;
+        if (direction.lengthSquared() < 0.000001f) {
+            continue;
+        }
+        direction.normalize();
+        const QVector3D reference =
+                std::fabs(QVector3D::dotProduct(
+                                  direction, QVector3D(0.0f, 1.0f, 0.0f))) <
+                        0.9f
+                ? QVector3D(0.0f, 1.0f, 0.0f)
+                : QVector3D(1.0f, 0.0f, 0.0f);
+        const QVector3D side =
+                QVector3D::crossProduct(direction, reference).normalized() *
+                radius;
+        const QVector3D normal =
+                QVector3D::crossProduct(side, direction).normalized() *
+                radius;
+        const std::array<QVector3D, 4u> startCorners{
+                start + side + normal,
+                start - side + normal,
+                start - side - normal,
+                start + side - normal};
+        const std::array<QVector3D, 4u> endCorners{
+                end + side + normal,
+                end - side + normal,
+                end - side - normal,
+                end + side - normal};
+        addQuad(startCorners[0],
+                startCorners[1],
+                startCorners[2],
+                startCorners[3]);
+        addQuad(endCorners[3],
+                endCorners[2],
+                endCorners[1],
+                endCorners[0]);
+        for (std::size_t sideIndex = 0u; sideIndex < 4u; ++sideIndex) {
+            const std::size_t next = (sideIndex + 1u) % 4u;
+            addQuad(startCorners[sideIndex],
+                    endCorners[sideIndex],
+                    endCorners[next],
+                    startCorners[next]);
+        }
+    }
+    if (triangles.empty()) {
+        const QVector3D center = frames.front().position;
+        const QVector3D x(radius, 0.0f, 0.0f);
+        const QVector3D y(0.0f, radius, 0.0f);
+        const QVector3D z(0.0f, 0.0f, radius);
+        const std::array<QVector3D, 8u> corners{
+                center - x - y - z,
+                center + x - y - z,
+                center + x + y - z,
+                center - x + y - z,
+                center - x - y + z,
+                center + x - y + z,
+                center + x + y + z,
+                center - x + y + z};
+        addQuad(corners[0], corners[1], corners[2], corners[3]);
+        addQuad(corners[7], corners[6], corners[5], corners[4]);
+        addQuad(corners[0], corners[4], corners[5], corners[1]);
+        addQuad(corners[1], corners[5], corners[6], corners[2]);
+        addQuad(corners[2], corners[6], corners[7], corners[3]);
+        addQuad(corners[3], corners[7], corners[4], corners[0]);
+    }
+    return BuildMeshBuffers(triangles, 2);
+}
+
+RaceViewerMeshBuffers BuildTrajectoryLineMesh(
+        const std::vector<RaceViewerFrame> &frames,
+        float stationaryMarkerRadius) {
+    RaceViewerMeshBuffers result;
+    if (frames.empty()) {
+        return result;
+    }
+    std::vector<WireVertex> vertices;
+    if (frames.size() - 1u > vertices.max_size() / 2u) {
+        throw std::length_error("trajectory line is too large");
+    }
+    vertices.reserve((frames.size() - 1u) * 2u);
+    const auto append = [&vertices](const QVector3D &point) {
+        vertices.push_back({point.x(), point.y(), point.z()});
+    };
+    for (std::size_t index = 1u; index < frames.size(); ++index) {
+        const QVector3D &start = frames[index - 1u].position;
+        const QVector3D &end = frames[index].position;
+        if ((end - start).lengthSquared() < 0.000001f) {
+            continue;
+        }
+        append(start);
+        append(end);
+    }
+    if (vertices.empty()) {
+        const QVector3D center = frames.front().position;
+        const QVector3D x(stationaryMarkerRadius, 0.0f, 0.0f);
+        const QVector3D y(0.0f, stationaryMarkerRadius, 0.0f);
+        const QVector3D z(0.0f, 0.0f, stationaryMarkerRadius);
+        append(center - x);
+        append(center + x);
+        append(center - y);
+        append(center + y);
+        append(center - z);
+        append(center + z);
+    }
+    if (vertices.size() > static_cast<std::size_t>(
+                std::numeric_limits<qsizetype>::max() /
+                sizeof(WireVertex))) {
+        throw std::length_error("trajectory line geometry is too large");
+    }
+    result.boundsMin = QVector3D(
+            vertices.front().x, vertices.front().y, vertices.front().z);
+    result.boundsMax = result.boundsMin;
+    for (const WireVertex &vertex : vertices) {
+        ExpandBounds(
+                QVector3D(vertex.x, vertex.y, vertex.z),
+                result.boundsMin,
+                result.boundsMax);
+    }
+    result.wire.resize(
+            static_cast<qsizetype>(vertices.size() * sizeof(WireVertex)));
+    std::memcpy(result.wire.data(),
+                vertices.data(),
+                static_cast<std::size_t>(result.wire.size()));
+    return result;
+}
+
 QVariantMap MaterialMap(ReplacementMaterialClass materialClass) {
     const ReplacementMaterial replacement = ReplacementFor(materialClass);
     QVariantMap map;
     map.insert(QStringLiteral("materialClass"),
                MaterialClassName(materialClass));
-    map.insert(QStringLiteral("baseColor"), replacement.baseColor);
     map.insert(QStringLiteral("debugColor"), replacement.debugColor);
     map.insert(QStringLiteral("baseTexture"), replacement.baseTexture);
-    map.insert(QStringLiteral("normalTexture"), replacement.normalTexture);
     map.insert(QStringLiteral("roughness"), replacement.roughness);
     map.insert(QStringLiteral("metalness"), replacement.metalness);
-    map.insert(QStringLiteral("opacity"), replacement.opacity);
-    map.insert(QStringLiteral("textureScale"),
-               replacement.worldUvScale > 0.0f
-                       ? 1.0f
-                       : replacement.textureScale);
     map.insert(QStringLiteral("emissiveStrength"),
                replacement.emissiveStrength);
-    map.insert(QStringLiteral("twoSided"), replacement.twoSided);
     map.insert(QStringLiteral("unknown"),
                materialClass == ReplacementMaterialClass::Unknown);
     return map;
@@ -261,13 +592,17 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
     RaceViewerLoadResult result;
     result.packsDirectory = packsDirectory;
     result.replayPath = replayPath;
+    result.backend = backend;
     try {
-        const ReplayIdentity identity{replayPath.toStdString()};
+        const std::string replayPathUtf8 =
+                replayPath.toUtf8().toStdString();
+        const ReplayIdentity identity{replayPathUtf8};
         AssetSource source = Require(
-                OpenInstalledPackDirectory(packsDirectory.toStdString()),
+                OpenInstalledPackDirectory(
+                        packsDirectory.toUtf8().toStdString()),
                 "opening Packs directory failed");
         AssetBytes bytes = Require(
-                ReadNativeReplayFile(replayPath.toStdString(), identity),
+                ReadReplayFileUtf8(replayPathUtf8, identity),
                 "reading replay failed");
         PhysicsSandboxOptions options;
         options.backend = ToForeverValidatorBackend(backend);
@@ -275,11 +610,15 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
         PhysicsSandbox sandbox = Require(
                 CreatePhysicsSandbox(std::move(source), options),
                 "creating replay sandbox failed");
-        static_cast<void>(Require(
+        const PhysicsSandboxStateView initialState = Require(
                 sandbox.LoadReplay({bytes.data(), bytes.size()}, identity),
-                "loading replay failed"));
+                "loading replay failed");
         PhysicsSandboxSceneView scene = Require(
                 sandbox.ReadScene(), "reading replay scene failed");
+        result.mapKey = CollisionSceneKey(scene);
+        result.mapName = QString::fromUtf8(Require(
+                sandbox.ReadMapName(),
+                "reading replay map name failed"));
         PhysicsSandboxRenderSceneHandle renderScene = Require(
                 sandbox.ReadRenderScene(),
                 "reading visual render scene failed");
@@ -382,12 +721,63 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
             result.carEllipsoids.push_back(std::move(item));
         }
 
+        const std::vector<PhysicsSandboxInputEvent> replayInputs =
+                Require(sandbox.ReadInputs(),
+                        "reading replay inputs for manual driving failed");
+        std::vector<PhysicsSandboxInputEvent> fixedInputs =
+                ViewerFixedInputs(replayInputs);
+        PhysicsSandboxState manualStart = Require(
+                sandbox.CaptureState(),
+                "capturing manual-driving start state failed");
+        result.manualRuntime = std::make_shared<ManualDriveRuntime>(
+                std::move(sandbox),
+                std::move(manualStart),
+                std::move(fixedInputs),
+                initialState);
     } catch (const std::exception &exception) {
         result.error = QString::fromUtf8(exception.what());
     } catch (...) {
         result.error = QStringLiteral("Unexpected replay viewer failure");
     }
     return result;
+}
+
+std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        PhysicsBackend backend) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    const std::string replayPathUtf8 = replayPath.toUtf8().toStdString();
+    const ReplayIdentity identity{replayPathUtf8};
+    AssetSource source = Require(
+            OpenInstalledPackDirectory(
+                    packsDirectory.toUtf8().toStdString()),
+            "opening Packs directory for input preview failed");
+    AssetBytes bytes = Require(
+            ReadReplayFileUtf8(replayPathUtf8, identity),
+            "reading replay for input preview failed");
+    PhysicsSandboxOptions options;
+    options.backend = ToForeverValidatorBackend(backend);
+    options.tickDurationMs = kViewerTickDurationMs;
+    PhysicsSandbox sandbox = Require(
+            CreatePhysicsSandbox(std::move(source), options),
+            "creating input preview sandbox failed");
+    const PhysicsSandboxStateView initialState = Require(
+            sandbox.LoadReplay({bytes.data(), bytes.size()}, identity),
+            "loading replay for input preview failed");
+    std::vector<PhysicsSandboxInputEvent> fixedInputs = ViewerFixedInputs(
+            Require(sandbox.ReadInputs(),
+                    "reading replay inputs for input preview failed"));
+    PhysicsSandboxState initial = Require(
+            sandbox.CaptureState(),
+            "capturing input preview start state failed");
+    return std::make_shared<ManualDriveRuntime>(
+            std::move(sandbox),
+            std::move(initial),
+            std::move(fixedInputs),
+            initialState);
 }
 
 QString FormatTime(qint64 milliseconds) {
@@ -411,9 +801,210 @@ std::vector<RaceViewerFrame> ToViewerFrames(
                             frame.rotationZ).normalized(),
                 frame.accelerate,
                 frame.brake,
-                frame.steering});
+                frame.steering,
+                frame.checkpointsCollected,
+                frame.checkpointsTotal,
+                frame.completedLaps,
+                frame.totalLaps,
+                frame.raceCompleted,
+                frame.finishTimeMs});
     }
     return result;
+}
+
+bool IsViewableTrajectory(
+        const std::vector<RaceViewerFrame> &frames) {
+    if (frames.empty() || frames.front().timeMs != 0) {
+        return false;
+    }
+    std::int64_t previousTime = -1;
+    for (const RaceViewerFrame &frame : frames) {
+        if (frame.timeMs <= previousTime ||
+            !std::isfinite(frame.position.x()) ||
+            !std::isfinite(frame.position.y()) ||
+            !std::isfinite(frame.position.z())) {
+            return false;
+        }
+        previousTime = frame.timeMs;
+    }
+    return true;
+}
+
+RaceViewerFrame ToViewerFrame(const PhysicsSandboxStateView &state) {
+    return {
+            static_cast<std::int64_t>(state.timeMs),
+            ToQt(state.car.position),
+            QQuaternion(state.car.rotationW,
+                        state.car.rotationX,
+                        state.car.rotationY,
+                        state.car.rotationZ).normalized(),
+            state.accelerate,
+            state.brake,
+            state.steering,
+            state.checkpointsCollected,
+            state.checkpointsTotal,
+            state.completedLaps,
+            state.totalLaps,
+            state.raceCompleted,
+            state.finishTimeMs};
+}
+
+RaceViewerInputPreviewResult BuildInputPreview(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        PhysicsBackend backend,
+        const QString &script,
+        float trajectoryRadius,
+        std::shared_ptr<ManualDriveRuntime> runtime) {
+    RaceViewerInputPreviewResult result;
+    const auto canceled = []() {
+        QThread *const thread = QThread::currentThread();
+        return thread != nullptr && thread->isInterruptionRequested();
+    };
+    try {
+        const InputScriptParseResult parsed =
+                ParseInputScript(script.toStdString());
+        if (!parsed || canceled()) {
+            result.canceled = canceled();
+            return result;
+        }
+        if (runtime == nullptr) {
+            runtime = LoadInputPreviewRuntime(
+                    packsDirectory, replayPath, backend);
+        }
+        result.runtime = runtime;
+        if (canceled()) {
+            result.canceled = true;
+            return result;
+        }
+
+        InputScriptBaselineResult baseline = BuildInputScriptBaseline(
+                runtime->fixedInputs,
+                parsed.commands,
+                static_cast<std::int64_t>(runtime->state.durationMs),
+                kViewerTickDurationMs);
+        if (!baseline) {
+            return result;
+        }
+        ConvertKeyboardSteeringToAnalog(baseline.events);
+        result.inputs = baseline.events;
+
+        auto initial = runtime->sandbox.RestoreState(runtime->initialState);
+        if (!initial) {
+            result.error = QStringLiteral(
+                                   "Updating the input preview failed: %1")
+                                   .arg(SandboxErrorText(initial.Error()));
+            return result;
+        }
+        auto replaced = runtime->sandbox.ReplaceInputs(
+                std::move(baseline.events));
+        if (!replaced) {
+            result.error = QStringLiteral(
+                                   "Updating the input preview failed: %1")
+                                   .arg(SandboxErrorText(replaced.Error()));
+            return result;
+        }
+
+        PhysicsSandboxStateView state = initial.Value();
+        const std::uint64_t remainingDuration =
+                state.durationMs > state.timeMs
+                ? state.durationMs - state.timeMs
+                : 0u;
+        const std::uint64_t maximumTicks =
+                remainingDuration / kViewerTickDurationMs +
+                (remainingDuration % kViewerTickDurationMs == 0u ? 0u : 1u);
+        if (maximumTicks >= result.frames.max_size()) {
+            throw std::length_error("trajectory contains too many ticks");
+        }
+        result.frames.reserve(
+                static_cast<std::size_t>(maximumTicks) + 1u);
+        result.frames.push_back(ToViewerFrame(state));
+        for (std::uint64_t tick = 0u;
+             tick < maximumTicks && state.timeMs < state.durationMs &&
+             !state.raceCompleted;
+             ++tick) {
+            if (canceled()) {
+                result.canceled = true;
+                result.frames.clear();
+                return result;
+            }
+            auto advanced = runtime->sandbox.AdvanceTicks(1u);
+            if (!advanced) {
+                result.error = QStringLiteral(
+                                       "Updating the input preview failed: %1")
+                                       .arg(SandboxErrorText(
+                                               advanced.Error()));
+                result.frames.clear();
+                return result;
+            }
+            state = advanced.Value();
+            result.frames.push_back(ToViewerFrame(state));
+        }
+        if (canceled()) {
+            result.canceled = true;
+            result.frames.clear();
+            return result;
+        }
+        result.mesh = BuildTrajectoryMesh(
+                result.frames, trajectoryRadius);
+        if (result.mesh.filled.isEmpty()) {
+            result.error = QStringLiteral(
+                    "The input preview produced no viewable path.");
+            result.frames.clear();
+        }
+    } catch (const std::exception &exception) {
+        result.error = QStringLiteral("Updating the input preview failed: %1")
+                               .arg(QString::fromUtf8(exception.what()));
+        result.frames.clear();
+    } catch (...) {
+        result.error = QStringLiteral(
+                "Updating the input preview failed unexpectedly.");
+        result.frames.clear();
+    }
+    return result;
+}
+
+void AppendCheckpointTransitions(
+        std::vector<RaceViewerSplit> &splits,
+        std::uint32_t previousCheckpointCount,
+        const RaceViewerFrame &frame) {
+    for (std::uint64_t index =
+                 static_cast<std::uint64_t>(
+                         previousCheckpointCount) + 1u;
+         index <= static_cast<std::uint64_t>(
+                          frame.checkpointsCollected);
+         ++index) {
+        splits.push_back({
+                static_cast<std::uint32_t>(index),
+                frame.timeMs,
+                false});
+    }
+    if (frame.raceCompleted &&
+        std::none_of(
+                splits.cbegin(),
+                splits.cend(),
+                [](const RaceViewerSplit &split) {
+                    return split.isFinish;
+                })) {
+        splits.push_back({
+                0u,
+                frame.finishTimeMs.has_value()
+                        ? static_cast<std::int64_t>(*frame.finishTimeMs)
+                        : frame.timeMs,
+                true});
+    }
+}
+
+std::vector<RaceViewerSplit> BuildCheckpointSplits(
+        const std::vector<RaceViewerFrame> &frames) {
+    std::vector<RaceViewerSplit> splits;
+    std::uint32_t checkpointCount = 0u;
+    for (const RaceViewerFrame &frame : frames) {
+        AppendCheckpointTransitions(splits, checkpointCount, frame);
+        checkpointCount =
+                std::max(checkpointCount, frame.checkpointsCollected);
+    }
+    return splits;
 }
 
 void UpdateRunPose(RaceViewerRun &run, qint64 timeMs) {
@@ -455,13 +1046,40 @@ void UpdateRunPose(RaceViewerRun &run, qint64 timeMs) {
 }  // namespace
 
 RaceViewerController::RaceViewerController(QObject *parent)
-    : QObject(parent) {
+    : QObject(parent), simulationDebugger_(this) {
     playbackTimer_.setInterval(5);
     playbackTimer_.setTimerType(Qt::PreciseTimer);
     connect(&playbackTimer_,
             &QTimer::timeout,
             this,
             &RaceViewerController::advancePlayback);
+    manualDriveTimer_.setInterval(5);
+    manualDriveTimer_.setTimerType(Qt::PreciseTimer);
+    connect(&manualDriveTimer_,
+            &QTimer::timeout,
+            this,
+            &RaceViewerController::advanceManualDrive);
+    connect(&simulationDebugger_,
+            &SimulationDebuggerModel::frameProduced,
+            this,
+            &RaceViewerController::appendSimulationDebuggerFrame);
+    connect(&simulationDebugger_,
+            &SimulationDebuggerModel::stateChanged,
+            this,
+            [this]() {
+                if (simulationDebugger_.active()) {
+                    setPlaying(simulationDebugger_.running());
+                } else if (selectedRunId_ == QStringLiteral("debug")) {
+                    setPlaying(false);
+                }
+            });
+    connect(&simulationDebugger_,
+            &SimulationDebuggerModel::sessionFinished,
+            this,
+            [this]() {
+                setPlaying(false);
+                setStatusText(simulationDebugger_.statusText());
+            });
 
     const std::vector<ViewerTriangle> ellipsoidTriangles =
             UnitEllipsoidTriangles();
@@ -492,6 +1110,9 @@ RaceViewerController::RaceViewerController(QObject *parent)
 
 RaceViewerController::~RaceViewerController() {
     playbackTimer_.stop();
+    manualDriveTimer_.stop();
+    simulationDebugger_.stopSession();
+    waitForInputPreviewWorker();
     waitForWorker();
 }
 
@@ -511,6 +1132,14 @@ QQuick3DGeometry *RaceViewerController::ellipsoidWireGeometry() {
     return &ellipsoidWireGeometry_;
 }
 
+WhiteboardModel *RaceViewerController::whiteboard() {
+    return &whiteboard_;
+}
+
+SimulationDebuggerModel *RaceViewerController::simulationDebugger() {
+    return &simulationDebugger_;
+}
+
 QVariantList RaceViewerController::carEllipsoids() const {
     return carEllipsoids_;
 }
@@ -525,6 +1154,18 @@ QVariantList RaceViewerController::visualBatches() const {
 
 QVariantList RaceViewerController::visualMaterials() const {
     return visualMaterials_;
+}
+
+QVariantList RaceViewerController::trajectoryPaths() const {
+    return trajectoryPaths_;
+}
+
+qint64 RaceViewerController::trajectoryCount() const {
+    return static_cast<qint64>(trajectoryPaths_.size());
+}
+
+QString RaceViewerController::previewInputScript() const {
+    return previewInputScript_;
 }
 
 QVariantList RaceViewerController::runOptions() const {
@@ -584,6 +1225,14 @@ qint64 RaceViewerController::durationMs() const {
     return durationMs_;
 }
 
+qint64 RaceViewerController::timelineSeekLimitMs() const {
+    const RaceViewerRun *const run = selectedRun();
+    return run == nullptr || run->frames.empty()
+            ? 0
+            : std::clamp<qint64>(
+                      run->frames.back().timeMs, 0, durationMs_);
+}
+
 qint64 RaceViewerController::timeMs() const {
     return timeMs_;
 }
@@ -615,8 +1264,86 @@ QString RaceViewerController::timeText() const {
             FormatTime(durationMs_);
 }
 
+QVariantList RaceViewerController::checkpointSplits() const {
+    QVariantList result;
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr) {
+        return result;
+    }
+    result.reserve(static_cast<qsizetype>(run->checkpointSplits.size()));
+    for (const RaceViewerSplit &split : run->checkpointSplits) {
+        if (split.timeMs > timeMs_) {
+            break;
+        }
+        QVariantMap item;
+        item.insert(
+                QStringLiteral("label"),
+                split.isFinish
+                        ? tr("Finish")
+                        : tr("CP %1").arg(split.index));
+        item.insert(
+                QStringLiteral("time"),
+                QString::fromStdString(
+                        FormatSignificantDurationMilliseconds(
+                                static_cast<std::uint64_t>(
+                                        std::max<std::int64_t>(
+                                                0, split.timeMs)))));
+        item.insert(
+                QStringLiteral("timeMs"),
+                static_cast<qlonglong>(split.timeMs));
+        item.insert(QStringLiteral("isFinish"), split.isFinish);
+        item.insert(
+                QStringLiteral("index"),
+                static_cast<qulonglong>(split.index));
+        result.push_back(std::move(item));
+    }
+    return result;
+}
+
 bool RaceViewerController::playing() const {
     return playing_;
+}
+
+bool RaceViewerController::takeOverOnInput() const {
+    return takeOverOnInput_;
+}
+
+bool RaceViewerController::manualDriving() const {
+    return manualDriving_;
+}
+
+bool RaceViewerController::manualSteeringTakenOver() const {
+    return manualTakeover_ && steeringTakeoverTimeMs_.has_value();
+}
+
+bool RaceViewerController::manualLongitudinalTakenOver() const {
+    return manualTakeover_ && longitudinalTakeoverTimeMs_.has_value();
+}
+
+bool RaceViewerController::manualLeft() const {
+    return manualLeft_;
+}
+
+bool RaceViewerController::manualRight() const {
+    return manualRight_;
+}
+
+bool RaceViewerController::manualAccelerate() const {
+    return manualAccelerate_;
+}
+
+bool RaceViewerController::manualBrake() const {
+    return manualBrake_;
+}
+
+bool RaceViewerController::canCopyCurrentInputs() const {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr) {
+        return false;
+    }
+    return run->id == QStringLiteral("manual")
+            ? manualRuntime_ != nullptr
+            : !run->inputs.empty();
 }
 
 bool RaceViewerController::loaded() const {
@@ -708,6 +1435,7 @@ void RaceViewerController::addSearchRun(
     addSearchRun(packsDirectory,
                  replayPath,
                  frames,
+                 std::vector<SandboxInputEvent>{},
                  QStringLiteral("optimized-cpu"));
 }
 
@@ -716,6 +1444,32 @@ void RaceViewerController::addSearchRun(
         const QString &replayPath,
         const std::vector<SearchTimelineFrame> &frames,
         const QString &backendId) {
+    addSearchRun(packsDirectory,
+                 replayPath,
+                 frames,
+                 std::vector<SandboxInputEvent>{},
+                 backendId);
+}
+
+void RaceViewerController::addSearchRun(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const std::vector<SandboxInputEvent> &inputs) {
+    addSearchRun(packsDirectory,
+                 replayPath,
+                 frames,
+                 inputs,
+                 QStringLiteral("optimized-cpu"));
+}
+
+void RaceViewerController::addSearchRun(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const std::vector<SandboxInputEvent> &inputs,
+        const QString &backendId) {
+    stopManualDrive();
     if (frames.empty()) {
         setStatusText(QStringLiteral("Best run produced no viewable frames."));
         return;
@@ -730,12 +1484,14 @@ void RaceViewerController::addSearchRun(
             packsDirectory,
             replayPath,
             *backend,
-            ToViewerFrames(frames)};
+            ToViewerFrames(frames),
+            inputs};
     if (loaded_ && loadedPacksDirectory_ == packsDirectory &&
         loadedReplayPath_ == replayPath) {
         upsertRun(QStringLiteral("best"),
                   QStringLiteral("Best"),
                   std::move(pending.frames),
+                  std::move(pending.inputs),
                   true);
         setStatusText(QStringLiteral("Best run added"));
         return;
@@ -746,7 +1502,232 @@ void RaceViewerController::addSearchRun(
     }
 }
 
+void RaceViewerController::addSearchImprovement(
+        const QString &packsDirectory,
+        const QString &replayPath,
+        const std::vector<SearchTimelineFrame> &frames,
+        const QString &backendId,
+        std::uint64_t searchId,
+        std::uint64_t improvementNumber) {
+    if (searchId == 0u || improvementNumber == 0u ||
+        frames.empty()) {
+        setStatusText(QStringLiteral(
+                "Search improvement produced no viewable trajectory."));
+        return;
+    }
+    const std::optional<PhysicsBackend> backend =
+            ParsePhysicsBackend(backendId.toStdString());
+    if (!backend) {
+        setStatusText(QStringLiteral("Select a valid physics backend."));
+        return;
+    }
+
+    try {
+        PendingImprovement pending{
+                packsDirectory,
+                replayPath,
+                *backend,
+                searchId,
+                improvementNumber,
+                ToViewerFrames(frames)};
+        if (!IsViewableTrajectory(pending.frames)) {
+            setStatusText(QStringLiteral(
+                    "Search improvement produced an invalid trajectory."));
+            return;
+        }
+        const QString key =
+                QStringLiteral("improvement:%1:%2")
+                        .arg(searchId)
+                        .arg(improvementNumber);
+        if (std::find(trajectoryKeys_.begin(),
+                      trajectoryKeys_.end(),
+                      key) != trajectoryKeys_.end()) {
+            return;
+        }
+        const auto queued = std::find_if(
+                pendingImprovements_.begin(),
+                pendingImprovements_.end(),
+                [searchId, improvementNumber](
+                        const PendingImprovement &entry) {
+                    return entry.searchId == searchId &&
+                            entry.improvementNumber ==
+                                    improvementNumber;
+                });
+        if (queued != pendingImprovements_.end()) {
+            return;
+        }
+        if (loaded_ &&
+            loadedPacksDirectory_ == packsDirectory &&
+            loadedReplayPath_ == replayPath) {
+            appendImprovementTrajectory(
+                    searchId,
+                    improvementNumber,
+                    pending.frames);
+            return;
+        }
+        pendingImprovements_.push_back(std::move(pending));
+        if (workerThread_ == nullptr) {
+            beginMapLoad(packsDirectory, replayPath, *backend);
+        }
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral(
+                        "Adding search improvement trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Adding search improvement trajectory failed unexpectedly."));
+    }
+}
+
+bool RaceViewerController::appendImprovementTrajectory(
+        std::uint64_t searchId,
+        std::uint64_t improvementNumber,
+        const std::vector<RaceViewerFrame> &frames) {
+    const QString key =
+            QStringLiteral("improvement:%1:%2")
+                    .arg(searchId)
+                    .arg(improvementNumber);
+    if (std::find(trajectoryKeys_.begin(),
+                  trajectoryKeys_.end(),
+                  key) != trajectoryKeys_.end()) {
+        return true;
+    }
+
+    try {
+        const float radius = static_cast<float>(
+                std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
+        RaceViewerMeshBuffers mesh =
+                BuildTrajectoryLineMesh(frames, radius * 2.0f);
+        if (mesh.wire.isEmpty()) {
+            setStatusText(QStringLiteral(
+                    "Search improvement produced no viewable trajectory."));
+            return false;
+        }
+        auto geometry = std::make_unique<RaceGeometry>();
+        geometry->setMesh(
+                std::move(mesh.wire),
+                static_cast<int>(sizeof(WireVertex)),
+                QQuick3DGeometry::PrimitiveType::Lines,
+                false,
+                mesh.boundsMin,
+                mesh.boundsMax);
+
+        QVariantList paths = trajectoryPaths_;
+        for (QVariant &entry : paths) {
+            QVariantMap path = entry.toMap();
+            if (path.value(QStringLiteral("kind")).toString() ==
+                QStringLiteral("improvement")) {
+                path.insert(QStringLiteral("opacity"), 0.3);
+                entry = std::move(path);
+            }
+        }
+        QVariantMap path;
+        path.insert(QStringLiteral("kind"),
+                    QStringLiteral("improvement"));
+        path.insert(
+                QStringLiteral("name"),
+                QStringLiteral("Improvement %1")
+                        .arg(improvementNumber));
+        path.insert(QStringLiteral("color"),
+                    QStringLiteral("#ffb84d"));
+        path.insert(QStringLiteral("opacity"), 0.96);
+        path.insert(QStringLiteral("visible"), true);
+        path.insert(QStringLiteral("searchId"),
+                    QVariant::fromValue<qulonglong>(searchId));
+        path.insert(
+                QStringLiteral("improvementNumber"),
+                QVariant::fromValue<qulonglong>(improvementNumber));
+        path.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(
+                        static_cast<QObject *>(geometry.get())));
+        paths.push_back(std::move(path));
+
+        trajectoryGeometries_.reserve(
+                trajectoryGeometries_.size() + 1u);
+        trajectoryKeys_.reserve(trajectoryKeys_.size() + 1u);
+        trajectoryGeometries_.push_back(std::move(geometry));
+        trajectoryKeys_.push_back(key);
+        trajectoryPaths_ = std::move(paths);
+        emit trajectoriesChanged();
+        setStatusText(
+                QStringLiteral("Improvement %1 trajectory added")
+                        .arg(improvementNumber));
+        return true;
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral(
+                        "Adding search improvement trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Adding search improvement trajectory failed unexpectedly."));
+    }
+    return false;
+}
+
+void RaceViewerController::updateBestTrajectory(
+        const QString &name,
+        const std::vector<RaceViewerFrame> &frames) {
+    try {
+        const float radius = static_cast<float>(
+                std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
+        RaceViewerMeshBuffers mesh = BuildTrajectoryMesh(frames, radius);
+        if (mesh.filled.isEmpty()) {
+            return;
+        }
+        bestTrajectoryGeometry_.setMesh(
+                std::move(mesh.filled),
+                static_cast<int>(sizeof(FilledVertex)),
+                QQuick3DGeometry::PrimitiveType::Triangles,
+                true,
+                mesh.boundsMin,
+                mesh.boundsMax);
+
+        QVariantList paths = trajectoryPaths_;
+        const auto existing = std::find_if(
+                paths.begin(), paths.end(), [](const QVariant &entry) {
+                    return entry.toMap()
+                                   .value(QStringLiteral("runId"))
+                                   .toString() == QStringLiteral("best");
+                });
+        const bool visible = existing == paths.end() ||
+                existing->toMap()
+                        .value(QStringLiteral("visible"), true)
+                        .toBool();
+        QVariantMap path;
+        path.insert(QStringLiteral("kind"), QStringLiteral("run"));
+        path.insert(QStringLiteral("runId"), QStringLiteral("best"));
+        path.insert(QStringLiteral("name"), name);
+        path.insert(QStringLiteral("color"), QStringLiteral("#58a6ff"));
+        path.insert(QStringLiteral("opacity"), 0.9);
+        path.insert(QStringLiteral("visible"), visible);
+        path.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(
+                        static_cast<QObject *>(&bestTrajectoryGeometry_)));
+        if (existing == paths.end()) {
+            paths.push_back(path);
+        } else {
+            *existing = path;
+        }
+        trajectoryPaths_ = std::move(paths);
+        emit trajectoriesChanged();
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral("Updating the Best trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Updating the Best trajectory failed unexpectedly."));
+    }
+}
+
 void RaceViewerController::setTimeMs(qint64 value) {
+    if (manualDriving_) {
+        return;
+    }
     const qint64 clamped = std::clamp<qint64>(value, 0, durationMs_);
     if (timeMs_ == clamped) {
         return;
@@ -769,6 +1750,12 @@ void RaceViewerController::setCurrentTick(qint64 tick) {
 }
 
 void RaceViewerController::setSelectedRunId(const QString &value) {
+    if (manualDriving_) {
+        return;
+    }
+    if (simulationDebugger_.active() && value != QStringLiteral("debug")) {
+        stopSimulationDebugger();
+    }
     const auto selected = std::find_if(
             runs_.begin(), runs_.end(), [&value](const RaceViewerRun &run) {
                 return run.id == value;
@@ -784,9 +1771,41 @@ void RaceViewerController::setSelectedRunId(const QString &value) {
     emit timeChanged();
 }
 
+void RaceViewerController::setPreviewInputScript(const QString &value) {
+    if (previewInputScript_ == value) {
+        return;
+    }
+    previewInputScript_ = value;
+    emit previewInputScriptChanged();
+    if (loaded_ && !loading_ && !manualDriving_) {
+        scheduleInputPreviewRebuild();
+    }
+}
+
+void RaceViewerController::setTakeOverOnInput(bool value) {
+    if (takeOverOnInput_ == value) {
+        return;
+    }
+    takeOverOnInput_ = value;
+    emit takeOverOnInputChanged();
+}
+
 void RaceViewerController::play() {
+    if (simulationDebugger_.active()) {
+        RaceViewerRun *const debugRun = selectedRun();
+        if (!loaded_ || manualDriving_ || playing_ || debugRun == nullptr ||
+            debugRun->id != QStringLiteral("debug")) {
+            return;
+        }
+        timeMs_ = debugRun->frames.empty() ? 0 : debugRun->frames.back().timeMs;
+        updatePose();
+        emit timeChanged();
+        simulationDebugger_.play();
+        return;
+    }
     const RaceViewerRun *const run = selectedRun();
-    if (!loaded_ || run == nullptr || run->frames.empty() || playing_) {
+    if (!loaded_ || manualDriving_ || run == nullptr ||
+        run->frames.empty() || playing_) {
         return;
     }
     if (timeMs_ >= durationMs_) {
@@ -802,6 +1821,9 @@ void RaceViewerController::play() {
 
 void RaceViewerController::pause() {
     playbackTimer_.stop();
+    if (simulationDebugger_.active()) {
+        simulationDebugger_.pause();
+    }
     setPlaying(false);
 }
 
@@ -823,6 +1845,934 @@ void RaceViewerController::jumpToEnd() {
     setTimeMs(durationMs_);
 }
 
+void RaceViewerController::startManualDrive() {
+    if (manualDriving_) {
+        return;
+    }
+    if (!loaded_ || loading_ || manualRuntime_ == nullptr) {
+        setStatusText(QStringLiteral(
+                "Load a replay map before starting manual drive."));
+        return;
+    }
+
+    if (simulationDebugger_.active()) {
+        stopSimulationDebugger();
+    }
+    cancelInputPreviewBuild();
+    pause();
+    if (!resetManualDriveSession(QStringLiteral("Manual drive"))) {
+        return;
+    }
+    manualDriving_ = true;
+    emit manualDrivingChanged();
+}
+
+bool RaceViewerController::resetManualDriveSession(
+        const QString &status,
+        bool preserveHeldInputs) {
+    if (manualRuntime_ == nullptr) {
+        setStatusText(QStringLiteral(
+                "Manual drive failed: physics runtime is unavailable."));
+        return false;
+    }
+    auto restored =
+            manualRuntime_->sandbox.RestoreState(
+                    manualRuntime_->initialState);
+    if (!restored) {
+        setStatusText(
+                QStringLiteral("Manual drive failed: %1")
+                        .arg(SandboxErrorText(restored.Error())));
+        return false;
+    }
+    manualRuntime_->state = restored.Value();
+    resetManualTakeoverState();
+    manualRuntime_->driverInputs.clear();
+    if (preserveHeldInputs) {
+        appendHeldManualInputs(static_cast<std::int32_t>(
+                manualRuntime_->state.timeMs));
+    } else {
+        resetManualInputState();
+    }
+    if (!replaceManualInputs()) {
+        return false;
+    }
+
+    upsertRun(
+            QStringLiteral("manual"),
+            QStringLiteral("Manual"),
+            {ToViewerFrame(manualRuntime_->state)},
+            {},
+            true);
+    manualDriveStartTick_ =
+            static_cast<qint64>(manualRuntime_->state.tick);
+    setStatusText(status);
+    manualDriveClock_.restart();
+    manualDriveTimer_.start();
+    return true;
+}
+
+void RaceViewerController::stopManualDrive() {
+    finishManualDrive(QStringLiteral("Manual drive stopped"), true);
+}
+
+bool RaceViewerController::giveUpManualDrive() {
+    if (!manualDriving_ || manualRuntime_ == nullptr) {
+        return false;
+    }
+    manualDriveTimer_.stop();
+    if (!resetManualDriveSession(
+                QStringLiteral("Manual drive restarted"), true)) {
+        finishManualDrive(statusText_, false);
+        return false;
+    }
+    return true;
+}
+
+bool RaceViewerController::respawnManualDrive() {
+    if (!manualDriving_ || manualRuntime_ == nullptr) {
+        return false;
+    }
+    const std::uint64_t maximumEventTime =
+            static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int32_t>::max());
+    if (manualRuntime_->state.timeMs >
+        maximumEventTime - 2u * kViewerTickDurationMs) {
+        setStatusText(QStringLiteral(
+                "Manual drive failed: respawn time is outside the "
+                "supported race range."));
+        return false;
+    }
+    const std::int32_t eventTime = static_cast<std::int32_t>(
+            manualRuntime_->state.timeMs + kViewerTickDurationMs);
+    const std::size_t previousEventCount =
+            manualRuntime_->driverInputs.size();
+    manualRuntime_->driverInputs.push_back(
+            ManualSwitchEvent(
+                    eventTime,
+                    PhysicsSandboxInputAction::Respawn,
+                    true));
+    appendHeldManualInputs(eventTime + kViewerTickDurationMs);
+    if (!replaceManualInputs()) {
+        manualRuntime_->driverInputs.resize(previousEventCount);
+        return false;
+    }
+    setStatusText(QStringLiteral("Manual drive: respawn queued"));
+    return true;
+}
+
+bool RaceViewerController::startSimulationDebugger() {
+    if (!loaded_ || loading_ || manualRuntime_ == nullptr ||
+        !simulationDebugger_.available()) {
+        setStatusText(QStringLiteral(
+                "Load a replay map before starting native source debugging."));
+        return false;
+    }
+
+    pause();
+    if (manualDriving_) {
+        stopManualDrive();
+    }
+    upsertRun(
+            QStringLiteral("debug"),
+            QStringLiteral("Reference source"),
+            {ToViewerFrame(manualRuntime_->state)},
+            {},
+            true);
+    RaceViewerRun *const run = selectedRun();
+    if (run != nullptr && run->id == QStringLiteral("debug")) {
+        run->frames.clear();
+        refreshSelectedRun();
+        emit timelineChanged();
+        emit timeChanged();
+    }
+    const bool started = simulationDebugger_.startSession(
+            loadedPacksDirectory_, loadedReplayPath_);
+    setStatusText(simulationDebugger_.statusText());
+    return started;
+}
+
+void RaceViewerController::stopSimulationDebugger() {
+    if (!simulationDebugger_.active()) {
+        return;
+    }
+    pause();
+    simulationDebugger_.stopSession();
+    setStatusText(QStringLiteral("Native source debugging stopped"));
+}
+
+void RaceViewerController::setManualInput(const QString &input,
+                                         bool active) {
+    if (manualRuntime_ == nullptr) {
+        return;
+    }
+    if (!manualDriving_) {
+        if (takeOverOnInput_ && playing_) {
+            beginManualTakeover(input, active);
+        }
+        return;
+    }
+    if (!applyManualInput(input, active)) {
+        finishManualDrive(statusText_, false);
+        return;
+    }
+    emit manualInputChanged();
+}
+
+bool RaceViewerController::beginManualTakeover(const QString &input,
+                                               bool active) {
+    if (!takeOverOnInput_ || !playing_ || manualRuntime_ == nullptr ||
+        !loaded_ || loading_) {
+        return false;
+    }
+    const RaceViewerRun *const sourceRun = selectedRun();
+    if (sourceRun == nullptr || sourceRun->frames.empty()) {
+        return false;
+    }
+    if (input != QStringLiteral("left") &&
+        input != QStringLiteral("right") &&
+        input != QStringLiteral("accelerate") &&
+        input != QStringLiteral("brake")) {
+        return false;
+    }
+
+    const qint64 sourceTick = currentTick();
+    const std::size_t prefixCount = static_cast<std::size_t>(
+            std::clamp<qint64>(
+                    sourceTick + 1,
+                    1,
+                    static_cast<qint64>(sourceRun->frames.size())));
+    std::vector<RaceViewerFrame> prefix(
+            sourceRun->frames.begin(),
+            sourceRun->frames.begin() +
+                    static_cast<std::ptrdiff_t>(prefixCount));
+    std::vector<SandboxInputEvent> sourceInputs =
+            inputHistoryForRun(*sourceRun);
+
+    auto captured = manualRuntime_->sandbox.CaptureState();
+    auto previousInputsResult = manualRuntime_->sandbox.ReadInputs();
+    if (!captured || !previousInputsResult) {
+        setStatusText(QStringLiteral(
+                "Manual takeover failed while saving the current simulation."));
+        return false;
+    }
+    PhysicsSandboxState previousState =
+            std::move(captured).Value();
+    std::vector<SandboxInputEvent> previousInputs =
+            std::move(previousInputsResult).Value();
+    const bool resumePlayback = playing_;
+    pause();
+
+    const auto restorePreviousRuntime = [this,
+                                         &previousState,
+                                         &previousInputs]() {
+        auto restored =
+                manualRuntime_->sandbox.RestoreState(previousState);
+        if (!restored) {
+            setStatusText(
+                    QStringLiteral("Restoring playback after a failed "
+                                   "takeover failed: %1")
+                            .arg(SandboxErrorText(restored.Error())));
+            return false;
+        }
+        auto replaced =
+                manualRuntime_->sandbox.ReplaceInputs(previousInputs);
+        if (!replaced) {
+            setStatusText(
+                    QStringLiteral("Restoring playback inputs after a failed "
+                                   "takeover failed: %1")
+                            .arg(SandboxErrorText(replaced.Error())));
+            return false;
+        }
+        auto state = manualRuntime_->sandbox.ReadState();
+        if (!state) {
+            setStatusText(
+                    QStringLiteral("Reading restored playback after a failed "
+                                   "takeover failed: %1")
+                            .arg(SandboxErrorText(state.Error())));
+            return false;
+        }
+        manualRuntime_->state = state.Value();
+        return true;
+    };
+    const auto fail = [this,
+                       resumePlayback,
+                       &restorePreviousRuntime](
+                              const QString &message) {
+        setStatusText(message);
+        if (restorePreviousRuntime() && resumePlayback) {
+            play();
+        }
+        return false;
+    };
+
+    auto restored = manualRuntime_->sandbox.RestoreState(
+            manualRuntime_->initialState);
+    if (!restored) {
+        return fail(
+                QStringLiteral("Manual takeover failed: %1")
+                        .arg(SandboxErrorText(restored.Error())));
+    }
+    manualRuntime_->state = restored.Value();
+    auto replaced = manualRuntime_->sandbox.ReplaceInputs(sourceInputs);
+    if (!replaced) {
+        return fail(
+                QStringLiteral("Manual takeover failed: %1")
+                        .arg(SandboxErrorText(replaced.Error())));
+    }
+    const std::uint64_t targetTick =
+            static_cast<std::uint64_t>(std::max<qint64>(0, sourceTick));
+    if (targetTick > manualRuntime_->state.tick) {
+        const std::uint64_t remaining =
+                targetTick - manualRuntime_->state.tick;
+        if (remaining >
+            static_cast<std::uint64_t>(
+                    std::numeric_limits<std::uint32_t>::max())) {
+            return fail(QStringLiteral(
+                    "Manual takeover failed because the selected time is "
+                    "outside the supported race range."));
+        }
+        auto advanced = manualRuntime_->sandbox.AdvanceTicks(
+                static_cast<std::uint32_t>(remaining));
+        if (!advanced) {
+            return fail(
+                    QStringLiteral("Manual takeover failed: %1")
+                            .arg(SandboxErrorText(advanced.Error())));
+        }
+        manualRuntime_->state = advanced.Value();
+    }
+
+    std::vector<SandboxInputEvent> previousTakeoverSource =
+            std::move(takeoverSourceInputs_);
+    std::vector<SandboxInputEvent> previousDriverInputs =
+            std::move(manualRuntime_->driverInputs);
+    const std::optional<std::int32_t> previousSteeringTakeover =
+            steeringTakeoverTimeMs_;
+    const std::optional<std::int32_t> previousLongitudinalTakeover =
+            longitudinalTakeoverTimeMs_;
+    const bool previousManualTakeover = manualTakeover_;
+    const bool previousLeft = manualLeft_;
+    const bool previousRight = manualRight_;
+    const bool previousAccelerate = manualAccelerate_;
+    const bool previousBrake = manualBrake_;
+
+    takeoverSourceInputs_ = std::move(sourceInputs);
+    manualRuntime_->driverInputs.clear();
+    steeringTakeoverTimeMs_.reset();
+    longitudinalTakeoverTimeMs_.reset();
+    manualTakeover_ = true;
+    manualLeft_ = false;
+    manualRight_ = false;
+    manualAccelerate_ = false;
+    manualBrake_ = false;
+    if (!applyManualInput(input, active)) {
+        takeoverSourceInputs_ = std::move(previousTakeoverSource);
+        manualRuntime_->driverInputs =
+                std::move(previousDriverInputs);
+        steeringTakeoverTimeMs_ = previousSteeringTakeover;
+        longitudinalTakeoverTimeMs_ =
+                previousLongitudinalTakeover;
+        manualTakeover_ = previousManualTakeover;
+        manualLeft_ = previousLeft;
+        manualRight_ = previousRight;
+        manualAccelerate_ = previousAccelerate;
+        manualBrake_ = previousBrake;
+        if (restorePreviousRuntime() && resumePlayback) {
+            play();
+        }
+        return false;
+    }
+
+    if (simulationDebugger_.active()) {
+        simulationDebugger_.stopSession();
+    }
+    const RaceViewerFrame takeoverFrame =
+            ToViewerFrame(manualRuntime_->state);
+    if (!prefix.empty() &&
+        prefix.back().timeMs == takeoverFrame.timeMs) {
+        prefix.back() = takeoverFrame;
+    } else {
+        prefix.push_back(takeoverFrame);
+    }
+    upsertRun(
+            QStringLiteral("manual"),
+            QStringLiteral("Manual"),
+            std::move(prefix),
+            {},
+            true);
+    manualDriving_ = true;
+    manualDriveStartTick_ =
+            static_cast<qint64>(manualRuntime_->state.tick);
+    setStatusText(QStringLiteral("Manual takeover"));
+    manualDriveClock_.restart();
+    manualDriveTimer_.start();
+    emit manualDrivingChanged();
+    emit manualInputChanged();
+    return true;
+}
+
+bool RaceViewerController::applyManualInput(const QString &input,
+                                            bool active) {
+    bool *state = nullptr;
+    PhysicsSandboxInputAction action =
+            PhysicsSandboxInputAction::Unmapped;
+    bool steering = false;
+    if (input == QStringLiteral("left")) {
+        state = &manualLeft_;
+        action = PhysicsSandboxInputAction::SteerLeft;
+        steering = true;
+    } else if (input == QStringLiteral("right")) {
+        state = &manualRight_;
+        action = PhysicsSandboxInputAction::SteerRight;
+        steering = true;
+    } else if (input == QStringLiteral("accelerate")) {
+        state = &manualAccelerate_;
+        action = PhysicsSandboxInputAction::Accelerate;
+    } else if (input == QStringLiteral("brake")) {
+        state = &manualBrake_;
+        action = PhysicsSandboxInputAction::Brake;
+    } else {
+        return true;
+    }
+
+    std::optional<std::int32_t> &takeoverTime = steering
+            ? steeringTakeoverTimeMs_
+            : longitudinalTakeoverTimeMs_;
+    const bool firstInterference = manualTakeover_ &&
+            !takeoverTime.has_value();
+    if (!firstInterference && *state == active) {
+        return true;
+    }
+
+    const std::uint64_t time = manualRuntime_->state.timeMs;
+    const std::int32_t eventTime = static_cast<std::int32_t>(
+            std::min<std::uint64_t>(
+                    time,
+                    static_cast<std::uint64_t>(
+                            std::numeric_limits<std::int32_t>::max())));
+    const std::size_t previousEventCount =
+            manualRuntime_->driverInputs.size();
+    const bool previousLeft = manualLeft_;
+    const bool previousRight = manualRight_;
+    const bool previousAccelerate = manualAccelerate_;
+    const bool previousBrake = manualBrake_;
+    const std::optional<std::int32_t> previousTakeoverTime =
+            takeoverTime;
+
+    if (firstInterference) {
+        takeoverTime = eventTime;
+        if (steering) {
+            manualLeft_ = false;
+            manualRight_ = false;
+            manualRuntime_->driverInputs.push_back(
+                    ManualAnalogInputEvent(
+                            eventTime,
+                            PhysicsSandboxInputAction::Steer,
+                            0));
+            if (SwitchInputActiveAt(
+                        takeoverSourceInputs_,
+                        PhysicsSandboxInputAction::SteerLeft,
+                        eventTime)) {
+                manualRuntime_->driverInputs.push_back(
+                        ManualSwitchEvent(
+                                eventTime,
+                                PhysicsSandboxInputAction::SteerLeft,
+                                false));
+            }
+            if (SwitchInputActiveAt(
+                        takeoverSourceInputs_,
+                        PhysicsSandboxInputAction::SteerRight,
+                        eventTime)) {
+                manualRuntime_->driverInputs.push_back(
+                        ManualSwitchEvent(
+                                eventTime,
+                                PhysicsSandboxInputAction::SteerRight,
+                                false));
+            }
+        } else {
+            manualAccelerate_ = false;
+            manualBrake_ = false;
+            if (AnalogInputAt(
+                        takeoverSourceInputs_,
+                        PhysicsSandboxInputAction::Gas,
+                        eventTime) != 0) {
+                manualRuntime_->driverInputs.push_back(
+                        ManualAnalogInputEvent(
+                                eventTime,
+                                PhysicsSandboxInputAction::Gas,
+                                0));
+            }
+            for (const PhysicsSandboxInputAction sourceAction :
+                 {PhysicsSandboxInputAction::Accelerate,
+                  PhysicsSandboxInputAction::Gas,
+                  PhysicsSandboxInputAction::Brake}) {
+                if (SwitchInputActiveAt(
+                            takeoverSourceInputs_,
+                            sourceAction,
+                            eventTime)) {
+                    manualRuntime_->driverInputs.push_back(
+                            ManualSwitchEvent(
+                                    eventTime,
+                                    sourceAction,
+                                    false));
+                }
+            }
+        }
+    }
+    if (*state != active) {
+        *state = active;
+        manualRuntime_->driverInputs.push_back(
+                ManualSwitchEvent(eventTime, action, active));
+    }
+    if (!replaceManualInputs()) {
+        manualRuntime_->driverInputs.resize(previousEventCount);
+        manualLeft_ = previousLeft;
+        manualRight_ = previousRight;
+        manualAccelerate_ = previousAccelerate;
+        manualBrake_ = previousBrake;
+        takeoverTime = previousTakeoverTime;
+        return false;
+    }
+    return true;
+}
+
+void RaceViewerController::releaseManualInputs() {
+    if (!manualDriving_) {
+        resetManualInputState();
+        return;
+    }
+    if (manualTakeover_) {
+        if (manualLeft_) {
+            setManualInput(QStringLiteral("left"), false);
+        }
+        if (manualRight_) {
+            setManualInput(QStringLiteral("right"), false);
+        }
+        if (manualAccelerate_) {
+            setManualInput(QStringLiteral("accelerate"), false);
+        }
+        if (manualBrake_) {
+            setManualInput(QStringLiteral("brake"), false);
+        }
+        return;
+    }
+    setManualInput(QStringLiteral("left"), false);
+    setManualInput(QStringLiteral("right"), false);
+    setManualInput(QStringLiteral("accelerate"), false);
+    setManualInput(QStringLiteral("brake"), false);
+}
+
+std::vector<SandboxInputEvent>
+RaceViewerController::inputHistoryForRun(
+        const RaceViewerRun &run) const {
+    if (manualRuntime_ == nullptr) {
+        return {};
+    }
+
+    std::vector<SandboxInputEvent> source;
+    if (run.id == QStringLiteral("manual")) {
+        source = effectiveManualInputs();
+    } else {
+        source = run.inputs;
+    }
+    if (source.empty()) {
+        bool accelerate = false;
+        bool brake = false;
+        forevervalidator::AnalogInputState steering = 0;
+        for (const RaceViewerFrame &frame : run.frames) {
+            const std::int32_t eventTime = static_cast<std::int32_t>(
+                    std::clamp<std::int64_t>(
+                            frame.timeMs,
+                            std::numeric_limits<std::int32_t>::min(),
+                            std::numeric_limits<std::int32_t>::max()));
+            const bool nextAccelerate = frame.accelerate > 0.5f;
+            const bool nextBrake = frame.brake > 0.5f;
+            const forevervalidator::AnalogInputState nextSteering =
+                    SaturateAnalogInputState(
+                            static_cast<std::int64_t>(std::llround(
+                                    static_cast<double>(frame.steering) *
+                                    static_cast<double>(
+                                            kAnalogInputScale))));
+            if (nextAccelerate != accelerate) {
+                accelerate = nextAccelerate;
+                source.push_back(ManualSwitchEvent(
+                        eventTime,
+                        PhysicsSandboxInputAction::Accelerate,
+                        accelerate));
+            }
+            if (nextBrake != brake) {
+                brake = nextBrake;
+                source.push_back(ManualSwitchEvent(
+                        eventTime,
+                        PhysicsSandboxInputAction::Brake,
+                        brake));
+            }
+            if (nextSteering != steering) {
+                steering = nextSteering;
+                source.push_back(ManualAnalogInputEvent(
+                        eventTime,
+                        PhysicsSandboxInputAction::Steer,
+                        steering));
+            }
+        }
+    }
+
+    std::vector<SandboxInputEvent> result =
+            manualRuntime_->fixedInputs;
+    result.reserve(result.size() + source.size());
+    for (const SandboxInputEvent &event : source) {
+        if (std::none_of(
+                    result.begin(),
+                    result.end(),
+                    [&event](const SandboxInputEvent &existing) {
+                        return SameInputEvent(existing, event);
+                    })) {
+            result.push_back(event);
+        }
+    }
+    std::stable_sort(
+            result.begin(),
+            result.end(),
+            [](const SandboxInputEvent &left,
+               const SandboxInputEvent &right) {
+                return left.timeMs < right.timeMs;
+            });
+    return result;
+}
+
+std::vector<SandboxInputEvent>
+RaceViewerController::effectiveManualInputs() const {
+    if (manualRuntime_ == nullptr) {
+        return {};
+    }
+    std::vector<SandboxInputEvent> inputs = manualTakeover_
+            ? takeoverSourceInputs_
+            : manualRuntime_->fixedInputs;
+    if (manualTakeover_) {
+        inputs.erase(
+                std::remove_if(
+                        inputs.begin(),
+                        inputs.end(),
+                        [this](const SandboxInputEvent &event) {
+                            return (steeringTakeoverTimeMs_ &&
+                                    IsSteeringInput(event.action) &&
+                                    event.timeMs >
+                                            *steeringTakeoverTimeMs_) ||
+                                    (longitudinalTakeoverTimeMs_ &&
+                                     IsLongitudinalInput(event.action) &&
+                                     event.timeMs >
+                                             *longitudinalTakeoverTimeMs_);
+                        }),
+                inputs.end());
+    }
+    inputs.insert(
+            inputs.end(),
+            manualRuntime_->driverInputs.begin(),
+            manualRuntime_->driverInputs.end());
+    std::stable_sort(
+            inputs.begin(),
+            inputs.end(),
+            [](const SandboxInputEvent &left,
+               const SandboxInputEvent &right) {
+                return left.timeMs < right.timeMs;
+            });
+    return inputs;
+}
+
+QString RaceViewerController::currentInputScript() const {
+    const RaceViewerRun *const run = selectedRun();
+    if (run == nullptr) {
+        return {};
+    }
+
+    std::vector<SandboxInputEvent> inputs;
+    if (run->id == QStringLiteral("manual")) {
+        if (manualRuntime_ == nullptr) {
+            return {};
+        }
+        inputs = effectiveManualInputs();
+    } else {
+        inputs = run->inputs;
+    }
+
+    std::int64_t raceStartTimeMs = 0;
+    bool foundRaceStart = false;
+    for (const SandboxInputEvent &event : inputs) {
+        if (event.action != PhysicsSandboxInputAction::RaceRunning) {
+            continue;
+        }
+        if (!foundRaceStart || event.timeMs < raceStartTimeMs) {
+            raceStartTimeMs = event.timeMs;
+            foundRaceStart = true;
+        }
+    }
+    const std::int64_t cutoffTimeMs = std::clamp<std::int64_t>(
+            raceStartTimeMs + timeMs_,
+            std::numeric_limits<std::int32_t>::min(),
+            std::numeric_limits<std::int32_t>::max());
+    inputs.erase(
+            std::remove_if(
+                    inputs.begin(),
+                    inputs.end(),
+                    [cutoffTimeMs](const SandboxInputEvent &event) {
+                        return event.timeMs > cutoffTimeMs;
+                    }),
+            inputs.end());
+    return QString::fromStdString(FormatInputScript(inputs));
+}
+
+bool RaceViewerController::hasTrajectoryForRun(const QString &runId) const {
+    return std::any_of(
+            trajectoryPaths_.begin(),
+            trajectoryPaths_.end(),
+            [&runId](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("runId"))
+                               .toString() == runId;
+            });
+}
+
+bool RaceViewerController::trajectoryVisibleForRun(
+        const QString &runId) const {
+    const auto path = std::find_if(
+            trajectoryPaths_.begin(),
+            trajectoryPaths_.end(),
+            [&runId](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("runId"))
+                               .toString() == runId;
+            });
+    return path != trajectoryPaths_.end() &&
+            path->toMap()
+                    .value(QStringLiteral("visible"), true)
+                    .toBool();
+}
+
+void RaceViewerController::setTrajectoryVisibleForRun(
+        const QString &runId,
+        bool visible) {
+    QVariantList paths = trajectoryPaths_;
+    const auto path = std::find_if(
+            paths.begin(), paths.end(), [&runId](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("runId"))
+                               .toString() == runId;
+            });
+    if (path == paths.end()) {
+        return;
+    }
+    QVariantMap updated = path->toMap();
+    if (updated.value(QStringLiteral("visible"), true).toBool() == visible) {
+        return;
+    }
+    updated.insert(QStringLiteral("visible"), visible);
+    *path = std::move(updated);
+    trajectoryPaths_ = std::move(paths);
+    emit trajectoriesChanged();
+}
+
+void RaceViewerController::scheduleInputPreviewRebuild() {
+    if (!loaded_ || manualRuntime_ == nullptr || manualDriving_) {
+        return;
+    }
+    ++inputPreviewSerial_;
+    inputPreviewBuildPending_ = true;
+    if (inputPreviewThread_ != nullptr) {
+        inputPreviewThread_->requestInterruption();
+        return;
+    }
+    startInputPreviewBuild();
+}
+
+void RaceViewerController::startInputPreviewBuild() {
+    if (!inputPreviewBuildPending_ || inputPreviewThread_ != nullptr ||
+        !loaded_ || manualRuntime_ == nullptr || manualDriving_) {
+        return;
+    }
+    inputPreviewBuildPending_ = false;
+    const std::uint64_t previewSerial = inputPreviewSerial_;
+    const std::uint64_t loadSerial = loadSerial_;
+    const QString packsDirectory = loadedPacksDirectory_;
+    const QString replayPath = loadedReplayPath_;
+    const PhysicsBackend backend = loadedBackend_;
+    const QString script = previewInputScript_;
+    const float trajectoryRadius = static_cast<float>(
+            std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
+    std::shared_ptr<ManualDriveRuntime> runtime = inputPreviewRuntime_;
+    auto result = std::make_shared<RaceViewerInputPreviewResult>();
+
+    QThread *const thread = QThread::create(
+            [result,
+             packsDirectory,
+             replayPath,
+             backend,
+             script,
+             trajectoryRadius,
+             runtime = std::move(runtime)]() mutable {
+                *result = BuildInputPreview(
+                        packsDirectory,
+                        replayPath,
+                        backend,
+                        script,
+                        trajectoryRadius,
+                        std::move(runtime));
+            });
+    inputPreviewThread_ = thread;
+    connect(thread, &QThread::finished, this,
+            [this, thread, previewSerial, loadSerial,
+             result = std::move(result)]() mutable {
+        if (inputPreviewThread_ == thread) {
+            inputPreviewThread_ = nullptr;
+        }
+        applyInputPreviewResult(
+                previewSerial, loadSerial, std::move(*result));
+        if (inputPreviewBuildPending_) {
+            startInputPreviewBuild();
+        }
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+void RaceViewerController::applyInputPreviewResult(
+        std::uint64_t previewSerial,
+        std::uint64_t loadSerial,
+        RaceViewerInputPreviewResult result) {
+    if (loadSerial == loadSerial_ && result.runtime != nullptr &&
+        inputPreviewRuntime_ == nullptr) {
+        inputPreviewRuntime_ = result.runtime;
+    }
+    if (previewSerial != inputPreviewSerial_ || loadSerial != loadSerial_ ||
+        result.canceled) {
+        return;
+    }
+    if (!result.error.isEmpty()) {
+        setStatusText(result.error);
+        clearInputPreview();
+        emit stateChanged();
+        return;
+    }
+    if (result.frames.empty() || result.mesh.filled.isEmpty()) {
+        clearInputPreview();
+        emit stateChanged();
+        return;
+    }
+
+    const bool resumePlayback =
+            playing_ && selectedRunId_ == QStringLiteral("preview") &&
+            !simulationDebugger_.active();
+    if (resumePlayback) {
+        pause();
+    }
+    QVariantList paths = trajectoryPaths_;
+    QVariantMap path;
+    path.insert(QStringLiteral("kind"), QStringLiteral("preview"));
+    path.insert(QStringLiteral("runId"), QStringLiteral("preview"));
+    path.insert(QStringLiteral("name"), QStringLiteral("Inputs"));
+    path.insert(QStringLiteral("color"), QStringLiteral("#41c979"));
+    path.insert(QStringLiteral("opacity"), 0.94);
+    path.insert(
+            QStringLiteral("geometry"),
+            QVariant::fromValue(
+                    static_cast<QObject *>(&inputPreviewGeometry_)));
+    const auto existingPath = std::find_if(
+            paths.begin(), paths.end(), [](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("kind"))
+                               .toString() == QStringLiteral("preview");
+            });
+    path.insert(
+            QStringLiteral("visible"),
+            existingPath == paths.end() ||
+                    existingPath->toMap()
+                            .value(QStringLiteral("visible"), true)
+                            .toBool());
+    if (existingPath == paths.end()) {
+        paths.prepend(path);
+    } else {
+        *existingPath = path;
+    }
+    inputPreviewGeometry_.setMesh(
+            std::move(result.mesh.filled),
+            static_cast<int>(sizeof(FilledVertex)),
+            QQuick3DGeometry::PrimitiveType::Triangles,
+            true,
+            result.mesh.boundsMin,
+            result.mesh.boundsMax);
+    trajectoryPaths_ = std::move(paths);
+    inputPreviewVisible_ = true;
+    emit trajectoriesChanged();
+    upsertRun(
+            QStringLiteral("preview"),
+            QStringLiteral("Inputs"),
+            std::move(result.frames),
+            std::move(result.inputs),
+            false);
+    if (resumePlayback) {
+        play();
+    }
+    emit stateChanged();
+}
+
+void RaceViewerController::cancelInputPreviewBuild() {
+    ++inputPreviewSerial_;
+    inputPreviewBuildPending_ = false;
+    if (inputPreviewThread_ != nullptr) {
+        inputPreviewThread_->requestInterruption();
+    }
+}
+
+void RaceViewerController::waitForInputPreviewWorker() {
+    cancelInputPreviewBuild();
+    if (inputPreviewThread_ != nullptr) {
+        inputPreviewThread_->quit();
+        inputPreviewThread_->wait();
+        inputPreviewThread_ = nullptr;
+    }
+}
+
+void RaceViewerController::clearInputPreview() {
+    const qsizetype previousPathCount = trajectoryPaths_.size();
+    trajectoryPaths_.erase(
+            std::remove_if(
+                    trajectoryPaths_.begin(),
+                    trajectoryPaths_.end(),
+                    [](const QVariant &entry) {
+                        return entry.toMap()
+                                           .value(QStringLiteral("kind"))
+                                           .toString() ==
+                                QStringLiteral("preview");
+                    }),
+            trajectoryPaths_.end());
+    if (inputPreviewVisible_) {
+        inputPreviewGeometry_.clearMesh();
+        inputPreviewVisible_ = false;
+    }
+    if (trajectoryPaths_.size() != previousPathCount) {
+        emit trajectoriesChanged();
+    }
+
+    const auto previewRun = std::find_if(
+            runs_.begin(), runs_.end(), [](const RaceViewerRun &run) {
+                return run.id == QStringLiteral("preview");
+            });
+    if (previewRun == runs_.end()) {
+        return;
+    }
+    const bool selected = selectedRunId_ == QStringLiteral("preview");
+    if (selected) {
+        pause();
+    }
+    runs_.erase(previewRun);
+    emit runsChanged();
+    if (selected) {
+        selectedRunId_ = runs_.empty() ? QString{} : runs_.front().id;
+        emit selectedRunChanged();
+    }
+    refreshSelectedRun();
+    emit timelineChanged();
+    emit timeChanged();
+}
+
 void RaceViewerController::loadMap(const QString &packsDirectory,
                                    const QString &replayPath) {
     loadMap(packsDirectory,
@@ -833,6 +2783,8 @@ void RaceViewerController::loadMap(const QString &packsDirectory,
 void RaceViewerController::loadMap(const QString &packsDirectory,
                                    const QString &replayPath,
                                    const QString &backendId) {
+    stopSimulationDebugger();
+    stopManualDrive();
     const std::optional<PhysicsBackend> backend =
             ParsePhysicsBackend(backendId.toStdString());
     if (!backend) {
@@ -840,6 +2792,7 @@ void RaceViewerController::loadMap(const QString &packsDirectory,
         return;
     }
     pendingRun_.reset();
+    pendingImprovements_.clear();
     if (workerThread_ != nullptr) {
         queuedMapLoad_ =
                 MapLoadRequest{packsDirectory, replayPath, *backend};
@@ -865,6 +2818,7 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
     const QFileInfo replayInfo(replayPath);
     if (!packsInfo.isDir() || !packsInfo.isReadable()) {
         pendingRun_.reset();
+        pendingImprovements_.clear();
         setStatusText(QStringLiteral(
                 "Select a readable installed Packs directory."));
         setLoading(false);
@@ -872,6 +2826,7 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
     }
     if (!replayInfo.isFile() || !replayInfo.isReadable()) {
         pendingRun_.reset();
+        pendingImprovements_.clear();
         setStatusText(QStringLiteral("Select a readable replay file."));
         setLoading(false);
         return;
@@ -881,6 +2836,7 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
     // Publishing an empty run/ellipsoid model detaches nested Repeater3D render
     // nodes on some Qt Quick 3D backends.
     setLoading(true);
+    cancelInputPreviewBuild();
     setStatusText(QStringLiteral(
             "Loading map geometry and materials..."));
 
@@ -917,6 +2873,18 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
             beginMapLoad(pendingRun_->packsDirectory,
                          pendingRun_->replayPath,
                          pendingRun_->backend);
+            return;
+        }
+        if (!pendingImprovements_.empty()) {
+            const PendingImprovement &pending =
+                    pendingImprovements_.back();
+            if (!loaded_ ||
+                loadedPacksDirectory_ != pending.packsDirectory ||
+                loadedReplayPath_ != pending.replayPath) {
+                beginMapLoad(pending.packsDirectory,
+                             pending.replayPath,
+                             pending.backend);
+            }
         }
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
@@ -930,10 +2898,15 @@ void RaceViewerController::applyLoadResult(
     pause();
     if (!result.error.isEmpty()) {
         pendingRun_.reset();
+        pendingImprovements_.clear();
         setStatusText(result.error);
+        if (loaded_ && !queuedMapLoad_) {
+            scheduleInputPreviewRebuild();
+        }
         if (!queuedMapLoad_) setLoading(false);
         return;
     }
+    stopManualDrive();
 
     trackFilledGeometry_.setMesh(
             std::move(result.track.filled),
@@ -1001,23 +2974,55 @@ void RaceViewerController::applyLoadResult(
     timeMs_ = 0;
     loadedPacksDirectory_ = result.packsDirectory;
     loadedReplayPath_ = result.replayPath;
+    loadedBackend_ = result.backend;
+    whiteboard_.setMapIdentity(result.mapKey, result.mapName);
+    manualRuntime_ = std::move(result.manualRuntime);
+    inputPreviewRuntime_.reset();
+    resetManualTakeoverState();
+    simulationDebugger_.configure(QStringLiteral("Reference"));
     loaded_ = true;
     runs_.clear();
     selectedRunId_.clear();
+    trajectoryPaths_.clear();
+    inputPreviewGeometry_.clearMesh();
+    bestTrajectoryGeometry_.clearMesh();
+    inputPreviewVisible_ = false;
+    trajectoryGeometries_.clear();
+    trajectoryKeys_.clear();
     durationMs_ = 0;
-    updatePose();
-    emit runsChanged();
-    emit selectedRunChanged();
-    emit timelineChanged();
-    emit timeChanged();
     const bool addingPendingRun =
             pendingRun_ &&
             pendingRun_->packsDirectory == loadedPacksDirectory_ &&
             pendingRun_->replayPath == loadedReplayPath_;
+    const bool addingPendingImprovements =
+            std::any_of(
+                    pendingImprovements_.begin(),
+                    pendingImprovements_.end(),
+                    [this](const PendingImprovement &pending) {
+                        return pending.packsDirectory ==
+                                        loadedPacksDirectory_ &&
+                                pending.replayPath ==
+                                        loadedReplayPath_;
+                    });
     applyPendingRunIfReady();
-    setStatusText(addingPendingRun
-                          ? QStringLiteral("Best run added")
-                          : QStringLiteral("Map loaded"));
+    scheduleInputPreviewRebuild();
+    const bool pendingImprovementsAdded =
+            applyPendingImprovementsIfReady();
+    if (!addingPendingImprovements ||
+        pendingImprovementsAdded) {
+        setStatusText(addingPendingRun
+                              ? QStringLiteral("Best run added")
+                              : addingPendingImprovements
+                              ? QStringLiteral(
+                                        "Search improvement trajectories added")
+                              : QStringLiteral("Map loaded"));
+    }
+    updatePose();
+    emit runsChanged();
+    emit selectedRunChanged();
+    emit trajectoriesChanged();
+    emit timelineChanged();
+    emit timeChanged();
     if (!queuedMapLoad_) setLoading(false);
     emit sceneChanged();
     emit stateChanged();
@@ -1031,11 +3036,39 @@ void RaceViewerController::applyPendingRunIfReady() {
     }
     std::vector<RaceViewerFrame> frames =
             std::move(pendingRun_->frames);
+    std::vector<SandboxInputEvent> inputs =
+            std::move(pendingRun_->inputs);
     pendingRun_.reset();
     upsertRun(QStringLiteral("best"),
               QStringLiteral("Best"),
               std::move(frames),
+              std::move(inputs),
               true);
+}
+
+bool RaceViewerController::applyPendingImprovementsIfReady() {
+    if (!loaded_ || pendingImprovements_.empty()) {
+        return true;
+    }
+    bool succeeded = true;
+    std::vector<PendingImprovement> remaining;
+    remaining.reserve(pendingImprovements_.size());
+    for (PendingImprovement &pending : pendingImprovements_) {
+        if (pending.packsDirectory == loadedPacksDirectory_ &&
+            pending.replayPath == loadedReplayPath_) {
+            if (!appendImprovementTrajectory(
+                        pending.searchId,
+                        pending.improvementNumber,
+                        pending.frames)) {
+                remaining.push_back(std::move(pending));
+                succeeded = false;
+            }
+        } else {
+            remaining.push_back(std::move(pending));
+        }
+    }
+    pendingImprovements_ = std::move(remaining);
+    return succeeded;
 }
 
 void RaceViewerController::setLoading(bool value) {
@@ -1073,9 +3106,13 @@ RaceViewerRun *RaceViewerController::selectedRun() noexcept {
 void RaceViewerController::upsertRun(QString id,
                                      QString name,
                                      std::vector<RaceViewerFrame> frames,
+                                     std::vector<SandboxInputEvent> inputs,
                                      bool select) {
     if (frames.empty()) {
         return;
+    }
+    if (id == QStringLiteral("best")) {
+        updateBestTrajectory(name, frames);
     }
     auto existing = std::find_if(
             runs_.begin(), runs_.end(), [&id](const RaceViewerRun &run) {
@@ -1083,14 +3120,21 @@ void RaceViewerController::upsertRun(QString id,
             });
     const QString runId = id;
     if (existing == runs_.end()) {
+        std::vector<RaceViewerSplit> checkpointSplits =
+                BuildCheckpointSplits(frames);
         runs_.push_back({std::move(id),
                          std::move(name),
                          std::move(frames),
+                         std::move(inputs),
                          {},
-                         {}});
+                         {},
+                         std::move(checkpointSplits)});
     } else {
         existing->name = std::move(name);
         existing->frames = std::move(frames);
+        existing->inputs = std::move(inputs);
+        existing->checkpointSplits =
+                BuildCheckpointSplits(existing->frames);
     }
     emit runsChanged();
 
@@ -1156,6 +3200,246 @@ void RaceViewerController::advancePlayback() {
         return;
     }
     setCurrentTick(targetTick);
+}
+
+void RaceViewerController::appendSimulationDebuggerFrame(
+        const QVariantMap &frame) {
+    const QVariantList position =
+            frame.value(QStringLiteral("position")).toList();
+    const QVariantList rotation =
+            frame.value(QStringLiteral("rotation")).toList();
+    if (position.size() != 3 || rotation.size() != 4) {
+        setStatusText(QStringLiteral(
+                "Native debugger returned an invalid car pose."));
+        simulationDebugger_.pause();
+        return;
+    }
+
+    const RaceViewerFrame viewerFrame{
+            frame.value(QStringLiteral("timeMs")).toLongLong(),
+            QVector3D(
+                    position[0].toFloat(),
+                    position[1].toFloat(),
+                    position[2].toFloat()),
+            QQuaternion(
+                    rotation[3].toFloat(),
+                    rotation[0].toFloat(),
+                    rotation[1].toFloat(),
+                    rotation[2].toFloat())
+                    .normalized(),
+            frame.value(QStringLiteral("accelerate")).toFloat(),
+            frame.value(QStringLiteral("brake")).toFloat(),
+            frame.value(QStringLiteral("steering")).toFloat(),
+            frame.value(QStringLiteral("checkpointsCollected")).toUInt(),
+            frame.value(QStringLiteral("checkpointsTotal")).toUInt(),
+            frame.value(QStringLiteral("completedLaps")).toUInt(),
+            frame.value(QStringLiteral("totalLaps")).toUInt(),
+            frame.value(QStringLiteral("raceCompleted")).toBool(),
+            frame.contains(QStringLiteral("finishTimeMs"))
+                    ? std::optional<std::uint32_t>(
+                              frame.value(QStringLiteral("finishTimeMs"))
+                                      .toUInt())
+                    : std::nullopt};
+
+    auto found = std::find_if(
+            runs_.begin(), runs_.end(), [](const RaceViewerRun &run) {
+                return run.id == QStringLiteral("debug");
+            });
+    if (found == runs_.end()) {
+        std::vector<RaceViewerSplit> checkpointSplits =
+                BuildCheckpointSplits({viewerFrame});
+        runs_.push_back(
+                {QStringLiteral("debug"),
+                 QStringLiteral("Reference source"),
+                 {viewerFrame},
+                 {},
+                 {},
+                 {},
+                 std::move(checkpointSplits)});
+        found = std::prev(runs_.end());
+        emit runsChanged();
+    } else if (
+            !found->frames.empty() &&
+            found->frames.back().timeMs == viewerFrame.timeMs) {
+        found->frames.back() = viewerFrame;
+        found->checkpointSplits =
+                BuildCheckpointSplits(found->frames);
+    } else if (
+            found->frames.empty() ||
+            found->frames.back().timeMs < viewerFrame.timeMs) {
+        const std::uint32_t previousCheckpointCount =
+                found->frames.empty()
+                ? 0u
+                : found->frames.back().checkpointsCollected;
+        found->frames.push_back(viewerFrame);
+        AppendCheckpointTransitions(
+                found->checkpointSplits,
+                previousCheckpointCount,
+                viewerFrame);
+    } else {
+        setStatusText(QStringLiteral(
+                "Native debugger returned a non-monotonic "
+                "simulation frame."));
+        simulationDebugger_.pause();
+        return;
+    }
+
+    if (selectedRunId_ != QStringLiteral("debug")) {
+        selectedRunId_ = QStringLiteral("debug");
+        emit selectedRunChanged();
+    }
+    durationMs_ = std::max<qint64>(
+            static_cast<qint64>(found->frames.back().timeMs),
+            frame.value(QStringLiteral("durationMs")).toLongLong());
+    timeMs_ = found->frames.back().timeMs;
+    updatePose();
+    setStatusText(simulationDebugger_.statusText());
+    emit timelineChanged();
+    emit timeChanged();
+}
+
+void RaceViewerController::advanceManualDrive() {
+    if (!manualDriving_ || manualRuntime_ == nullptr) {
+        return;
+    }
+    RaceViewerRun *const run = selectedRun();
+    if (run == nullptr || run->id != QStringLiteral("manual") ||
+        run->frames.empty()) {
+        finishManualDrive(
+                QStringLiteral("Manual drive stopped: run is unavailable."),
+                false);
+        return;
+    }
+
+    const qint64 targetTick = manualDriveStartTick_ +
+            manualDriveClock_.elapsed() /
+                    static_cast<qint64>(kViewerTickDurationMs);
+    const qint64 currentTick =
+            static_cast<qint64>(manualRuntime_->state.tick);
+    const qint64 steps = std::min<qint64>(
+            std::max<qint64>(0, targetTick - currentTick), 32);
+    bool changed = false;
+    for (qint64 step = 0; step < steps; ++step) {
+        if (manualRuntime_->state.timeMs >=
+            manualRuntime_->state.durationMs) {
+            finishManualDrive(
+                    QStringLiteral("Manual drive complete"), true);
+            break;
+        }
+        auto advanced = manualRuntime_->sandbox.AdvanceTicks(1u);
+        if (!advanced) {
+            finishManualDrive(
+                    QStringLiteral("Manual drive failed: %1")
+                            .arg(SandboxErrorText(advanced.Error())),
+                    false);
+            break;
+        }
+        manualRuntime_->state = advanced.Value();
+        const RaceViewerFrame viewerFrame =
+                ToViewerFrame(manualRuntime_->state);
+        const std::uint32_t previousCheckpointCount =
+                run->frames.back().checkpointsCollected;
+        run->frames.push_back(viewerFrame);
+        AppendCheckpointTransitions(
+                run->checkpointSplits,
+                previousCheckpointCount,
+                viewerFrame);
+        durationMs_ = static_cast<qint64>(
+                manualRuntime_->state.timeMs);
+        timeMs_ = durationMs_;
+        changed = true;
+        if (manualRuntime_->state.raceCompleted) {
+            finishManualDrive(
+                    QStringLiteral("Manual drive complete"), true);
+            break;
+        }
+    }
+    if (changed) {
+        updatePose();
+        emit timelineChanged();
+        emit timeChanged();
+    }
+}
+
+bool RaceViewerController::replaceManualInputs() {
+    if (manualRuntime_ == nullptr) {
+        return false;
+    }
+    std::vector<PhysicsSandboxInputEvent> inputs =
+            effectiveManualInputs();
+    auto replaced =
+            manualRuntime_->sandbox.ReplaceInputs(std::move(inputs));
+    if (!replaced) {
+        setStatusText(
+                QStringLiteral("Manual drive failed: %1")
+                        .arg(SandboxErrorText(replaced.Error())));
+        return false;
+    }
+    return true;
+}
+
+void RaceViewerController::appendHeldManualInputs(std::int32_t timeMs) {
+    if (manualRuntime_ == nullptr) {
+        return;
+    }
+    const std::array<std::pair<bool, PhysicsSandboxInputAction>, 4> held{{
+            {manualLeft_, PhysicsSandboxInputAction::SteerLeft},
+            {manualRight_, PhysicsSandboxInputAction::SteerRight},
+            {manualAccelerate_, PhysicsSandboxInputAction::Accelerate},
+            {manualBrake_, PhysicsSandboxInputAction::Brake},
+    }};
+    for (const auto &[active, action] : held) {
+        if (active) {
+            manualRuntime_->driverInputs.push_back(
+                    ManualSwitchEvent(timeMs, action, true));
+        }
+    }
+}
+
+void RaceViewerController::finishManualDrive(
+        const QString &status,
+        bool releaseInputs) {
+    if (!manualDriving_) {
+        return;
+    }
+    if (releaseInputs) {
+        releaseManualInputs();
+        if (!manualDriving_) {
+            return;
+        }
+    }
+    manualDriveTimer_.stop();
+    manualDriving_ = false;
+    resetManualInputState();
+    setStatusText(status);
+    emit manualDrivingChanged();
+    scheduleInputPreviewRebuild();
+}
+
+void RaceViewerController::resetManualInputState() {
+    const bool changed = manualLeft_ || manualRight_ ||
+            manualAccelerate_ || manualBrake_;
+    manualLeft_ = false;
+    manualRight_ = false;
+    manualAccelerate_ = false;
+    manualBrake_ = false;
+    if (changed) {
+        emit manualInputChanged();
+    }
+}
+
+void RaceViewerController::resetManualTakeoverState() {
+    const bool changed = manualTakeover_ ||
+            steeringTakeoverTimeMs_.has_value() ||
+            longitudinalTakeoverTimeMs_.has_value();
+    manualTakeover_ = false;
+    takeoverSourceInputs_.clear();
+    steeringTakeoverTimeMs_.reset();
+    longitudinalTakeoverTimeMs_.reset();
+    manualDriveStartTick_ = 0;
+    if (changed) {
+        emit manualInputChanged();
+    }
 }
 
 void RaceViewerController::setPlaying(bool value) {

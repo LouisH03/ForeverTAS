@@ -26,12 +26,26 @@ int main(int argc, char **argv) {
     forevertas::viewer::RaceViewerController viewer;
     QObject::connect(
             &controller,
+            &forevertas::app::SearchController::searchImprovement,
+            &viewer,
+            [&viewer](forevertas::app::SearchImprovementPtr improvement) {
+                viewer.addSearchImprovement(
+                        improvement->packsDirectory,
+                        improvement->replayPath,
+                        improvement->timeline,
+                        improvement->simulationBackendId,
+                        improvement->searchId,
+                        improvement->improvementNumber);
+            });
+    QObject::connect(
+            &controller,
             &forevertas::app::SearchController::searchCompleted,
             &viewer,
             [&viewer](forevertas::app::SearchCompletionPtr completion) {
                 viewer.addSearchRun(completion->packsDirectory,
                                     completion->replayPath,
                                     completion->bestTimeline,
+                                    completion->bestInputs,
                                     completion->simulationBackendId);
             });
     forevertas::viewer::RegisterRaceViewerQmlTypes();

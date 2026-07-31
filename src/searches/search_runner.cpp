@@ -1,16 +1,24 @@
 #include "searches/search_runner.h"
 
 #include "mutations/composite_input_mutator.h"
+#include "mutations/input_event_utils.h"
+#include "replay_file_io.h"
 #include "searches/algorithm_registry.h"
 #include "searches/cuda_search_configuration.h"
+#include "searches/option_settings_utils.h"
 
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -61,7 +69,99 @@ SearchTimelineFrame ToTimelineFrame(
             view.car.rotationW,
             view.accelerate,
             view.brake,
-            view.steering};
+            view.steering,
+            view.checkpointsCollected,
+            view.checkpointsTotal,
+            view.completedLaps,
+            view.totalLaps,
+            view.raceCompleted,
+            view.finishTimeMs};
+}
+
+struct TimelineSamplingRuntime {
+    forevervalidator::experimental::PhysicsSandbox sandbox;
+    forevervalidator::experimental::PhysicsSandboxState initialState;
+    std::uint64_t finalTickCount = 0u;
+};
+
+TimelineSamplingRuntime CreateTimelineSamplingRuntime(
+        const SearchRequest &request,
+        const forevervalidator::AssetBytes &replay,
+        const forevervalidator::ReplayIdentity &identity) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    AssetSource source = Require(
+            OpenInstalledPackDirectory(request.packDirectory),
+            "opening pack directory for timeline sampling");
+    PhysicsSandboxOptions options;
+    options.backend = ToForeverValidatorBackend(request.backend);
+    options.tickDurationMs = kSearchTickDurationMs;
+    PhysicsSandbox sandbox = Require(
+            CreatePhysicsSandbox(std::move(source), options),
+            "creating timeline-sampling sandbox");
+    const PhysicsSandboxStateView state = Require(
+            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading replay for timeline sampling");
+    if (state.durationMs % kSearchTickDurationMs != 0u) {
+        throw std::runtime_error(
+                "replay duration is not aligned to the search tick duration");
+    }
+    PhysicsSandboxState initialState = Require(
+            sandbox.CaptureState(),
+            "capturing timeline-sampling initial state");
+    return {
+            std::move(sandbox),
+            std::move(initialState),
+            state.durationMs / kSearchTickDurationMs};
+}
+
+std::vector<SearchTimelineFrame> SampleTimeline(
+        TimelineSamplingRuntime &runtime,
+        const std::vector<
+                forevervalidator::experimental::PhysicsSandboxInputEvent>
+                &inputs,
+        const SearchRunControl *control,
+        bool reportProgress) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    CheckCancellation(control);
+    PhysicsSandboxStateView state = Require(
+            runtime.sandbox.RestoreState(runtime.initialState),
+            "restoring timeline-sampling initial state");
+    Require(runtime.sandbox.ReplaceInputs(inputs),
+            "replacing inputs for timeline sampling");
+    std::vector<SearchTimelineFrame> frames;
+    if (runtime.finalTickCount >= frames.max_size()) {
+        throw std::length_error("timeline contains too many ticks");
+    }
+    frames.reserve(
+            static_cast<std::size_t>(runtime.finalTickCount) + 1u);
+    frames.push_back(ToTimelineFrame(state));
+    if (reportProgress) {
+        ReportProgress(control,
+                       SearchProgressStage::FinalSampling,
+                       0u,
+                       runtime.finalTickCount);
+    }
+
+    for (std::uint64_t tick = 1u;
+         tick <= runtime.finalTickCount;
+         ++tick) {
+        CheckCancellation(control);
+        state = Require(runtime.sandbox.AdvanceTicks(1u),
+                        "sampling run timeline");
+        frames.push_back(ToTimelineFrame(state));
+        if (reportProgress &&
+            (tick == runtime.finalTickCount || tick % 128u == 0u)) {
+            ReportProgress(control,
+                           SearchProgressStage::FinalSampling,
+                           tick,
+                           runtime.finalTickCount);
+        }
+    }
+    return frames;
 }
 
 std::vector<SearchTimelineFrame> SampleBestTimeline(
@@ -72,54 +172,11 @@ std::vector<SearchTimelineFrame> SampleBestTimeline(
                 forevervalidator::experimental::PhysicsSandboxInputEvent>
                 &inputs,
         const SearchRunControl *control) {
-    using namespace forevervalidator;
-    using namespace forevervalidator::experimental;
-
-    CheckCancellation(control);
-    AssetSource source = Require(
-            OpenInstalledPackDirectory(request.packDirectory),
-            "opening pack directory for final sampling");
-    PhysicsSandboxOptions options;
-    options.backend = ToForeverValidatorBackend(request.backend);
-    options.tickDurationMs = kSearchTickDurationMs;
-    PhysicsSandbox sandbox = Require(
-            CreatePhysicsSandbox(std::move(source), options),
-            "creating final-sampling sandbox");
-    PhysicsSandboxStateView state = Require(
-            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
-            "loading replay for final sampling");
-    Require(sandbox.ReplaceInputs(inputs),
-            "replacing best inputs for final sampling");
-    state = Require(sandbox.ReadState(),
-                    "reading final-sampling initial state");
-    if (state.durationMs % kSearchTickDurationMs != 0u) {
-        throw std::runtime_error(
-                "replay duration is not aligned to the search tick duration");
-    }
-
-    const std::uint64_t finalTickCount =
-            state.durationMs / kSearchTickDurationMs;
-    std::vector<SearchTimelineFrame> frames;
-    frames.reserve(static_cast<std::size_t>(finalTickCount + 1u));
-    frames.push_back(ToTimelineFrame(state));
-    ReportProgress(control,
-                   SearchProgressStage::FinalSampling,
-                   0u,
-                   finalTickCount);
-
-    for (std::uint64_t tick = 1u; tick <= finalTickCount; ++tick) {
-        CheckCancellation(control);
-        state = Require(sandbox.AdvanceTicks(1u),
-                        "sampling best-run timeline");
-        frames.push_back(ToTimelineFrame(state));
-        if (tick == finalTickCount || tick % 128u == 0u) {
-            ReportProgress(control,
-                           SearchProgressStage::FinalSampling,
-                           tick,
-                           finalTickCount);
-        }
-    }
-    return frames;
+    ReportProgress(
+            control, SearchProgressStage::FinalSamplingSetup, 0u, 0u);
+    TimelineSamplingRuntime runtime =
+            CreateTimelineSamplingRuntime(request, replay, identity);
+    return SampleTimeline(runtime, inputs, control, true);
 }
 
 struct CachedSearchSandbox {
@@ -182,6 +239,7 @@ SearchResult RunLoadedSearch(
                     kSearchTickDurationMs);
     std::vector<PhysicsSandboxCudaModifier> cudaModifiers;
     std::optional<PhysicsSandboxCudaEvaluator> cudaEvaluator;
+    ReportProgress(control, SearchProgressStage::PreparingSearch, 0u, 0u);
 #if FOREVERVALIDATOR_HAS_CUDA
     if (request.backend == PhysicsBackend::Cuda) {
         if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
@@ -197,12 +255,52 @@ SearchResult RunLoadedSearch(
                 kSearchTickDurationMs);
     }
 #endif
+    const SearchRunControl *executionControl = control;
+    SearchRunControl instrumentedControl;
+    std::unique_ptr<TimelineSamplingRuntime> improvementSampler;
+    std::uint64_t sampledImprovementCount = 0u;
+    if (control != nullptr && control->liveChanged) {
+        instrumentedControl = *control;
+        const auto downstreamLiveChanged = control->liveChanged;
+        instrumentedControl.liveChanged =
+                [&, downstreamLiveChanged](
+                        const SearchLiveUpdate &live) {
+                    const bool improved =
+                            live.winnerSource ==
+                                    SearchWinnerSource::Mutation &&
+                            live.mutationImprovementCount >
+                                    sampledImprovementCount;
+                    if (!improved) {
+                        downstreamLiveChanged(live);
+                        return;
+                    }
+                    if (!improvementSampler) {
+                        improvementSampler =
+                                std::make_unique<TimelineSamplingRuntime>(
+                                        CreateTimelineSamplingRuntime(
+                                                request,
+                                                replay,
+                                                identity));
+                    }
+                    SearchLiveUpdate enriched = live;
+                    enriched.bestTimeline = SampleTimeline(
+                            *improvementSampler,
+                            live.bestInputs,
+                            control,
+                            false);
+                    downstreamLiveChanged(enriched);
+                    sampledImprovementCount =
+                            live.mutationImprovementCount;
+                };
+        executionControl = &instrumentedControl;
+    }
+
     SearchResult result = search->Run({
             sandbox,
             kSearchTickDurationMs,
             mutator,
             *evaluator,
-            control,
+            executionControl,
             request.parallelSampleCount,
             request.calibrateCudaParallelSampleCount,
             cudaModifiers.empty() ? nullptr : &cudaModifiers,
@@ -230,7 +328,484 @@ BuildBaselineOrThrow(
     if (!baseline) {
         throw std::invalid_argument(*baseline.error);
     }
+    ConvertKeyboardSteeringToAnalog(baseline.events);
     return std::move(baseline.events);
+}
+
+struct CpuWorkerState {
+    std::optional<SearchLiveUpdate> live;
+    std::optional<SearchResult> result;
+    std::exception_ptr failure;
+    bool done = false;
+};
+
+bool BetterEvaluation(const IterationEvaluator &evaluator,
+                      double candidateScore,
+                      double candidateTimeMs,
+                      double incumbentScore,
+                      double incumbentTimeMs) {
+    return evaluator.IsBetter(
+            {candidateScore, candidateTimeMs, {}},
+            {incumbentScore, incumbentTimeMs, {}});
+}
+
+bool PreferEvaluation(
+        const IterationEvaluator &evaluator,
+        double candidateScore,
+        double candidateTimeMs,
+        SearchWinnerSource candidateSource,
+        std::optional<std::uint64_t> candidateIteration,
+        double incumbentScore,
+        double incumbentTimeMs,
+        SearchWinnerSource incumbentSource,
+        std::optional<std::uint64_t> incumbentIteration) {
+    if (BetterEvaluation(
+                evaluator,
+                candidateScore,
+                candidateTimeMs,
+                incumbentScore,
+                incumbentTimeMs)) {
+        return true;
+    }
+    if (BetterEvaluation(
+                evaluator,
+                incumbentScore,
+                incumbentTimeMs,
+                candidateScore,
+                candidateTimeMs)) {
+        return false;
+    }
+    if (candidateSource != incumbentSource) {
+        return candidateSource == SearchWinnerSource::Baseline;
+    }
+    return candidateIteration.value_or(0u) <
+            incumbentIteration.value_or(0u);
+}
+
+SearchResult RunMultiThreadedCpuSearch(
+        const SearchRequest &request,
+        const EvaluationTargetRegistration &evaluationRegistration,
+        const SearchRunControl *control) {
+    CheckCancellation(control);
+    if (request.parallelSampleCount == 0u ||
+        request.parallelSampleCount > kMaximumCpuWorkerCount) {
+        throw std::invalid_argument(
+                "CPU worker count must be between 1 and " +
+                std::to_string(kMaximumCpuWorkerCount));
+    }
+    if (request.searchAlgorithm.id != kBasicBruteForceSearchId) {
+        throw std::invalid_argument(
+                "multi-threaded CPU does not support search algorithm: " +
+                request.searchAlgorithm.id);
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const std::uint32_t workerCount = request.parallelSampleCount;
+    std::unique_ptr<IterationEvaluator> evaluator =
+            evaluationRegistration.create(
+                    request.evaluationTarget.settings,
+                    kSearchTickDurationMs);
+    std::mutex evaluatorMutex;
+    const auto betterShared =
+            [&](double candidateScore,
+                double candidateTimeMs,
+                double incumbentScore,
+                double incumbentTimeMs) {
+                std::lock_guard<std::mutex> guard(evaluatorMutex);
+                return BetterEvaluation(
+                        *evaluator,
+                        candidateScore,
+                        candidateTimeMs,
+                        incumbentScore,
+                        incumbentTimeMs);
+            };
+    const auto preferShared =
+            [&](double candidateScore,
+                double candidateTimeMs,
+                SearchWinnerSource candidateSource,
+                std::optional<std::uint64_t> candidateIteration,
+                double incumbentScore,
+                double incumbentTimeMs,
+                SearchWinnerSource incumbentSource,
+                std::optional<std::uint64_t> incumbentIteration) {
+                std::lock_guard<std::mutex> guard(evaluatorMutex);
+                return PreferEvaluation(
+                        *evaluator,
+                        candidateScore,
+                        candidateTimeMs,
+                        candidateSource,
+                        candidateIteration,
+                        incumbentScore,
+                        incumbentTimeMs,
+                        incumbentSource,
+                        incumbentIteration);
+            };
+    std::mutex stateMutex;
+    std::mutex upstreamControlMutex;
+    std::condition_variable stateChanged;
+    std::vector<CpuWorkerState> states(workerCount);
+    std::atomic_bool internalCancellation{false};
+    const bool autoPromoteBest = *ParseBoolean(
+            request.searchAlgorithm.settings.at(
+                    "autoPromoteBest"));
+    std::optional<EvaluationSample> promotedEvaluation;
+    std::vector<SandboxInputEvent> promotedInputs;
+    std::uint64_t revision = 0u;
+    std::size_t finishedWorkerCount = 0u;
+    ReportProgress(
+            control, SearchProgressStage::PreparingSearch, 0u, workerCount);
+
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    try {
+        for (std::uint32_t workerIndex = 0u;
+             workerIndex < workerCount;
+             ++workerIndex) {
+            workers.emplace_back([&, workerIndex]() {
+                try {
+                    SearchRequest workerRequest = request;
+                    workerRequest.backend = PhysicsBackend::OptimizedCpu;
+                    workerRequest.parallelSampleCount = 1u;
+                    workerRequest.calibrateCudaParallelSampleCount = false;
+
+                    SearchRunControl workerControl;
+                    if (control != nullptr) {
+                        workerControl = *control;
+                    }
+                    const auto upstreamStop = workerControl.stopRequested;
+                    workerControl.stopRequested =
+                            [&, upstreamStop]() {
+                                if (internalCancellation.load(
+                                            std::memory_order_relaxed)) {
+                                    return true;
+                                }
+                                std::lock_guard<std::mutex> guard(
+                                        upstreamControlMutex);
+                                return upstreamStop && upstreamStop();
+                            };
+                    const auto upstreamCancellation =
+                            workerControl.cancellationRequested;
+                    workerControl.cancellationRequested =
+                            [&, upstreamCancellation]() {
+                                if (internalCancellation.load(
+                                            std::memory_order_relaxed)) {
+                                    return true;
+                                }
+                                std::lock_guard<std::mutex> guard(
+                                        upstreamControlMutex);
+                                return upstreamCancellation &&
+                                        upstreamCancellation();
+                            };
+                    const auto upstreamBegin =
+                            workerControl.beginIteration;
+                    workerControl.beginIteration =
+                            [&, upstreamBegin]() {
+                                std::lock_guard<std::mutex> guard(
+                                        upstreamControlMutex);
+                                return !upstreamBegin || upstreamBegin();
+                            };
+                    workerControl.progressChanged = {};
+                    workerControl.cudaBatchSizeChanged = {};
+                    workerControl.liveChanged =
+                            [&, workerIndex](
+                                    const SearchLiveUpdate &live) {
+                                std::lock_guard<std::mutex> guard(
+                                        stateMutex);
+                                if (autoPromoteBest &&
+                                    live.winnerSource ==
+                                            SearchWinnerSource::Mutation &&
+                                    (!promotedEvaluation ||
+                                     betterShared(
+                                             live.bestScore,
+                                             live.bestEvaluationTimeMs,
+                                             promotedEvaluation->score,
+                                             promotedEvaluation->timeMs))) {
+                                    promotedEvaluation = {
+                                            live.bestScore,
+                                            live.bestEvaluationTimeMs,
+                                            {}};
+                                    promotedInputs =
+                                            live.bestInputs;
+                                }
+                                states[workerIndex].live = live;
+                                ++revision;
+                                stateChanged.notify_one();
+                            };
+                    workerControl.promotedBaselineInputs =
+                            [&]() -> std::optional<
+                                    std::vector<SandboxInputEvent>> {
+                                if (!autoPromoteBest) {
+                                    return std::nullopt;
+                                }
+                                std::lock_guard<std::mutex> guard(
+                                        stateMutex);
+                                if (!promotedEvaluation) {
+                                    return std::nullopt;
+                                }
+                                return promotedInputs;
+                            };
+                    if (control != nullptr && control->iterationLimit) {
+                        const std::uint64_t total =
+                                *control->iterationLimit;
+                        workerControl.iterationLimit =
+                                total / workerCount +
+                                (workerIndex < total % workerCount
+                                         ? 1u
+                                         : 0u);
+                    }
+                    workerControl.iterationIndexOffset = workerIndex;
+                    workerControl.iterationIndexStride = workerCount;
+                    workerControl.sampleBestTimeline = false;
+                    workerControl.reuseLoadedSandbox = false;
+
+                    SearchResult result =
+                            RunSearch(workerRequest, &workerControl);
+                    std::lock_guard<std::mutex> guard(stateMutex);
+                    states[workerIndex].result = std::move(result);
+                    states[workerIndex].done = true;
+                    ++finishedWorkerCount;
+                    ++revision;
+                    stateChanged.notify_one();
+                } catch (...) {
+                    internalCancellation.store(
+                            true, std::memory_order_relaxed);
+                    std::lock_guard<std::mutex> guard(stateMutex);
+                    states[workerIndex].failure =
+                            std::current_exception();
+                    states[workerIndex].done = true;
+                    ++finishedWorkerCount;
+                    ++revision;
+                    stateChanged.notify_one();
+                }
+            });
+        }
+    } catch (...) {
+        internalCancellation.store(true, std::memory_order_relaxed);
+        for (std::thread &worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        throw;
+    }
+
+    std::optional<SearchLiveUpdate> aggregateBest;
+    std::uint64_t aggregateImprovementCount = 0u;
+    std::optional<std::chrono::steady_clock::duration>
+            lastImprovementElapsed;
+    std::uint64_t publishedRevision = 0u;
+    std::size_t completedWorkers = 0u;
+    bool searchingReported = false;
+    auto nextReduction =
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(100);
+    try {
+        while (completedWorkers < workerCount) {
+            std::vector<std::optional<SearchLiveUpdate>> liveUpdates;
+            {
+                std::unique_lock<std::mutex> lock(stateMutex);
+                stateChanged.wait_until(
+                        lock,
+                        nextReduction,
+                        [&]() {
+                            return finishedWorkerCount == workerCount;
+                        });
+                if (revision == publishedRevision) {
+                    nextReduction =
+                            std::chrono::steady_clock::now() +
+                            std::chrono::milliseconds(100);
+                    continue;
+                }
+                publishedRevision = revision;
+                completedWorkers = finishedWorkerCount;
+                liveUpdates.reserve(states.size());
+                for (const CpuWorkerState &state : states) {
+                    liveUpdates.push_back(state.live);
+                }
+                nextReduction =
+                        std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(100);
+            }
+
+            std::optional<SearchLiveUpdate> candidate;
+            std::uint64_t iterations = 0u;
+            std::uint64_t evaluatorCalls = 0u;
+            std::uint64_t totalMutationCount = 0u;
+            for (const auto &live : liveUpdates) {
+                if (!live) {
+                    continue;
+                }
+                iterations += live->iterations;
+                evaluatorCalls += live->evaluatorCalls;
+                totalMutationCount += live->totalMutationCount;
+                if (!candidate ||
+                    preferShared(
+                            live->bestScore,
+                            live->bestEvaluationTimeMs,
+                            live->winnerSource,
+                            live->winningIterationIndex,
+                            candidate->bestScore,
+                            candidate->bestEvaluationTimeMs,
+                            candidate->winnerSource,
+                            candidate->winningIterationIndex)) {
+                    candidate = live;
+                }
+            }
+            if (!candidate) {
+                continue;
+            }
+            if (!searchingReported) {
+                ReportProgress(
+                        control,
+                        SearchProgressStage::Mutations,
+                        iterations,
+                        0u);
+                searchingReported = true;
+            }
+
+            bool improved = false;
+            const bool strictlyBetter = aggregateBest &&
+                    betterShared(
+                        candidate->bestScore,
+                        candidate->bestEvaluationTimeMs,
+                        aggregateBest->bestScore,
+                        aggregateBest->bestEvaluationTimeMs);
+            if (!aggregateBest ||
+                preferShared(
+                        candidate->bestScore,
+                        candidate->bestEvaluationTimeMs,
+                        candidate->winnerSource,
+                        candidate->winningIterationIndex,
+                        aggregateBest->bestScore,
+                        aggregateBest->bestEvaluationTimeMs,
+                        aggregateBest->winnerSource,
+                        aggregateBest->winningIterationIndex)) {
+                improved = candidate->winnerSource ==
+                                SearchWinnerSource::Mutation &&
+                        (!aggregateBest || strictlyBetter);
+                aggregateBest = candidate;
+                if (improved) {
+                    ++aggregateImprovementCount;
+                    lastImprovementElapsed =
+                            std::chrono::steady_clock::now() - started;
+                }
+            }
+            if (control != nullptr && control->liveChanged &&
+                aggregateBest) {
+                SearchLiveUpdate aggregate = *aggregateBest;
+                if (!improved) {
+                    aggregate.bestTimeline.clear();
+                }
+                aggregate.iterations = iterations;
+                aggregate.evaluatorCalls = evaluatorCalls;
+                aggregate.mutationImprovementCount =
+                        aggregateImprovementCount;
+                aggregate.totalMutationCount = totalMutationCount;
+                aggregate.elapsed =
+                        std::chrono::steady_clock::now() - started;
+                aggregate.lastImprovementElapsed =
+                        lastImprovementElapsed;
+                control->liveChanged(aggregate);
+            }
+        }
+    } catch (...) {
+        internalCancellation.store(true, std::memory_order_relaxed);
+        stateChanged.notify_all();
+        for (std::thread &worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        throw;
+    }
+
+    for (std::thread &worker : workers) {
+        worker.join();
+    }
+    CheckCancellation(control);
+
+    for (const CpuWorkerState &state : states) {
+        if (!state.failure) {
+            continue;
+        }
+        try {
+            std::rethrow_exception(state.failure);
+        } catch (const SearchCancelled &) {
+            continue;
+        }
+    }
+    for (const CpuWorkerState &state : states) {
+        if (state.failure) {
+            std::rethrow_exception(state.failure);
+        }
+    }
+
+    std::optional<std::size_t> bestWorker;
+    std::uint64_t iterations = 0u;
+    std::uint64_t evaluatorCalls = 0u;
+    std::uint64_t totalMutationCount = 0u;
+    for (std::size_t index = 0u; index < states.size(); ++index) {
+        if (!states[index].result) {
+            throw std::runtime_error(
+                    "CPU worker completed without a search result");
+        }
+        const SearchResult &result = *states[index].result;
+        iterations += result.iterations;
+        evaluatorCalls += result.evaluatorCalls;
+        totalMutationCount += result.totalMutationCount;
+        if (!bestWorker ||
+            preferShared(
+                    result.bestScore,
+                    result.bestEvaluationTimeMs,
+                    result.winnerSource,
+                    result.winningIterationIndex,
+                    states[*bestWorker].result->bestScore,
+                    states[*bestWorker].result
+                            ->bestEvaluationTimeMs,
+                    states[*bestWorker].result->winnerSource,
+                    states[*bestWorker].result
+                            ->winningIterationIndex)) {
+            bestWorker = index;
+        }
+    }
+
+    SearchResult result =
+            std::move(*states[*bestWorker].result);
+    if (((!aggregateBest ||
+         betterShared(
+                 result.bestScore,
+                 result.bestEvaluationTimeMs,
+                 aggregateBest->bestScore,
+                 aggregateBest->bestEvaluationTimeMs)) ||
+         aggregateImprovementCount == 0u) &&
+        result.winnerSource == SearchWinnerSource::Mutation) {
+        ++aggregateImprovementCount;
+        lastImprovementElapsed =
+                std::chrono::steady_clock::now() - started;
+    }
+    result.iterations = iterations;
+    result.evaluatorCalls = evaluatorCalls;
+    result.mutationImprovementCount =
+            aggregateImprovementCount;
+    result.totalMutationCount = totalMutationCount;
+    result.elapsed = std::chrono::steady_clock::now() - started;
+    result.lastImprovementElapsed = lastImprovementElapsed;
+
+    CheckCancellation(control);
+    if (control == nullptr || control->sampleBestTimeline) {
+        const forevervalidator::ReplayIdentity identity{
+                request.replayPath};
+        forevervalidator::AssetBytes replay = Require(
+                ReadReplayFileUtf8(request.replayPath, identity),
+                "reading replay for multi-threaded result sampling");
+        result.bestTimeline = SampleBestTimeline(
+                request,
+                replay,
+                identity,
+                result.bestInputs,
+                control);
+    }
+    return result;
 }
 
 }  // namespace
@@ -276,6 +851,11 @@ SearchResult RunSearch(const SearchRequest &request,
         }
     }
 
+    if (request.backend == PhysicsBackend::MultiThreadedCpu) {
+        return RunMultiThreadedCpuSearch(
+                request, *evaluationRegistration, control);
+    }
+
     CheckCancellation(control);
     const ReplayIdentity identity{request.replayPath};
     PhysicsSandboxOptions options;
@@ -287,15 +867,29 @@ SearchResult RunSearch(const SearchRequest &request,
         std::lock_guard<std::mutex> guard(cached->lock);
         CheckCancellation(control);
         if (!cached->sandbox) {
+            ReportProgress(
+                    control,
+                    SearchProgressStage::OpeningPacksDirectory,
+                    0u,
+                    0u);
             AssetSource source = Require(
                     OpenInstalledPackDirectory(request.packDirectory),
                     "opening cached pack directory");
+            ReportProgress(
+                    control, SearchProgressStage::ReadingReplay, 0u, 0u);
             cached->replay = Require(
-                    ReadNativeReplayFile(request.replayPath, identity),
+                    ReadReplayFileUtf8(request.replayPath, identity),
                     "reading cached replay");
+            ReportProgress(
+                    control,
+                    SearchProgressStage::CreatingSimulation,
+                    0u,
+                    0u);
             cached->sandbox.emplace(Require(
                     CreatePhysicsSandbox(std::move(source), options),
                     "creating cached sandbox"));
+            ReportProgress(
+                    control, SearchProgressStage::LoadingReplay, 0u, 0u);
             Require(
                     cached->sandbox->LoadReplay(
                             {cached->replay.data(),
@@ -309,6 +903,11 @@ SearchResult RunSearch(const SearchRequest &request,
                     cached->sandbox->ReadInputs(),
                     "reading cached initial inputs");
         } else {
+            ReportProgress(
+                    control,
+                    SearchProgressStage::RestoringSimulation,
+                    0u,
+                    0u);
             Require(
                     cached->sandbox->RestoreState(
                             *cached->initialState),
@@ -321,6 +920,11 @@ SearchResult RunSearch(const SearchRequest &request,
         const PhysicsSandboxStateView initialView = Require(
                 cached->sandbox->ReadState(),
                 "reading cached initial state");
+        ReportProgress(
+                control,
+                SearchProgressStage::ApplyingBaselineInputs,
+                0u,
+                0u);
         Require(
                 cached->sandbox->ReplaceInputs(BuildBaselineOrThrow(
                         request,
@@ -339,23 +943,34 @@ SearchResult RunSearch(const SearchRequest &request,
                 control);
     }
 
+    ReportProgress(
+            control, SearchProgressStage::OpeningPacksDirectory, 0u, 0u);
     AssetSource source = Require(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory");
     CheckCancellation(control);
+    ReportProgress(control, SearchProgressStage::ReadingReplay, 0u, 0u);
     AssetBytes replay = Require(
-            ReadNativeReplayFile(request.replayPath, identity),
+            ReadReplayFileUtf8(request.replayPath, identity),
             "reading replay");
     CheckCancellation(control);
+    ReportProgress(
+            control, SearchProgressStage::CreatingSimulation, 0u, 0u);
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating sandbox");
     CheckCancellation(control);
+    ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
     const PhysicsSandboxStateView initialView = Require(
             sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay");
     const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
             sandbox.ReadInputs(), "reading replay inputs");
+    ReportProgress(
+            control,
+            SearchProgressStage::ApplyingBaselineInputs,
+            0u,
+            0u);
     Require(
             sandbox.ReplaceInputs(BuildBaselineOrThrow(
                     request,

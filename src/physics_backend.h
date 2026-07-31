@@ -12,6 +12,7 @@ namespace forevertas {
 enum class PhysicsBackend : std::uint8_t {
     Reference,
     OptimizedCpu,
+    MultiThreadedCpu,
 #if FOREVERVALIDATOR_HAS_CUDA
     Cuda,
 #endif
@@ -23,6 +24,8 @@ constexpr std::string_view PhysicsBackendId(PhysicsBackend backend) noexcept {
         return "reference";
     case PhysicsBackend::OptimizedCpu:
         return "optimized-cpu";
+    case PhysicsBackend::MultiThreadedCpu:
+        return "multi-threaded-cpu";
 #if FOREVERVALIDATOR_HAS_CUDA
     case PhysicsBackend::Cuda:
         return "cuda";
@@ -39,6 +42,9 @@ inline std::optional<PhysicsBackend> ParsePhysicsBackend(
     if (id == PhysicsBackendId(PhysicsBackend::OptimizedCpu)) {
         return PhysicsBackend::OptimizedCpu;
     }
+    if (id == PhysicsBackendId(PhysicsBackend::MultiThreadedCpu)) {
+        return PhysicsBackend::MultiThreadedCpu;
+    }
 #if FOREVERVALIDATOR_HAS_CUDA
     if (id == PhysicsBackendId(PhysicsBackend::Cuda)) {
         return PhysicsBackend::Cuda;
@@ -53,6 +59,7 @@ constexpr forevervalidator::SimulationBackend ToForeverValidatorBackend(
     case PhysicsBackend::Reference:
         return forevervalidator::SimulationBackend::Reference;
     case PhysicsBackend::OptimizedCpu:
+    case PhysicsBackend::MultiThreadedCpu:
         return forevervalidator::SimulationBackend::OptimizedCpu;
 #if FOREVERVALIDATOR_HAS_CUDA
     case PhysicsBackend::Cuda:
