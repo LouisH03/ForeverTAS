@@ -80,6 +80,41 @@ Item {
         return true
     }
 
+    function insertLineAfter(lineNumber) {
+        if (root.debuggerModel.running || root.debuggerModel.stepping
+                || root.debuggerModel.compiling)
+            return -1
+        root.commitActiveEdit()
+        const sourcePosition = sourceTree.contentY
+        const codePosition = codeList.contentY
+        const insertedLine = root.debuggerModel.insertLineAfter(lineNumber)
+        if (insertedLine < 1)
+            return -1
+        root.restoreEditorPositions(sourcePosition, codePosition)
+        Qt.callLater(function() {
+            codeList.positionViewAtIndex(insertedLine - 1, ListView.Contain)
+            Qt.callLater(function() {
+                const item = codeList.itemAtIndex(insertedLine - 1)
+                if (item)
+                    item.beginEdit()
+            })
+        })
+        return insertedLine
+    }
+
+    function deleteLine(lineNumber) {
+        if (root.debuggerModel.running || root.debuggerModel.stepping
+                || root.debuggerModel.compiling)
+            return false
+        root.cancelActiveEdit()
+        const sourcePosition = sourceTree.contentY
+        const codePosition = codeList.contentY
+        if (!root.debuggerModel.deleteLine(lineNumber))
+            return false
+        root.restoreEditorPositions(sourcePosition, codePosition)
+        return true
+    }
+
     function revealExecutingLine() {
         if (root.waitingForPause)
             return
@@ -403,6 +438,12 @@ Item {
                         liveEdit.forceActiveFocus()
                         liveEdit.selectAll()
                     }
+                    function insertAfter() {
+                        root.insertLineAfter(codeLine.modelData.number)
+                    }
+                    function deleteCurrent() {
+                        root.deleteLine(codeLine.modelData.number)
+                    }
                     readonly property bool draftModified:
                         codeLine.editing
                         ? liveEdit.text !== codeLine.modelData.original
@@ -431,6 +472,10 @@ Item {
                             root.toggleBreakpoint(codeLine.modelData.number)
                     }
 
+                    HoverHandler {
+                        id: codeLineHover
+                    }
+
                     TapHandler {
                         enabled: !codeLine.editing
                         acceptedButtons: Qt.LeftButton
@@ -450,6 +495,47 @@ Item {
                         width: codeLine.draftModified ? 3 : 0
                         height: parent.height
                         color: AppTheme.success
+                    }
+
+                    Row {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        z: 2
+                        visible: codeLineHover.hovered && !codeLine.editing
+
+                        ThemedToolButton {
+                            objectName: "insertLiveCodeLineButton"
+                            width: 22
+                            height: 22
+                            text: "+"
+                            enabled: !root.debuggerModel.running
+                                     && !root.debuggerModel.stepping
+                                     && !root.debuggerModel.compiling
+                                     && codeLine.modelData.editable
+                                     && codeLine.modelData.number
+                                        < codeList.count
+                            onClicked: codeLine.insertAfter()
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Insert a source line after line %1")
+                                          .arg(codeLine.modelData.number)
+                        }
+
+                        ThemedToolButton {
+                            objectName: "deleteLiveCodeLineButton"
+                            width: 22
+                            height: 22
+                            text: "\u00d7"
+                            enabled: !root.debuggerModel.running
+                                     && !root.debuggerModel.stepping
+                                     && !root.debuggerModel.compiling
+                                     && codeList.count > 1
+                            onClicked: codeLine.deleteCurrent()
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Delete source line %1")
+                                          .arg(codeLine.modelData.number)
+                        }
                     }
 
                     RowLayout {
@@ -525,6 +611,13 @@ Item {
                             }
                             onEditingFinished: codeLine.commitEdit()
                             Keys.onEscapePressed: codeLine.cancelEdit()
+                            Keys.onReturnPressed: function(event) {
+                                const lineNumber =
+                                    codeLine.modelData.number
+                                codeLine.commitEdit()
+                                root.insertLineAfter(lineNumber)
+                                event.accepted = true
+                            }
                         }
 
                         Text {

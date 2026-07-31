@@ -112,6 +112,14 @@ bool IsExplicitPrintExpression(const QString &expression) {
     return printPattern.match(code).hasMatch();
 }
 
+bool IsEditableSourceLine(const QString &text) {
+    const QString trimmed = text.trimmed();
+    return !trimmed.isEmpty() &&
+           !trimmed.startsWith(QStringLiteral("//")) &&
+           !trimmed.startsWith(QLatin1Char('#')) &&
+           trimmed != QStringLiteral("{") && trimmed != QStringLiteral("}");
+}
+
 } // namespace
 
 SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
@@ -237,7 +245,10 @@ void SimulationDebuggerModel::setDarkMode(bool value) {
 bool SimulationDebuggerModel::hasEdits() const {
     return std::any_of(
             sources_.begin(), sources_.end(),
-            [](const SourceFile &source) { return !source.edits.isEmpty(); });
+            [](const SourceFile &source) {
+                return !source.edits.isEmpty() ||
+                       !source.deletedSourceLines.isEmpty();
+            });
 }
 
 QVariantList SimulationDebuggerModel::fileEntries() const {
@@ -253,17 +264,22 @@ QVariantList SimulationDebuggerModel::lines() const {
     result.reserve(source->currentLines.size());
     for (int index = 0; index < source->currentLines.size(); ++index) {
         const int line = index + 1;
+        const quint64 lineId = source->lineIds[index];
+        const int originalSourceLine = source->sourceLineNumbers[index];
         const QString &text = source->currentLines[index];
-        const QString trimmed = text.trimmed();
-        const bool sourceLine = !trimmed.isEmpty() &&
-                                !trimmed.startsWith(QStringLiteral("//")) &&
-                                !trimmed.startsWith(QLatin1Char('#')) &&
-                                trimmed != QStringLiteral("{") &&
-                                trimmed != QStringLiteral("}");
+        const QString original =
+                originalSourceLine > 0 &&
+                                originalSourceLine <=
+                                        source->originalLines.size()
+                        ? source->originalLines[originalSourceLine - 1]
+                        : QString();
+        const bool sourceLine = IsEditableSourceLine(text);
         result.push_back(QVariantMap{
                 {QStringLiteral("number"), line},
+                {QStringLiteral("lineId"),
+                 static_cast<qulonglong>(lineId)},
                 {QStringLiteral("text"), text},
-                {QStringLiteral("original"), source->originalLines[index]},
+                {QStringLiteral("original"), original},
                 {QStringLiteral("highlighted"),
                  (darkMode_ ? source->highlightedDark
                             : source->highlightedLight)[index]},
@@ -271,12 +287,16 @@ QVariantList SimulationDebuggerModel::lines() const {
                  active_ && source->path == activeFilePath_ &&
                          line == activeLine_},
                 {QStringLiteral("breakpoint"),
-                 source->breakpoints.contains(line)},
-                {QStringLiteral("modified"), source->edits.contains(line)},
-                {QStringLiteral("editable"), sourceLine},
+                 source->breakpoints.contains(lineId)},
+                {QStringLiteral("modified"),
+                 source->edits.contains(lineId)},
+                {QStringLiteral("inserted"), originalSourceLine == 0},
+                {QStringLiteral("editable"),
+                 sourceLine || originalSourceLine == 0},
                 {QStringLiteral("executable"),
-                 source->executableLines.contains(line) ||
-                         source->breakpoints.contains(line) ||
+                 source->executableSourceLines.contains(
+                         source->anchorLineNumbers[index]) ||
+                         source->breakpoints.contains(lineId) ||
                          (source->path == activeFilePath_ &&
                           line == activeLine_)},
                 {QStringLiteral("inlineValue"),
@@ -327,20 +347,27 @@ bool SimulationDebuggerModel::updateLine(int lineNumber, const QString &text) {
     if (source->currentLines[index] == text) {
         return true;
     }
+    const quint64 lineId = source->lineIds[index];
+    const int sourceLine = source->sourceLineNumbers[index];
+    const int anchorLine = source->anchorLineNumbers[index];
     source->currentLines[index] = text;
     ++sourceRevision_;
     source->highlightedLight[index] = syntaxHighlighted(text, false);
     source->highlightedDark[index] = syntaxHighlighted(text, true);
     source->inlineValueLines[index] = inlineValues(text);
-    if (text == source->originalLines[index]) {
-        source->edits.remove(lineNumber);
+    const QString original =
+            sourceLine > 0 && sourceLine <= source->originalLines.size()
+                    ? source->originalLines[sourceLine - 1]
+                    : QString();
+    if (sourceLine > 0 && text == original) {
+        source->edits.remove(lineId);
     } else {
-        const QString key = lineKey(source->path, lineNumber);
+        const QString key = lineKey(source->path, anchorLine);
         const qint64 effectiveTick =
                 active_ && executedLinesThisTick_.contains(key)
                         ? executionTick_ + 1
                         : executionTick_;
-        source->edits.insert(lineNumber, SourceEdit{effectiveTick});
+        source->edits.insert(lineId, SourceEdit{effectiveTick});
     }
     editError_.clear();
     if (active_) {
@@ -354,10 +381,112 @@ bool SimulationDebuggerModel::updateLine(int lineNumber, const QString &text) {
     }
     emit filesChanged();
     emit linesChanged();
-    setStatus(source->edits.contains(lineNumber)
+    setStatus(source->edits.contains(lineId)
                       ? QStringLiteral("Native edit queued for tick %1.")
-                                .arg(source->edits[lineNumber].effectiveTick)
+                                .arg(source->edits[lineId].effectiveTick)
                       : QStringLiteral("Source line restored."));
+    return true;
+}
+
+int SimulationDebuggerModel::insertLineAfter(int lineNumber) {
+    SourceFile *const source = selectedSource();
+    if (source == nullptr || lineNumber < 0 ||
+        lineNumber >= source->currentLines.size()) {
+        editError_ = QStringLiteral(
+                "A line can only be inserted before another source boundary.");
+        emit linesChanged();
+        return -1;
+    }
+    const int insertIndex = lineNumber;
+    int anchorLine = 0;
+    for (int index = insertIndex; index < source->sourceLineNumbers.size();
+         ++index) {
+        if (source->sourceLineNumbers[index] > 0) {
+            anchorLine = source->sourceLineNumbers[index];
+            break;
+        }
+    }
+    if (anchorLine <= 0) {
+        editError_ = QStringLiteral(
+                "The end of this file has no following executable boundary.");
+        emit linesChanged();
+        return -1;
+    }
+    const quint64 lineId = nextInsertedLineId_++;
+    const qint64 effectiveTick =
+            effectiveTickForBoundary(*source, anchorLine);
+    source->currentLines.insert(insertIndex, QString());
+    source->highlightedLight.insert(insertIndex, QString());
+    source->highlightedDark.insert(insertIndex, QString());
+    source->inlineValueLines.insert(insertIndex, QString());
+    source->lineIds.insert(insertIndex, lineId);
+    source->sourceLineNumbers.insert(insertIndex, 0);
+    source->anchorLineNumbers.insert(insertIndex, anchorLine);
+    source->edits.insert(lineId, SourceEdit{effectiveTick});
+    ++sourceRevision_;
+    editError_.clear();
+    if (active_) {
+        syncSourceBreakpoints(*source);
+    }
+    if (activeFilePath_ == source->path) {
+        activeLine_ =
+                displayLineForSourceLine(*source, activeSourceLine_);
+    }
+    refreshDebugOutputLocations(source->path);
+    emit filesChanged();
+    emit linesChanged();
+    emit executionChanged();
+    setStatus(QStringLiteral("Inserted source line queued for tick %1.")
+                      .arg(effectiveTick));
+    return insertIndex + 1;
+}
+
+bool SimulationDebuggerModel::deleteLine(int lineNumber) {
+    SourceFile *const source = selectedSource();
+    if (source == nullptr || lineNumber <= 0 ||
+        lineNumber > source->currentLines.size()) {
+        return false;
+    }
+    const int index = lineNumber - 1;
+    const quint64 lineId = source->lineIds[index];
+    const int sourceLine = source->sourceLineNumbers[index];
+    const int anchorLine = source->anchorLineNumbers[index];
+    const qint64 effectiveTick =
+            effectiveTickForBoundary(*source, anchorLine);
+    source->edits.remove(lineId);
+    source->breakpoints.remove(lineId);
+    if (sourceLine > 0) {
+        source->deletedSourceLines.insert(
+                sourceLine,
+                SourceEdit{effectiveTick,
+                           IsEditableSourceLine(
+                                   source->originalLines[sourceLine - 1])});
+    }
+    source->currentLines.removeAt(index);
+    source->highlightedLight.removeAt(index);
+    source->highlightedDark.removeAt(index);
+    source->inlineValueLines.removeAt(index);
+    source->lineIds.removeAt(index);
+    source->sourceLineNumbers.removeAt(index);
+    source->anchorLineNumbers.removeAt(index);
+    ++sourceRevision_;
+    editError_.clear();
+    saveBreakpoints();
+    if (active_) {
+        syncSourceBreakpoints(*source);
+    }
+    if (activeFilePath_ == source->path) {
+        activeLine_ =
+                displayLineForSourceLine(*source, activeSourceLine_);
+    }
+    refreshDebugOutputLocations(source->path);
+    emit filesChanged();
+    emit linesChanged();
+    emit executionChanged();
+    setStatus(sourceLine > 0
+                      ? QStringLiteral("Deleted source line queued for tick %1.")
+                                .arg(effectiveTick)
+                      : QStringLiteral("Inserted source line removed."));
     return true;
 }
 
@@ -370,11 +499,14 @@ bool SimulationDebuggerModel::toggleBreakpoint(const QString &path,
         return false;
     }
     SourceFile &source = sources_[static_cast<std::size_t>(index)];
-    if (source.breakpoints.contains(lineNumber)) {
-        source.breakpoints.remove(lineNumber);
+    const quint64 lineId = source.lineIds[lineNumber - 1];
+    const bool removed = source.breakpoints.contains(lineId);
+    if (removed) {
+        source.breakpoints.remove(lineId);
     } else {
-        source.breakpoints.insert(lineNumber);
-        source.executableLines.insert(lineNumber);
+        source.breakpoints.insert(lineId);
+        source.executableSourceLines.insert(
+                source.anchorLineNumbers[lineNumber - 1]);
     }
     saveBreakpoints();
     if (active_) {
@@ -390,6 +522,12 @@ bool SimulationDebuggerModel::toggleBreakpoint(const QString &path,
     if (selectedFilePath_ == path) {
         emit linesChanged();
     }
+    setStatus(removed ? QStringLiteral("Breakpoint removed from %1:%2.")
+                                .arg(fileName(path))
+                                .arg(lineNumber)
+                      : QStringLiteral("Breakpoint requested at %1:%2.")
+                                .arg(fileName(path))
+                                .arg(lineNumber));
     return true;
 }
 
@@ -418,22 +556,56 @@ bool SimulationDebuggerModel::openDebugOutput(int index) {
 void SimulationDebuggerModel::resetEdits() {
     bool changed = false;
     for (SourceFile &source : sources_) {
-        for (auto edit = source.edits.cbegin(); edit != source.edits.cend();
-             ++edit) {
-            const int index = edit.key() - 1;
-            if (index < 0 || index >= source.originalLines.size()) {
-                continue;
+        if (source.edits.isEmpty() && source.deletedSourceLines.isEmpty()) {
+            continue;
+        }
+        QSet<int> breakpointSourceLines;
+        for (const quint64 lineId : source.breakpoints) {
+            const int displayLine = displayLineForId(source, lineId);
+            if (displayLine > 0) {
+                breakpointSourceLines.insert(
+                        anchorLineForDisplayLine(source, displayLine));
             }
-            source.currentLines[index] = source.originalLines[index];
-            changed = true;
-            source.highlightedLight[index] =
-                    syntaxHighlighted(source.originalLines[index], false);
-            source.highlightedDark[index] =
-                    syntaxHighlighted(source.originalLines[index], true);
-            source.inlineValueLines[index] =
-                    inlineValues(source.originalLines[index]);
+        }
+        source.currentLines = source.originalLines;
+        source.highlightedLight.clear();
+        source.highlightedDark.clear();
+        source.inlineValueLines.clear();
+        source.lineIds.clear();
+        source.sourceLineNumbers.clear();
+        source.anchorLineNumbers.clear();
+        source.highlightedLight.reserve(source.originalLines.size());
+        source.highlightedDark.reserve(source.originalLines.size());
+        source.inlineValueLines.resize(source.originalLines.size());
+        source.lineIds.reserve(source.originalLines.size());
+        source.sourceLineNumbers.reserve(source.originalLines.size());
+        source.anchorLineNumbers.reserve(source.originalLines.size());
+        for (int index = 0; index < source.originalLines.size(); ++index) {
+            source.highlightedLight.push_back(
+                    syntaxHighlighted(source.originalLines[index], false));
+            source.highlightedDark.push_back(
+                    syntaxHighlighted(source.originalLines[index], true));
+            source.lineIds.push_back(static_cast<quint64>(index + 1));
+            source.sourceLineNumbers.push_back(index + 1);
+            source.anchorLineNumbers.push_back(index + 1);
         }
         source.edits.clear();
+        source.deletedSourceLines.clear();
+        source.breakpoints.clear();
+        for (const int sourceLine : breakpointSourceLines) {
+            if (sourceLine > 0 && sourceLine <= source.lineIds.size()) {
+                source.breakpoints.insert(source.lineIds[sourceLine - 1]);
+            }
+        }
+        refreshDebugOutputLocations(source.path);
+        if (activeFilePath_ == source.path) {
+            activeLine_ =
+                    displayLineForSourceLine(source, activeSourceLine_);
+        }
+        if (active_) {
+            syncSourceBreakpoints(source);
+        }
+        changed = true;
     }
     if (changed) {
         ++sourceRevision_;
@@ -511,6 +683,13 @@ void SimulationDebuggerModel::beginPendingSession() {
     debugOutputSequence_ = 0;
     executedLinesThisTick_.clear();
     currentLineKey_.clear();
+    activeLine_ = -1;
+    activeSourceLine_ = -1;
+    activeFilePath_.clear();
+    pendingBoundaryEditIds_.clear();
+    pendingBoundaryEditIndex_ = 0;
+    boundaryEditInProgress_ = false;
+    pendingBoundarySkipsOriginal_ = false;
     lastBreakpointKey_.clear();
     executionTick_ = 0;
     installedBreakpointKeys_.clear();
@@ -976,6 +1155,103 @@ SimulationDebuggerModel::selectedSource() const {
     return index < 0 ? nullptr : &sources_[static_cast<std::size_t>(index)];
 }
 
+int SimulationDebuggerModel::displayLineForSourceLine(
+        const SourceFile &source, int sourceLine) const {
+    if (sourceLine <= 0) {
+        return -1;
+    }
+    for (int index = 0; index < source.sourceLineNumbers.size(); ++index) {
+        if (source.sourceLineNumbers[index] == sourceLine) {
+            return index + 1;
+        }
+    }
+    for (int index = 0; index < source.anchorLineNumbers.size(); ++index) {
+        if (source.anchorLineNumbers[index] == sourceLine) {
+            return index + 1;
+        }
+    }
+    for (int index = 0; index < source.sourceLineNumbers.size(); ++index) {
+        if (source.sourceLineNumbers[index] > sourceLine) {
+            return index + 1;
+        }
+    }
+    return source.currentLines.isEmpty() ? -1 : source.currentLines.size();
+}
+
+int SimulationDebuggerModel::displayLineForId(const SourceFile &source,
+                                              quint64 lineId) const {
+    const auto found = std::find(source.lineIds.cbegin(),
+                                 source.lineIds.cend(), lineId);
+    return found == source.lineIds.cend()
+                   ? -1
+                   : static_cast<int>(
+                             std::distance(source.lineIds.cbegin(), found)) +
+                             1;
+}
+
+int SimulationDebuggerModel::sourceLineForDisplayLine(
+        const SourceFile &source, int displayLine) const {
+    return displayLine > 0 &&
+                           displayLine <= source.sourceLineNumbers.size()
+                   ? source.sourceLineNumbers[displayLine - 1]
+                   : -1;
+}
+
+int SimulationDebuggerModel::anchorLineForDisplayLine(
+        const SourceFile &source, int displayLine) const {
+    return displayLine > 0 &&
+                           displayLine <= source.anchorLineNumbers.size()
+                   ? source.anchorLineNumbers[displayLine - 1]
+                   : -1;
+}
+
+bool SimulationDebuggerModel::sourceWantsBreakpoint(
+        const SourceFile &source, int sourceLine) const {
+    for (const quint64 lineId : source.breakpoints) {
+        const int displayLine = displayLineForId(source, lineId);
+        if (anchorLineForDisplayLine(source, displayLine) == sourceLine) {
+            return true;
+        }
+    }
+    for (auto edit = source.edits.cbegin(); edit != source.edits.cend();
+         ++edit) {
+        const int displayLine = displayLineForId(source, edit.key());
+        if (anchorLineForDisplayLine(source, displayLine) == sourceLine) {
+            return true;
+        }
+    }
+    const auto deleted = source.deletedSourceLines.constFind(sourceLine);
+    return deleted != source.deletedSourceLines.cend() &&
+           deleted->affectsExecution;
+}
+
+bool SimulationDebuggerModel::hasApplicableEdits(
+        const SourceFile &source, int sourceLine) const {
+    const auto deleted = source.deletedSourceLines.constFind(sourceLine);
+    if (deleted != source.deletedSourceLines.cend() &&
+        deleted->affectsExecution &&
+        deleted->effectiveTick <= executionTick_) {
+        return true;
+    }
+    for (auto edit = source.edits.cbegin(); edit != source.edits.cend();
+         ++edit) {
+        const int displayLine = displayLineForId(source, edit.key());
+        if (anchorLineForDisplayLine(source, displayLine) == sourceLine &&
+            edit->effectiveTick <= executionTick_) {
+            return true;
+        }
+    }
+    return false;
+}
+
+qint64 SimulationDebuggerModel::effectiveTickForBoundary(
+        const SourceFile &source, int sourceLine) const {
+    const QString key = lineKey(source.path, sourceLine);
+    return active_ && executedLinesThisTick_.contains(key)
+                   ? executionTick_ + 1
+                   : executionTick_;
+}
+
 QVariantList SimulationDebuggerModel::visibleFileEntries() const {
     QSet<QString> directories;
     for (const SourceFile &source : sources_) {
@@ -1008,7 +1284,8 @@ QVariantList SimulationDebuggerModel::visibleFileEntries() const {
                 std::any_of(sources_.begin(), sources_.end(),
                             [&prefix](const SourceFile &source) {
                                 return source.path.startsWith(prefix) &&
-                                       !source.edits.isEmpty();
+                                       (!source.edits.isEmpty() ||
+                                        !source.deletedSourceLines.isEmpty());
                             });
         const bool breakpoint =
                 std::any_of(sources_.begin(), sources_.end(),
@@ -1037,7 +1314,9 @@ QVariantList SimulationDebuggerModel::visibleFileEntries() const {
                 {QStringLiteral("depth"), depth(source.path)},
                 {QStringLiteral("directory"), false},
                 {QStringLiteral("expanded"), false},
-                {QStringLiteral("modified"), !source.edits.isEmpty()},
+                {QStringLiteral("modified"),
+                 !source.edits.isEmpty() ||
+                         !source.deletedSourceLines.isEmpty()},
                 {QStringLiteral("breakpoint"), !source.breakpoints.isEmpty()},
                 {QStringLiteral("selected"), source.path == selectedFilePath_},
                 {QStringLiteral("active"), source.path == activeFilePath_}});
@@ -1186,13 +1465,6 @@ int SimulationDebuggerModel::statementEndLine(const SourceFile &source,
     return line;
 }
 
-bool SimulationDebuggerModel::editApplies(const SourceFile &source,
-                                          int line) const {
-    const auto found = source.edits.constFind(line);
-    return found != source.edits.cend() &&
-           found->effectiveTick <= executionTick_;
-}
-
 void SimulationDebuggerModel::loadSources() {
     const quint64 generation = ++sourceLoadGeneration_;
     preparing_ = true;
@@ -1275,16 +1547,23 @@ void SimulationDebuggerModel::loadSources() {
                 highlightedLight.push_back(syntaxHighlighted(line, false));
                 highlightedDark.push_back(syntaxHighlighted(line, true));
             }
-            sources.push_back(SourceFile{path,
-                                         QDir(root).filePath(path),
-                                         lines,
-                                         lines,
-                                         highlightedLight,
-                                         highlightedDark,
-                                         inlineValueLines,
-                                         {},
-                                         {},
-                                         {}});
+            SourceFile source;
+            source.path = path;
+            source.absolutePath = QDir(root).filePath(path);
+            source.originalLines = lines;
+            source.currentLines = lines;
+            source.highlightedLight = highlightedLight;
+            source.highlightedDark = highlightedDark;
+            source.inlineValueLines = inlineValueLines;
+            source.lineIds.reserve(lines.size());
+            source.sourceLineNumbers.reserve(lines.size());
+            source.anchorLineNumbers.reserve(lines.size());
+            for (int line = 1; line <= lines.size(); ++line) {
+                source.lineIds.push_back(static_cast<quint64>(line));
+                source.sourceLineNumbers.push_back(line);
+                source.anchorLineNumbers.push_back(line);
+            }
+            sources.push_back(std::move(source));
         }
         std::sort(sources.begin(), sources.end(),
                   [](const SourceFile &left, const SourceFile &right) {
@@ -1309,22 +1588,30 @@ void SimulationDebuggerModel::restoreBreakpoints() {
         const int line = key.mid(separator + 1).toInt(&lineValid);
         const QString path = separator > 0 ? key.left(separator) : QString();
         const int index = sourceIndex(path);
-        if (!lineValid || line <= 0 || index < 0 ||
-            line > sources_[static_cast<std::size_t>(index)]
-                            .currentLines.size()) {
+        if (!lineValid || line <= 0 || index < 0) {
             continue;
         }
         SourceFile &source = sources_[static_cast<std::size_t>(index)];
-        source.breakpoints.insert(line);
-        source.executableLines.insert(line);
+        const int displayLine = displayLineForSourceLine(source, line);
+        if (displayLine <= 0 ||
+            sourceLineForDisplayLine(source, displayLine) != line) {
+            continue;
+        }
+        source.breakpoints.insert(source.lineIds[displayLine - 1]);
+        source.executableSourceLines.insert(line);
     }
 }
 
 void SimulationDebuggerModel::saveBreakpoints() const {
     QStringList persisted;
     for (const SourceFile &source : sources_) {
-        for (const int line : source.breakpoints) {
-            persisted.push_back(lineKey(source.path, line));
+        for (const quint64 lineId : source.breakpoints) {
+            const int displayLine = displayLineForId(source, lineId);
+            const int sourceLine =
+                    anchorLineForDisplayLine(source, displayLine);
+            if (sourceLine > 0) {
+                persisted.push_back(lineKey(source.path, sourceLine));
+            }
         }
     }
     std::sort(persisted.begin(), persisted.end());
@@ -1333,10 +1620,29 @@ void SimulationDebuggerModel::saveBreakpoints() const {
 }
 
 void SimulationDebuggerModel::syncSourceBreakpoints(SourceFile &source) {
-    QSet<int> lines = source.breakpoints;
+    QSet<int> lines;
+    for (const quint64 lineId : source.breakpoints) {
+        const int displayLine = displayLineForId(source, lineId);
+        const int anchorLine =
+                anchorLineForDisplayLine(source, displayLine);
+        if (anchorLine > 0) {
+            lines.insert(anchorLine);
+        }
+    }
     for (auto edit = source.edits.cbegin(); edit != source.edits.cend();
          ++edit) {
-        lines.insert(edit.key());
+        const int displayLine = displayLineForId(source, edit.key());
+        const int anchorLine =
+                anchorLineForDisplayLine(source, displayLine);
+        if (anchorLine > 0) {
+            lines.insert(anchorLine);
+        }
+    }
+    for (auto deleted = source.deletedSourceLines.cbegin();
+         deleted != source.deletedSourceLines.cend(); ++deleted) {
+        if (deleted->affectsExecution) {
+            lines.insert(deleted.key());
+        }
     }
     const QString keyPrefix = source.path + QLatin1Char(':');
     const QList<QString> installed = installedBreakpointKeys_.values();
@@ -1372,7 +1678,7 @@ void SimulationDebuggerModel::installSourceBreakpoint(SourceFile &source,
         return;
     }
     installedBreakpointKeys_.insert(key);
-    source.executableLines.insert(line);
+    source.executableSourceLines.insert(line);
     queueCommand(CommandKind::SourceBreakpoint,
                  QStringLiteral("breakpoint set --file %1 --line %2")
                          .arg(quoteDebuggerArgument(source.absolutePath))
@@ -1380,16 +1686,55 @@ void SimulationDebuggerModel::installSourceBreakpoint(SourceFile &source,
                  source.path, line);
 }
 
+void SimulationDebuggerModel::refreshDebugOutputLocations(
+        const QString &path) {
+    const int index = sourceIndex(path);
+    if (index < 0) {
+        return;
+    }
+    const SourceFile &source = sources_[static_cast<std::size_t>(index)];
+    bool changed = false;
+    for (QVariant &value : debugOutput_) {
+        QVariantMap entry = value.toMap();
+        if (entry.value(QStringLiteral("path")).toString() != path) {
+            continue;
+        }
+        const quint64 lineId =
+                entry.value(QStringLiteral("lineId")).toULongLong();
+        int displayLine = displayLineForId(source, lineId);
+        if (displayLine <= 0) {
+            displayLine = displayLineForSourceLine(
+                    source,
+                    entry.value(QStringLiteral("sourceLine")).toInt());
+        }
+        if (displayLine <= 0 ||
+            entry.value(QStringLiteral("line")).toInt() == displayLine) {
+            continue;
+        }
+        entry.insert(QStringLiteral("line"), displayLine);
+        entry.insert(QStringLiteral("location"),
+                     fileName(path) + QLatin1Char(':') +
+                             QString::number(displayLine));
+        value = entry;
+        changed = true;
+    }
+    if (changed) {
+        emit debugOutputChanged();
+    }
+}
+
 void SimulationDebuggerModel::queueCommand(CommandKind kind,
                                            const QString &text,
                                            const QString &sourcePath,
                                            int line,
-                                           const QString &printToken) {
+                                           const QString &printToken,
+                                           quint64 lineId,
+                                           int sourceLine) {
     if (!active_ || debugger_.state() == QProcess::NotRunning) {
         return;
     }
-    commandQueue_.enqueue(
-            DebuggerCommand{kind, text, sourcePath, printToken, line});
+    commandQueue_.enqueue(DebuggerCommand{
+            kind, text, sourcePath, printToken, lineId, line, sourceLine});
     sendNextCommand();
 }
 
@@ -1538,6 +1883,10 @@ void SimulationDebuggerModel::handleCommandResult(
         handleSourceBreakpointResult(command, output.rawOutput);
         scheduleAdvance();
         break;
+    case CommandKind::SourceBreakpointLookup:
+        handleSourceBreakpointLookupResult(command, output.rawOutput);
+        scheduleAdvance();
+        break;
     case CommandKind::SourceBreakpointRemove:
         if (output.commandFailed) {
             installedBreakpointKeys_.insert(command.sourcePath);
@@ -1574,6 +1923,10 @@ void SimulationDebuggerModel::handleCommandResult(
         }
         if (output.commandFailed) {
             cancelStep();
+            boundaryEditInProgress_ = false;
+            pendingBoundaryEditIds_.clear();
+            pendingBoundaryEditIndex_ = 0;
+            pendingBoundarySkipsOriginal_ = false;
             editError_ = diagnostic;
             if (editError_.isEmpty()) {
                 editError_ = QStringLiteral(
@@ -1583,13 +1936,17 @@ void SimulationDebuggerModel::handleCommandResult(
             emit linesChanged();
             setStatus(QStringLiteral("Native edit did not compile."));
         } else {
-            jumpPastCurrentStatement();
+            applyNextBoundaryEdit();
         }
         break;
     }
     case CommandKind::JumpAfterEdit:
         if (output.commandFailed) {
             cancelStep();
+            boundaryEditInProgress_ = false;
+            pendingBoundaryEditIds_.clear();
+            pendingBoundaryEditIndex_ = 0;
+            pendingBoundarySkipsOriginal_ = false;
             editError_ =
                     QStringLiteral("The debugger could not skip the original "
                                    "source statement: %1")
@@ -1598,6 +1955,7 @@ void SimulationDebuggerModel::handleCommandResult(
             compiling_ = false;
             emit linesChanged();
         } else {
+            boundaryEditInProgress_ = false;
             executedLinesThisTick_.insert(currentLineKey_);
             if (stepping_) {
                 if (stepMode_ == StepMode::Tick) {
@@ -1632,6 +1990,9 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
     static const QRegularExpression idPattern(
             QStringLiteral("\\bBreakpoint\\s+(\\d+):"),
             QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression locationCountPattern(
+            QStringLiteral("\\bBreakpoint\\s+\\d+:\\s+(\\d+)\\s+locations?\\b"),
+            QRegularExpression::CaseInsensitiveOption);
     const int breakpointId = idPattern.match(output).captured(1).toInt();
     int resolvedLine = -1;
     QRegularExpressionMatchIterator locations =
@@ -1646,6 +2007,10 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
             resolvedLine = location.captured(2).toInt();
             break;
         }
+    }
+    if (resolvedLine <= 0 &&
+        locationCountPattern.match(output).captured(1).toInt() > 0) {
+        resolvedLine = command.line;
     }
 
     const bool unresolved =
@@ -1663,7 +2028,80 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
                     QStringLiteral("breakpoint delete %1").arg(breakpointId),
                     requestedKey, breakpointId);
         }
-        if (source.breakpoints.remove(command.line)) {
+        bool hasBoundaryEdit = false;
+        const auto deletedEdit =
+                source.deletedSourceLines.constFind(command.line);
+        hasBoundaryEdit =
+                deletedEdit != source.deletedSourceLines.cend() &&
+                deletedEdit->affectsExecution;
+        for (auto edit = source.edits.cbegin();
+             !hasBoundaryEdit && edit != source.edits.cend(); ++edit) {
+            const int displayLine = displayLineForId(source, edit.key());
+            hasBoundaryEdit =
+                    anchorLineForDisplayLine(source, displayLine) ==
+                    command.line;
+        }
+        int fallbackLine = command.line + 1;
+        while (fallbackLine <= source.originalLines.size() &&
+               !IsEditableSourceLine(
+                       source.originalLines[fallbackLine - 1])) {
+            ++fallbackLine;
+        }
+        if (hasBoundaryEdit &&
+            fallbackLine <= source.originalLines.size()) {
+            bool movedUserBreakpoint = false;
+            for (int displayIndex = 0;
+                 displayIndex < source.anchorLineNumbers.size();
+                 ++displayIndex) {
+                if (source.anchorLineNumbers[displayIndex] == command.line) {
+                    movedUserBreakpoint |= source.breakpoints.contains(
+                            source.lineIds[displayIndex]);
+                    source.anchorLineNumbers[displayIndex] = fallbackLine;
+                }
+            }
+            if (deletedEdit != source.deletedSourceLines.cend()) {
+                const SourceEdit edit = deletedEdit.value();
+                source.deletedSourceLines.remove(command.line);
+                source.deletedSourceLines.insert(fallbackLine, edit);
+            }
+            if (movedUserBreakpoint) {
+                saveBreakpoints();
+                emit filesChanged();
+            }
+            editError_.clear();
+            syncSourceBreakpoints(source);
+            emit linesChanged();
+            setStatus(QStringLiteral(
+                              "Inserted code mapped to the next native source "
+                              "boundary at %1:%2.")
+                              .arg(fileName(command.sourcePath))
+                              .arg(fallbackLine));
+            return;
+        }
+        if (sourceWantsBreakpoint(source, command.line)) {
+            queueCommand(
+                    CommandKind::SourceBreakpointLookup,
+                    QStringLiteral("image lookup -v -f %1 -l %2")
+                            .arg(quoteDebuggerArgument(source.absolutePath))
+                            .arg(command.line),
+                    command.sourcePath, command.line);
+            setStatus(QStringLiteral(
+                              "Resolving breakpoint to native source code in "
+                              "%1.")
+                              .arg(fileName(command.sourcePath)));
+            return;
+        }
+        bool removedUserBreakpoint = false;
+        const QList<quint64> breakpointIds = source.breakpoints.values();
+        for (const quint64 lineId : breakpointIds) {
+            const int displayLine = displayLineForId(source, lineId);
+            if (anchorLineForDisplayLine(source, displayLine) ==
+                command.line) {
+                source.breakpoints.remove(lineId);
+                removedUserBreakpoint = true;
+            }
+        }
+        if (removedUserBreakpoint) {
             saveBreakpoints();
             emit filesChanged();
         }
@@ -1679,8 +2117,8 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
         return;
     }
 
-    const bool stillWanted = source.breakpoints.contains(command.line) ||
-                             source.edits.contains(command.line);
+    const bool stillWanted =
+            sourceWantsBreakpoint(source, command.line);
     if (!stillWanted) {
         installedBreakpointKeys_.remove(requestedKey);
         if (breakpointId > 0) {
@@ -1695,11 +2133,43 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
     if (breakpointId > 0) {
         installedBreakpointIds_.insert(requestedKey, breakpointId);
     }
-    source.executableLines.insert(resolvedLine);
-    if (source.breakpoints.contains(command.line) &&
-        resolvedLine != command.line) {
-        source.breakpoints.remove(command.line);
-        source.breakpoints.insert(resolvedLine);
+    source.executableSourceLines.insert(resolvedLine);
+    if (resolvedLine != command.line) {
+        QList<quint64> movedBreakpointIds;
+        for (int displayIndex = 0;
+             displayIndex < source.anchorLineNumbers.size();
+             ++displayIndex) {
+            if (source.anchorLineNumbers[displayIndex] != command.line) {
+                continue;
+            }
+            if (source.breakpoints.contains(source.lineIds[displayIndex])) {
+                movedBreakpointIds.push_back(source.lineIds[displayIndex]);
+            }
+            source.anchorLineNumbers[displayIndex] = resolvedLine;
+        }
+        for (const quint64 lineId : movedBreakpointIds) {
+            source.breakpoints.remove(lineId);
+        }
+        if (!movedBreakpointIds.isEmpty()) {
+            const int resolvedDisplayLine =
+                    displayLineForSourceLine(source, resolvedLine);
+            if (resolvedDisplayLine > 0) {
+                source.breakpoints.insert(
+                        source.lineIds[resolvedDisplayLine - 1]);
+            }
+        }
+        const auto deleted =
+                source.deletedSourceLines.constFind(command.line);
+        if (deleted != source.deletedSourceLines.cend()) {
+            const SourceEdit edit = deleted.value();
+            source.deletedSourceLines.remove(command.line);
+            const auto existing =
+                    source.deletedSourceLines.constFind(resolvedLine);
+            if (existing == source.deletedSourceLines.cend() ||
+                edit.effectiveTick < existing->effectiveTick) {
+                source.deletedSourceLines.insert(resolvedLine, edit);
+            }
+        }
         installedBreakpointKeys_.remove(requestedKey);
         installedBreakpointIds_.remove(requestedKey);
         const QString resolvedKey = lineKey(command.sourcePath, resolvedLine);
@@ -1707,14 +2177,97 @@ void SimulationDebuggerModel::handleSourceBreakpointResult(
         if (breakpointId > 0) {
             installedBreakpointIds_.insert(resolvedKey, breakpointId);
         }
+        if (!movedBreakpointIds.isEmpty()) {
+            saveBreakpoints();
+            emit filesChanged();
+        }
+        emit linesChanged();
+        if (!movedBreakpointIds.isEmpty()) {
+            setStatus(QStringLiteral(
+                              "Breakpoint moved to executable line %1 in %2.")
+                              .arg(resolvedLine)
+                              .arg(fileName(command.sourcePath)));
+        }
+    }
+}
+
+void SimulationDebuggerModel::handleSourceBreakpointLookupResult(
+        const DebuggerCommand &command, const QString &output) {
+    const int index = sourceIndex(command.sourcePath);
+    if (index < 0) {
+        return;
+    }
+    SourceFile &source = sources_[static_cast<std::size_t>(index)];
+    if (!sourceWantsBreakpoint(source, command.line)) {
+        return;
+    }
+
+    static const QRegularExpression locationPattern(
+            QStringLiteral("\\bat\\s+(.+?):(\\d+)(?::\\d+)?(?:\\s|,|$)"));
+    int resolvedLine = -1;
+    QRegularExpressionMatchIterator locations =
+            locationPattern.globalMatch(output);
+    while (locations.hasNext()) {
+        const QRegularExpressionMatch location = locations.next();
+        const QString resolvedPath =
+                relativeSourcePath(QDir::cleanPath(location.captured(1)));
+        if (resolvedPath == command.sourcePath ||
+            QFileInfo(location.captured(1)).fileName() ==
+                    fileName(command.sourcePath)) {
+            resolvedLine = location.captured(2).toInt();
+            break;
+        }
+    }
+
+    const int resolvedDisplayLine =
+            displayLineForSourceLine(source, resolvedLine);
+    if (resolvedLine <= 0 || resolvedLine == command.line ||
+        resolvedDisplayLine <= 0) {
+        const QList<quint64> breakpointIds = source.breakpoints.values();
+        for (const quint64 lineId : breakpointIds) {
+            const int displayLine = displayLineForId(source, lineId);
+            if (anchorLineForDisplayLine(source, displayLine) ==
+                command.line) {
+                source.breakpoints.remove(lineId);
+            }
+        }
         saveBreakpoints();
         emit filesChanged();
         emit linesChanged();
-        setStatus(
-                QStringLiteral("Breakpoint moved to executable line %1 in %2.")
-                        .arg(resolvedLine)
-                        .arg(fileName(command.sourcePath)));
+        editError_ =
+                QStringLiteral("Line %1 has no executable debugger location.")
+                        .arg(command.line);
+        const QString diagnostic = TrimDebuggerNoise(output);
+        if (!diagnostic.isEmpty()) {
+            editError_ += QLatin1Char('\n') + diagnostic;
+        }
+        setStatus(QStringLiteral("Breakpoint could not be resolved."));
+        return;
     }
+
+    QList<quint64> movedBreakpointIds;
+    for (const quint64 lineId : source.breakpoints) {
+        const int displayLine = displayLineForId(source, lineId);
+        if (anchorLineForDisplayLine(source, displayLine) == command.line) {
+            movedBreakpointIds.push_back(lineId);
+        }
+    }
+    for (const quint64 lineId : movedBreakpointIds) {
+        source.breakpoints.remove(lineId);
+    }
+    if (movedBreakpointIds.isEmpty()) {
+        return;
+    }
+    source.breakpoints.insert(source.lineIds[resolvedDisplayLine - 1]);
+    source.executableSourceLines.insert(resolvedLine);
+    editError_.clear();
+    saveBreakpoints();
+    emit filesChanged();
+    emit linesChanged();
+    syncSourceBreakpoints(source);
+    setStatus(QStringLiteral("Breakpoint moved to executable line %1 in %2.")
+                      .arg(resolvedLine)
+                      .arg(fileName(command.sourcePath)));
 }
 
 void SimulationDebuggerModel::handleDebuggerStop(
@@ -1729,7 +2282,12 @@ void SimulationDebuggerModel::handleDebuggerStop(
         currentLineKey_.clear();
         executedLinesThisTick_.clear();
         activeLine_ = -1;
+        activeSourceLine_ = -1;
         activeFilePath_.clear();
+        pendingBoundaryEditIds_.clear();
+        pendingBoundaryEditIndex_ = 0;
+        boundaryEditInProgress_ = false;
+        pendingBoundarySkipsOriginal_ = false;
         atTickBoundary_ = true;
         editInterruptRequested_ = false;
         emit executionChanged();
@@ -1814,17 +2372,25 @@ void SimulationDebuggerModel::handleSourceStop(const QString &absolutePath,
         currentLineKey_ != lineKey(relative, line)) {
         executedLinesThisTick_.insert(currentLineKey_);
     }
-    activeFilePath_ = relative;
-    activeLine_ = line;
-    currentLineKey_ = lineKey(relative, line);
     const int index = sourceIndex(relative);
     if (index < 0) {
         queueCommand(CommandKind::Continue, QStringLiteral("continue"));
         return;
     }
     SourceFile &source = sources_[static_cast<std::size_t>(index)];
-    source.executableLines.insert(line);
-    const bool userBreakpoint = source.breakpoints.contains(line);
+    activeFilePath_ = relative;
+    activeSourceLine_ = line;
+    activeLine_ = displayLineForSourceLine(source, line);
+    currentLineKey_ = lineKey(relative, line);
+    source.executableSourceLines.insert(line);
+    bool userBreakpoint = false;
+    for (const quint64 lineId : source.breakpoints) {
+        const int displayLine = displayLineForId(source, lineId);
+        if (anchorLineForDisplayLine(source, displayLine) == line) {
+            userBreakpoint = true;
+            break;
+        }
+    }
     const bool stopsAtUserBreakpoint =
             userBreakpoint && lastBreakpointKey_ != currentLineKey_;
     if (stopsAtUserBreakpoint) {
@@ -1833,7 +2399,7 @@ void SimulationDebuggerModel::handleSourceStop(const QString &absolutePath,
         cancelStep();
         setStatus(QStringLiteral("Paused at breakpoint %1:%2.")
                           .arg(fileName(relative))
-                          .arg(line));
+                          .arg(activeLine_));
     } else if (!userBreakpoint) {
         lastBreakpointKey_.clear();
     }
@@ -1846,7 +2412,7 @@ void SimulationDebuggerModel::handleSourceStop(const QString &absolutePath,
 
     if (stepping_ && stepMode_ == StepMode::Tick) {
         if (!executedLinesThisTick_.contains(currentLineKey_) &&
-            editApplies(source, line)) {
+            hasApplicableEdits(source, activeSourceLine_)) {
             applyCurrentEdit();
         } else {
             queueCommand(CommandKind::Continue, QStringLiteral("continue"));
@@ -1864,11 +2430,11 @@ void SimulationDebuggerModel::handleSourceStop(const QString &absolutePath,
         clearVariables();
         queueCommand(CommandKind::Variables,
                      QStringLiteral("frame variable --show-types"));
-    } else if (!running_ && !editApplies(source, line)) {
+    } else if (!running_) {
         if (!userBreakpoint) {
             setStatus(QStringLiteral("Paused at %1:%2.")
                               .arg(fileName(relative))
-                              .arg(line));
+                              .arg(activeLine_));
         }
         clearVariables();
         queueCommand(CommandKind::Variables,
@@ -1917,6 +2483,9 @@ void SimulationDebuggerModel::appendDebugOutput(
                 {QStringLiteral("context"), executionContextLabel()},
                 {QStringLiteral("path"), command.sourcePath},
                 {QStringLiteral("line"), command.line},
+                {QStringLiteral("lineId"),
+                 static_cast<qulonglong>(command.lineId)},
+                {QStringLiteral("sourceLine"), command.sourceLine},
                 {QStringLiteral("location"),
                  fileName(command.sourcePath) + QLatin1Char(':') +
                          QString::number(command.line)}});
@@ -2026,9 +2595,10 @@ bool SimulationDebuggerModel::beginStep(StepMode mode) {
     emit executionChanged();
 
     const int index = sourceIndex(activeFilePath_);
-    if (index >= 0 && activeLine_ > 0 &&
+    if (index >= 0 && activeSourceLine_ > 0 &&
         !executedLinesThisTick_.contains(currentLineKey_) &&
-        editApplies(sources_[static_cast<std::size_t>(index)], activeLine_)) {
+        hasApplicableEdits(sources_[static_cast<std::size_t>(index)],
+                           activeSourceLine_)) {
         setStatus(QStringLiteral(
                 "Executing the edited source line before stepping."));
         applyCurrentEdit();
@@ -2090,9 +2660,10 @@ void SimulationDebuggerModel::advanceExecution() {
         return;
     }
     const int index = sourceIndex(activeFilePath_);
-    if (index >= 0 && activeLine_ > 0 &&
+    if (index >= 0 && activeSourceLine_ > 0 &&
         !executedLinesThisTick_.contains(currentLineKey_) &&
-        editApplies(sources_[static_cast<std::size_t>(index)], activeLine_)) {
+        hasApplicableEdits(sources_[static_cast<std::size_t>(index)],
+                           activeSourceLine_)) {
         applyCurrentEdit();
         return;
     }
@@ -2101,52 +2672,147 @@ void SimulationDebuggerModel::advanceExecution() {
 
 void SimulationDebuggerModel::applyCurrentEdit() {
     const int index = sourceIndex(activeFilePath_);
-    if (index < 0 || activeLine_ <= 0) {
+    if (index < 0 || activeSourceLine_ <= 0) {
         scheduleAdvance();
         return;
     }
     const SourceFile &source = sources_[static_cast<std::size_t>(index)];
-    if (activeLine_ > source.currentLines.size()) {
-        scheduleAdvance();
+    pendingBoundaryEditIds_.clear();
+    pendingBoundaryEditIndex_ = 0;
+    pendingBoundarySkipsOriginal_ = false;
+    const auto deleted =
+            source.deletedSourceLines.constFind(activeSourceLine_);
+    if (deleted != source.deletedSourceLines.cend() &&
+        deleted->affectsExecution &&
+        deleted->effectiveTick <= executionTick_) {
+        pendingBoundarySkipsOriginal_ = true;
+    }
+    for (int displayIndex = 0; displayIndex < source.lineIds.size();
+         ++displayIndex) {
+        const quint64 lineId = source.lineIds[displayIndex];
+        const auto edit = source.edits.constFind(lineId);
+        if (edit == source.edits.cend() ||
+            edit->effectiveTick > executionTick_ ||
+            source.anchorLineNumbers[displayIndex] != activeSourceLine_) {
+            continue;
+        }
+        pendingBoundaryEditIds_.push_back(lineId);
+        if (source.sourceLineNumbers[displayIndex] > 0) {
+            pendingBoundarySkipsOriginal_ = true;
+        }
+    }
+    if (pendingBoundaryEditIds_.isEmpty() &&
+        !pendingBoundarySkipsOriginal_) {
+        if (stepping_) {
+            queueStepCommand();
+        } else {
+            scheduleAdvance();
+        }
         return;
     }
+    boundaryEditInProgress_ = true;
     editError_.clear();
-    QString expression = source.currentLines[activeLine_ - 1].trimmed();
-    if (expression.isEmpty() || expression.startsWith(QStringLiteral("//"))) {
-        setStatus(QStringLiteral("Skipping the removed C++ source statement."));
+    applyNextBoundaryEdit();
+}
+
+void SimulationDebuggerModel::applyNextBoundaryEdit() {
+    const int index = sourceIndex(activeFilePath_);
+    if (!boundaryEditInProgress_ || index < 0 ||
+        activeSourceLine_ <= 0) {
+        return;
+    }
+    const SourceFile &source = sources_[static_cast<std::size_t>(index)];
+    while (pendingBoundaryEditIndex_ < pendingBoundaryEditIds_.size()) {
+        const quint64 lineId =
+                pendingBoundaryEditIds_[pendingBoundaryEditIndex_++];
+        const int displayLine = displayLineForId(source, lineId);
+        if (displayLine <= 0) {
+            continue;
+        }
+        const auto edit = source.edits.constFind(lineId);
+        if (edit == source.edits.cend() ||
+            edit->effectiveTick > executionTick_ ||
+            anchorLineForDisplayLine(source, displayLine) !=
+                    activeSourceLine_) {
+            continue;
+        }
+        QString expression =
+                source.currentLines[displayLine - 1].trimmed();
+        if (!IsEditableSourceLine(expression)) {
+            continue;
+        }
+        if (activeLine_ != displayLine) {
+            activeLine_ = displayLine;
+            emit executionChanged();
+            emit linesChanged();
+        }
+        compiling_ = true;
+        setStatus(QStringLiteral(
+                "Compiling edited C++ in the live physics frame..."));
+        emit stateChanged();
+        if (expression.endsWith(QLatin1Char(';'))) {
+            expression.chop(1);
+        }
+        QString printToken;
+        if (IsExplicitPrintExpression(expression)) {
+            printToken =
+                    QUuid::createUuid().toString(QUuid::WithoutBraces);
+            static const QRegularExpression printfPattern(
+                    QStringLiteral("(^|[^A-Za-z0-9_.>:])(?:std::)?"
+                                   "printf(?=\\s*\\()"));
+            static const QRegularExpression putsPattern(
+                    QStringLiteral("(^|[^A-Za-z0-9_.>:])(?:std::)?"
+                                   "puts(?=\\s*\\()"));
+            expression.replace(printfPattern,
+                               QStringLiteral("\\1__builtin_printf"));
+            expression.replace(putsPattern,
+                               QStringLiteral("\\1__builtin_puts"));
+            expression =
+                    QStringLiteral(
+                            "(void)(__builtin_printf("
+                            "\"@FOREVERTAS_DEBUG_PRINT_BEGIN_%1@\\n\"), "
+                            "(void)(%2), __builtin_printf("
+                            "\"@FOREVERTAS_DEBUG_PRINT_END_%1@\\n\"))")
+                            .arg(printToken, expression);
+        }
+        expression.prepend(QStringLiteral("expression -- "));
+        queueCommand(CommandKind::EvaluateEdit, expression,
+                     activeFilePath_, displayLine, printToken, lineId,
+                     activeSourceLine_);
+        return;
+    }
+    finishBoundaryEdits();
+}
+
+void SimulationDebuggerModel::finishBoundaryEdits() {
+    boundaryEditInProgress_ = false;
+    pendingBoundaryEditIds_.clear();
+    pendingBoundaryEditIndex_ = 0;
+    if (pendingBoundarySkipsOriginal_) {
+        pendingBoundarySkipsOriginal_ = false;
+        setStatus(QStringLiteral(
+                "Applying inserted code and skipping the original statement."));
         jumpPastCurrentStatement();
         return;
     }
-    compiling_ = true;
-    setStatus(QStringLiteral(
-            "Compiling edited C++ in the live physics frame..."));
-    emit stateChanged();
-    if (expression.endsWith(QLatin1Char(';'))) {
-        expression.chop(1);
+    pendingBoundarySkipsOriginal_ = false;
+    executedLinesThisTick_.insert(currentLineKey_);
+    const int index = sourceIndex(activeFilePath_);
+    if (index >= 0) {
+        const int originalDisplayLine = displayLineForSourceLine(
+                sources_[static_cast<std::size_t>(index)],
+                activeSourceLine_);
+        if (originalDisplayLine != activeLine_) {
+            activeLine_ = originalDisplayLine;
+            emit executionChanged();
+            emit linesChanged();
+        }
     }
-    QString printToken;
-    if (IsExplicitPrintExpression(expression)) {
-        printToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        static const QRegularExpression printfPattern(
-                QStringLiteral("(^|[^A-Za-z0-9_.>:])(?:std::)?"
-                               "printf(?=\\s*\\()"));
-        static const QRegularExpression putsPattern(
-                QStringLiteral("(^|[^A-Za-z0-9_.>:])(?:std::)?"
-                               "puts(?=\\s*\\()"));
-        expression.replace(printfPattern,
-                           QStringLiteral("\\1__builtin_printf"));
-        expression.replace(putsPattern, QStringLiteral("\\1__builtin_puts"));
-        expression =
-                QStringLiteral(
-                        "(void)(__builtin_printf("
-                        "\"@FOREVERTAS_DEBUG_PRINT_BEGIN_%1@\\n\"), "
-                        "(void)(%2), __builtin_printf("
-                        "\"@FOREVERTAS_DEBUG_PRINT_END_%1@\\n\"))")
-                        .arg(printToken, expression);
+    if (stepping_) {
+        queueStepCommand();
+    } else if (running_) {
+        scheduleAdvance();
     }
-    expression.prepend(QStringLiteral("expression -- "));
-    queueCommand(CommandKind::EvaluateEdit, expression, activeFilePath_,
-                 activeLine_, printToken);
 }
 
 void SimulationDebuggerModel::jumpPastCurrentStatement() {
@@ -2156,7 +2822,8 @@ void SimulationDebuggerModel::jumpPastCurrentStatement() {
         return;
     }
     const SourceFile &source = sources_[static_cast<std::size_t>(index)];
-    const int nextLine = statementEndLine(source, activeLine_) + 1;
+    const int nextLine =
+            statementEndLine(source, activeSourceLine_) + 1;
     const QString command =
             QStringLiteral("thread jump --file %1 --line %2")
                     .arg(quoteDebuggerArgument(source.absolutePath))
@@ -2166,7 +2833,12 @@ void SimulationDebuggerModel::jumpPastCurrentStatement() {
 
 void SimulationDebuggerModel::clearExecutionLocation() {
     activeLine_ = -1;
+    activeSourceLine_ = -1;
     activeFilePath_.clear();
+    pendingBoundaryEditIds_.clear();
+    pendingBoundaryEditIndex_ = 0;
+    boundaryEditInProgress_ = false;
+    pendingBoundarySkipsOriginal_ = false;
     emit executionChanged();
     emit linesChanged();
     emit filesChanged();

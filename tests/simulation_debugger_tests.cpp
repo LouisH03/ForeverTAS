@@ -20,10 +20,13 @@ constexpr auto kVehicleSource =
         "src/simulation/runtime/replay_vehicle_simulation.cpp";
 constexpr auto kStableInspectionSource =
         "src/engine/physics/world/physics_step.cpp";
+constexpr auto kRuntimeSource =
+        "src/simulation/runtime/replay_simulation_runtime.cpp";
 constexpr int kApplyControlsLine = 31;
 constexpr int kRelocatedBreakpointRequestLine = 34;
 constexpr int kRelocatedBreakpointLine = 37;
 constexpr int kPreparedBodyLine = 200;
+constexpr int kRuntimeIncludeLine = 7;
 
 bool Check(bool condition, const char *message) {
     if (!condition) {
@@ -215,6 +218,8 @@ int main(int argc, char **argv) {
     enum class Phase {
         Loading,
         WaitingInitialFrame,
+        WaitingNonExecutableBreakpoint,
+        WaitingResolvedBreakpointInstall,
         WaitingApplyControls,
         WaitingEditedSourceStep,
         WaitingSubstep,
@@ -226,6 +231,9 @@ int main(int argc, char **argv) {
         WaitingInvalidLine,
         WaitingRepeatedBreakpoint,
         WaitingPrintOutput,
+        WaitingInsertedOutput,
+        WaitingDeletedTick,
+        WaitingPostDeletionBreakpoint,
         WaitingCompileFailure,
         WaitingPauseStop,
         Finished,
@@ -236,12 +244,18 @@ int main(int argc, char **argv) {
     qint64 frameCountBeforeInvalid = 0;
     qint64 firstBreakpointTick = -1;
     qint64 stepTick = -1;
+    qint64 insertedEditTick = -1;
     qint64 framesBeforeSteps = -1;
+    qint64 framesBeforeDeletion = -1;
+    qint64 deletionTick = -1;
     QString sourceStepFile;
     int sourceStepLine = -1;
     QString heldInspectionFile;
     int requestedOutputLine = -1;
+    QList<int> insertedActiveLines;
     int selectionChangesWhileRunning = 0;
+    int resolvedRuntimeBreakpointLine = -1;
+    QElapsedTimer resolvedBreakpointClock;
     QElapsedTimer responsivenessClock;
     qint64 lastUiPulse = 0;
     qint64 maximumUiGap = 0;
@@ -272,6 +286,15 @@ int main(int argc, char **argv) {
             });
     QObject::connect(
             model,
+            &forevertas::viewer::SimulationDebuggerModel::debugOutputChanged,
+            &application, [&]() {
+                if (phase == Phase::WaitingInsertedOutput &&
+                    !model->debugOutput().isEmpty()) {
+                    insertedActiveLines.push_back(model->activeLine());
+                }
+            });
+    QObject::connect(
+            model,
             &forevertas::viewer::SimulationDebuggerModel::
                     sourceLocationRequested,
             &application,
@@ -295,13 +318,11 @@ int main(int argc, char **argv) {
                                             .toLongLong(),
                             "live viewer did not retain the replay duration");
                     okay &= Check(
-                            model->selectFile(QString::fromLatin1(
-                                    kStableInspectionSource)),
-                            "could not select a stable inspection file before "
-                            "continuous playback");
-                    heldInspectionFile = model->selectedFilePath();
-                    phase = Phase::WaitingApplyControls;
-                    viewer.play();
+                            model->toggleBreakpoint(
+                                    QString::fromLatin1(kRuntimeSource),
+                                    kRuntimeIncludeLine),
+                            "non-executable runtime breakpoint was rejected");
+                    phase = Phase::WaitingNonExecutableBreakpoint;
                 } else if (phase == Phase::WaitingTickStep && tick == 1) {
                     const double forward = VectorComponent(
                             frame, QStringLiteral("linearSpeed"), 2);
@@ -342,7 +363,75 @@ int main(int argc, char **argv) {
     QTimer poll;
     poll.setInterval(2);
     QObject::connect(&poll, &QTimer::timeout, &application, [&]() {
-        if (phase == Phase::WaitingApplyControls && !model->running() &&
+        if (phase == Phase::WaitingNonExecutableBreakpoint &&
+            !model->running() &&
+            model->statusText().startsWith(
+                    QStringLiteral("Breakpoint moved to executable line")) &&
+            model->statusText().contains(
+                    QStringLiteral("replay_simulation_runtime.cpp"))) {
+            okay &= Check(
+                    model->selectFile(QString::fromLatin1(kRuntimeSource)),
+                    "resolved runtime breakpoint source could not be selected");
+            const QVariantList runtimeLines = model->lines();
+            int resolvedDisplayLine = -1;
+            for (int index = 0; index < runtimeLines.size(); ++index) {
+                if (runtimeLines[index]
+                            .toMap()
+                            .value(QStringLiteral("breakpoint"))
+                            .toBool()) {
+                    resolvedDisplayLine = index + 1;
+                    break;
+                }
+            }
+            const bool includeStillMarked =
+                    runtimeLines[kRuntimeIncludeLine - 1]
+                            .toMap()
+                            .value(QStringLiteral("breakpoint"))
+                            .toBool();
+            const bool resolvedBreakpointMoved =
+                    resolvedDisplayLine > 0 &&
+                    resolvedDisplayLine != kRuntimeIncludeLine &&
+                    !includeStillMarked;
+            if (resolvedDisplayLine <= 0 ||
+                resolvedDisplayLine == kRuntimeIncludeLine ||
+                includeStillMarked) {
+                std::cerr << "nearest breakpoint details: resolvedDisplayLine="
+                          << resolvedDisplayLine
+                          << ", includeStillMarked=" << includeStillMarked
+                          << ", status="
+                          << model->statusText().toStdString() << '\n';
+            }
+            okay &= Check(
+                    resolvedBreakpointMoved,
+                    "non-executable breakpoint did not move to the nearest "
+                    "native source location");
+            resolvedRuntimeBreakpointLine = resolvedDisplayLine;
+            resolvedBreakpointClock.start();
+            phase = Phase::WaitingResolvedBreakpointInstall;
+        } else if (phase == Phase::WaitingResolvedBreakpointInstall &&
+                   resolvedBreakpointClock.elapsed() >= 200) {
+            okay &= Check(
+                    model->selectFile(QString::fromLatin1(kRuntimeSource)) &&
+                            resolvedRuntimeBreakpointLine > 0 &&
+                            model->lines()[resolvedRuntimeBreakpointLine - 1]
+                                    .toMap()
+                                    .value(QStringLiteral("breakpoint"))
+                                    .toBool() &&
+                            model->editError().isEmpty() &&
+                            model->toggleBreakpoint(
+                                    QString::fromLatin1(kRuntimeSource),
+                                    resolvedRuntimeBreakpointLine),
+                    "resolved native breakpoint did not remain installed and "
+                    "toggle cleanly");
+            okay &= Check(
+                    model->selectFile(
+                            QString::fromLatin1(kStableInspectionSource)),
+                    "could not select a stable inspection file before "
+                    "continuous playback");
+            heldInspectionFile = model->selectedFilePath();
+            phase = Phase::WaitingApplyControls;
+            viewer.play();
+        } else if (phase == Phase::WaitingApplyControls && !model->running() &&
             model->activeFilePath() == QString::fromLatin1(kVehicleSource) &&
             model->activeLine() == kApplyControlsLine) {
             okay &= Check(
@@ -540,14 +629,141 @@ int main(int argc, char **argv) {
             okay &= Check(model->debugOutput().isEmpty(),
                           "printed debug output did not clear");
             okay &= Check(
-                    model->updateLine(kApplyControlsLine, originalApplyLine) &&
+                    model->updateLine(kApplyControlsLine, originalApplyLine),
+                    "original statement could not be restored before inserted "
+                    "line execution");
+            insertedEditTick = model->executionTick();
+            const int firstInserted =
+                    model->insertLineAfter(kPreparedBodyLine - 1);
+            const int secondInserted =
+                    model->insertLineAfter(firstInserted);
+            okay &= Check(
+                    firstInserted == kPreparedBodyLine &&
+                            secondInserted == kPreparedBodyLine + 1 &&
+                            model->updateLine(
+                                    firstInserted,
+                                    QStringLiteral(
+                                            "printf(\"FB17 inserted "
+                                            "first=%d\\n\", 117);")) &&
+                            model->updateLine(
+                                    secondInserted,
+                                    QStringLiteral(
+                                            "printf(\"FB17 inserted "
+                                            "second=%d\\n\", 118);")) &&
+                            model->activeLine() == kApplyControlsLine &&
+                            model->lines()
+                                    .at(kApplyControlsLine - 1)
+                                    .toMap()
+                                    .value(QStringLiteral("breakpoint"))
+                                    .toBool(),
+                    "future inserted runtime lines did not preserve active-line "
+                    "and breakpoint identity");
+            phase = Phase::WaitingInsertedOutput;
+            viewer.play();
+        } else if (phase == Phase::WaitingInsertedOutput &&
+                   !model->running() &&
+                   model->activeFilePath() ==
+                           QString::fromLatin1(kVehicleSource) &&
+                   model->activeLine() == kApplyControlsLine &&
+                   model->debugOutput().size() >= 2) {
+            const QVariantMap first = model->debugOutput().at(0).toMap();
+            const QVariantMap second = model->debugOutput().at(1).toMap();
+            okay &= Check(
+                    model->debugOutput().size() == 2 &&
+                            first.value(QStringLiteral("message")).toString() ==
+                                    QStringLiteral(
+                                            "FB17 inserted first=117") &&
+                            second.value(QStringLiteral("message")).toString() ==
+                                    QStringLiteral(
+                                            "FB17 inserted second=118") &&
+                            first.value(QStringLiteral("line")).toInt() ==
+                                    kPreparedBodyLine &&
+                            second.value(QStringLiteral("line")).toInt() ==
+                                    kPreparedBodyLine + 1 &&
+                            first.value(QStringLiteral("tick")).toLongLong() ==
+                                    insertedEditTick &&
+                            insertedActiveLines ==
+                                    QList<int>{kPreparedBodyLine,
+                                               kPreparedBodyLine + 1} &&
+                            first.value(QStringLiteral("sequence"))
+                                            .toULongLong() <
+                                    second.value(QStringLiteral("sequence"))
+                                            .toULongLong(),
+                    "future inserted source lines did not execute immediately "
+                    "in display order with matching active-line tracking during "
+                    "the current tick");
+            okay &= Check(
+                    model->deleteLine(kPreparedBodyLine) &&
+                            model->debugOutput()
+                                            .at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("line"))
+                                            .toInt() == kPreparedBodyLine &&
+                            model->activeLine() == kApplyControlsLine,
+                    "line deletion did not remap later output and active "
+                    "locations");
+            requestedOutputLine = -1;
+            okay &= Check(
+                    model->openDebugOutput(1) &&
+                            requestedOutputLine == kPreparedBodyLine,
+                    "shifted inserted-output link did not follow its stable "
+                    "source line");
+            okay &= Check(
+                    model->deleteLine(kPreparedBodyLine) &&
+                            model->activeLine() == kApplyControlsLine &&
+                            model->lines()
+                                    .at(kApplyControlsLine - 1)
+                                    .toMap()
+                                    .value(QStringLiteral("breakpoint"))
+                                    .toBool(),
+                    "removing inserted lines did not restore original line "
+                    "numbering and breakpoint placement");
+            model->clearDebugOutput();
+            deletionTick = model->executionTick();
+            framesBeforeDeletion = viewer.tickCount();
+            okay &= Check(
+                    model->deleteLine(kApplyControlsLine) &&
+                            model->hasEdits() && model->canStepTick() &&
+                            model->stepTick(),
+                    "original source-line deletion could not be executed by "
+                    "the native engine");
+            phase = Phase::WaitingDeletedTick;
+        } else if (phase == Phase::WaitingDeletedTick &&
+                   !model->stepping() &&
+                   model->executionTick() == deletionTick + 1) {
+            okay &= Check(
+                    viewer.tickCount() == framesBeforeDeletion + 1 &&
+                            model->editError().isEmpty(),
+                    "deleting an original statement did not complete exactly "
+                    "one real physics tick");
+            model->resetEdits();
+            okay &= Check(
+                    !model->hasEdits() &&
+                            SourceLine(
+                                    *model,
+                                    QString::fromLatin1(kVehicleSource),
+                                    kApplyControlsLine) == originalApplyLine &&
                             model->toggleBreakpoint(
                                     QString::fromLatin1(kVehicleSource),
-                                    kApplyControlsLine) &&
+                                    kApplyControlsLine),
+                    "reset after executed deletion did not restore source and "
+                    "breakpoint mapping");
+            phase = Phase::WaitingPostDeletionBreakpoint;
+            viewer.play();
+        } else if (phase == Phase::WaitingPostDeletionBreakpoint &&
+                   !model->running() &&
+                   model->activeFilePath() ==
+                           QString::fromLatin1(kVehicleSource) &&
+                   model->activeLine() == kApplyControlsLine) {
+            okay &= Check(
+                    model->toggleBreakpoint(
+                            QString::fromLatin1(kVehicleSource),
+                            kApplyControlsLine) &&
                             model->updateLine(
                                     kApplyControlsLine,
                                     QStringLiteral("this is not valid C++;")),
-                    "invalid native edit could not be staged");
+                    "invalid native edit could not be staged after insertion "
+                    "and deletion");
             frameCountBeforeInvalid = viewer.tickCount();
             phase = Phase::WaitingCompileFailure;
             viewer.play();
@@ -639,6 +855,123 @@ int main(int argc, char **argv) {
                               "source syntax colors did not switch to the dark "
                               "theme");
                 model->setDarkMode(false);
+                const int originalLineCount = model->lines().size();
+                const qulonglong originalApplyId =
+                        model->lines()
+                                .at(kApplyControlsLine - 1)
+                                .toMap()
+                                .value(QStringLiteral("lineId"))
+                                .toULongLong();
+                okay &= Check(
+                        model->toggleBreakpoint(
+                                QString::fromLatin1(kVehicleSource),
+                                kApplyControlsLine) &&
+                                model->insertLineAfter(
+                                        kApplyControlsLine - 1) ==
+                                        kApplyControlsLine &&
+                                model->updateLine(
+                                        kApplyControlsLine,
+                                        QStringLiteral(
+                                                "printf(\"FB17 "
+                                                "mapping=%d\\n\", 17);")),
+                        "inserted source-line mapping setup failed");
+                const QVariantList insertedLines = model->lines();
+                const QVariantMap inserted =
+                        insertedLines.at(kApplyControlsLine - 1).toMap();
+                const QVariantMap shiftedOriginal =
+                        insertedLines.at(kApplyControlsLine).toMap();
+                okay &= Check(
+                        insertedLines.size() == originalLineCount + 1 &&
+                                inserted.value(QStringLiteral("inserted"))
+                                        .toBool() &&
+                                inserted.value(QStringLiteral("editable"))
+                                        .toBool() &&
+                                inserted.value(QStringLiteral("modified"))
+                                        .toBool() &&
+                                inserted.value(QStringLiteral("highlighted"))
+                                        .toString()
+                                        .contains(QStringLiteral("<span")) &&
+                                shiftedOriginal
+                                                .value(QStringLiteral("lineId"))
+                                                .toULongLong() ==
+                                        originalApplyId &&
+                                shiftedOriginal
+                                        .value(QStringLiteral("breakpoint"))
+                                        .toBool() &&
+                                shiftedOriginal
+                                                .value(QStringLiteral("text"))
+                                                .toString() ==
+                                        originalApplyLine,
+                        "insertion did not update highlighting, numbering, "
+                        "stable identity, or breakpoint placement");
+                okay &= Check(
+                        model->deleteLine(kApplyControlsLine) &&
+                                model->lines().size() == originalLineCount &&
+                                model->lines()
+                                                .at(kApplyControlsLine - 1)
+                                                .toMap()
+                                                .value(QStringLiteral("lineId"))
+                                                .toULongLong() ==
+                                        originalApplyId &&
+                                model->lines()
+                                        .at(kApplyControlsLine - 1)
+                                        .toMap()
+                                        .value(QStringLiteral("breakpoint"))
+                                        .toBool() &&
+                                !model->hasEdits() &&
+                                model->toggleBreakpoint(
+                                        QString::fromLatin1(kVehicleSource),
+                                        kApplyControlsLine),
+                        "removing an inserted line did not restore exact "
+                        "numbering and stable breakpoint identity");
+                okay &= Check(
+                        model->insertLineAfter(0) == 1 &&
+                                model->updateLine(
+                                        1,
+                                        QStringLiteral(
+                                                "printf(\"first\\n\");")) &&
+                                model->deleteLine(1) &&
+                                !model->hasEdits(),
+                        "insertion before the first source line was not "
+                        "editable and reversible");
+                okay &= Check(
+                        model->deleteLine(1) && model->hasEdits(),
+                        "deleting a non-executable source line was not tracked "
+                        "as an editor change");
+                model->resetEdits();
+                okay &= Check(
+                        model->lines().size() == originalLineCount &&
+                                SourceLine(
+                                        *model,
+                                        QString::fromLatin1(kVehicleSource),
+                                        1) ==
+                                        QStringLiteral(
+                                                "#include \"simulation/runtime/"
+                                                "replay_vehicle_simulation.h\"") &&
+                                !model->hasEdits(),
+                        "reset did not restore a deleted non-executable source "
+                        "line");
+                okay &= Check(
+                        model->deleteLine(kApplyControlsLine) &&
+                                model->lines().size() ==
+                                        originalLineCount - 1 &&
+                                model->hasEdits(),
+                        "deleting an original source statement was not "
+                        "tracked");
+                model->resetEdits();
+                okay &= Check(
+                        model->lines().size() == originalLineCount &&
+                                SourceLine(
+                                        *model,
+                                        QString::fromLatin1(kVehicleSource),
+                                        kApplyControlsLine) ==
+                                        originalApplyLine &&
+                                !model->hasEdits() &&
+                                model->insertLineAfter(originalLineCount) < 0 &&
+                                !model->deleteLine(0) &&
+                                !model->deleteLine(originalLineCount + 1),
+                        "reset or invalid insertion/deletion boundaries "
+                        "corrupted the immutable source");
                 okay &= Check(
                         !originalApplyLine.isEmpty() &&
                                 lightHighlight.contains(
