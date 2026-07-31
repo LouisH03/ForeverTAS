@@ -87,7 +87,11 @@ public:
                 run.frames.back().timeMs);
         const RaceViewerFrame sampled = SampleFrame(run.frames, clampedTime);
         if (preset == 3) {
-            const QQuaternion vehicleRotation = sampled.rotation.normalized();
+            // The game exposes the vehicle-facing axes through GmIso4 rows.
+            // Qt scene nodes expect local-to-world axes as columns, so transpose
+            // the orthonormal basis by conjugating its quaternion.
+            const QQuaternion vehicleRotation =
+                    sampled.rotation.conjugated().normalized();
             *position = sampled.position +
                     vehicleRotation.rotatedVector(
                             resources_->hoodLocalPosition);
@@ -327,7 +331,9 @@ private:
                 output_.transform.rotation.x,
                 output_.transform.rotation.y,
                 output_.transform.rotation.z);
-        *rotation = validatorRotation.normalized() *
+        // Validator preserves the game camera basis-row convention. Qt uses
+        // basis columns; conjugation performs the required transpose.
+        *rotation = validatorRotation.conjugated().normalized() *
                 QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, 180.0f);
         *target = *position +
                 rotation->rotatedVector(QVector3D(0.0f, 0.0f, -10.0f));

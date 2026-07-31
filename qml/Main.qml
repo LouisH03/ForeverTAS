@@ -633,13 +633,15 @@ ApplicationWindow {
                     }
 
                     function freeMovementForKey(key) {
-                        if (key === Qt.Key_W || key === Qt.Key_Z)
+                        if (key === Qt.Key_Up || key === Qt.Key_W
+                                || key === Qt.Key_Z)
                             return "forward"
-                        if (key === Qt.Key_S)
+                        if (key === Qt.Key_Down || key === Qt.Key_S)
                             return "backward"
-                        if (key === Qt.Key_A || key === Qt.Key_Q)
+                        if (key === Qt.Key_Left || key === Qt.Key_A
+                                || key === Qt.Key_Q)
                             return "left"
-                        if (key === Qt.Key_D)
+                        if (key === Qt.Key_Right || key === Qt.Key_D)
                             return "right"
                         if (key === Qt.Key_E)
                             return "up"
@@ -675,9 +677,7 @@ ApplicationWindow {
                     }
 
                     function handleFreeCameraKey(event, active) {
-                        if (!freeCamera || window.viewer.manualDriving
-                                || (window.viewer.takeOverOnInput
-                                    && window.viewer.playing))
+                        if (!freeCamera)
                             return false
                         const direction = freeMovementForKey(event.key)
                         if (direction.length === 0)
@@ -689,9 +689,7 @@ ApplicationWindow {
                     }
 
                     function stepFreeCameraMovement(timestamp) {
-                        if (!freeCamera || window.viewer.manualDriving
-                                || (window.viewer.takeOverOnInput
-                                    && window.viewer.playing)) {
+                        if (!freeCamera) {
                             releaseFreeMovement()
                             return false
                         }
@@ -811,6 +809,7 @@ ApplicationWindow {
                     }
 
                     function enableFreeCamera() {
+                        window.viewer.releaseManualInputs()
                         const wasCarCamera = carCameraActive
                         const forward = cameraForward
                         const position = freeCamera
@@ -2478,16 +2477,16 @@ ApplicationWindow {
                         Keys.onPressed: event => {
                             viewport.handleCameraPresetKey(event, true)
                             if (!event.accepted)
-                                window.handleManualKey(event, true)
-                            if (!event.accepted)
                                 viewport.handleFreeCameraKey(event, true)
+                            if (!event.accepted)
+                                window.handleManualKey(event, true)
                         }
                         Keys.onReleased: event => {
                             viewport.handleCameraPresetKey(event, false)
                             if (!event.accepted)
-                                window.handleManualKey(event, false)
-                            if (!event.accepted)
                                 viewport.handleFreeCameraKey(event, false)
+                            if (!event.accepted)
+                                window.handleManualKey(event, false)
                         }
                         onActiveFocusChanged: {
                             if (!activeFocus
@@ -2705,9 +2704,9 @@ ApplicationWindow {
 
                             ThemedButton {
                                 objectName: "freeCameraButton"
-                                Layout.preferredWidth: 62
+                                Layout.preferredWidth: Math.max(58, implicitWidth)
                                 Layout.preferredHeight: 32
-                                text: qsTr("7 Free")
+                                text: qsTr("Free")
                                 highlighted: viewport.freeCamera
                                 Accessible.name: qsTr("Free camera")
                                 onClicked: {
@@ -2721,9 +2720,9 @@ ApplicationWindow {
 
                             ThemedButton {
                                 objectName: "focusCarButton"
-                                Layout.preferredWidth: 58
+                                Layout.preferredWidth: Math.max(52, implicitWidth)
                                 Layout.preferredHeight: 32
-                                text: qsTr("1 Far")
+                                text: qsTr("Far")
                                 enabled: window.viewer.runCount > 0
                                          && window.viewer.carCameraAvailable
                                 highlighted: enabled
@@ -2742,9 +2741,9 @@ ApplicationWindow {
 
                             ThemedButton {
                                 objectName: "nearCameraButton"
-                                Layout.preferredWidth: 66
+                                Layout.preferredWidth: Math.max(60, implicitWidth)
                                 Layout.preferredHeight: 32
-                                text: qsTr("2 Near")
+                                text: qsTr("Near")
                                 enabled: window.viewer.runCount > 0
                                          && window.viewer.carCameraAvailable
                                 highlighted: enabled
@@ -2763,9 +2762,9 @@ ApplicationWindow {
 
                             ThemedButton {
                                 objectName: "internalCameraButton"
-                                Layout.preferredWidth: 82
+                                Layout.preferredWidth: Math.max(82, implicitWidth)
                                 Layout.preferredHeight: 32
-                                text: qsTr("3 Internal")
+                                text: qsTr("Internal")
                                 enabled: window.viewer.runCount > 0
                                          && window.viewer.carCameraAvailable
                                 highlighted: enabled

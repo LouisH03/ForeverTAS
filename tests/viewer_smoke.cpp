@@ -303,17 +303,36 @@ int main(int argc, char **argv) {
                         manualVerificationStarted = true;
                         const QVector3D farPosition =
                                 viewer.carCameraPosition();
+                        const QVector3D farLook =
+                                viewer.carCameraTarget() - farPosition;
+                        const QVector3D farToCar =
+                                viewer.carPosition() - farPosition;
+                        const float farLookAlignment = QVector3D::dotProduct(
+                                farLook.normalized(), farToCar.normalized());
+                        const bool farLooksTowardCar =
+                                farLook.lengthSquared() > 0.000001f &&
+                                farToCar.lengthSquared() > 0.000001f &&
+                                farLookAlignment > 0.0f;
                         const double farFov =
                                 viewer.carCameraFieldOfView();
                         viewer.setCameraPreset(2);
                         const QVector3D nearPosition =
                                 viewer.carCameraPosition();
+                        const QVector3D nearLook =
+                                viewer.carCameraTarget() - nearPosition;
+                        const QVector3D nearToCar =
+                                viewer.carPosition() - nearPosition;
+                        const float nearLookAlignment = QVector3D::dotProduct(
+                                nearLook.normalized(), nearToCar.normalized());
                         const bool nearValid =
                                 viewer.carCameraAvailable() &&
                                 !viewer.hideSelectedCar() &&
                                 (nearPosition - farPosition)
                                                 .lengthSquared() >
-                                        0.000001f;
+                                        0.000001f &&
+                                nearLook.lengthSquared() > 0.000001f &&
+                                nearToCar.lengthSquared() > 0.000001f &&
+                                nearLookAlignment > 0.0f;
                         viewer.setCameraPreset(3);
                         const QVector3D internalPosition =
                                 viewer.carCameraPosition();
@@ -329,7 +348,8 @@ int main(int argc, char **argv) {
                                 viewer.cameraPreset() == 1 &&
                                 !viewer.hideSelectedCar() &&
                                 std::isfinite(farFov) && farFov >= 20.0 &&
-                                farFov <= 150.0 && nearValid && internalValid;
+                                farFov <= 150.0 && farLooksTowardCar &&
+                                nearValid && internalValid;
                         if (!cameraPresetsValid) {
                             completed = true;
                             std::cerr
@@ -337,6 +357,10 @@ int main(int argc, char **argv) {
                                     << "available="
                                     << viewer.carCameraAvailable()
                                     << ", farFov=" << farFov
+                                    << ", farLookAlignment="
+                                    << farLookAlignment
+                                    << ", nearLookAlignment="
+                                    << nearLookAlignment
                                     << ", nearDelta="
                                     << (nearPosition - farPosition)
                                                .lengthSquared()

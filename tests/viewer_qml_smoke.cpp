@@ -360,6 +360,7 @@ int main(int argc, char **argv) {
     bool editorStructure = false;
     bool manualActionKeysValid = false;
     bool cameraShortcutKeysValid = false;
+    bool freeCameraManualRoutingValid = false;
     QObject::connect(
             &engine,
             &QQmlApplicationEngine::objectCreationFailed,
@@ -1318,6 +1319,19 @@ int main(int argc, char **argv) {
                             focusCarButton->property("highlighted").toBool() &&
                             nearCameraButton->property("enabled").toBool() &&
                             internalCameraButton->property("enabled").toBool() &&
+                            freeCameraButton->property("text").toString() ==
+                                    QStringLiteral("Free") &&
+                            focusCarButton->property("text").toString() ==
+                                    QStringLiteral("Far") &&
+                            nearCameraButton->property("text").toString() ==
+                                    QStringLiteral("Near") &&
+                            internalCameraButton->property("text").toString() ==
+                                    QStringLiteral("Internal") &&
+                            internalCameraButton->property("width").toDouble() +
+                                            0.5 >=
+                                    internalCameraButton
+                                            ->property("implicitWidth")
+                                            .toDouble() &&
                             !focusObjectButton->property("enabled").toBool();
                     if (!freeCameraUiValid) {
                         std::cerr
@@ -6068,31 +6082,34 @@ int main(int argc, char **argv) {
                                                     currentRoot->findChild<QObject *>(
                                                             QStringLiteral(
                                                                     "manualInputFocus")));
-                                    const auto sendCameraKey =
+                                    const auto sendCameraKeyPhase =
                                             [currentManualInputFocus](
+                                                    QEvent::Type type,
                                                     int key,
                                                     Qt::KeyboardModifiers modifiers) {
                                                 if (currentManualInputFocus ==
                                                     nullptr) {
                                                     return false;
                                                 }
-                                                QKeyEvent press(
-                                                        QEvent::KeyPress,
-                                                        key,
-                                                        modifiers);
+                                                QKeyEvent event(type, key, modifiers);
                                                 QCoreApplication::sendEvent(
                                                         currentManualInputFocus,
-                                                        &press);
-                                                QKeyEvent release(
-                                                        QEvent::KeyRelease,
-                                                        key,
-                                                        modifiers);
-                                                QCoreApplication::sendEvent(
-                                                        currentManualInputFocus,
-                                                        &release);
+                                                        &event);
                                                 QCoreApplication::processEvents();
-                                                return press.isAccepted() &&
-                                                        release.isAccepted();
+                                                return event.isAccepted();
+                                            };
+                                    const auto sendCameraKey =
+                                            [&sendCameraKeyPhase](
+                                                    int key,
+                                                    Qt::KeyboardModifiers modifiers) {
+                                                return sendCameraKeyPhase(
+                                                               QEvent::KeyPress,
+                                                               key,
+                                                               modifiers) &&
+                                                        sendCameraKeyPhase(
+                                                               QEvent::KeyRelease,
+                                                               key,
+                                                               modifiers);
                                             };
                                     if (currentViewport != nullptr &&
                                         currentManualInputFocus != nullptr) {
@@ -6196,6 +6213,105 @@ int main(int argc, char **argv) {
                                                     ->property(
                                                             "carCameraActive")
                                                     .toBool();
+                                    if (driveFocusedRealCar &&
+                                        currentViewport != nullptr &&
+                                        currentManualInputFocus != nullptr) {
+                                        const bool switchedToFree =
+                                                sendCameraKey(
+                                                        Qt::Key_7,
+                                                        Qt::NoModifier) &&
+                                                currentViewport
+                                                        ->property("freeCamera")
+                                                        .toBool() &&
+                                                !viewer.manualLeft() &&
+                                                !viewer.manualRight() &&
+                                                !viewer.manualAccelerate() &&
+                                                !viewer.manualBrake();
+                                        const QVector3D positionBeforeMovement =
+                                                currentViewport
+                                                        ->property(
+                                                                "freeCameraPosition")
+                                                        .value<QVector3D>();
+                                        const bool forwardPressed =
+                                                sendCameraKeyPhase(
+                                                        QEvent::KeyPress,
+                                                        Qt::Key_W,
+                                                        Qt::NoModifier) &&
+                                                currentViewport
+                                                        ->property(
+                                                                "freeMoveForward")
+                                                        .toBool() &&
+                                                !viewer.manualAccelerate();
+                                        const double movementStart =
+                                                currentViewport
+                                                        ->property(
+                                                                "freeMoveStartedAt")
+                                                        .toDouble();
+                                        QVariant movementStepped;
+                                        const bool movementAdvanced =
+                                                movementStart > 0.0 &&
+                                                QMetaObject::invokeMethod(
+                                                        currentViewport,
+                                                        "stepFreeCameraMovement",
+                                                        Q_RETURN_ARG(
+                                                                QVariant,
+                                                                movementStepped),
+                                                        Q_ARG(
+                                                                QVariant,
+                                                                QVariant(
+                                                                        movementStart +
+                                                                        1000.0))) &&
+                                                movementStepped.toBool() &&
+                                                (currentViewport
+                                                                 ->property(
+                                                                         "freeCameraPosition")
+                                                                 .value<QVector3D>() -
+                                                 positionBeforeMovement)
+                                                                .lengthSquared() >
+                                                        0.000001f &&
+                                                !viewer.manualAccelerate();
+                                        const bool forwardReleased =
+                                                sendCameraKeyPhase(
+                                                        QEvent::KeyRelease,
+                                                        Qt::Key_W,
+                                                        Qt::NoModifier) &&
+                                                !currentViewport
+                                                         ->property(
+                                                                 "freeMoveForward")
+                                                         .toBool() &&
+                                                !viewer.manualAccelerate();
+                                        const bool arrowPressed =
+                                                sendCameraKeyPhase(
+                                                        QEvent::KeyPress,
+                                                        Qt::Key_Left,
+                                                        Qt::NoModifier) &&
+                                                currentViewport
+                                                        ->property(
+                                                                "freeMoveLeft")
+                                                        .toBool() &&
+                                                !viewer.manualLeft();
+                                        const bool arrowReleased =
+                                                sendCameraKeyPhase(
+                                                        QEvent::KeyRelease,
+                                                        Qt::Key_Left,
+                                                        Qt::NoModifier) &&
+                                                !currentViewport
+                                                         ->property(
+                                                                 "freeMoveLeft")
+                                                         .toBool() &&
+                                                !viewer.manualLeft();
+                                        freeCameraManualRoutingValid =
+                                                switchedToFree &&
+                                                forwardPressed &&
+                                                movementAdvanced &&
+                                                forwardReleased &&
+                                                arrowPressed && arrowReleased;
+                                        viewer.setCameraPreset(1);
+                                        QMetaObject::invokeMethod(
+                                                currentViewport,
+                                                "focusCurrentCar");
+                                        QCoreApplication::processEvents();
+                                    }
                                     const bool enterRespawn =
                                             invokeCurrentManualKey(
                                                     Qt::Key_Enter, true);
@@ -6255,6 +6371,7 @@ int main(int argc, char **argv) {
                                     QCoreApplication::processEvents();
                                     manualActionKeysValid =
                                             cameraShortcutKeysValid &&
+                                            freeCameraManualRoutingValid &&
                                             driveFocusedRealCar &&
                                             enterRespawn &&
                                             enterRespawnExecuted &&
@@ -6504,6 +6621,8 @@ int main(int argc, char **argv) {
                                             << editorStructure
                                             << ", cameraShortcutKeys="
                                             << cameraShortcutKeysValid
+                                            << ", freeCameraManualRouting="
+                                            << freeCameraManualRoutingValid
                                             << ", manualActionKeys="
                                             << manualActionKeysValid << '\n';
                                 }
