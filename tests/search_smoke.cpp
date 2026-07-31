@@ -422,8 +422,8 @@ bool CheckStuntTargetBackend(
     const forevertas::SearchResult result =
             forevertas::RunSearch(request, &control);
     const bool valid =
-            result.bestEvaluationTimeMs == 6010.0 &&
-            result.bestState.timeMs == 6010u &&
+            result.bestEvaluationTimeMs == 6000.0 &&
+            result.bestState.timeMs == 6000u &&
             result.bestScore ==
                     static_cast<double>(
                             result.bestState.stuntsScore.value_or(0u)) &&
@@ -433,7 +433,9 @@ bool CheckStuntTargetBackend(
         std::cerr
                 << "stunt target did not observe the configured deadline "
                 << "with backend "
-                << forevertas::PhysicsBackendId(backend) << '\n';
+                << forevertas::PhysicsBackendId(backend)
+                << " (evaluation=" << result.bestEvaluationTimeMs
+                << ", state=" << result.bestState.timeMs << ")\n";
     }
     return valid;
 }

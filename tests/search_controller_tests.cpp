@@ -706,8 +706,9 @@ bool TestUserTimelineConfigurationBoundary() {
     const forevertas::EvaluationPlan plan = evaluator->Plan(
             1000, modifier->EarliestMutationTimeMs(), 10u);
     okay &= Check(modifier->EarliestMutationTimeMs() == 10 &&
-                          plan.startTimeMs == 10 && plan.endTimeMs == 30,
-                  "registry did not apply exactly one timeline tick");
+                          plan.startTimeMs == 10 && plan.endTimeMs == 20,
+                  "registry did not limit the one-tick offset to input "
+                  "settings");
     return okay;
 }
 

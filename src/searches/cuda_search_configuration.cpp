@@ -13,11 +13,11 @@ namespace {
 
 using namespace forevervalidator::experimental;
 
-const OptionSettings &SimulationSettings(
+const OptionSettings &SimulationInputSettings(
         const OptionConfiguration &configuration,
         std::uint32_t tickDurationMs,
         OptionSettings *storage) {
-    const auto translated = SimulationSettingsFromUserTimeline(
+    const auto translated = SimulationInputSettingsFromUserTimeline(
             configuration.settings, tickDurationMs);
     if (!translated) {
         throw std::invalid_argument(
@@ -75,7 +75,7 @@ std::vector<PhysicsSandboxCudaModifier> BuildCudaModifiers(
     result.reserve(modifiers.size());
     for (const OptionConfiguration &configuration : modifiers) {
         OptionSettings storage;
-        const OptionSettings &settings = SimulationSettings(
+        const OptionSettings &settings = SimulationInputSettings(
                 configuration, tickDurationMs, &storage);
         if (configuration.id == kRandomSteeringModifierId) {
             result.emplace_back(
@@ -174,9 +174,11 @@ std::vector<PhysicsSandboxCudaModifier> BuildCudaModifiers(
 std::optional<PhysicsSandboxCudaEvaluator> BuildCudaEvaluator(
         const OptionConfiguration &configuration,
         std::uint32_t tickDurationMs) {
-    OptionSettings storage;
-    const OptionSettings &settings = SimulationSettings(
-            configuration, tickDurationMs, &storage);
+    if (tickDurationMs == 0u) {
+        throw std::invalid_argument(
+                "CUDA evaluator tick duration must be greater than zero");
+    }
+    const OptionSettings &settings = configuration.settings;
     if (configuration.id == kVelocityEvaluationId) {
         const double x = Number(settings, "directionX");
         const double y = Number(settings, "directionY");

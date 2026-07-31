@@ -85,7 +85,11 @@ std::optional<std::string> ValidateStuntPointsOptionSettings(
         return "stunt points target time is invalid";
     }
     return ValidateTimeWindow(
-            *deadline, *deadline, tickDurationMs, "stunt points target");
+            *deadline,
+            *deadline,
+            tickDurationMs,
+            "stunt points target",
+            true);
 }
 
 std::unique_ptr<IterationEvaluator> CreateStuntPointsEvaluator(

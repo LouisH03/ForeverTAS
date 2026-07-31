@@ -135,9 +135,16 @@ inline std::optional<std::string> ValidateTimeWindow(
         std::int64_t minimum,
         std::int64_t maximum,
         std::uint32_t tickDurationMs,
-        const std::string &name) {
+        const std::string &name,
+        bool allowTimelineOrigin = false) {
     if (tickDurationMs == 0u) return "tick duration must be greater than zero";
-    if (minimum < static_cast<std::int64_t>(tickDurationMs)) {
+    const std::int64_t earliest =
+            allowTimelineOrigin
+            ? 0 : static_cast<std::int64_t>(tickDurationMs);
+    if (minimum < earliest) {
+        if (allowTimelineOrigin) {
+            return name + " minimum must not be negative";
+        }
         return name + " minimum must be at least one tick";
     }
     if (maximum < minimum) return name + " maximum must not precede minimum";

@@ -174,7 +174,7 @@ std::unique_ptr<forevertas::IterationEvaluator> Evaluator(
 }
 
 
-bool TestUserTimelineTimeOrigin() {
+bool TestInputOnlyTimelineTimeOrigin() {
     const auto firstInput =
             forevertas::SimulationTimelineTimeFromUserTime(
                     0, forevertas::kInputTimelineTickDurationMs);
@@ -198,7 +198,7 @@ bool TestUserTimelineTimeOrigin() {
                                 {"radiusMs", "200"},
                                 {"maxSteerHoldMs", "300"}};
     const auto converted =
-            forevertas::SimulationSettingsFromUserTimeline(
+            forevertas::SimulationInputSettingsFromUserTimeline(
                     sample, forevertas::kInputTimelineTickDurationMs);
     okay &= Check(converted && converted->at("minTimeMs") == "10" &&
                               converted->at("maxTimeMs") == "1010" &&
@@ -207,9 +207,9 @@ bool TestUserTimelineTimeOrigin() {
                               converted->at("maxSteerHoldMs") == "300",
                       "timeline conversion changed a duration setting");
 
-    const auto verifySettings = [&okay](const OptionSettings &settings) {
+    const auto verifyInputSettings = [&okay](const OptionSettings &settings) {
         const auto simulation =
-                forevertas::SimulationSettingsFromUserTimeline(
+                forevertas::SimulationInputSettingsFromUserTimeline(
                         settings,
                         forevertas::kInputTimelineTickDurationMs);
         if (!simulation) {
@@ -218,7 +218,7 @@ bool TestUserTimelineTimeOrigin() {
             return;
         }
         for (const auto &[key, value] : settings) {
-            if (forevertas::IsUserTimelineTimeSetting(key)) {
+            if (forevertas::IsInputTimelineTimeSetting(key)) {
                 const auto parsed = forevertas::ParseSignedDecimal(value);
                 okay &= Check(parsed &&
                                       simulation->at(key) ==
@@ -230,15 +230,45 @@ bool TestUserTimelineTimeOrigin() {
             }
         }
     };
-    for (const auto &registration : forevertas::SearchAlgorithmRegistry()) {
-        verifySettings(registration.defaultSettings);
-    }
     for (const auto &registration : forevertas::ModifierRegistry()) {
-        verifySettings(registration.defaultSettings);
+        verifyInputSettings(registration.defaultSettings);
     }
-    for (const auto &registration : forevertas::EvaluationTargetRegistry()) {
-        verifySettings(registration.defaultSettings);
-    }
+
+    const std::string largestAlignedTime =
+            "9223372036854775800";
+    const auto *const stuntRegistration =
+            forevertas::FindEvaluationTarget(
+                    forevertas::kStuntPointsEvaluationId);
+    OptionSettings evaluationSettings =
+            stuntRegistration->defaultSettings;
+    evaluationSettings["targetTimeMs"] = largestAlignedTime;
+    okay &= Check(
+            !stuntRegistration->validateSettings(
+                    evaluationSettings,
+                    forevertas::kInputTimelineTickDurationMs),
+            "a large non-input evaluation time was treated as an offset input "
+            "time");
+    const auto largeTimeEvaluator = stuntRegistration->create(
+            evaluationSettings,
+            forevertas::kInputTimelineTickDurationMs);
+    const forevertas::EvaluationPlan largeTimePlan =
+            largeTimeEvaluator->Plan(10000, 1010, 10u);
+    okay &= Check(
+            largeTimePlan.startTimeMs == 10000 &&
+                    largeTimePlan.endTimeMs == 10000,
+            "a large non-input evaluation time was not preserved");
+
+    const auto *const modifierRegistration = forevertas::FindModifier(
+            forevertas::kRandomSteeringModifierId);
+    OptionSettings inputSettings = modifierRegistration->defaultSettings;
+    inputSettings["minTimeMs"] = largestAlignedTime;
+    inputSettings["maxTimeMs"] = largestAlignedTime;
+    okay &= Check(
+            modifierRegistration->validateSettings(
+                    inputSettings,
+                    forevertas::kInputTimelineTickDurationMs)
+                    .has_value(),
+            "an overflowing input time offset was accepted");
     return okay;
 }
 
@@ -325,6 +355,33 @@ bool TestMutableSuffixNormalization() {
 
 bool TestEvaluationTargets() {
     bool okay = true;
+
+    {
+        constexpr std::array<const char *, 3> windowTargetIds{
+                forevertas::kVelocityEvaluationId,
+                forevertas::kPointTargetEvaluationId,
+                forevertas::kPoseTargetEvaluationId};
+        for (const char *const id : windowTargetIds) {
+            const auto *const registration =
+                    forevertas::FindEvaluationTarget(id);
+            OptionSettings settings = registration->defaultSettings;
+            settings["minTimeMs"] = "0";
+            settings["maxTimeMs"] = "20";
+            std::unique_ptr<forevertas::IterationEvaluator> evaluator =
+                    registration->create(settings, 10u);
+            const forevertas::EvaluationPlan plan =
+                    evaluator->Plan(10000, 0, 10u);
+            okay &= Check(
+                    plan.startTimeMs == 0 &&
+                            plan.endTimeMs == 20,
+                    "an evaluation time frame received the input one-tick "
+                    "offset");
+            settings["minTimeMs"] = "-10";
+            okay &= Check(
+                    registration->validateSettings(settings, 10u).has_value(),
+                    "a negative evaluation time frame was accepted");
+        }
+    }
 
     {
         auto evaluator = Evaluator(forevertas::kVelocityEvaluationId);
@@ -517,20 +574,20 @@ bool TestEvaluationTargets() {
                 evaluator->Plan(10000, 1010, 10u);
         auto session = evaluator->CreateSession();
         PhysicsSandboxStateView previous;
-        previous.timeMs = 2500u;
+        previous.timeMs = 2490u;
         previous.stuntsScore = 999u;
         PhysicsSandboxStateView current = previous;
-        current.timeMs = 2510u;
+        current.timeMs = 2500u;
         current.stuntsScore = 250u;
         const auto sample = session->Observe(previous, current);
-        EvaluationSample incumbent{249.0, 2510.0, {}};
+        EvaluationSample incumbent{249.0, 2500.0, {}};
         okay &= Check(
-                plan.startTimeMs == 2510 &&
-                        plan.endTimeMs == 2510,
-                "stunt target did not observe only its chosen deadline");
+                plan.startTimeMs == 2500 &&
+                        plan.endTimeMs == 2500,
+                "stunt target time received the input one-tick offset");
         okay &= Check(
                 sample && sample->score == 250.0 &&
-                        sample->timeMs == 2510.0 &&
+                        sample->timeMs == 2500.0 &&
                         sample->description.find("Stunt points: 250") == 0u,
                 "stunt target did not use the deadline's monotonic score");
         okay &= Check(
@@ -626,7 +683,9 @@ bool TestModifierDeterminism() {
     const MutationResult repeated = modifier->Mutate({baseline, 7u, 0u, 10u});
     const MutationResult otherIteration = modifier->Mutate(
             {baseline, 8u, 0u, 10u});
-    bool okay = Check(SameEvents(first.inputs, repeated.inputs),
+    bool okay = Check(modifier->EarliestMutationTimeMs() == 1010,
+                      "an input modifier did not receive the one-tick offset");
+    okay &= Check(SameEvents(first.inputs, repeated.inputs),
                       "same seed and iteration index were not deterministic");
     okay &= Check(!SameEvents(first.inputs, otherIteration.inputs),
                   "different iteration indices produced identical inputs");
@@ -1397,6 +1456,23 @@ bool TestCudaConfigurationCoverage() {
             okay &= Check(
                     modifiers.size() == 1u,
                     "a registered modifier was not translated for CUDA");
+            if (modifiers.size() == 1u) {
+                const auto window = std::visit(
+                        [](const auto &modifier) {
+                            return modifier.window;
+                        },
+                        modifiers.front());
+                const auto minimum = forevertas::ParseSignedDecimal(
+                        registration.defaultSettings.at("minTimeMs"));
+                const auto maximum = forevertas::ParseSignedDecimal(
+                        registration.defaultSettings.at("maxTimeMs"));
+                okay &= Check(
+                        minimum && maximum &&
+                                window.minimumTimeMs == *minimum + 10 &&
+                                window.maximumTimeMs == *maximum + 10,
+                        "a CUDA input modifier did not receive the one-tick "
+                        "offset");
+            }
         } catch (...) {
             okay &= Check(
                     false,
@@ -1541,7 +1617,7 @@ bool TestReplayPathRobustness() {
 }  // namespace
 
 int main() {
-    const bool okay = TestUserTimelineTimeOrigin() &&
+    const bool okay = TestInputOnlyTimelineTimeOrigin() &&
             TestHumanDurationFormatting() &&
             TestMutableSuffixNormalization() &&
             TestEvaluationTargets() &&
