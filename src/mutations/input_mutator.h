@@ -1,7 +1,7 @@
 #ifndef FOREVERTAS_MUTATIONS_INPUT_MUTATOR_H
 #define FOREVERTAS_MUTATIONS_INPUT_MUTATOR_H
 
-#include "mutations/input_event_utils.h"
+#include "mutations/mutation_overlay.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +56,9 @@ public:
     virtual MutationResult Mutate(const MutationRequest &request) const = 0;
     virtual std::int64_t EarliestMutationTimeMs() const = 0;
     virtual MutationTimeRange AffectedTimeRange() const = 0;
+    virtual bool SupportsSparseMutation() const { return false; }
+    virtual void MutateSparse(SparseMutationTimeline &,
+                              const SparseMutationRequest &) const {}
 };
 
 }  // namespace forevertas

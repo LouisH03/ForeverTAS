@@ -24,7 +24,7 @@ private:
         std::uint64_t generation = 0u;
         std::uint32_t tickDurationMs = 0u;
         bool usable = false;
-        std::vector<SandboxInputEvent> events;
+        MutationBaselineIndex index;
     };
 
     MutationResult MutateFull(const MutationRequest &request) const;
@@ -32,6 +32,7 @@ private:
 
     std::vector<std::unique_ptr<InputMutator>> modifiers_;
     std::optional<MutationTimeRange> affectedTimeRange_;
+    bool sparseMutationSupported_ = true;
     mutable LocalBaselineCache localBaselineCache_;
 };
 

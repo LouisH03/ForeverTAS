@@ -758,6 +758,60 @@ bool TestExistingEventWindowPatchParity() {
     return okay;
 }
 
+bool TestSparseMutationOverlayStorage() {
+    std::vector<SandboxInputEvent> baseline;
+    baseline.reserve(200u);
+    for (std::int32_t timeMs = 0; timeMs < 2000; timeMs += 10) {
+        baseline.push_back(Steering(
+                timeMs,
+                static_cast<AnalogInputState>(timeMs - 1000)));
+    }
+
+    forevertas::MutationBaselineIndex index;
+    bool okay = Check(
+            index.Build(baseline, 0, 1990, 10u),
+            "sparse mutation baseline index rejected canonical inputs");
+    if (!okay) return false;
+
+    forevertas::SparseMutationTimeline timeline(index);
+    const auto steering = timeline.CollectEligible(
+            forevertas::MutationEligibility::SteeringAnalog,
+            0,
+            1990);
+    okay &= Check(
+            steering.size() == baseline.size(),
+            "precomputed steering eligibility omitted baseline events");
+    if (!okay) return false;
+
+    const auto handle = steering[50u];
+    SandboxInputEvent moved = handle.event;
+    moved.timeMs += 30;
+    moved.value.analog = 20000;
+    timeline.ReplaceEvent(handle, moved);
+    timeline.AppendEvent(Steering(moved.timeMs, 30000));
+    okay &= Check(
+            timeline.TouchedGroupCount() == 0u &&
+                    timeline.PendingEventCount() == 2u,
+            "sparse mutation copied a source group for a shifted event");
+
+    timeline.Normalize(10u);
+    okay &= Check(
+            timeline.TouchedGroupCount() == 1u &&
+                    timeline.PendingEventCount() == 0u,
+            "sparse normalization did not stay limited to touched groups");
+
+    std::vector<SandboxInputEvent> materializedBaseline = baseline;
+    materializedBaseline[50u] = moved;
+    materializedBaseline.push_back(Steering(moved.timeMs, 30000));
+    forevertas::NormalizeInputEvents(materializedBaseline, 10u);
+    const std::vector<SandboxInputEvent> materializedSparse =
+            timeline.MaterializeRange(0, 1990);
+    okay &= Check(
+            SameEvents(materializedSparse, materializedBaseline),
+            "sparse shifted-event conflict resolution changed semantics");
+    return okay;
+}
+
 struct ModifierParitySpec {
     const char *id = nullptr;
     OptionSettings settings;
@@ -1395,6 +1449,10 @@ bool TestRegistries() {
         okay &= Check(registration.create(
                               registration.defaultSettings, 10u) != nullptr,
                       "modifier factory returned null");
+        const std::unique_ptr<InputMutator> modifier = registration.create(
+                registration.defaultSettings, 10u);
+        okay &= Check(modifier->SupportsSparseMutation(),
+                      "registered modifier lacks sparse mutation support");
     }
     for (const auto &registration : forevertas::EvaluationTargetRegistry()) {
         okay &= Check(!registration.settingsComponent.empty(),
@@ -2036,6 +2094,7 @@ int main() {
             TestModifierComposition() &&
             TestModifierDeterminism() &&
             TestExistingEventWindowPatchParity() &&
+            TestSparseMutationOverlayStorage() &&
             TestAllModifierWindowPatchParity() &&
             TestEveryOrderedModifierPairWindowPatchParity() &&
             TestMultiPassModifierWindowPatchParity() &&
