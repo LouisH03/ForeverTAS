@@ -249,6 +249,11 @@ file(GLOB_RECURSE FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES
     "${forevervalidator_SOURCE_DIR}/src/validation/evaluation/*.cpp"
     "${forevervalidator_SOURCE_DIR}/src/validation/planning/*.cpp"
     "${forevervalidator_SOURCE_DIR}/src/platform/native/*.cpp")
+# The debugger executes the reference/native engine and deliberately does not
+# link the CUDA driver. Session specialization is a CUDA host-side facility,
+# not part of the editable reference simulation path.
+list(FILTER FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES EXCLUDE REGEX
+    "/src/simulation/backends/cuda/cuda_session_specialization\.cpp$")
 add_executable(forevertas-simulation-debug-worker
     src/debugger/simulation_debug_worker.cpp
     ${FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES})
