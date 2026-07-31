@@ -1,3 +1,4 @@
+#include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
 #include "viewer/simulation_debugger_model.h"
 
@@ -5,6 +6,7 @@
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QHash>
+#include <QMouseEvent>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
@@ -160,6 +162,21 @@ bool WaitForPreparation(forevertas::viewer::SimulationDebuggerModel &model,
     return !model.preparing() && model.available();
 }
 
+void SendTimelineMouseEvent(
+        forevertas::viewer::RaceTimelineItem &timeline,
+        QEvent::Type type,
+        Qt::MouseButton button,
+        Qt::MouseButtons buttons,
+        const QPointF &position) {
+    QMouseEvent event(type,
+                      position,
+                      position,
+                      button,
+                      buttons,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(&timeline, &event);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -174,6 +191,10 @@ int main(int argc, char **argv) {
     QSettings().clear();
     forevertas::viewer::RaceViewerController viewer;
     auto *const model = viewer.simulationDebugger();
+    forevertas::viewer::RaceTimelineItem timeline;
+    timeline.setWidth(252);
+    timeline.setHeight(600);
+    timeline.setViewer(&viewer);
     bool okay = true;
     okay &= Check(
             model->preparing(),
@@ -236,6 +257,7 @@ int main(int argc, char **argv) {
         WaitingPostDeletionBreakpoint,
         WaitingCompileFailure,
         WaitingPauseStop,
+        WaitingTimelineSeekStability,
         Finished,
     };
     Phase phase = Phase::Loading;
@@ -255,6 +277,17 @@ int main(int argc, char **argv) {
     QList<int> insertedActiveLines;
     int selectionChangesWhileRunning = 0;
     int resolvedRuntimeBreakpointLine = -1;
+    qint64 timelineSeekTick = -1;
+    qint64 timelineSeekFrameCount = -1;
+    qint64 timelineSeekExpectedTime = -1;
+    QString timelineSeekFile;
+    int timelineSeekLine = -1;
+    int timelineSeekLineChanges = 0;
+    int timelineSeekStateChanges = 0;
+    int timelineSeekTimeChanges = 0;
+    int timelineSeekPoseChanges = 0;
+    bool countingTimelineSeekSignals = false;
+    QElapsedTimer timelineSeekClock;
     QElapsedTimer resolvedBreakpointClock;
     QElapsedTimer responsivenessClock;
     qint64 lastUiPulse = 0;
@@ -282,6 +315,42 @@ int main(int argc, char **argv) {
             &application, [&]() {
                 if (model->running()) {
                     ++selectionChangesWhileRunning;
+                }
+            });
+    QObject::connect(
+            model,
+            &forevertas::viewer::SimulationDebuggerModel::linesChanged,
+            &application,
+            [&]() {
+                if (countingTimelineSeekSignals) {
+                    ++timelineSeekLineChanges;
+                }
+            });
+    QObject::connect(
+            model,
+            &forevertas::viewer::SimulationDebuggerModel::stateChanged,
+            &application,
+            [&]() {
+                if (countingTimelineSeekSignals) {
+                    ++timelineSeekStateChanges;
+                }
+            });
+    QObject::connect(
+            &viewer,
+            &forevertas::viewer::RaceViewerController::timeChanged,
+            &application,
+            [&]() {
+                if (countingTimelineSeekSignals) {
+                    ++timelineSeekTimeChanges;
+                }
+            });
+    QObject::connect(
+            &viewer,
+            &forevertas::viewer::RaceViewerController::poseChanged,
+            &application,
+            [&]() {
+                if (countingTimelineSeekSignals) {
+                    ++timelineSeekPoseChanges;
                 }
             });
     QObject::connect(
@@ -785,6 +854,77 @@ int main(int argc, char **argv) {
                                   ActiveLineIsSelectedAndMarked(*model) &&
                                   selectionChangesWhileRunning == 0,
                           "normal pause did not settle at a real source line");
+            timelineSeekTick = model->executionTick();
+            timelineSeekFrameCount = viewer.tickCount();
+            timelineSeekFile = model->activeFilePath();
+            timelineSeekLine = model->activeLine();
+            const qint64 scrubStartTime = viewer.timeMs();
+            timelineSeekLineChanges = 0;
+            timelineSeekStateChanges = 0;
+            timelineSeekTimeChanges = 0;
+            timelineSeekPoseChanges = 0;
+            countingTimelineSeekSignals = true;
+            QElapsedTimer synchronousSeekClock;
+            synchronousSeekClock.start();
+            for (int repeat = 0; repeat < 2000; ++repeat) {
+                viewer.pause();
+            }
+            SendTimelineMouseEvent(
+                    timeline,
+                    QEvent::MouseButtonPress,
+                    Qt::LeftButton,
+                    Qt::LeftButton,
+                    QPointF(126.0, 300.0));
+            constexpr int kMoveCount = 4701;
+            for (int move = 0; move < kMoveCount; ++move) {
+                SendTimelineMouseEvent(
+                        timeline,
+                        QEvent::MouseMove,
+                        Qt::NoButton,
+                        Qt::LeftButton,
+                        QPointF(126.0,
+                                static_cast<qreal>(move % 600)));
+            }
+            const qreal finalY =
+                    static_cast<qreal>((kMoveCount - 1) % 600);
+            SendTimelineMouseEvent(
+                    timeline,
+                    QEvent::MouseButtonRelease,
+                    Qt::LeftButton,
+                    Qt::NoButton,
+                    QPointF(126.0, finalY));
+            timelineSeekExpectedTime = std::clamp<qint64>(
+                    static_cast<qint64>(std::llround(
+                            static_cast<double>(scrubStartTime) -
+                            (finalY - 300.0) / timeline.pixelsPerTick() *
+                                    viewer.tickDurationMs())),
+                    0,
+                    viewer.timelineSeekLimitMs());
+            okay &= Check(
+                    synchronousSeekClock.elapsed() < 250 &&
+                            timelineSeekTimeChanges <= 2 &&
+                            timelineSeekPoseChanges <= 2 &&
+                            viewer.timeMs() == timelineSeekExpectedTime,
+                    "continuous code-mode scrubbing was not coalesced or "
+                    "lost its exact release position");
+            timelineSeekClock.start();
+            phase = Phase::WaitingTimelineSeekStability;
+        } else if (phase == Phase::WaitingTimelineSeekStability &&
+                   timelineSeekClock.elapsed() >= 250) {
+            countingTimelineSeekSignals = false;
+            okay &= Check(
+                    model->active() && !model->running() &&
+                            !model->preparing() &&
+                            model->executionTick() == timelineSeekTick &&
+                            viewer.tickCount() == timelineSeekFrameCount &&
+                            model->activeFilePath() == timelineSeekFile &&
+                            model->activeLine() == timelineSeekLine &&
+                            HasInlineValue(*model) &&
+                            timelineSeekLineChanges == 0 &&
+                            timelineSeekStateChanges == 0 &&
+                            viewer.timeMs() == timelineSeekExpectedTime,
+                    "timeline seeking restarted or reprocessed the native "
+                    "debugger instead of reusing cached simulation frames");
             QElapsedTimer stopTimer;
             stopTimer.start();
             viewer.stopSimulationDebugger();

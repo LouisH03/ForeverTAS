@@ -3,8 +3,10 @@
 
 #include "viewer/race_viewer_controller.h"
 
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QQuickPaintedItem>
+#include <QTimer>
 
 class QMouseEvent;
 class QPainter;
@@ -45,6 +47,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
 
 private:
@@ -54,11 +57,18 @@ private:
         Zoom,
     };
 
+    void queueScrub(qint64 timeMs);
+    void applyPendingScrub();
+    void finishScrub();
     void disconnectViewer();
 
     QPointer<RaceViewerController> viewer_;
+    QTimer scrubUpdateTimer_;
+    QElapsedTimer lastScrubUpdate_;
     qreal pixelsPerTick_ = 3.0;
     bool darkMode_ = false;
+    bool hasPendingScrub_ = false;
+    qint64 pendingScrubTimeMs_ = 0;
     qint64 dragAnchorTimeMs_ = 0;
     qreal dragAnchorY_ = 0.0;
     qreal zoomAnchorPixelsPerTick_ = 3.0;

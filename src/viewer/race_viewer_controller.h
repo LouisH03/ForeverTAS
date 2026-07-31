@@ -204,6 +204,7 @@ public:
     QVector3D carPosition() const;
     QQuaternion carRotation() const;
     qint64 durationMs() const;
+    qint64 timelineSeekLimitMs() const;
     qint64 timeMs() const;
     qint64 currentTick() const;
     qint64 tickCount() const;

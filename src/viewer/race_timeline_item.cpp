@@ -20,6 +20,7 @@ namespace {
 
 constexpr qreal kMinimumPixelsPerTick = 1.0;
 constexpr qreal kMaximumPixelsPerTick = 12.0;
+constexpr int kScrubUpdateIntervalMs = 16;
 
 struct TimelineScale {
     qint64 majorTicks = 100;
@@ -110,6 +111,12 @@ RaceTimelineItem::RaceTimelineItem(QQuickItem *parent)
     setAntialiasing(false);
     setOpaquePainting(true);
     setCursor(QCursor(Qt::SizeVerCursor));
+    scrubUpdateTimer_.setSingleShot(true);
+    scrubUpdateTimer_.setTimerType(Qt::PreciseTimer);
+    connect(&scrubUpdateTimer_,
+            &QTimer::timeout,
+            this,
+            &RaceTimelineItem::applyPendingScrub);
 }
 
 RaceViewerController *RaceTimelineItem::viewer() const {
@@ -120,6 +127,10 @@ void RaceTimelineItem::setViewer(RaceViewerController *viewer) {
     if (viewer_ == viewer) {
         return;
     }
+    scrubUpdateTimer_.stop();
+    hasPendingScrub_ = false;
+    dragMode_ = DragMode::None;
+    lastScrubUpdate_.invalidate();
     disconnectViewer();
     viewer_ = viewer;
     if (viewer_ != nullptr) {
@@ -422,15 +433,19 @@ void RaceTimelineItem::mouseMoveEvent(QMouseEvent *event) {
     } else {
         const qreal deltaTimeMs =
                 deltaY / pixelsPerTick_ * viewer_->tickDurationMs();
-        viewer_->setTimeMs(static_cast<qint64>(std::llround(
+        queueScrub(static_cast<qint64>(std::llround(
                 static_cast<qreal>(dragAnchorTimeMs_) - deltaTimeMs)));
     }
     event->accept();
 }
 
 void RaceTimelineItem::mouseReleaseEvent(QMouseEvent *event) {
-    dragMode_ = DragMode::None;
+    finishScrub();
     event->accept();
+}
+
+void RaceTimelineItem::mouseUngrabEvent() {
+    finishScrub();
 }
 
 void RaceTimelineItem::wheelEvent(QWheelEvent *event) {
@@ -449,6 +464,52 @@ void RaceTimelineItem::wheelEvent(QWheelEvent *event) {
                 static_cast<qint64>(std::llround(steps * 10.0)));
     }
     event->accept();
+}
+
+void RaceTimelineItem::queueScrub(qint64 timeMs) {
+    pendingScrubTimeMs_ =
+            viewer_ == nullptr
+            ? 0
+            : std::clamp<qint64>(
+                      timeMs, 0, viewer_->timelineSeekLimitMs());
+    hasPendingScrub_ = true;
+    if (!lastScrubUpdate_.isValid() ||
+        lastScrubUpdate_.elapsed() >= kScrubUpdateIntervalMs) {
+        applyPendingScrub();
+        return;
+    }
+    if (!scrubUpdateTimer_.isActive()) {
+        scrubUpdateTimer_.start(std::max(
+                1,
+                kScrubUpdateIntervalMs -
+                        static_cast<int>(lastScrubUpdate_.elapsed())));
+    }
+}
+
+void RaceTimelineItem::applyPendingScrub() {
+    if (!hasPendingScrub_) {
+        return;
+    }
+    hasPendingScrub_ = false;
+    if (viewer_ != nullptr) {
+        viewer_->setTimeMs(pendingScrubTimeMs_);
+    }
+    if (lastScrubUpdate_.isValid()) {
+        lastScrubUpdate_.restart();
+    } else {
+        lastScrubUpdate_.start();
+    }
+}
+
+void RaceTimelineItem::finishScrub() {
+    scrubUpdateTimer_.stop();
+    if (dragMode_ == DragMode::Scrub) {
+        applyPendingScrub();
+    } else {
+        hasPendingScrub_ = false;
+    }
+    dragMode_ = DragMode::None;
+    lastScrubUpdate_.invalidate();
 }
 
 void RaceTimelineItem::disconnectViewer() {

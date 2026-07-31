@@ -1059,6 +1059,14 @@ qint64 RaceViewerController::durationMs() const {
     return durationMs_;
 }
 
+qint64 RaceViewerController::timelineSeekLimitMs() const {
+    const RaceViewerRun *const run = selectedRun();
+    return run == nullptr || run->frames.empty()
+            ? 0
+            : std::clamp<qint64>(
+                      run->frames.back().timeMs, 0, durationMs_);
+}
+
 qint64 RaceViewerController::timeMs() const {
     return timeMs_;
 }

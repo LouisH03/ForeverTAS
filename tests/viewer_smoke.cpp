@@ -1,6 +1,7 @@
 #include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
 
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QFileInfo>
 #include <QImage>
@@ -954,6 +955,64 @@ int main(int argc, char **argv) {
                             viewer.timeMs() < dragStartTimeMs;
 
                     viewer.setTimeMs(5000);
+                    int scrubTimeSignals = 0;
+                    int scrubPoseSignals = 0;
+                    const QMetaObject::Connection scrubTimeConnection =
+                            QObject::connect(
+                                    &viewer,
+                                    &RaceViewerController::timeChanged,
+                                    &application,
+                                    [&]() { ++scrubTimeSignals; });
+                    const QMetaObject::Connection scrubPoseConnection =
+                            QObject::connect(
+                                    &viewer,
+                                    &RaceViewerController::poseChanged,
+                                    &application,
+                                    [&]() { ++scrubPoseSignals; });
+                    QElapsedTimer scrubClock;
+                    scrubClock.start();
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseButtonPress,
+                            Qt::LeftButton,
+                            Qt::LeftButton,
+                            QPointF(126.0, 300.0));
+                    constexpr int kSyntheticMoveCount = 4701;
+                    for (int move = 0; move < kSyntheticMoveCount; ++move) {
+                        SendTimelineMouseEvent(
+                                timeline,
+                                QEvent::MouseMove,
+                                Qt::NoButton,
+                                Qt::LeftButton,
+                                QPointF(126.0,
+                                        static_cast<qreal>(move % 600)));
+                    }
+                    const qreal finalScrubY =
+                            static_cast<qreal>(
+                                    (kSyntheticMoveCount - 1) % 600);
+                    SendTimelineMouseEvent(
+                            timeline,
+                            QEvent::MouseButtonRelease,
+                            Qt::LeftButton,
+                            Qt::NoButton,
+                            QPointF(126.0, finalScrubY));
+                    const qint64 scrubElapsedMs = scrubClock.elapsed();
+                    QObject::disconnect(scrubTimeConnection);
+                    QObject::disconnect(scrubPoseConnection);
+                    const qint64 exactScrubTime = std::clamp<qint64>(
+                            static_cast<qint64>(std::llround(
+                                    5000.0 -
+                                    (finalScrubY - 300.0) / 3.0 *
+                                            viewer.tickDurationMs())),
+                            0,
+                            viewer.timelineSeekLimitMs());
+                    const bool continuousScrubCoalesced =
+                            scrubElapsedMs < 250 &&
+                            scrubTimeSignals <= 2 &&
+                            scrubPoseSignals <= 2 &&
+                            viewer.timeMs() == exactScrubTime;
+
+                    viewer.setTimeMs(5000);
                     timeline.setPixelsPerTick(1.0);
                     const QImage baseScaleImage = RenderTimeline(timeline);
                     const bool baseScaleReadable =
@@ -1158,7 +1217,8 @@ int main(int argc, char **argv) {
                                             1 &&
                             timelineThemePalette &&
                             timelineInputs && naturalScrubDirection &&
-                            leftPressDoesNotSnap && dynamicRulerScale &&
+                            leftPressDoesNotSnap &&
+                            continuousScrubCoalesced && dynamicRulerScale &&
                             fineMarksGrowSmoothly && rightDragZoomsIn &&
                             timeLabelUnambiguous &&
                             checkpointSplitHistory &&
@@ -1187,6 +1247,11 @@ int main(int argc, char **argv) {
                                 << naturalScrubDirection
                                 << ", leftPressDoesNotSnap="
                                 << leftPressDoesNotSnap
+                                << ", continuousScrubCoalesced="
+                                << continuousScrubCoalesced
+                                << ", scrubElapsedMs=" << scrubElapsedMs
+                                << ", scrubTimeSignals=" << scrubTimeSignals
+                                << ", scrubPoseSignals=" << scrubPoseSignals
                                 << ", baseScaleReadable=" << baseScaleReadable
                                 << ", mediumScaleReadable="
                                 << mediumScaleReadable

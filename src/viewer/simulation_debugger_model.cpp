@@ -794,10 +794,7 @@ void SimulationDebuggerModel::play() {
 }
 
 void SimulationDebuggerModel::pause() {
-    if (!active_) {
-        return;
-    }
-    if (stepping_) {
+    if (!active_ || stepping_ || pauseRequested_ || !running_) {
         return;
     }
     setRunning(false);
