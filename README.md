@@ -45,9 +45,10 @@ adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
 The pinned dependency is extended by
-`cmake/patches/forevervalidator-stunt-points.patch`. It adds the native CUDA
-stunt-points batch evaluator without requiring a local Validator checkout at
-build time.
+`cmake/patches/forevervalidator-cpu-multithreading.patch`. It includes the
+native CUDA compatibility additions and the shared optimized-CPU sandbox and
+input-window APIs used by the multi-threaded search backend, without requiring
+a local Validator checkout at build time.
 
 ## Desktop application
 

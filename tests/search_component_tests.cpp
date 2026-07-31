@@ -625,6 +625,9 @@ public:
     }
 
     std::int64_t EarliestMutationTimeMs() const override { return 1000; }
+    forevertas::MutationTimeRange AffectedTimeRange() const override {
+        return {1000, 1000};
+    }
 
 private:
     AnalogInputState value_;
@@ -636,6 +639,9 @@ public:
         return {request.baselineInputs, 0u};
     }
     std::int64_t EarliestMutationTimeMs() const override { return 1000; }
+    forevertas::MutationTimeRange AffectedTimeRange() const override {
+        return {1000, 1000};
+    }
 };
 
 bool TestModifierComposition() {
@@ -698,6 +704,412 @@ bool TestModifierDeterminism() {
                                                      baseline.back()),
                   "modifier changed events outside its window");
     return okay;
+}
+
+bool TestExistingEventWindowPatchParity() {
+    const auto *const registration = forevertas::FindModifier(
+            forevertas::kExistingEventPerturbationModifierId);
+    if (registration == nullptr) {
+        return Check(false,
+                     "existing-event perturbation modifier was not registered");
+    }
+    OptionSettings settings = registration->defaultSettings;
+    settings["minTimeMs"] = "100";
+    settings["maxTimeMs"] = "1000";
+    settings["minCount"] = "1";
+    settings["maxCount"] = "6";
+    settings["maxTimeShiftMs"] = "100";
+    settings["steerDeltaMin"] = "-1";
+    settings["steerDeltaMax"] = "1";
+    std::unique_ptr<InputMutator> modifier =
+            registration->create(settings, 10u);
+    const std::vector<SandboxInputEvent> baseline{
+            Steering(0, -30000),
+            Switch(90, SandboxInputAction::Accelerate, true),
+            Steering(100, -20000),
+            Steering(250, -10000),
+            Switch(400, SandboxInputAction::Brake, true),
+            Steering(700, 10000),
+            Switch(900, SandboxInputAction::Accelerate, false),
+            Steering(1000, 20000),
+            Steering(1100, 30000),
+            Switch(1500, SandboxInputAction::Brake, false)};
+    bool okay = true;
+    for (std::uint64_t iteration = 0u; iteration < 128u; ++iteration) {
+        const MutationResult legacy = modifier->Mutate(
+                {baseline, iteration, 0u, 10u, 100, false});
+        const MutationResult window = modifier->Mutate(
+                {baseline, iteration, 0u, 10u, 100, true});
+        if (!window.windowPatch) {
+            return Check(false,
+                         "existing-event fast path did not return a window patch");
+        }
+        const std::vector<SandboxInputEvent> materialized =
+                forevertas::ApplyInputWindowPatch(
+                        baseline, *window.windowPatch);
+        okay &= Check(
+                SameEvents(legacy.inputs, materialized),
+                "window-local existing-event mutation changed semantics");
+        okay &= Check(
+                legacy.mutationCount == window.mutationCount,
+                "window-local existing-event mutation count changed");
+        if (!okay) return false;
+    }
+    return okay;
+}
+
+struct ModifierParitySpec {
+    const char *id = nullptr;
+    OptionSettings settings;
+};
+
+OptionSettings ModifierParitySettings(
+        const char *id,
+        std::int64_t minimumTimeMs,
+        std::int64_t maximumTimeMs,
+        std::uint32_t seed) {
+    const auto *const registration = forevertas::FindModifier(id);
+    if (registration == nullptr) {
+        throw std::runtime_error("modifier registration is missing");
+    }
+    OptionSettings settings = registration->defaultSettings;
+    settings["minTimeMs"] = std::to_string(minimumTimeMs);
+    settings["maxTimeMs"] = std::to_string(maximumTimeMs);
+    settings["seed"] = std::to_string(seed);
+    if (std::string(id) == forevertas::kExistingEventPerturbationModifierId) {
+        settings["minCount"] = "1";
+        settings["maxCount"] = "6";
+        settings["maxTimeShiftMs"] = "100";
+        settings["steerDeltaMin"] = "-1";
+        settings["steerDeltaMax"] = "1";
+        settings["toggleAccelerate"] = "true";
+        settings["toggleBrake"] = "true";
+    } else if (std::string(id) == forevertas::kSmoothSteeringModifierId) {
+        settings["deformationCount"] = "3";
+        settings["radiusMs"] = "100";
+        settings["amplitudeMin"] = "-0.5";
+        settings["amplitudeMax"] = "0.5";
+    } else if (std::string(id) == forevertas::kInputInsertionModifierId) {
+        settings["steerEnabled"] = "true";
+        settings["steerMode"] = "offset";
+        settings["steerOffsetMin"] = "-0.5";
+        settings["steerOffsetMax"] = "0.5";
+        settings["steerMinCount"] = "1";
+        settings["steerMaxCount"] = "2";
+        settings["steerMaxHoldMs"] = "200";
+        settings["accelerateEnabled"] = "true";
+        settings["accelerateMinCount"] = "1";
+        settings["accelerateMaxCount"] = "2";
+        settings["accelerateMaxHoldMs"] = "200";
+        settings["brakeEnabled"] = "true";
+        settings["brakeMinCount"] = "1";
+        settings["brakeMaxCount"] = "2";
+        settings["brakeMaxHoldMs"] = "200";
+    } else if (std::string(id) == forevertas::kInputDeletionModifierId) {
+        settings["steerEnabled"] = "true";
+        settings["steerMaxCount"] = "3";
+        settings["accelerateEnabled"] = "true";
+        settings["accelerateMaxCount"] = "2";
+        settings["brakeEnabled"] = "true";
+        settings["brakeMaxCount"] = "2";
+    }
+    return settings;
+}
+
+std::unique_ptr<forevertas::CompositeInputMutator> BuildParityComposite(
+        const std::vector<ModifierParitySpec> &specs) {
+    std::vector<std::unique_ptr<InputMutator>> passes;
+    passes.reserve(specs.size());
+    for (const ModifierParitySpec &spec : specs) {
+        const auto *const registration = forevertas::FindModifier(spec.id);
+        if (registration == nullptr) {
+            throw std::runtime_error("modifier registration is missing");
+        }
+        if (const auto error = registration->validateSimulationSettings(
+                    spec.settings, 10u)) {
+            throw std::runtime_error(*error);
+        }
+        passes.push_back(registration->createFromSimulationSettings(
+                spec.settings, 10u));
+    }
+    return std::make_unique<forevertas::CompositeInputMutator>(
+            std::move(passes));
+}
+
+std::vector<SandboxInputEvent> ModifierParityBaseline() {
+    std::vector<SandboxInputEvent> baseline{
+            Steering(0, -32000),
+            Switch(10, SandboxInputAction::Accelerate, true),
+            Switch(20, SandboxInputAction::Brake, false),
+            Steering(100, -28000),
+            Switch(120, SandboxInputAction::Accelerate, false),
+            Switch(140, SandboxInputAction::Brake, true),
+            Steering(200, -22000),
+            Steering(300, -16000),
+            Switch(320, SandboxInputAction::Accelerate, true),
+            Steering(400, -8000),
+            Switch(420, SandboxInputAction::Brake, false),
+            Steering(500, 0),
+            Steering(600, 8000),
+            Switch(620, SandboxInputAction::Accelerate, false),
+            Steering(700, 16000),
+            Switch(720, SandboxInputAction::Brake, true),
+            Steering(800, 22000),
+            Steering(900, 28000),
+            Switch(920, SandboxInputAction::Accelerate, true),
+            Steering(1000, 32000),
+            Switch(1020, SandboxInputAction::Brake, false),
+            Steering(1100, 24000),
+            Steering(1200, 12000),
+            Switch(1220, SandboxInputAction::Accelerate, false),
+            Steering(1300, 0),
+            Switch(1320, SandboxInputAction::Brake, true),
+            Steering(1400, -12000),
+            Steering(1500, -24000),
+            Switch(1520, SandboxInputAction::Accelerate, true),
+            Steering(1600, -32000),
+            Switch(1620, SandboxInputAction::Brake, false),
+            Steering(1700, 0),
+            Switch(1720, SandboxInputAction::Accelerate, false),
+            Steering(2000, 1000)};
+    forevertas::NormalizeInputEvents(baseline, 10u);
+    return baseline;
+}
+
+bool CheckCompositeWindowParity(
+        const std::vector<ModifierParitySpec> &specs,
+        std::uint64_t iterationCount,
+        const char *diagnostic) {
+    const std::vector<SandboxInputEvent> baseline =
+            ModifierParityBaseline();
+    std::unique_ptr<forevertas::CompositeInputMutator> legacy =
+            BuildParityComposite(specs);
+    std::unique_ptr<forevertas::CompositeInputMutator> optimized =
+            BuildParityComposite(specs);
+    const std::int64_t mutableFromTimeMs =
+            legacy->EarliestMutationTimeMs();
+    for (std::uint64_t iteration = 0u;
+         iteration < iterationCount; ++iteration) {
+        const MutationResult full = legacy->Mutate(
+                {baseline,
+                 iteration,
+                 0u,
+                 10u,
+                 mutableFromTimeMs,
+                 false,
+                 0u});
+        const MutationResult window = optimized->Mutate(
+                {baseline,
+                 iteration,
+                 0u,
+                 10u,
+                 mutableFromTimeMs,
+                 true,
+                 0u});
+        if (!window.windowPatch) {
+            std::cerr << diagnostic << " did not return a window patch\n";
+            return false;
+        }
+        const std::vector<SandboxInputEvent> materialized =
+                forevertas::ApplyInputWindowPatch(
+                        baseline, *window.windowPatch);
+        if (!SameEvents(full.inputs, materialized) ||
+            full.mutationCount != window.mutationCount ||
+            full.mutationCount != forevertas::EffectiveInputChangeCount(
+                    baseline, *window.windowPatch)) {
+            std::cerr << diagnostic << " diverged at iteration "
+                      << iteration << '\n';
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestAllModifierWindowPatchParity() {
+    constexpr const char *ids[] = {
+            forevertas::kRandomSteeringModifierId,
+            forevertas::kExistingEventPerturbationModifierId,
+            forevertas::kSmoothSteeringModifierId,
+            forevertas::kInputInsertionModifierId,
+            forevertas::kInputDeletionModifierId};
+    for (std::uint32_t index = 0u; index < std::size(ids); ++index) {
+        const std::vector<ModifierParitySpec> specs{{
+                ids[index],
+                ModifierParitySettings(
+                        ids[index], 100, 1000, 1179926867u + index)}};
+        if (!CheckCompositeWindowParity(
+                    specs, 128u, "single-pass modifier window path")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestMultiPassModifierWindowPatchParity() {
+    const std::vector<ModifierParitySpec> allPasses{
+            {forevertas::kRandomSteeringModifierId,
+             ModifierParitySettings(
+                     forevertas::kRandomSteeringModifierId,
+                     100, 700, 1179926867u)},
+            {forevertas::kInputInsertionModifierId,
+             ModifierParitySettings(
+                     forevertas::kInputInsertionModifierId,
+                     300, 1200, 1179926868u)},
+            {forevertas::kExistingEventPerturbationModifierId,
+             ModifierParitySettings(
+                     forevertas::kExistingEventPerturbationModifierId,
+                     500, 1400, 1179926869u)},
+            {forevertas::kSmoothSteeringModifierId,
+             ModifierParitySettings(
+                     forevertas::kSmoothSteeringModifierId,
+                     200, 1500, 1179926870u)},
+            {forevertas::kInputDeletionModifierId,
+             ModifierParitySettings(
+                     forevertas::kInputDeletionModifierId,
+                     700, 1600, 1179926871u)},
+            {forevertas::kInputInsertionModifierId,
+             ModifierParitySettings(
+                     forevertas::kInputInsertionModifierId,
+                     100, 400, 1179926872u)},
+            {forevertas::kExistingEventPerturbationModifierId,
+             ModifierParitySettings(
+                     forevertas::kExistingEventPerturbationModifierId,
+                     1200, 1600, 1179926873u)}};
+    if (!CheckCompositeWindowParity(
+                allPasses, 128u, "seven-pass modifier window path")) {
+        return false;
+    }
+
+    std::vector<ModifierParitySpec> reversed = allPasses;
+    std::reverse(reversed.begin(), reversed.end());
+    return CheckCompositeWindowParity(
+            reversed, 128u, "reversed seven-pass modifier window path");
+}
+
+bool TestEveryOrderedModifierPairWindowPatchParity() {
+    constexpr const char *ids[] = {
+            forevertas::kRandomSteeringModifierId,
+            forevertas::kExistingEventPerturbationModifierId,
+            forevertas::kSmoothSteeringModifierId,
+            forevertas::kInputInsertionModifierId,
+            forevertas::kInputDeletionModifierId};
+    for (std::uint32_t first = 0u; first < std::size(ids); ++first) {
+        for (std::uint32_t second = 0u; second < std::size(ids); ++second) {
+            const std::vector<ModifierParitySpec> specs{
+                    {ids[first],
+                     ModifierParitySettings(
+                             ids[first],
+                             100,
+                             1100,
+                             1179926900u + first * 5u + second)},
+                    {ids[second],
+                     ModifierParitySettings(
+                             ids[second],
+                             500,
+                             1600,
+                             1179927000u + first * 5u + second)}};
+            if (!CheckCompositeWindowParity(
+                        specs,
+                        32u,
+                        "ordered two-pass modifier window path")) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool TestNonCanonicalModifierWindowFallback() {
+    std::vector<SandboxInputEvent> baseline = ModifierParityBaseline();
+    baseline[4].timeMs += 1;
+    const std::vector<ModifierParitySpec> specs{{
+            forevertas::kSmoothSteeringModifierId,
+            ModifierParitySettings(
+                    forevertas::kSmoothSteeringModifierId,
+                    100, 1000, 1179926867u)}};
+    std::unique_ptr<forevertas::CompositeInputMutator> legacy =
+            BuildParityComposite(specs);
+    std::unique_ptr<forevertas::CompositeInputMutator> optimized =
+            BuildParityComposite(specs);
+    const MutationResult full = legacy->Mutate(
+            {baseline, 3u, 0u, 10u, 100, false, 0u});
+    const MutationResult fallback = optimized->Mutate(
+            {baseline, 3u, 0u, 10u, 100, true, 0u});
+    return Check(
+            !fallback.windowPatch &&
+                    SameEvents(full.inputs, fallback.inputs) &&
+                    full.mutationCount == fallback.mutationCount,
+            "non-canonical input did not use the full-stream fallback");
+}
+
+bool TestModifierWindowBaselineGeneration() {
+    const std::vector<ModifierParitySpec> specs{
+            {forevertas::kExistingEventPerturbationModifierId,
+             ModifierParitySettings(
+                     forevertas::kExistingEventPerturbationModifierId,
+                     100, 1200, 1179927100u)},
+            {forevertas::kInputInsertionModifierId,
+             ModifierParitySettings(
+                     forevertas::kInputInsertionModifierId,
+                     300, 1500, 1179927101u)},
+            {forevertas::kSmoothSteeringModifierId,
+             ModifierParitySettings(
+                     forevertas::kSmoothSteeringModifierId,
+                     200, 1400, 1179927102u)}};
+    std::vector<SandboxInputEvent> baseline = ModifierParityBaseline();
+    std::unique_ptr<forevertas::CompositeInputMutator> optimized =
+            BuildParityComposite(specs);
+    const std::int64_t mutableFromTimeMs =
+            optimized->EarliestMutationTimeMs();
+    static_cast<void>(optimized->Mutate(
+            {baseline,
+             9u,
+             0u,
+             10u,
+             mutableFromTimeMs,
+             true,
+             0u}));
+
+    const auto changed = std::find_if(
+            baseline.begin(), baseline.end(),
+            [](const SandboxInputEvent &event) {
+                return event.timeMs == 600 &&
+                        event.action == SandboxInputAction::Steer;
+            });
+    if (changed == baseline.end()) {
+        return Check(false, "baseline generation test input is missing");
+    }
+    changed->value.analog = -12345;
+
+    std::unique_ptr<forevertas::CompositeInputMutator> legacy =
+            BuildParityComposite(specs);
+    const MutationResult expected = legacy->Mutate(
+            {baseline,
+             9u,
+             0u,
+             10u,
+             mutableFromTimeMs,
+             false,
+             1u});
+    const MutationResult actual = optimized->Mutate(
+            {baseline,
+             9u,
+             0u,
+             10u,
+             mutableFromTimeMs,
+             true,
+             1u});
+    if (!actual.windowPatch) {
+        return Check(false,
+                     "changed baseline did not retain the window path");
+    }
+    return Check(
+            SameEvents(
+                    expected.inputs,
+                    forevertas::ApplyInputWindowPatch(
+                            baseline, *actual.windowPatch)) &&
+                    expected.mutationCount == actual.mutationCount,
+            "window baseline cache ignored its generation change");
 }
 
 bool TestInputScriptFormatting() {
@@ -1623,6 +2035,12 @@ int main() {
             TestEvaluationTargets() &&
             TestModifierComposition() &&
             TestModifierDeterminism() &&
+            TestExistingEventWindowPatchParity() &&
+            TestAllModifierWindowPatchParity() &&
+            TestEveryOrderedModifierPairWindowPatchParity() &&
+            TestMultiPassModifierWindowPatchParity() &&
+            TestNonCanonicalModifierWindowFallback() &&
+            TestModifierWindowBaselineGeneration() &&
             TestInputScriptFormatting() &&
             TestInputScriptParsingAndBaseline() &&
             TestAnalogInputRepresentation() &&

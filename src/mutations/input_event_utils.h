@@ -10,6 +10,8 @@
 
 namespace forevertas {
 
+struct MutationWindowPatch;
+
 using AnalogInputState = forevervalidator::AnalogInputState;
 using SandboxInputEvent =
         forevervalidator::experimental::PhysicsSandboxInputEvent;
@@ -40,6 +42,15 @@ void NormalizeMutableInputEvents(
 std::size_t EffectiveInputChangeCount(
         const std::vector<SandboxInputEvent> &baseline,
         const std::vector<SandboxInputEvent> &iterationInputs);
+std::size_t EffectiveInputChangeCount(
+        const std::vector<SandboxInputEvent> &baseline,
+        const MutationWindowPatch &patch);
+std::vector<SandboxInputEvent> ApplyInputWindowPatch(
+        const std::vector<SandboxInputEvent> &baseline,
+        const MutationWindowPatch &patch);
+bool InputEventsAreCanonical(
+        const std::vector<SandboxInputEvent> &events,
+        std::uint32_t tickDurationMs);
 
 AnalogInputState SteeringStateAt(
         const std::vector<SandboxInputEvent> &events,

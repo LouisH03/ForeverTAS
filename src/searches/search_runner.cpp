@@ -129,6 +129,25 @@ TimelineSamplingRuntime CreateTimelineSamplingRuntime(
             state.durationMs / kSearchTickDurationMs};
 }
 
+TimelineSamplingRuntime CloneTimelineSamplingRuntime(
+        const forevervalidator::experimental::PhysicsSandbox &source,
+        std::uint64_t durationMs) {
+    using namespace forevervalidator::experimental;
+    if (durationMs % kSearchTickDurationMs != 0u) {
+        throw std::runtime_error(
+                "replay duration is not aligned to the search tick duration");
+    }
+    PhysicsSandbox sandbox = Require(
+            ClonePhysicsSandbox(source),
+            "cloning timeline-sampling sandbox");
+    PhysicsSandboxState initialState = Require(
+            sandbox.CaptureState(),
+            "capturing cloned timeline-sampling initial state");
+    return {std::move(sandbox),
+            std::move(initialState),
+            durationMs / kSearchTickDurationMs};
+}
+
 std::vector<SearchTimelineFrame> SampleTimeline(
         TimelineSamplingRuntime &runtime,
         const std::vector<
@@ -273,7 +292,8 @@ SearchResult RunLoadedSearch(
     std::unique_ptr<TimelineSamplingRuntime> improvementSampler;
     std::uint64_t sampledImprovementCount = 0u;
     bool sampledBaseline = false;
-    if (control != nullptr && control->liveChanged) {
+    if (control != nullptr && control->liveChanged &&
+        control->sampleImprovementTimelines) {
         instrumentedControl = *control;
         const auto downstreamLiveChanged = control->liveChanged;
         instrumentedControl.liveChanged =
@@ -406,6 +426,7 @@ bool PreferEvaluation(
 
 SearchResult RunMultiThreadedCpuSearch(
         const SearchRequest &request,
+        const SearchAlgorithmRegistration &searchRegistration,
         const EvaluationTargetRegistration &evaluationRegistration,
         const SearchRunControl *control) {
     CheckCancellation(control);
@@ -423,6 +444,54 @@ SearchResult RunMultiThreadedCpuSearch(
 
     const auto started = std::chrono::steady_clock::now();
     const std::uint32_t workerCount = request.parallelSampleCount;
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+
+    const ReplayIdentity identity{request.replayPath};
+    ReportProgress(
+            control, SearchProgressStage::OpeningPacksDirectory, 0u, 0u);
+    AssetSource source = Require(
+            OpenInstalledPackDirectory(request.packDirectory),
+            "opening shared CPU pack directory");
+    ReportProgress(control, SearchProgressStage::ReadingReplay, 0u, 0u);
+    AssetBytes replay = Require(
+            ReadReplayFileUtf8(request.replayPath, identity),
+            "reading shared CPU replay");
+    PhysicsSandboxOptions options;
+    options.backend = SimulationBackend::OptimizedCpu;
+    options.tickDurationMs = kSearchTickDurationMs;
+    ReportProgress(control, SearchProgressStage::CreatingSimulation, 0u, 0u);
+    PhysicsSandbox sourceSandbox = Require(
+            CreatePhysicsSandbox(std::move(source), options),
+            "creating shared CPU sandbox");
+    ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
+    const PhysicsSandboxStateView initialView = Require(
+            sourceSandbox.LoadReplay(
+                    {replay.data(), replay.size()}, identity),
+            "loading shared CPU replay");
+    const std::vector<SandboxInputEvent> replayInputs = Require(
+            sourceSandbox.ReadInputs(),
+            "reading shared CPU replay inputs");
+    ReportProgress(
+            control, SearchProgressStage::ApplyingBaselineInputs, 0u, 0u);
+    Require(sourceSandbox.ReplaceInputs(BuildBaselineOrThrow(
+                    request,
+                    replayInputs,
+                    static_cast<std::int64_t>(initialView.durationMs))),
+            "applying shared CPU baseline");
+
+    std::vector<PhysicsSandbox> workerSandboxes;
+    workerSandboxes.reserve(workerCount);
+    for (std::uint32_t workerIndex = 0u;
+         workerIndex < workerCount; ++workerIndex) {
+        workerSandboxes.push_back(Require(
+                ClonePhysicsSandbox(sourceSandbox),
+                "cloning shared CPU sandbox"));
+        ReportProgress(control,
+                       SearchProgressStage::PreparingSearch,
+                       workerIndex + 1u,
+                       workerCount);
+    }
     std::unique_ptr<IterationEvaluator> evaluator =
             evaluationRegistration.create(
                     request.evaluationTarget.settings,
@@ -474,9 +543,6 @@ SearchResult RunMultiThreadedCpuSearch(
     std::vector<SandboxInputEvent> promotedInputs;
     std::uint64_t revision = 0u;
     std::size_t finishedWorkerCount = 0u;
-    ReportProgress(
-            control, SearchProgressStage::PreparingSearch, 0u, workerCount);
-
     std::vector<std::thread> workers;
     workers.reserve(workerCount);
     try {
@@ -577,11 +643,18 @@ SearchResult RunMultiThreadedCpuSearch(
                     }
                     workerControl.iterationIndexOffset = workerIndex;
                     workerControl.iterationIndexStride = workerCount;
+                    workerControl.sampleImprovementTimelines = false;
                     workerControl.sampleBestTimeline = false;
                     workerControl.reuseLoadedSandbox = false;
 
-                    SearchResult result =
-                            RunSearch(workerRequest, &workerControl);
+                    SearchResult result = RunLoadedSearch(
+                            workerRequest,
+                            replay,
+                            identity,
+                            workerSandboxes[workerIndex],
+                            searchRegistration,
+                            evaluationRegistration,
+                            &workerControl);
                     std::lock_guard<std::mutex> guard(stateMutex);
                     states[workerIndex].result = std::move(result);
                     states[workerIndex].done = true;
@@ -618,6 +691,7 @@ SearchResult RunMultiThreadedCpuSearch(
     std::uint64_t publishedRevision = 0u;
     std::size_t completedWorkers = 0u;
     bool searchingReported = false;
+    std::unique_ptr<TimelineSamplingRuntime> timelineSampler;
     auto nextReduction =
             std::chrono::steady_clock::now() +
             std::chrono::milliseconds(100);
@@ -715,7 +789,21 @@ SearchResult RunMultiThreadedCpuSearch(
             if (control != nullptr && control->liveChanged &&
                 aggregateBest) {
                 SearchLiveUpdate aggregate = *aggregateBest;
-                if (!improved) {
+                if (improved &&
+                    aggregate.winnerSource == SearchWinnerSource::Mutation) {
+                    if (!timelineSampler) {
+                        timelineSampler =
+                                std::make_unique<TimelineSamplingRuntime>(
+                                        CloneTimelineSamplingRuntime(
+                                                sourceSandbox,
+                                                initialView.durationMs));
+                    }
+                    aggregate.bestTimeline = SampleTimeline(
+                            *timelineSampler,
+                            aggregate.bestInputs,
+                            control,
+                            false);
+                } else {
                     aggregate.bestTimeline.clear();
                 }
                 aggregate.iterations = iterations;
@@ -815,17 +903,18 @@ SearchResult RunMultiThreadedCpuSearch(
 
     CheckCancellation(control);
     if (control == nullptr || control->sampleBestTimeline) {
-        const forevervalidator::ReplayIdentity identity{
-                request.replayPath};
-        forevervalidator::AssetBytes replay = Require(
-                ReadReplayFileUtf8(request.replayPath, identity),
-                "reading replay for multi-threaded result sampling");
-        result.bestTimeline = SampleBestTimeline(
-                request,
-                replay,
-                identity,
+        ReportProgress(
+                control, SearchProgressStage::FinalSamplingSetup, 0u, 0u);
+        if (!timelineSampler) {
+            timelineSampler = std::make_unique<TimelineSamplingRuntime>(
+                    CloneTimelineSamplingRuntime(
+                            sourceSandbox, initialView.durationMs));
+        }
+        result.bestTimeline = SampleTimeline(
+                *timelineSampler,
                 result.bestInputs,
-                control);
+                control,
+                true);
     }
     return result;
 }
@@ -875,7 +964,10 @@ SearchResult RunSearch(const SearchRequest &request,
 
     if (request.backend == PhysicsBackend::MultiThreadedCpu) {
         return RunMultiThreadedCpuSearch(
-                request, *evaluationRegistration, control);
+                request,
+                *searchRegistration,
+                *evaluationRegistration,
+                control);
     }
 
     CheckCancellation(control);

@@ -1,4 +1,5 @@
 #include "mutations/input_event_formatter.h"
+#include "mutations/input_event_utils.h"
 #include "mutations/replay_input_script.h"
 #include "replay_file_io.h"
 #include "searches/basic_brute_force_search.h"
@@ -49,6 +50,10 @@ public:
 
     std::int64_t EarliestMutationTimeMs() const override {
         return 10;
+    }
+
+    forevertas::MutationTimeRange AffectedTimeRange() const override {
+        return {10, 10};
     }
 
     mutable std::vector<forevertas::AnalogInputState>
@@ -779,6 +784,164 @@ bool CheckKeyboardSteeringPhysicsParity(const char *packsDirectory,
     return true;
 }
 
+bool SameSandboxState(const PhysicsSandboxStateView &left,
+                      const PhysicsSandboxStateView &right) {
+    return left.tick == right.tick && left.timeMs == right.timeMs &&
+            left.accelerate == right.accelerate &&
+            left.brake == right.brake &&
+            left.steering == right.steering &&
+            left.car.position.x == right.car.position.x &&
+            left.car.position.y == right.car.position.y &&
+            left.car.position.z == right.car.position.z &&
+            left.car.linearSpeed.x == right.car.linearSpeed.x &&
+            left.car.linearSpeed.y == right.car.linearSpeed.y &&
+            left.car.linearSpeed.z == right.car.linearSpeed.z &&
+            left.car.angularSpeed.x == right.car.angularSpeed.x &&
+            left.car.angularSpeed.y == right.car.angularSpeed.y &&
+            left.car.angularSpeed.z == right.car.angularSpeed.z &&
+            left.checkpointsCollected == right.checkpointsCollected &&
+            left.completedLaps == right.completedLaps &&
+            left.raceCompleted == right.raceCompleted &&
+            left.stuntsScore == right.stuntsScore;
+}
+
+bool CheckSandboxCloneAndWindowParity(
+        const char *packsDirectory,
+        const char *replayPath) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+    const ReplayIdentity identity{replayPath};
+    const AssetBytes replay = Require(
+            forevertas::ReadReplayFileUtf8(replayPath, identity),
+            "reading clone parity replay");
+    PhysicsSandboxOptions options;
+    options.backend = SimulationBackend::OptimizedCpu;
+    options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    PhysicsSandbox source = Require(
+            CreatePhysicsSandbox(
+                    Require(OpenInstalledPackDirectory(packsDirectory),
+                            "opening clone parity Packs"),
+                    options),
+            "creating clone parity sandbox");
+    const PhysicsSandboxStateView initial = Require(
+            source.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading clone parity replay");
+    const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
+            source.ReadInputs(), "reading clone parity replay inputs");
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    forevertas::ExtractReplayInputScript(
+                            packsDirectory, replayPath));
+    if (!parsed) throw std::runtime_error(*parsed.error);
+    forevertas::InputScriptBaselineResult baselineResult =
+            forevertas::BuildInputScriptBaseline(
+                    replayInputs,
+                    parsed.commands,
+                    static_cast<std::int64_t>(initial.durationMs),
+                    forevertas::kSearchTickDurationMs);
+    if (!baselineResult) throw std::runtime_error(*baselineResult.error);
+    forevertas::ConvertKeyboardSteeringToAnalog(baselineResult.events);
+    Require(source.ReplaceInputs(baselineResult.events),
+            "applying clone parity baseline");
+
+    PhysicsSandbox full = Require(
+            ClonePhysicsSandbox(source), "cloning full parity sandbox");
+    PhysicsSandbox window = Require(
+            ClonePhysicsSandbox(source), "cloning window parity sandbox");
+    const PhysicsSandboxStateView sourceInitial = Require(
+            source.ReadState(), "reading source clone state");
+    if (!SameSandboxState(
+                sourceInitial,
+                Require(full.ReadState(), "reading full clone state")) ||
+        !SameSandboxState(
+                sourceInitial,
+                Require(window.ReadState(), "reading window clone state"))) {
+        std::cerr << "cloned sandbox did not preserve its source state\n";
+        return false;
+    }
+
+    forevertas::MutationWindowPatch patch;
+    patch.minimumTimeMs = 0;
+    patch.maximumTimeMs = 1000;
+    for (const PhysicsSandboxInputEvent &event : baselineResult.events) {
+        if (event.timeMs >= patch.minimumTimeMs &&
+            event.timeMs <= patch.maximumTimeMs) {
+            patch.events.push_back(event);
+        }
+    }
+    const auto steering = std::find_if(
+            patch.events.begin(), patch.events.end(),
+            [](const PhysicsSandboxInputEvent &event) {
+                return event.action ==
+                               forevertas::SandboxInputAction::Steer &&
+                        event.value.kind ==
+                               PhysicsSandboxInputValueKind::Analog;
+            });
+    if (steering == patch.events.end()) {
+        std::cerr << "clone parity replay has no steering event in window\n";
+        return false;
+    }
+    steering->timeMs = std::min<std::int32_t>(
+            steering->timeMs + 10, 1000);
+    steering->value.analog = forevertas::SaturateAnalogInputState(
+            static_cast<std::int64_t>(steering->value.analog) + 12345);
+    forevertas::NormalizeInputEvents(
+            patch.events, forevertas::kSearchTickDurationMs);
+    const std::vector<PhysicsSandboxInputEvent> expectedInputs =
+            forevertas::ApplyInputWindowPatch(
+                    baselineResult.events, patch);
+    Require(full.ReplaceInputs(expectedInputs),
+            "applying full clone parity inputs");
+    auto windowReplaced = window.ReplaceInputWindow(
+            patch.minimumTimeMs,
+            patch.maximumTimeMs,
+            patch.events);
+    if (!windowReplaced) {
+        std::cerr << "applying window clone parity inputs failed: "
+                  << windowReplaced.Error().diagnostic << '\n';
+        return false;
+    }
+    if (forevertas::FormatInputScript(Require(
+                full.ReadInputs(), "reading full parity inputs")) !=
+            forevertas::FormatInputScript(Require(
+                window.ReadInputs(), "reading window parity inputs")) ||
+        forevertas::FormatInputScript(Require(
+                source.ReadInputs(), "reading untouched source inputs")) !=
+            forevertas::FormatInputScript(baselineResult.events)) {
+        std::cerr << "window replacement did not preserve input semantics\n";
+        return false;
+    }
+
+    std::optional<PhysicsSandboxState> savedWindowState;
+    for (std::uint32_t tick = 0u; tick <= 200u; ++tick) {
+        const PhysicsSandboxStateView fullState = Require(
+                full.ReadState(), "reading full parity state");
+        const PhysicsSandboxStateView windowState = Require(
+                window.ReadState(), "reading window parity state");
+        if (!SameSandboxState(fullState, windowState)) {
+            std::cerr << "window control overlay diverged at tick "
+                      << tick << '\n';
+            return false;
+        }
+        if (tick == 50u) {
+            savedWindowState = Require(
+                    window.CaptureState(),
+                    "capturing window overlay state");
+        }
+        if (tick != 200u) {
+            Require(full.AdvanceTicks(1u),
+                    "advancing full parity sandbox");
+            Require(window.AdvanceTicks(1u),
+                    "advancing window parity sandbox");
+        }
+    }
+    if (!savedWindowState) return false;
+    const PhysicsSandboxStateView restored = Require(
+            window.RestoreState(*savedWindowState),
+            "restoring window overlay state");
+    return restored.timeMs == 500u;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -795,6 +958,7 @@ int main(int argc, char **argv) {
             !CheckCachedScriptIsolation(argv[1], argv[2]) ||
             !CheckKeyboardSteeringBaseline(argv[1], argv[2]) ||
             !CheckKeyboardSteeringPhysicsParity(argv[1], argv[2]) ||
+            !CheckSandboxCloneAndWindowParity(argv[1], argv[2]) ||
             !CheckMultiThreadedCpuBackend(argv[1], argv[2]) ||
             !CheckStuntTargetBackend(
                     argv[1],
