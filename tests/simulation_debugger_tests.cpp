@@ -59,6 +59,12 @@ double VectorComponent(const QVariantMap &frame, const QString &name,
                    : 0.0;
 }
 
+double HorizontalSpeed(const QVariantMap &frame) {
+    return std::hypot(
+            VectorComponent(frame, QStringLiteral("linearSpeed"), 0),
+            VectorComponent(frame, QStringLiteral("linearSpeed"), 2));
+}
+
 bool HasRealEngineTree(forevertas::viewer::SimulationDebuggerModel &model) {
     const bool physics = model.selectFile(
             QStringLiteral("src/engine/physics/world/physics_step.cpp"));
@@ -413,32 +419,32 @@ int main(int argc, char **argv) {
                             "non-executable runtime breakpoint was rejected");
                     phase = Phase::WaitingNonExecutableBreakpoint;
                 } else if (phase == Phase::WaitingTickStep && tick == 1) {
-                    const double forward = VectorComponent(
-                            frame, QStringLiteral("linearSpeed"), 2);
+                    const double forward = HorizontalSpeed(frame);
                     okay &= Check(
                             std::abs(forward) < 0.02,
                             "edited real ApplyControls statement did not alter "
                             "reference physics");
                 } else if (phase == Phase::WaitingDeferredTick && tick == 2) {
-                    const double forward = VectorComponent(
-                            frame, QStringLiteral("linearSpeed"), 2);
+                    const double forward = HorizontalSpeed(frame);
                     okay &= Check(
                             std::abs(forward) < 0.03,
                             "restoring an already executed line changed the "
                             "current tick");
                     phase = Phase::WaitingRestoredTick;
                 } else if (phase == Phase::WaitingRestoredTick && tick == 3) {
-                    const double previous = VectorComponent(
-                            frames.value(2), QStringLiteral("linearSpeed"), 2);
-                    const double restored = VectorComponent(
-                            frame, QStringLiteral("linearSpeed"), 2);
+                    const double previous = HorizontalSpeed(frames.value(2));
+                    const double restored = HorizontalSpeed(frame);
+                    if (!(restored > previous + 0.05)) {
+                        std::cerr << "restoration speeds: previous="
+                                  << previous << ", restored=" << restored
+                                  << ", executionTick="
+                                  << model->executionTick() << '\n';
+                    }
                     okay &= Check(
                             restored > previous + 0.05,
                             "past-line restoration did not take effect on the "
                             "next tick");
-                    okay &= Check(VectorComponent(frames.value(1),
-                                                  QStringLiteral("linearSpeed"),
-                                                  2) < 0.02,
+                    okay &= Check(HorizontalSpeed(frames.value(1)) < 0.02,
                                   "a later source edit changed a past "
                                   "simulated tick");
                     okay &= Check(model->toggleBreakpoint(

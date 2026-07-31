@@ -259,18 +259,23 @@ SearchResult RunLoadedSearch(
     SearchRunControl instrumentedControl;
     std::unique_ptr<TimelineSamplingRuntime> improvementSampler;
     std::uint64_t sampledImprovementCount = 0u;
+    bool sampledBaseline = false;
     if (control != nullptr && control->liveChanged) {
         instrumentedControl = *control;
         const auto downstreamLiveChanged = control->liveChanged;
         instrumentedControl.liveChanged =
                 [&, downstreamLiveChanged](
                         const SearchLiveUpdate &live) {
-                    const bool improved =
+                    const bool initialBaseline =
+                            live.winnerSource ==
+                                    SearchWinnerSource::Baseline &&
+                            !sampledBaseline;
+                    const bool improvedMutation =
                             live.winnerSource ==
                                     SearchWinnerSource::Mutation &&
                             live.mutationImprovementCount >
                                     sampledImprovementCount;
-                    if (!improved) {
+                    if (!initialBaseline && !improvedMutation) {
                         downstreamLiveChanged(live);
                         return;
                     }
@@ -289,8 +294,12 @@ SearchResult RunLoadedSearch(
                             control,
                             false);
                     downstreamLiveChanged(enriched);
-                    sampledImprovementCount =
-                            live.mutationImprovementCount;
+                    if (initialBaseline) {
+                        sampledBaseline = true;
+                    } else {
+                        sampledImprovementCount =
+                                live.mutationImprovementCount;
+                    }
                 };
         executionControl = &instrumentedControl;
     }

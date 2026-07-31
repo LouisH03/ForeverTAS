@@ -308,7 +308,7 @@ bool CheckCalibration(const char *packs, const char *replay) {
             replay,
             forevertas::PhysicsBackend::Cuda,
             64u,
-            1000000u,
+            3000000u,
             {insertion},
             velocity,
             true,

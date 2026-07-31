@@ -201,6 +201,15 @@ bool CheckCudaAutoPromoteAcrossBatches(
     request.baseInputCommands = parsed.commands;
     request.backend = forevertas::PhysicsBackend::Cuda;
     request.parallelSampleCount = 128u;
+    request.evaluationTarget =
+            forevertas::DefaultEvaluationTargetConfiguration();
+    request.evaluationTarget.id = forevertas::kPointTargetEvaluationId;
+    request.evaluationTarget.settings = {
+            {"minTimeMs", "1000"},
+            {"maxTimeMs", "6000"},
+            {"x", "0"},
+            {"y", "0"},
+            {"z", "0"}};
     request.searchAlgorithm.settings["autoPromoteBest"] = "true";
 
     forevertas::SearchRunControl control;
@@ -233,8 +242,9 @@ bool RunBackend(const char *packsDirectory,
         bool sawLiveBest = false;
         bool sawFinalSampling = false;
         bool improvementTimelineInvalid = false;
+        bool sampledBaseline = false;
         std::uint64_t lastSampledImprovement = 0u;
-        std::size_t sampledImprovementCount = 0u;
+        std::size_t sampledMutationTimelineCount = 0u;
         std::chrono::steady_clock::duration previousElapsed{};
         std::size_t liveUpdateCount = 0u;
         forevertas::SearchRunControl control;
@@ -248,11 +258,18 @@ bool RunBackend(const char *packsDirectory,
             }
             sawLiveBest |= !live.bestInputs.empty();
             if (!live.bestTimeline.empty()) {
-                const bool completeTimeline =
+                const bool baselineTimeline =
+                        live.winnerSource ==
+                                forevertas::SearchWinnerSource::Baseline &&
+                        !sampledBaseline &&
+                        live.mutationImprovementCount == 0u;
+                const bool mutationTimeline =
                         live.winnerSource ==
                                 forevertas::SearchWinnerSource::Mutation &&
                         live.mutationImprovementCount >
-                                lastSampledImprovement &&
+                                lastSampledImprovement;
+                const bool completeTimeline =
+                        (baselineTimeline || mutationTimeline) &&
                         live.bestTimeline.front().timeMs == 0 &&
                         live.bestTimeline.back().timeMs ==
                                 static_cast<std::int64_t>(
@@ -268,9 +285,13 @@ bool RunBackend(const char *packsDirectory,
                 }
                 improvementTimelineInvalid |=
                         !completeTimeline || !everyTick;
-                lastSampledImprovement =
-                        live.mutationImprovementCount;
-                ++sampledImprovementCount;
+                if (baselineTimeline) {
+                    sampledBaseline = true;
+                } else if (mutationTimeline) {
+                    lastSampledImprovement =
+                            live.mutationImprovementCount;
+                    ++sampledMutationTimelineCount;
+                }
             }
             if (liveUpdateCount != 0u && live.elapsed < previousElapsed) {
                 std::cerr << "live elapsed time moved backwards\n";
@@ -322,9 +343,9 @@ bool RunBackend(const char *packsDirectory,
             std::cerr << "search did not publish live updates while running\n";
             return false;
         }
-        if (improvementTimelineInvalid ||
+        if (improvementTimelineInvalid || !sampledBaseline ||
             (result.mutationImprovementCount > 0u) !=
-                    (sampledImprovementCount > 0u) ||
+                    (sampledMutationTimelineCount > 0u) ||
             (result.mutationImprovementCount > 0u &&
              lastSampledImprovement !=
                      result.mutationImprovementCount)) {

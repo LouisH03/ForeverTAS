@@ -255,6 +255,7 @@ void SearchWorker::run() {
                            latestSource = SearchWinnerSource::Baseline,
                            latestIteration =
                                    std::optional<std::uint64_t>{},
+                           publishedTrajectoryNumber = std::uint64_t{0},
                            throughput = RollingThroughput()](
                                   const SearchLiveUpdate &live) mutable {
         if (latestInputsText.isEmpty() ||
@@ -274,7 +275,7 @@ void SearchWorker::run() {
             auto improvement = std::make_shared<SearchImprovement>();
             improvement->searchId = searchId_;
             improvement->improvementNumber =
-                    live.mutationImprovementCount;
+                    ++publishedTrajectoryNumber;
             improvement->packsDirectory =
                     FilePathFromUtf8(request_.packDirectory);
             improvement->replayPath =

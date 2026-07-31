@@ -594,6 +594,8 @@ if(BUILD_TESTING)
              COMMAND forevertas-strategy-tests)
     add_test(NAME forevertas-controller
              COMMAND forevertas-controller-tests)
+    set_tests_properties(forevertas-controller PROPERTIES
+        RESOURCE_LOCK controller-settings)
     add_test(NAME forevertas-renderer
              COMMAND forevertas-renderer-tests)
     add_test(NAME forevertas-whiteboard
@@ -634,6 +636,8 @@ if(BUILD_TESTING)
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
         if(FOREVERTAS_ENABLE_CUDA)
+            set_tests_properties(forevertas-search-smoke PROPERTIES
+                RESOURCE_LOCK cuda)
             add_executable(forevertas-cuda-search-parity
                 tests/cuda_search_parity_tests.cpp)
             target_link_libraries(forevertas-cuda-search-parity PRIVATE
@@ -677,6 +681,8 @@ if(BUILD_TESTING)
                      --lifecycle
                      "${FOREVERTAS_TEST_PACK_DIRECTORY}"
                      "${FOREVERTAS_TEST_REPLAY}")
+        set_tests_properties(forevertas-controller-lifecycle PROPERTIES
+            RESOURCE_LOCK controller-settings)
 
         add_executable(forevertas-render-scene-data-smoke
             tests/render_scene_data_smoke.cpp)
