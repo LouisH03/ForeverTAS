@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QTimer>
+#include <QUuid>
 #include <QVariantMap>
 #include <QtConcurrent>
 
@@ -53,6 +54,62 @@ QVariantList JsonVector(const QJsonValue &value) {
         result.push_back(component.toDouble());
     }
     return result;
+}
+
+bool IsExplicitPrintExpression(const QString &expression) {
+    QString code = expression;
+    bool quoted = false;
+    bool blockComment = false;
+    bool escaped = false;
+    QChar quote;
+    for (qsizetype index = 0; index < code.size(); ++index) {
+        const QChar character = code[index];
+        if (blockComment) {
+            code[index] = QLatin1Char(' ');
+            if (character == QLatin1Char('*') &&
+                index + 1 < code.size() &&
+                code[index + 1] == QLatin1Char('/')) {
+                code[index + 1] = QLatin1Char(' ');
+                ++index;
+                blockComment = false;
+            }
+            continue;
+        }
+        if (quoted) {
+            code[index] = QLatin1Char(' ');
+            if (escaped) {
+                escaped = false;
+            } else if (character == QLatin1Char('\\')) {
+                escaped = true;
+            } else if (character == quote) {
+                quoted = false;
+            }
+            continue;
+        }
+        if (character == QLatin1Char('"') ||
+            character == QLatin1Char('\'')) {
+            quoted = true;
+            quote = character;
+            code[index] = QLatin1Char(' ');
+        } else if (character == QLatin1Char('/') &&
+                   index + 1 < code.size() &&
+                   code[index + 1] == QLatin1Char('/')) {
+            code.truncate(index);
+            break;
+        } else if (character == QLatin1Char('/') &&
+                   index + 1 < code.size() &&
+                   code[index + 1] == QLatin1Char('*')) {
+            code[index] = QLatin1Char(' ');
+            code[index + 1] = QLatin1Char(' ');
+            ++index;
+            blockComment = true;
+        }
+    }
+    static const QRegularExpression printPattern(QStringLiteral(
+            "\\b(?:__builtin_)?(?:printf|fprintf|puts|fputs)\\s*\\(|"
+            "\\bstd::(?:printf|fprintf|puts|cout|cerr|clog)\\b|"
+            "\\bq(?:Debug|Info|Warning|Critical)\\s*\\("));
+    return printPattern.match(code).hasMatch();
 }
 
 } // namespace
@@ -228,37 +285,8 @@ QVariantList SimulationDebuggerModel::lines() const {
     return result;
 }
 
-QVariantList SimulationDebuggerModel::variables() const {
-    QVariantList result;
-    result.reserve(static_cast<qsizetype>(variables_.size()));
-    for (const Variable &variable : variables_) {
-        result.push_back(QVariantMap{{QStringLiteral("name"), variable.name},
-                                     {QStringLiteral("value"), variable.value},
-                                     {QStringLiteral("type"), variable.type},
-                                     {QStringLiteral("pinned"),
-                                      pinnedNames_.contains(variable.name)}});
-    }
-    return result;
-}
-
-QVariantList SimulationDebuggerModel::pinnedVariables() const {
-    QVariantList result;
-    QStringList names(pinnedNames_.begin(), pinnedNames_.end());
-    std::sort(names.begin(), names.end());
-    for (const QString &name : names) {
-        const auto found = std::find_if(variables_.begin(), variables_.end(),
-                                        [&name](const Variable &variable) {
-                                            return variable.name == name;
-                                        });
-        result.push_back(QVariantMap{
-                {QStringLiteral("name"), name},
-                {QStringLiteral("value"),
-                 found == variables_.end() ? QStringLiteral("out of scope")
-                                           : found->value},
-                {QStringLiteral("type"),
-                 found == variables_.end() ? QString() : found->type}});
-    }
-    return result;
+QVariantList SimulationDebuggerModel::debugOutput() const {
+    return debugOutput_;
 }
 
 bool SimulationDebuggerModel::selectFile(const QString &path) {
@@ -365,20 +393,25 @@ bool SimulationDebuggerModel::toggleBreakpoint(const QString &path,
     return true;
 }
 
-bool SimulationDebuggerModel::togglePinned(const QString &name) {
-    const auto found = std::find_if(variables_.begin(), variables_.end(),
-                                    [&name](const Variable &variable) {
-                                        return variable.name == name;
-                                    });
-    if (found == variables_.end() && !pinnedNames_.contains(name)) {
+void SimulationDebuggerModel::clearDebugOutput() {
+    if (debugOutput_.isEmpty()) {
+        return;
+    }
+    debugOutput_.clear();
+    emit debugOutputChanged();
+}
+
+bool SimulationDebuggerModel::openDebugOutput(int index) {
+    if (index < 0 || index >= debugOutput_.size()) {
         return false;
     }
-    if (pinnedNames_.contains(name)) {
-        pinnedNames_.remove(name);
-    } else {
-        pinnedNames_.insert(name);
+    const QVariantMap entry = debugOutput_[index].toMap();
+    const QString path = entry.value(QStringLiteral("path")).toString();
+    const int line = entry.value(QStringLiteral("line")).toInt();
+    if (line <= 0 || !selectFile(path)) {
+        return false;
     }
-    emit variablesChanged();
+    emit sourceLocationRequested(line);
     return true;
 }
 
@@ -474,6 +507,8 @@ void SimulationDebuggerModel::beginPendingSession() {
     commandQueue_.clear();
     debuggerBuffer_.clear();
     editError_.clear();
+    clearDebugOutput();
+    debugOutputSequence_ = 0;
     executedLinesThisTick_.clear();
     currentLineKey_.clear();
     lastBreakpointKey_.clear();
@@ -646,7 +681,8 @@ QString SimulationDebuggerModel::syntaxHighlighted(const QString &text,
 SimulationDebuggerModel::ProcessedDebuggerOutput
 SimulationDebuggerModel::processDebuggerOutput(const QString &output,
                                                bool parseVariables,
-                                               bool parseStopLocation) {
+                                               bool parseStopLocation,
+                                               const QString &printToken) {
     ProcessedDebuggerOutput result;
     result.rawOutput = output;
     result.diagnostics = TrimDebuggerNoise(output);
@@ -660,7 +696,9 @@ SimulationDebuggerModel::processDebuggerOutput(const QString &output,
     const QString workerErrorMarker = QStringLiteral("@FOREVERTAS_ERROR ");
     static const QRegularExpression variablePattern(
             QStringLiteral("^\\s*\\(([^)]*)\\)\\s+([^\\s=]+)\\s+=\\s+(.*)$"));
-    for (const QString &line : output.split(QLatin1Char('\n'))) {
+    for (const QString &rawLine : output.split(QLatin1Char('\n'))) {
+        QString line = rawLine;
+        line.remove(QLatin1Char('\r'));
         if (line.startsWith(marker)) {
             QJsonParseError error;
             const QJsonDocument document = QJsonDocument::fromJson(
@@ -744,6 +782,37 @@ SimulationDebuggerModel::processDebuggerOutput(const QString &output,
                         {QStringLiteral("value"), match.captured(3).trimmed()},
                         {QStringLiteral("type"), match.captured(1).trimmed()}});
             }
+        }
+    }
+    if (!printToken.isEmpty()) {
+        const QString beginMarker =
+                QStringLiteral("@FOREVERTAS_DEBUG_PRINT_BEGIN_%1@")
+                        .arg(printToken);
+        const QString endMarker =
+                QStringLiteral("@FOREVERTAS_DEBUG_PRINT_END_%1@")
+                        .arg(printToken);
+        QString normalized = output;
+        normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+        normalized.remove(QLatin1Char('\r'));
+        const qsizetype begin = normalized.lastIndexOf(beginMarker);
+        const qsizetype end =
+                begin < 0
+                        ? -1
+                        : normalized.indexOf(endMarker,
+                                             begin + beginMarker.size());
+        if (begin >= 0 && end >= 0) {
+            QString printed =
+                    normalized.mid(begin + beginMarker.size(),
+                                   end - begin - beginMarker.size());
+            if (printed.startsWith(QLatin1Char('\n'))) {
+                printed.remove(0, 1);
+            }
+            QStringList lines =
+                    printed.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+            if (!lines.isEmpty() && lines.back().isEmpty()) {
+                lines.removeLast();
+            }
+            result.printedLines = std::move(lines);
         }
     }
     if (parseVariables) {
@@ -1054,6 +1123,21 @@ QString SimulationDebuggerModel::lineKey(const QString &path, int line) const {
     return path + QLatin1Char(':') + QString::number(line);
 }
 
+QString SimulationDebuggerModel::executionContextLabel() const {
+    switch (stepMode_) {
+    case StepMode::Substep:
+        return QStringLiteral("substep");
+    case StepMode::SourceLine:
+        return QStringLiteral("source-line step");
+    case StepMode::Tick:
+        return QStringLiteral("tick step");
+    case StepMode::None:
+        return running_ ? QStringLiteral("playback")
+                        : QStringLiteral("paused execution");
+    }
+    return QStringLiteral("execution");
+}
+
 int SimulationDebuggerModel::statementEndLine(const SourceFile &source,
                                               int line) const {
     int parentheses = 0;
@@ -1299,11 +1383,13 @@ void SimulationDebuggerModel::installSourceBreakpoint(SourceFile &source,
 void SimulationDebuggerModel::queueCommand(CommandKind kind,
                                            const QString &text,
                                            const QString &sourcePath,
-                                           int line) {
+                                           int line,
+                                           const QString &printToken) {
     if (!active_ || debugger_.state() == QProcess::NotRunning) {
         return;
     }
-    commandQueue_.enqueue(DebuggerCommand{kind, text, sourcePath, line});
+    commandQueue_.enqueue(
+            DebuggerCommand{kind, text, sourcePath, printToken, line});
     sendNextCommand();
 }
 
@@ -1390,6 +1476,7 @@ void SimulationDebuggerModel::processCommandOutputAsync(
             command.kind == CommandKind::Substep ||
             command.kind == CommandKind::SourceLineStep ||
             command.kind == CommandKind::RefreshLocation;
+    const QString printToken = command.printToken;
     QHash<QString, QStringList> sourceLines;
     if (parseVariables) {
         sourceLines.reserve(static_cast<qsizetype>(sources_.size()));
@@ -1422,10 +1509,11 @@ void SimulationDebuggerModel::processCommandOutputAsync(
                 consumeDebuggerPrompts();
             });
     watcher->setFuture(QtConcurrent::run(
-            [output, parseVariables, parseStopLocation, sourceRevision,
-             sourceLines = std::move(sourceLines)]() {
+            [output, parseVariables, parseStopLocation, printToken,
+             sourceRevision, sourceLines = std::move(sourceLines)]() {
                 ProcessedDebuggerOutput processed = processDebuggerOutput(
-                        output, parseVariables, parseStopLocation);
+                        output, parseVariables, parseStopLocation,
+                        printToken);
                 if (parseVariables) {
                     processed.sourceRevision = sourceRevision;
                     processed.inlineValuesBySource = buildInlineValueCache(
@@ -1476,6 +1564,7 @@ void SimulationDebuggerModel::handleCommandResult(
         }
         break;
     case CommandKind::EvaluateEdit: {
+        appendDebugOutput(command, output.printedLines);
         compiling_ = false;
         emit stateChanged();
         QString diagnostic = output.diagnostics;
@@ -1809,8 +1898,33 @@ void SimulationDebuggerModel::applyParsedVariables(
     } else {
         refreshInlineValueCacheAsync(output.parsedVariables);
     }
-    emit variablesChanged();
     emit linesChanged();
+}
+
+void SimulationDebuggerModel::appendDebugOutput(
+        const DebuggerCommand &command, const QStringList &messages) {
+    if (messages.isEmpty() || command.sourcePath.isEmpty() ||
+        command.line <= 0) {
+        return;
+    }
+    constexpr qsizetype kMaximumOutputEntries = 10000;
+    for (const QString &message : messages) {
+        debugOutput_.push_back(QVariantMap{
+                {QStringLiteral("sequence"),
+                 static_cast<qulonglong>(++debugOutputSequence_)},
+                {QStringLiteral("message"), message},
+                {QStringLiteral("tick"), executionTick_},
+                {QStringLiteral("context"), executionContextLabel()},
+                {QStringLiteral("path"), command.sourcePath},
+                {QStringLiteral("line"), command.line},
+                {QStringLiteral("location"),
+                 fileName(command.sourcePath) + QLatin1Char(':') +
+                         QString::number(command.line)}});
+    }
+    if (debugOutput_.size() > kMaximumOutputEntries) {
+        debugOutput_.remove(0, debugOutput_.size() - kMaximumOutputEntries);
+    }
+    emit debugOutputChanged();
 }
 
 void SimulationDebuggerModel::applyInlineValueCache(
@@ -2010,8 +2124,29 @@ void SimulationDebuggerModel::applyCurrentEdit() {
     if (expression.endsWith(QLatin1Char(';'))) {
         expression.chop(1);
     }
+    QString printToken;
+    if (IsExplicitPrintExpression(expression)) {
+        printToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        static const QRegularExpression printfPattern(
+                QStringLiteral("(^|[^A-Za-z0-9_.>:])(?:std::)?"
+                               "printf(?=\\s*\\()"));
+        static const QRegularExpression putsPattern(
+                QStringLiteral("(^|[^A-Za-z0-9_.>:])(?:std::)?"
+                               "puts(?=\\s*\\()"));
+        expression.replace(printfPattern,
+                           QStringLiteral("\\1__builtin_printf"));
+        expression.replace(putsPattern, QStringLiteral("\\1__builtin_puts"));
+        expression =
+                QStringLiteral(
+                        "(void)(__builtin_printf("
+                        "\"@FOREVERTAS_DEBUG_PRINT_BEGIN_%1@\\n\"), "
+                        "(void)(%2), __builtin_printf("
+                        "\"@FOREVERTAS_DEBUG_PRINT_END_%1@\\n\"))")
+                        .arg(printToken, expression);
+    }
     expression.prepend(QStringLiteral("expression -- "));
-    queueCommand(CommandKind::EvaluateEdit, expression);
+    queueCommand(CommandKind::EvaluateEdit, expression, activeFilePath_,
+                 activeLine_, printToken);
 }
 
 void SimulationDebuggerModel::jumpPastCurrentStatement() {

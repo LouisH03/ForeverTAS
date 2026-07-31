@@ -597,128 +597,111 @@ Item {
             wrapMode: Text.WordWrap
         }
 
-        Label {
+        RowLayout {
             Layout.fillWidth: true
-            text: qsTr("Pinned variables")
-            font.weight: Font.DemiBold
-            font.pixelSize: 11
-            color: AppTheme.textMuted
-        }
-
-        Flow {
-            Layout.fillWidth: true
-            spacing: 5
-
-            Repeater {
-                model: root.debuggerModel.pinnedVariables
-
-                delegate: ThemedButton {
-                    id: pinnedButton
-
-                    required property var modelData
-                    text: pinnedButton.modelData.name + "  "
-                          + pinnedButton.modelData.value
-                    width: Math.min(implicitWidth, root.width - 8)
-                    font.family: "monospace"
-                    font.pixelSize: 9
-                    onClicked:
-                        root.debuggerModel.togglePinned(
-                            pinnedButton.modelData.name)
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Unpin variable")
-
-                    contentItem: Label {
-                        text: pinnedButton.text
-                        font: pinnedButton.font
-                        color: pinnedButton.effectiveTextColor
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-                }
-            }
+            spacing: 6
 
             Label {
-                visible: root.debuggerModel.pinnedVariables.length === 0
-                text: qsTr("Select a variable below to pin it.")
-                color: AppTheme.textFaint
-                font.pixelSize: 10
+                Layout.fillWidth: true
+                text: qsTr("Debug output")
+                font.weight: Font.DemiBold
+                font.pixelSize: 11
+                color: AppTheme.textMuted
             }
-        }
 
-        Label {
-            Layout.fillWidth: true
-            text: qsTr("Variables")
-            font.weight: Font.DemiBold
-            font.pixelSize: 11
-            color: AppTheme.textMuted
+            ThemedButton {
+                objectName: "clearSimulationDebugOutputButton"
+                text: qsTr("Clear")
+                enabled: root.debuggerModel.debugOutput.length > 0
+                onClicked: root.debuggerModel.clearDebugOutput()
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Clear printed debug output")
+            }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 86
+            Layout.preferredHeight: 132
             color: AppTheme.surface
             border.width: 1
             border.color: AppTheme.border
             radius: 6
             clip: true
 
-            GridView {
-                id: variableGrid
+            ListView {
+                id: debugOutputList
 
-                objectName: "simulationVariables"
+                objectName: "simulationDebugOutput"
                 anchors.fill: parent
                 anchors.margins: 3
-                model: root.debuggerModel.variables
-                cellWidth: Math.max(155, width / 2)
-                cellHeight: 25
+                model: root.debuggerModel.debugOutput
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar {}
 
                 delegate: ThemedItemDelegate {
-                    id: variableButton
+                    id: outputEntry
 
                     required property var modelData
+                    required property int index
 
-                    width: variableGrid.cellWidth
-                    height: variableGrid.cellHeight
+                    width: debugOutputList.width
+                    height: Math.max(42, outputContent.implicitHeight + 8)
                     leftPadding: 6
                     rightPadding: 6
-                    onClicked:
-                        root.debuggerModel.togglePinned(
-                            variableButton.modelData.name)
+                    topPadding: 4
+                    bottomPadding: 4
+                    onClicked: {
+                        root.commitActiveEdit()
+                        root.debuggerModel.openDebugOutput(outputEntry.index)
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Open printed source location")
 
-                    contentItem: RowLayout {
-                        spacing: 4
+                    contentItem: ColumnLayout {
+                        id: outputContent
 
-                        Label {
+                        spacing: 2
+
+                        RowLayout {
                             Layout.fillWidth: true
-                            text: variableButton.modelData.name
-                            color: variableButton.modelData.pinned
-                                   ? AppTheme.success : AppTheme.textMuted
-                            font.family: "monospace"
-                            font.pixelSize: 9
-                            elide: Text.ElideRight
+                            spacing: 6
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: outputEntry.modelData.location
+                                color: AppTheme.info
+                                font.family: "monospace"
+                                font.pixelSize: 9
+                                font.underline: true
+                                elide: Text.ElideMiddle
+                            }
+
+                            Label {
+                                text: qsTr("%1 · tick %2")
+                                      .arg(outputEntry.modelData.context)
+                                      .arg(outputEntry.modelData.tick)
+                                color: AppTheme.textFaint
+                                font.family: "monospace"
+                                font.pixelSize: 9
+                            }
                         }
 
                         Label {
-                            Layout.preferredWidth:
-                                Math.max(54, variableGrid.cellWidth * 0.42)
-                            text: variableButton.modelData.value
+                            Layout.fillWidth: true
+                            text: outputEntry.modelData.message
                             color: AppTheme.text
                             font.family: "monospace"
-                            font.pixelSize: 9
-                            elide: Text.ElideRight
+                            font.pixelSize: 10
+                            wrapMode: Text.WrapAnywhere
                         }
                     }
                 }
 
                 Label {
+                    objectName: "simulationDebugOutputEmptyState"
                     anchors.centerIn: parent
-                    visible: root.debuggerModel.variables.length === 0
-                    text: root.debuggerModel.active
-                          ? qsTr("Pause on a source line to inspect variables.")
-                          : qsTr("Variables appear during a debug session.")
+                    visible: root.debuggerModel.debugOutput.length === 0
+                    text: qsTr("No printed output for this run.")
                     color: AppTheme.textFaint
                     font.pixelSize: 10
                 }
@@ -735,6 +718,19 @@ Item {
 
         function onLinesChanged() {
             root.revealExecutingLine()
+        }
+
+        function onSourceLocationRequested(line) {
+            Qt.callLater(function() {
+                codeList.forceLayout()
+                const centeredY = (line - 0.5) * 28 - codeList.height / 2
+                codeList.contentY = Math.max(
+                    0,
+                    Math.min(centeredY,
+                             Math.max(0,
+                                      codeList.contentHeight
+                                      - codeList.height)))
+            })
         }
     }
 

@@ -833,6 +833,15 @@ int main(int argc, char **argv) {
                     QObject *const simulationVariables =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationVariables"));
+                    QObject *const simulationDebugOutput =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("simulationDebugOutput"));
+                    QObject *const simulationDebugOutputEmptyState =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "simulationDebugOutputEmptyState"));
+                    QObject *const clearSimulationDebugOutputButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "clearSimulationDebugOutputButton"));
                     QObject *const restartLiveSimulationButton =
                             root->findChild<QObject *>(QStringLiteral(
                                     "restartLiveSimulationButton"));
@@ -1574,7 +1583,18 @@ int main(int argc, char **argv) {
                             !simulationDebuggerPanel
                                      ->property("waitingForPause")
                                      .toBool() &&
-                            simulationVariables != nullptr &&
+                            simulationVariables == nullptr &&
+                            simulationDebugOutput != nullptr &&
+                            simulationDebugOutputEmptyState != nullptr &&
+                            simulationDebugOutputEmptyState
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral(
+                                            "No printed output for this run.") &&
+                            clearSimulationDebugOutputButton != nullptr &&
+                            !clearSimulationDebugOutputButton
+                                     ->property("enabled")
+                                     .toBool() &&
                             restartLiveSimulationButton != nullptr &&
                             resetLiveEditsButton != nullptr &&
                             debuggerSubstepForwardButton != nullptr &&

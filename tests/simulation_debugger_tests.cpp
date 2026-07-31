@@ -105,6 +105,30 @@ bool ActiveLineIsSelectedAndMarked(
                    .toBool();
 }
 
+QString InlineValue(forevertas::viewer::SimulationDebuggerModel &model,
+                    const QString &path, int line) {
+    if (!model.selectFile(path)) {
+        return {};
+    }
+    const QVariantList lines = model.lines();
+    return line > 0 && line <= lines.size()
+                   ? lines[line - 1]
+                             .toMap()
+                             .value(QStringLiteral("inlineValue"))
+                             .toString()
+                   : QString();
+}
+
+bool HasInlineValue(forevertas::viewer::SimulationDebuggerModel &model) {
+    const QVariantList lines = model.lines();
+    return std::any_of(lines.cbegin(), lines.cend(), [](const QVariant &line) {
+        return !line.toMap()
+                        .value(QStringLiteral("inlineValue"))
+                        .toString()
+                        .isEmpty();
+    });
+}
+
 bool WaitForPreparation(forevertas::viewer::SimulationDebuggerModel &model,
                         int *pulseCount = nullptr) {
     QEventLoop loop;
@@ -201,6 +225,7 @@ int main(int argc, char **argv) {
         WaitingRestoredTick,
         WaitingInvalidLine,
         WaitingRepeatedBreakpoint,
+        WaitingPrintOutput,
         WaitingCompileFailure,
         WaitingPauseStop,
         Finished,
@@ -215,6 +240,7 @@ int main(int argc, char **argv) {
     QString sourceStepFile;
     int sourceStepLine = -1;
     QString heldInspectionFile;
+    int requestedOutputLine = -1;
     int selectionChangesWhileRunning = 0;
     QElapsedTimer responsivenessClock;
     qint64 lastUiPulse = 0;
@@ -244,6 +270,12 @@ int main(int argc, char **argv) {
                     ++selectionChangesWhileRunning;
                 }
             });
+    QObject::connect(
+            model,
+            &forevertas::viewer::SimulationDebuggerModel::
+                    sourceLocationRequested,
+            &application,
+            [&](int line) { requestedOutputLine = line; });
 
     QObject::connect(
             model, &forevertas::viewer::SimulationDebuggerModel::frameProduced,
@@ -419,27 +451,13 @@ int main(int argc, char **argv) {
                    model->activeFilePath() ==
                            QString::fromLatin1(kVehicleSource) &&
                    model->activeLine() == kPreparedBodyLine &&
-                   !model->variables().isEmpty()) {
-            QString pinName;
-            for (const QVariant &value : model->variables()) {
-                const QString name =
-                        value.toMap().value(QStringLiteral("name")).toString();
-                if (!name.isEmpty()) {
-                    pinName = name;
-                    break;
-                }
-            }
-            okay &= Check(!pinName.isEmpty() && model->togglePinned(pinName) &&
-                                  !model->pinnedVariables().isEmpty(),
-                          "native variable pinning failed");
+                   !InlineValue(*model, QString::fromLatin1(kVehicleSource),
+                                kPreparedBodyLine)
+                            .isEmpty()) {
             okay &= Check(
-                    model->selectFile(QString::fromLatin1(kVehicleSource)) &&
-                            !model->lines()
-                                     .at(kPreparedBodyLine - 1)
-                                     .toMap()
-                                     .value(QStringLiteral("inlineValue"))
-                                     .toString()
-                                     .isEmpty(),
+                    !InlineValue(*model, QString::fromLatin1(kVehicleSource),
+                                 kPreparedBodyLine)
+                             .isEmpty(),
                     "in-scope variable value was not shown beside code");
             okay &= Check(
                     model->updateLine(kApplyControlsLine, originalApplyLine) &&
@@ -464,10 +482,68 @@ int main(int argc, char **argv) {
                    model->executionTick() > firstBreakpointTick) {
             okay &= Check(model->executionTick() > firstBreakpointTick,
                           "breakpoint did not stop again on the next tick");
-            model->toggleBreakpoint(QString::fromLatin1(kVehicleSource),
-                                    kApplyControlsLine);
             okay &= Check(
                     model->selectFile(QString::fromLatin1(kVehicleSource)) &&
+                            model->updateLine(
+                                    kApplyControlsLine,
+                                    QStringLiteral(
+                                            "printf(\"FB16 first=%d "
+                                            "@FOREVERTAS_DEBUG_PRINT_BEGIN@ "
+                                            "@FOREVERTAS_DEBUG_PRINT_END@\\n"
+                                            "FB16 second=%d\\n\", 73, 74);")),
+                    "typed native print statement could not be staged");
+            phase = Phase::WaitingPrintOutput;
+            viewer.play();
+        } else if (phase == Phase::WaitingPrintOutput && !model->running() &&
+                   model->activeFilePath() ==
+                           QString::fromLatin1(kVehicleSource) &&
+                   model->activeLine() == kApplyControlsLine &&
+                   model->debugOutput().size() >= 2) {
+            const QVariantMap first = model->debugOutput().at(0).toMap();
+            const QVariantMap second = model->debugOutput().at(1).toMap();
+            okay &= Check(
+                    model->debugOutput().size() == 2 &&
+                            first.value(QStringLiteral("message")).toString() ==
+                                    QStringLiteral(
+                                            "FB16 first=73 "
+                                            "@FOREVERTAS_DEBUG_PRINT_BEGIN@ "
+                                            "@FOREVERTAS_DEBUG_PRINT_END@") &&
+                            second.value(QStringLiteral("message")).toString() ==
+                                    QStringLiteral("FB16 second=74") &&
+                            first.value(QStringLiteral("sequence"))
+                                            .toULongLong() <
+                                    second.value(QStringLiteral("sequence"))
+                                            .toULongLong() &&
+                            first.value(QStringLiteral("tick")).toLongLong() ==
+                                    model->executionTick() - 1 &&
+                            first.value(QStringLiteral("context")).toString() ==
+                                    QStringLiteral("playback") &&
+                            first.value(QStringLiteral("path")).toString() ==
+                                    QString::fromLatin1(kVehicleSource) &&
+                            first.value(QStringLiteral("line")).toInt() ==
+                                    kApplyControlsLine &&
+                            first.value(QStringLiteral("location")).toString() ==
+                                    QStringLiteral(
+                                            "replay_vehicle_simulation.cpp:31"),
+                    "printed output was not ordered or correctly contextualized");
+            requestedOutputLine = -1;
+            okay &= Check(
+                    !model->openDebugOutput(-1) &&
+                            !model->openDebugOutput(model->debugOutput().size()) &&
+                            model->openDebugOutput(0) &&
+                            model->selectedFilePath() ==
+                                    QString::fromLatin1(kVehicleSource) &&
+                            requestedOutputLine == kApplyControlsLine,
+                    "printed-output source link did not open the correct code "
+                    "location");
+            model->clearDebugOutput();
+            okay &= Check(model->debugOutput().isEmpty(),
+                          "printed debug output did not clear");
+            okay &= Check(
+                    model->updateLine(kApplyControlsLine, originalApplyLine) &&
+                            model->toggleBreakpoint(
+                                    QString::fromLatin1(kVehicleSource),
+                                    kApplyControlsLine) &&
                             model->updateLine(
                                     kApplyControlsLine,
                                     QStringLiteral("this is not valid C++;")),
@@ -487,7 +563,7 @@ int main(int argc, char **argv) {
             QTimer::singleShot(2, &application,
                                [&viewer]() { viewer.pause(); });
         } else if (phase == Phase::WaitingPauseStop && !model->running() &&
-                   model->activeLine() > 0 && !model->variables().isEmpty() &&
+                   model->activeLine() > 0 && HasInlineValue(*model) &&
                    model->statusText().startsWith(QStringLiteral("Paused"))) {
             okay &= Check(!model->activeFilePath().isEmpty() &&
                                   ActiveLineIsSelectedAndMarked(*model) &&

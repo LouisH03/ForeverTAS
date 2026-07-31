@@ -32,9 +32,8 @@ class SimulationDebuggerModel final : public QObject {
     Q_PROPERTY(int activeLine READ activeLine NOTIFY executionChanged)
     Q_PROPERTY(
             QString activeFilePath READ activeFilePath NOTIFY executionChanged)
-    Q_PROPERTY(QVariantList variables READ variables NOTIFY variablesChanged)
-    Q_PROPERTY(QVariantList pinnedVariables READ pinnedVariables NOTIFY
-                       variablesChanged)
+    Q_PROPERTY(QVariantList debugOutput READ debugOutput NOTIFY
+                       debugOutputChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(QString editError READ editError NOTIFY linesChanged)
     Q_PROPERTY(bool hasEdits READ hasEdits NOTIFY filesChanged)
@@ -60,8 +59,7 @@ class SimulationDebuggerModel final : public QObject {
     QVariantList lines() const;
     int activeLine() const;
     QString activeFilePath() const;
-    QVariantList variables() const;
-    QVariantList pinnedVariables() const;
+    QVariantList debugOutput() const;
     QString statusText() const;
     QString editError() const;
     bool hasEdits() const;
@@ -72,7 +70,8 @@ class SimulationDebuggerModel final : public QObject {
     Q_INVOKABLE void toggleFolder(const QString &path);
     Q_INVOKABLE bool updateLine(int lineNumber, const QString &text);
     Q_INVOKABLE bool toggleBreakpoint(const QString &path, int lineNumber);
-    Q_INVOKABLE bool togglePinned(const QString &name);
+    Q_INVOKABLE void clearDebugOutput();
+    Q_INVOKABLE bool openDebugOutput(int index);
     Q_INVOKABLE void resetEdits();
     Q_INVOKABLE bool stepSubstep();
     Q_INVOKABLE bool stepSourceLine();
@@ -91,7 +90,8 @@ class SimulationDebuggerModel final : public QObject {
     void selectionChanged();
     void linesChanged();
     void executionChanged();
-    void variablesChanged();
+    void debugOutputChanged();
+    void sourceLocationRequested(int line);
     void frameProduced(const QVariantMap &frame);
     void sessionFinished();
     void themeChanged();
@@ -142,6 +142,7 @@ class SimulationDebuggerModel final : public QObject {
         CommandKind kind = CommandKind::Setting;
         QString text;
         QString sourcePath;
+        QString printToken;
         int line = 0;
     };
 
@@ -150,6 +151,7 @@ class SimulationDebuggerModel final : public QObject {
         QString diagnostics;
         QString stopPath;
         QStringList workerErrors;
+        QStringList printedLines;
         QVariantList frames;
         QVariantList parsedVariables;
         QHash<QString, QStringList> inlineValuesBySource;
@@ -169,7 +171,7 @@ class SimulationDebuggerModel final : public QObject {
     static QString syntaxHighlighted(const QString &text, bool darkMode);
     static ProcessedDebuggerOutput
     processDebuggerOutput(const QString &output, bool parseVariables,
-                          bool parseStopLocation);
+                          bool parseStopLocation, const QString &printToken);
     static QHash<QString, QStringList>
     buildInlineValueCache(const QVariantList &variables,
                           const QHash<QString, QStringList> &sourceLines);
@@ -189,6 +191,7 @@ class SimulationDebuggerModel final : public QObject {
     QString inlineValues(const QString &line) const;
     QString relativeSourcePath(const QString &absolutePath) const;
     QString lineKey(const QString &path, int line) const;
+    QString executionContextLabel() const;
     int statementEndLine(const SourceFile &source, int line) const;
     bool editApplies(const SourceFile &source, int line) const;
     void loadSources();
@@ -197,7 +200,8 @@ class SimulationDebuggerModel final : public QObject {
     void syncSourceBreakpoints(SourceFile &source);
     void installSourceBreakpoint(SourceFile &source, int line);
     void queueCommand(CommandKind kind, const QString &text,
-                      const QString &sourcePath = {}, int line = 0);
+                      const QString &sourcePath = {}, int line = 0,
+                      const QString &printToken = {});
     void sendNextCommand();
     void readDebuggerOutput();
     void consumeDebuggerPrompts();
@@ -211,6 +215,8 @@ class SimulationDebuggerModel final : public QObject {
     void handleSourceStop(const QString &absolutePath, int line);
     void applyWorkerFrame(const QVariantMap &frame);
     void applyParsedVariables(const ProcessedDebuggerOutput &output);
+    void appendDebugOutput(const DebuggerCommand &command,
+                           const QStringList &messages);
     void applyInlineValueCache(
             const QHash<QString, QStringList> &inlineValuesBySource);
     void refreshInlineValueCacheAsync(const QVariantList &variables);
@@ -234,7 +240,7 @@ class SimulationDebuggerModel final : public QObject {
     std::vector<SourceFile> sources_;
     std::vector<Variable> variables_;
     QSet<QString> expandedFolders_;
-    QSet<QString> pinnedNames_;
+    QVariantList debugOutput_;
     QSet<QString> executedLinesThisTick_;
     QSet<QString> installedBreakpointKeys_;
     QHash<QString, int> installedBreakpointIds_;
@@ -280,6 +286,7 @@ class SimulationDebuggerModel final : public QObject {
     quint64 shutdownGeneration_ = 0;
     quint64 sourceRevision_ = 0;
     quint64 inlineCacheGeneration_ = 0;
+    quint64 debugOutputSequence_ = 0;
     StepMode stepMode_ = StepMode::None;
 };
 
