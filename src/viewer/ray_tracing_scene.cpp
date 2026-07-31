@@ -36,14 +36,13 @@ struct GpuBvhNode {
 };
 
 struct GpuMaterial {
-    std::array<float, 4> baseColor{};
     std::array<float, 4> parameters{};
 };
 
 static_assert(sizeof(GpuVertex) == 64u);
 static_assert(sizeof(GpuTriangle) == 16u);
 static_assert(sizeof(GpuBvhNode) == 48u);
-static_assert(sizeof(GpuMaterial) == 32u);
+static_assert(sizeof(GpuMaterial) == 16u);
 
 struct BuildTriangle {
     GpuTriangle triangle;
@@ -127,10 +126,6 @@ std::uint32_t BuildBvhNode(std::vector<BuildTriangle> &triangles,
             triangles, first + leftCount, count - leftCount, nodes);
     nodes[nodeIndex].metadata = {left, right, 0u, 0u};
     return nodeIndex;
-}
-
-std::array<float, 4> ColorComponents(const QColor &color) {
-    return {color.redF(), color.greenF(), color.blueF(), color.alphaF()};
 }
 
 }  // namespace
@@ -229,10 +224,10 @@ std::shared_ptr<const RayTracingSceneData> BuildRayTracingScene(
         const ReplacementMaterial replacement =
                 ReplacementFor(static_cast<ReplacementMaterialClass>(index));
         GpuMaterial material;
-        material.baseColor = ColorComponents(replacement.baseColor);
         material.parameters = {
                 replacement.roughness, replacement.metalness,
-                replacement.opacity, replacement.emissiveStrength};
+                replacement.emissiveStrength,
+                replacement.applyVertexColors ? 1.0f : 0.0f};
         materials.push_back(material);
     }
 

@@ -37,24 +37,25 @@ block to only a few sampled pixels, and keeps road centers, standalone grass,
 block borders, and grass clips at the same density. Missing normals are
 accumulated from indexed triangles; missing tangents use a stable orthogonal
 basis. Water, cube maps, render targets and complex shaders are reduced to
-deterministic replacement material parameters. Glass and water use alpha
-blending, emissive materials use an emissive factor, and thin classes disable
-culling.
+deterministic replacement material parameters.
 
 ## Qt Quick 3D
 
 `src/viewer/visual_scene_pipeline.*` transforms static LOD0 geometry once on
 load and batches compatible instances by replacement material, purpose, and
-vertex-color mode. Transparent materials are additionally divided into
-64-meter spatial cells. Each batch becomes one indexed `QQuick3DGeometry` with
+vertex-color mode. Each batch becomes one indexed `QQuick3DGeometry` with
 preserved normals, tangents, UV0, UV1, colors, and material boundaries. Exact
 duplicate mesh/material/purpose/transform tuples are suppressed.
 
 The QML scene creates one `Model` per batch rather than one per source
-instance. Material classes share a `PrincipledMaterial` and two `Texture`
-objects. Static geometry is rebuilt only after a successful replay reload;
-playback updates car transforms without touching map resources. Map shadows
-are disabled by default.
+instance. Material classes share a `PrincipledMaterial` and the exact albedo
+asset sampled by the ray tracer. Both paths use the UVs baked by the visual
+pipeline without a second scale, the same vertex-color policy, roughness,
+metalness, emissive asset, opaque surface, and two-sided visibility. Static
+geometry is rebuilt only after a successful replay reload; playback updates car
+transforms without touching map resources. Raster image-based lighting,
+directional lights, tone mapping, mip selection, and the ray tracer's sunlight,
+shadow, and reflection model remain renderer-specific.
 
 The textured viewport uses the project-owned 2:1 equirectangular panorama in
 `assets/environment/day_sky.png` as both a true Qt Quick 3D skybox and an

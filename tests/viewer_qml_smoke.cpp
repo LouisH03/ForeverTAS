@@ -11,6 +11,7 @@
 #include <QImage>
 #include <QInputDevice>
 #include <QMouseEvent>
+#include <QMetaProperty>
 #include <QPalette>
 #include <QPointer>
 #include <QQmlApplicationEngine>
@@ -97,41 +98,53 @@ bool VisualMaterialsAreBoundAndShared(
         const QList<QObject *> &models,
         const QList<QObject *> &materials,
         const QList<QObject *> &baseTextures,
-        const QList<QObject *> &normalTextures,
         const forevertas::viewer::RaceViewerController &viewer) {
     if (materials.size() != viewer.visualMaterials().size() ||
         baseTextures.size() != materials.size() ||
-        normalTextures.size() != materials.size() ||
         materials.isEmpty() || materials.size() >= models.size()) {
         return false;
     }
 
     QSet<QObject *> baseTextureObjects(baseTextures.cbegin(),
                                        baseTextures.cend());
-    QSet<QObject *> normalTextureObjects(normalTextures.cbegin(),
-                                         normalTextures.cend());
     for (const QObject *texture : baseTextures) {
         const QUrl source = texture->property("source").toUrl();
         if (source.scheme() != QStringLiteral("qrc") ||
-            !source.path().startsWith(QStringLiteral("/materials/"))) {
-            return false;
-        }
-    }
-    for (const QObject *texture : normalTextures) {
-        const QUrl source = texture->property("source").toUrl();
-        if (source.scheme() != QStringLiteral("qrc") ||
-            !source.path().startsWith(QStringLiteral("/materials/"))) {
+            !source.path().startsWith(QStringLiteral("/materials/")) ||
+            !qFuzzyCompare(texture->property("scaleU").toFloat(), 1.0f) ||
+            !qFuzzyCompare(texture->property("scaleV").toFloat(), 1.0f)) {
             return false;
         }
     }
 
-    for (const QObject *material : materials) {
+    const QVariantList materialDefinitions = viewer.visualMaterials();
+    for (qsizetype index = 0; index < materials.size(); ++index) {
+        const QObject *const material = materials.at(index);
+        const QVariantMap definition =
+                materialDefinitions.at(index).toMap();
         QObject *const baseMap =
                 material->property("baseColorMap").value<QObject *>();
         QObject *const normalMap =
                 material->property("normalMap").value<QObject *>();
-        if (!baseTextureObjects.contains(baseMap) ||
-            !normalTextureObjects.contains(normalMap)) {
+        QObject *const emissiveMap =
+                material->property("emissiveMap").value<QObject *>();
+        const bool emissive =
+                definition.value(QStringLiteral("emissiveStrength"))
+                                .toFloat() > 0.0f;
+        const QMetaProperty cullModeProperty =
+                material->metaObject()->property(
+                        material->metaObject()->indexOfProperty("cullMode"));
+        const char *const cullModeName =
+                cullModeProperty.enumerator().valueToKey(
+                        material->property("cullMode").toInt());
+        if (!baseTextureObjects.contains(baseMap) || normalMap != nullptr ||
+            (emissive ? emissiveMap != baseMap : emissiveMap != nullptr) ||
+            !qFuzzyCompare(material->property("opacity").toFloat(), 1.0f) ||
+            cullModeName == nullptr ||
+            QByteArray(cullModeName) != "NoCulling" ||
+            material->property("vertexColorsEnabled").toBool() !=
+                    definition.value(QStringLiteral("vertexColors"))
+                            .toBool()) {
             return false;
         }
     }
@@ -3108,10 +3121,6 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "trackVisualBaseTexture"));
-                                const QList<QObject *> visualNormalTextures =
-                                        root->findChildren<QObject *>(
-                                                QStringLiteral(
-                                                        "trackVisualNormalTexture"));
                                 const auto materialState =
                                         [](const QObject *material) {
                                             return QVariantList{
@@ -3311,8 +3320,11 @@ int main(int argc, char **argv) {
                                                 visualModels,
                                                 visualMaterials,
                                                 visualBaseTextures,
-                                                visualNormalTextures,
                                                 viewer) &&
+                                        root->findChildren<QObject *>(
+                                                    QStringLiteral(
+                                                            "trackVisualNormalTexture"))
+                                                .isEmpty() &&
                                         ModelsHaveState(carFilledModels,
                                                         expectedCarModels,
                                                         true) &&

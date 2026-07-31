@@ -178,12 +178,9 @@ struct BatchKey {
             PhysicsSandboxScenePurpose::Environment;
     bool vertexColors = false;
     bool defaultVisible = false;
-    int transparentCellX = 0;
-    int transparentCellZ = 0;
 
     auto asTuple() const {
-        return std::tie(materialClass, purpose, vertexColors, defaultVisible,
-                        transparentCellX, transparentCellZ);
+        return std::tie(materialClass, purpose, vertexColors, defaultVisible);
     }
 };
 
@@ -200,24 +197,10 @@ struct BatchAccumulator {
     std::uint64_t sourceInstanceCount = 0u;
 };
 
-bool IsTransparent(ReplacementMaterialClass materialClass) {
-    return materialClass == ReplacementMaterialClass::Glass ||
-           materialClass == ReplacementMaterialClass::Water;
-}
-
 BatchKey MakeBatchKey(ReplacementMaterialClass materialClass,
                       PhysicsSandboxScenePurpose purpose, bool vertexColors,
-                      bool defaultVisible,
-                      const PhysicsSandboxTransform &transform) {
-    BatchKey key{materialClass, purpose, vertexColors, defaultVisible, 0, 0};
-    if (IsTransparent(materialClass)) {
-        constexpr float CellSize = 64.0f;
-        key.transparentCellX = static_cast<int>(
-                std::floor(transform.translation.x / CellSize));
-        key.transparentCellZ = static_cast<int>(
-                std::floor(transform.translation.z / CellSize));
-    }
-    return key;
+                      bool defaultVisible) {
+    return {materialClass, purpose, vertexColors, defaultVisible};
 }
 
 struct DuplicateInstanceKey {
@@ -1087,8 +1070,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
                 instance.purpose, instance.provenance.blockName);
         const BatchKey key =
                 MakeBatchKey(materialClass, instance.purpose,
-                             mesh.hasVertexColors, defaultVisible,
-                             instance.worldTransform);
+                             mesh.hasVertexColors, defaultVisible);
         if (materialClass == ReplacementMaterialClass::Grass ||
             materialClass == ReplacementMaterialClass::Dirt) {
             AppendRandomizedTiledInstance(

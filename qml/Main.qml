@@ -1508,22 +1508,6 @@ ApplicationWindow {
                                     source: modelData.baseTexture
                                     tilingModeHorizontal: Texture.Repeat
                                     tilingModeVertical: Texture.Repeat
-                                    scaleU: modelData.textureScale
-                                    scaleV: modelData.textureScale
-                                    generateMipmaps: true
-                                    minFilter: Texture.Linear
-                                    magFilter: Texture.Linear
-                                    mipFilter: Texture.Linear
-                                }
-
-                                Texture {
-                                    id: replacementNormalMap
-                                    objectName: "trackVisualNormalTexture"
-                                    source: modelData.normalTexture
-                                    tilingModeHorizontal: Texture.Repeat
-                                    tilingModeVertical: Texture.Repeat
-                                    scaleU: modelData.textureScale
-                                    scaleV: modelData.textureScale
                                     generateMipmaps: true
                                     minFilter: Texture.Linear
                                     magFilter: Texture.Linear
@@ -1543,10 +1527,6 @@ ApplicationWindow {
                                               "textured"
                                               ? replacementBaseMap
                                               : null
-                                normalMap: window.renderMode ===
-                                           "textured"
-                                           ? replacementNormalMap
-                                           : null
                                 roughness: window.renderMode ===
                                            "neutral"
                                            ? 0.74
@@ -1555,25 +1535,21 @@ ApplicationWindow {
                                            "neutral"
                                            ? 0
                                            : modelData.metalness
-                                opacity: modelData.opacity
-                                alphaMode: modelData.opacity < 0.999
-                                           ? PrincipledMaterial.Blend
-                                           : PrincipledMaterial.Opaque
-                                cullMode: modelData.twoSided
-                                          ? Material.NoCulling
-                                          : Material.BackFaceCulling
+                                cullMode: Material.NoCulling
                                 vertexColorsEnabled:
                                     modelData.vertexColors
                                     && window.renderMode === "textured"
+                                emissiveMap: window.renderMode ===
+                                             "textured"
+                                             && modelData.emissiveStrength > 0
+                                             ? replacementBaseMap
+                                             : null
                                 emissiveFactor: window.renderMode ===
                                                 "textured"
                                                 ? Qt.vector3d(
-                                                      modelData.baseColor.r
-                                                      * modelData.emissiveStrength,
-                                                      modelData.baseColor.g
-                                                      * modelData.emissiveStrength,
-                                                      modelData.baseColor.b
-                                                      * modelData.emissiveStrength)
+                                                      modelData.emissiveStrength,
+                                                      modelData.emissiveStrength,
+                                                      modelData.emissiveStrength)
                                                 : Qt.vector3d(0, 0, 0)
                             }
                         }

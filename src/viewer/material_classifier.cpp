@@ -168,27 +168,19 @@ ReplacementMaterialClass ClassifySemanticContext(
 ReplacementMaterial Make(
         ReplacementMaterialClass materialClass,
         const char *name,
-        const char *baseColor,
         const char *debugColor,
         const char *texture,
-        const char *normal,
         float roughness,
-        float metalness,
-        float textureScale = 1.0f) {
+        float metalness) {
     ReplacementMaterial result;
     result.materialClass = materialClass;
     result.name = QString::fromLatin1(name);
-    result.baseColor = QColor(QString::fromLatin1(baseColor));
     result.debugColor = QColor(QString::fromLatin1(debugColor));
     result.baseTexture =
             QStringLiteral("qrc:/materials/") +
             QString::fromLatin1(texture);
-    result.normalTexture =
-            QStringLiteral("qrc:/materials/") +
-            QString::fromLatin1(normal);
     result.roughness = roughness;
     result.metalness = metalness;
-    result.textureScale = textureScale;
     return result;
 }
 
@@ -281,104 +273,78 @@ ReplacementMaterial ReplacementFor(
     ReplacementMaterial result;
     switch (materialClass) {
     case ReplacementMaterialClass::Asphalt:
-        result = Make(materialClass, "Asphalt", "#626563", "#343434",
-                      "asphalt_base.png", "asphalt_normal.png",
-                      0.88f, 0.0f);
+        result = Make(materialClass, "Asphalt", "#343434",
+                      "asphalt_base.png", 0.88f, 0.0f);
         result.worldUvScale = 0.25f;
         result.applyVertexColors = false;
         return result;
     case ReplacementMaterialClass::Concrete:
-        result = Make(materialClass, "Concrete", "#a8aaa5", "#d8d8d8",
-                      "concrete_base.png", "concrete_normal.png",
-                      0.82f, 0.0f);
+        result = Make(materialClass, "Concrete", "#d8d8d8",
+                      "concrete_base.png", 0.82f, 0.0f);
         result.worldUvScale = 0.25f;
         result.applyVertexColors = false;
         return result;
     case ReplacementMaterialClass::Dirt:
-        result = Make(materialClass, "Dirt", "#816746", "#9c5b22",
-                      "dirt_base.png", "dirt_normal.png",
-                      0.94f, 0.0f);
+        result = Make(materialClass, "Dirt", "#9c5b22",
+                      "dirt_base.png", 0.94f, 0.0f);
         result.worldUvScale = 0.25f;
         result.applyVertexColors = false;
         return result;
     case ReplacementMaterialClass::Grass:
-        result = Make(materialClass, "Grass", "#527144", "#40d153",
-                      "grass_base.png", "grass_normal.png",
-                      0.9f, 0.0f);
+        result = Make(materialClass, "Grass", "#40d153",
+                      "grass_base.png", 0.9f, 0.0f);
         result.worldUvScale = 0.25f;
         result.applyVertexColors = false;
         return result;
     case ReplacementMaterialClass::Metal:
-        return Make(materialClass, "Metal", "#899092", "#8ea6ff",
-                    "metal_base.png", "metal_normal.png",
-                    0.34f, 0.82f, 0.2f);
+        return Make(materialClass, "Metal", "#8ea6ff",
+                    "metal_base.png", 0.34f, 0.82f);
     case ReplacementMaterialClass::PaintedMetal:
-        return Make(materialClass, "Painted metal", "#a94a3c", "#ff536e",
-                    "painted_metal_base.png",
-                    "painted_metal_normal.png",
-                    0.42f, 0.58f, 0.2f);
+        return Make(materialClass, "Painted metal", "#ff536e",
+                    "painted_metal_base.png", 0.42f, 0.58f);
     case ReplacementMaterialClass::Plastic:
-        return Make(materialClass, "Plastic", "#d6d8d2", "#ffb347",
-                    "plastic_base.png", "plastic_normal.png",
-                    0.46f, 0.0f, 0.22f);
+        return Make(materialClass, "Plastic", "#ffb347",
+                    "plastic_base.png", 0.46f, 0.0f);
     case ReplacementMaterialClass::Rubber:
-        return Make(materialClass, "Rubber", "#343735", "#7f50a8",
-                    "rubber_base.png", "rubber_normal.png",
-                    0.96f, 0.0f, 0.18f);
+        return Make(materialClass, "Rubber", "#7f50a8",
+                    "rubber_base.png", 0.96f, 0.0f);
     case ReplacementMaterialClass::Glass:
-        result = Make(materialClass, "Glass", "#a6d8df", "#55dff5",
-                      "glass_base.png", "glass_normal.png",
-                      0.12f, 0.05f);
-        result.opacity = 0.38f;
-        result.twoSided = true;
-        return result;
+        return Make(materialClass, "Glass", "#55dff5",
+                    "glass_base.png", 0.12f, 0.05f);
     case ReplacementMaterialClass::Signage:
-        result = Make(materialClass, "Signage", "#ece8d8", "#ffe347",
-                      "signage_base.png", "signage_normal.png",
-                      0.48f, 0.0f, 0.4f);
-        result.twoSided = true;
-        return result;
+        return Make(materialClass, "Signage", "#ffe347",
+                    "signage_base.png", 0.48f, 0.0f);
     case ReplacementMaterialClass::Emissive:
-        result = Make(materialClass, "Emissive", "#59d7aa", "#ff4fd2",
-                      "emissive_base.png", "emissive_normal.png", 0.28f, 0.0f,
-                      0.25f);
+        result = Make(materialClass, "Emissive", "#ff4fd2",
+                      "emissive_base.png", 0.28f, 0.0f);
         result.emissiveStrength = 0.7f;
         return result;
     case ReplacementMaterialClass::Turbo:
-        result = Make(materialClass, "Turbo", "#20cde1", "#00fff0",
-                      "turbo_base.png", "turbo_normal.png", 0.3f, 0.18f, 0.48f);
+        result = Make(materialClass, "Turbo", "#00fff0",
+                      "turbo_base.png", 0.3f, 0.18f);
         result.emissiveStrength = 0.55f;
         return result;
     case ReplacementMaterialClass::Checkpoint:
-        result = Make(materialClass, "Checkpoint", "#168bd2", "#168bd2",
-                      "checkpoint_base.png", "checkpoint_normal.png", 0.4f,
-                      0.08f, 0.55f);
+        result = Make(materialClass, "Checkpoint", "#168bd2",
+                      "checkpoint_base.png", 0.4f, 0.08f);
         result.emissiveStrength = 0.22f;
-        result.twoSided = true;
         return result;
     case ReplacementMaterialClass::StartFinish:
-        result = Make(materialClass, "Start / finish", "#2d3335", "#f3f4ef",
-                      "start_finish_base.png", "start_finish_normal.png", 0.52f,
-                      0.05f, 0.55f);
-        result.twoSided = true;
-        return result;
+        return Make(materialClass, "Start / finish", "#f3f4ef",
+                    "start_finish_base.png", 0.52f, 0.05f);
     case ReplacementMaterialClass::Water:
-        result = Make(materialClass, "Water", "#4e9cac", "#267cff",
-                      "water_base.png", "water_normal.png",
-                      0.18f, 0.0f, 0.08f);
-        result.opacity = 0.7f;
-        result.twoSided = true;
-        return result;
+        return Make(materialClass, "Water", "#267cff",
+                    "water_base.png", 0.18f, 0.0f);
     case ReplacementMaterialClass::Neutral:
-        return Make(materialClass, "Neutral", "#979c98", "#9ca3a0",
-                    "neutral_base.png", "neutral_normal.png",
-                    0.72f, 0.0f, 0.18f);
+        result = Make(materialClass, "Neutral", "#9ca3a0",
+                      "neutral_base.png", 0.72f, 0.0f);
+        result.applyVertexColors = false;
+        return result;
     case ReplacementMaterialClass::Unknown:
     default:
         return Make(ReplacementMaterialClass::Unknown,
-                    "Unknown", "#a087a0", "#ff38df",
-                    "unknown_base.png", "unknown_normal.png",
-                    0.7f, 0.0f, 0.18f);
+                    "Unknown", "#ff38df",
+                    "unknown_base.png", 0.7f, 0.0f);
     }
 }
 

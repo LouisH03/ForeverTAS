@@ -4,6 +4,7 @@
 #include "viewer/visual_scene_pipeline.h"
 
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -157,8 +159,6 @@ bool TestClassification() {
 
 bool TestReplacementParametersAndTextures() {
     bool okay = true;
-    const auto glass = ReplacementFor(ReplacementMaterialClass::Glass);
-    const auto water = ReplacementFor(ReplacementMaterialClass::Water);
     const auto emissive =
             ReplacementFor(ReplacementMaterialClass::Emissive);
     const auto grass =
@@ -168,10 +168,6 @@ bool TestReplacementParametersAndTextures() {
     const auto dirt = ReplacementFor(ReplacementMaterialClass::Dirt);
     const auto concrete =
             ReplacementFor(ReplacementMaterialClass::Concrete);
-    okay &= Check(glass.opacity < 1.0f && glass.twoSided,
-                  "glass replacement is not transparent and two-sided");
-    okay &= Check(water.opacity < 1.0f && water.twoSided,
-                  "water replacement is not transparent and two-sided");
     okay &= Check(emissive.emissiveStrength > 0.0f,
                   "emissive replacement has no emission");
     okay &= Check(!asphalt.applyVertexColors &&
@@ -183,6 +179,12 @@ bool TestReplacementParametersAndTextures() {
                           std::fabs(dirt.worldUvScale - 0.25f) < 0.001f &&
                           std::fabs(concrete.worldUvScale - 0.25f) < 0.001f,
                   "driving surfaces do not use consistent world-space UVs");
+    okay &= Check(
+            !ReplacementFor(ReplacementMaterialClass::Neutral)
+                     .applyVertexColors &&
+                    ReplacementFor(ReplacementMaterialClass::Unknown)
+                            .applyVertexColors,
+            "replacement vertex-color policy differs from the ray tracer");
 
     constexpr std::array<const char *, 17> names{{
             "asphalt", "concrete", "dirt", "grass", "metal",
@@ -190,24 +192,17 @@ bool TestReplacementParametersAndTextures() {
             "emissive", "turbo", "checkpoint", "start_finish", "water",
             "neutral", "unknown"}};
     QSet<QByteArray> baseTextureHashes;
-    QSet<QByteArray> normalTextureHashes;
+    const QString root = QStringLiteral(FOREVERTAS_SOURCE_DIR) +
+            QStringLiteral("/assets/materials/");
     for (const char *name : names) {
-        const QString root = QStringLiteral(FOREVERTAS_SOURCE_DIR) +
-                QStringLiteral("/assets/materials/");
         const QString basePath = root + QString::fromLatin1(name) +
                 QStringLiteral("_base.png");
-        const QString normalPath = root + QString::fromLatin1(name) +
-                QStringLiteral("_normal.png");
         const QImage baseImage(basePath);
-        const QImage normalImage(normalPath);
         okay &= Check(!baseImage.isNull(),
                       "replacement base texture did not load");
-        okay &= Check(!normalImage.isNull(),
-                      "replacement normal texture did not load");
         okay &= Check(baseImage.width() >= 512 &&
-                              baseImage.height() >= 512 &&
-                              normalImage.size() == baseImage.size(),
-                      "replacement texture is undersized or mismatched");
+                              baseImage.height() >= 512,
+                      "replacement texture is undersized");
         if (std::string(name) != "concrete") {
             QSet<QRgb> sampledBaseColors;
             for (int y = 0; y < baseImage.height(); y += 4) {
@@ -220,32 +215,26 @@ bool TestReplacementParametersAndTextures() {
                     "replacement base texture is a low-information placeholder");
         }
         QFile baseFile(basePath);
-        QFile normalFile(normalPath);
-        okay &= Check(baseFile.open(QIODevice::ReadOnly) &&
-                              normalFile.open(QIODevice::ReadOnly),
+        okay &= Check(baseFile.open(QIODevice::ReadOnly),
                       "replacement texture bytes were not readable");
         if (baseFile.isOpen()) {
             baseTextureHashes.insert(QCryptographicHash::hash(
                     baseFile.readAll(), QCryptographicHash::Sha256));
         }
-        if (normalFile.isOpen()) {
-            normalTextureHashes.insert(QCryptographicHash::hash(
-                    normalFile.readAll(), QCryptographicHash::Sha256));
-        }
     }
     okay &= Check(baseTextureHashes.size() ==
                           static_cast<qsizetype>(names.size()),
                   "replacement base textures are not visibly distinct assets");
-    okay &= Check(normalTextureHashes.size() ==
-                          static_cast<qsizetype>(names.size()),
-                  "replacement normal textures are not distinct assets");
+    const QDir materialDirectory(root);
+    okay &= Check(
+            materialDirectory.entryList(
+                                     {QStringLiteral("*_normal.png")},
+                                     QDir::Files)
+                    .isEmpty(),
+            "unused raster-only normal-map assets remain packaged");
 
-    const QString textureRoot = QStringLiteral(FOREVERTAS_SOURCE_DIR) +
-            QStringLiteral("/assets/materials/");
-    const QImage concreteBase(textureRoot +
+    const QImage concreteBase(root +
                               QStringLiteral("concrete_base.png"));
-    const QImage concreteNormal(textureRoot +
-                                QStringLiteral("concrete_normal.png"));
     const auto isUniform = [](const QImage &image) {
         if (image.isNull()) {
             return false;
@@ -260,14 +249,12 @@ bool TestReplacementParametersAndTextures() {
         }
         return true;
     };
-    okay &= Check(isUniform(concreteBase) && isUniform(concreteNormal),
+    okay &= Check(isUniform(concreteBase),
                   "concrete replacement is not flat gray");
-    okay &= Check(concreteBase.pixelColor(0, 0) == QColor("#a4a69f") &&
-                          concreteNormal.pixelColor(0, 0) ==
-                                  QColor("#8080ff"),
+    okay &= Check(concreteBase.pixelColor(0, 0) == QColor("#a4a69f"),
                   "concrete replacement does not use the requested flat values");
 
-    const QImage grassBase(textureRoot + QStringLiteral("grass_base.png"));
+    const QImage grassBase(root + QStringLiteral("grass_base.png"));
     std::int64_t grassRed = 0;
     std::int64_t grassGreen = 0;
     std::int64_t grassBlue = 0;
@@ -283,7 +270,7 @@ bool TestReplacementParametersAndTextures() {
                           grassGreen * 6 > grassBlue * 7,
                   "grass ground cover is not recognizably green");
 
-    const QImage turboBase(textureRoot + QStringLiteral("turbo_base.png"));
+    const QImage turboBase(root + QStringLiteral("turbo_base.png"));
     const auto countArrowPixels =
             [&turboBase](int left, int right, bool yellow) {
         int count = 0;
@@ -660,6 +647,39 @@ bool TestStaticBatching() {
                                     rayTracingScene->bvhNodeCount * 48u),
             "ray tracing scene did not preserve the visible geometry or "
             "produce a compact GPU BVH");
+    if (rayTracingScene != nullptr) {
+        okay &= Check(
+                rayTracingScene->materials.size() ==
+                        static_cast<qsizetype>(17u * 4u * sizeof(float)),
+                "ray tracing material table did not use the unified surface "
+                "layout");
+        if (rayTracingScene->materials.size() ==
+            static_cast<qsizetype>(17u * 4u * sizeof(float))) {
+            std::array<float, 17u * 4u> parameters{};
+            std::memcpy(parameters.data(),
+                        rayTracingScene->materials.constData(),
+                        rayTracingScene->materials.size());
+            for (std::uint32_t index = 0u; index < 17u; ++index) {
+                const auto replacement = ReplacementFor(
+                        static_cast<ReplacementMaterialClass>(index));
+                const float *const material =
+                        parameters.data() + index * 4u;
+                okay &= Check(
+                        std::fabs(material[0] - replacement.roughness) <
+                                        0.0001f &&
+                                std::fabs(material[1] -
+                                          replacement.metalness) <
+                                        0.0001f &&
+                                std::fabs(material[2] -
+                                          replacement.emissiveStrength) <
+                                        0.0001f &&
+                                (material[3] > 0.5f) ==
+                                        replacement.applyVertexColors,
+                        "ray tracing material table diverged from the shared "
+                        "replacement contract");
+            }
+        }
+    }
     return okay;
 }
 
@@ -780,6 +800,14 @@ bool TestRayTracingShaders() {
                     "camera.viewportFrame.xy * 2.0 - 1.0;") &&
                     !rayTracingSource.contains("screen.y = -screen.y"),
             "ray tracing camera inverted the viewport Y coordinate");
+    okay &= Check(
+            rayTracingSource.contains(
+                    "bool usesVertexColor = parameters.w > 0.5;") &&
+                    rayTracingSource.contains(
+                            "max(parameters.z, 0.0) * 2.0") &&
+                    !rayTracingSource.contains("materialIndex > 3u") &&
+                    !rayTracingSource.contains("materialIndex != 15u"),
+            "ray tracing shader bypassed the shared material contract");
     return okay;
 }
 
