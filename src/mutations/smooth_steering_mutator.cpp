@@ -101,59 +101,6 @@ public:
                 settings_.window.maximumTimeMs};
     }
 
-    bool SupportsSparseMutation() const override { return true; }
-
-    void MutateSparse(SparseMutationTimeline &timeline,
-                      const SparseMutationRequest &request) const override {
-        std::mt19937 random = ModifierRandom(
-                settings_.window.seed,
-                request.iterationIndex,
-                request.passIndex);
-        const std::int64_t tick = request.tickDurationMs;
-        const std::int64_t minimumTick =
-                settings_.window.minimumTimeMs / tick;
-        const std::int64_t maximumTick =
-                settings_.window.maximumTimeMs / tick;
-        constexpr double pi = 3.14159265358979323846;
-        for (std::uint32_t deformation = 0u;
-             deformation < settings_.deformationCount;
-             ++deformation) {
-            const std::int64_t center = RandomInteger<std::int64_t>(
-                    random, minimumTick, maximumTick) * tick;
-            const AnalogInputState amplitude =
-                    RandomInteger<AnalogInputState>(
-                            random,
-                            settings_.amplitudeMinimum,
-                            settings_.amplitudeMaximum);
-            const std::int64_t start = std::max(
-                    settings_.window.minimumTimeMs,
-                    center - settings_.radiusMs);
-            const std::int64_t end = std::min(
-                    settings_.window.maximumTimeMs,
-                    center + settings_.radiusMs);
-            for (std::int64_t time = AlignInputTime(start, tick);
-                 time <= end;
-                 time += tick) {
-                const double distance = std::abs(
-                        static_cast<double>(time - center));
-                const double weight = settings_.radiusMs == 0
-                        ? 1.0
-                        : 0.5 * (1.0 + std::cos(
-                                  pi * distance /
-                                  static_cast<double>(settings_.radiusMs)));
-                const std::int64_t weightedDelta = std::llround(
-                        static_cast<double>(amplitude) * weight);
-                const AnalogInputState value = SaturateAnalogInputState(
-                        static_cast<std::int64_t>(
-                                timeline.SteeringStateAt(time)) +
-                        weightedDelta);
-                timeline.AppendEvent(AnalogEvent(
-                        time, SandboxInputAction::Steer, value));
-            }
-            timeline.Normalize(request.tickDurationMs);
-        }
-    }
-
 private:
     Settings settings_;
 };

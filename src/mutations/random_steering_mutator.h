@@ -33,9 +33,6 @@ public:
     MutationResult Mutate(const MutationRequest &request) const override;
     std::int64_t EarliestMutationTimeMs() const override;
     MutationTimeRange AffectedTimeRange() const override;
-    bool SupportsSparseMutation() const override { return true; }
-    void MutateSparse(SparseMutationTimeline &timeline,
-                      const SparseMutationRequest &request) const override;
 
 private:
     RandomSteeringSettings settings_;

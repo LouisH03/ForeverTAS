@@ -94,42 +94,6 @@ public:
                 settings_.window.maximumTimeMs};
     }
 
-    bool SupportsSparseMutation() const override { return true; }
-
-    void MutateSparse(SparseMutationTimeline &timeline,
-                      const SparseMutationRequest &request) const override {
-        std::mt19937 random = ModifierRandom(
-                settings_.window.seed,
-                request.iterationIndex,
-                request.passIndex);
-        const auto deleteChannel = [&](const ChannelSettings &channel,
-                                       MutationEligibility eligibility) {
-            if (!channel.enabled) return;
-            const std::uint32_t requested = RandomInteger(
-                    random, 0u, channel.maximumCount);
-            std::vector<SparseMutationTimeline::EventHandle> eligible =
-                    timeline.CollectEligible(
-                            eligibility,
-                            settings_.window.minimumTimeMs,
-                            settings_.window.maximumTimeMs);
-            for (std::uint32_t removal = 0u;
-                 removal < requested && !eligible.empty();
-                 ++removal) {
-                const std::size_t selected = RandomInteger<std::size_t>(
-                        random, 0u, eligible.size() - 1u);
-                timeline.EraseEvent(eligible[selected]);
-                eligible.erase(eligible.begin() +
-                               static_cast<std::ptrdiff_t>(selected));
-            }
-        };
-        deleteChannel(settings_.steering,
-                      MutationEligibility::SteeringAnalog);
-        deleteChannel(settings_.accelerate,
-                      MutationEligibility::Accelerate);
-        deleteChannel(settings_.brake,
-                      MutationEligibility::Brake);
-    }
-
 private:
     Settings settings_;
 };

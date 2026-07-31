@@ -125,27 +125,4 @@ MutationTimeRange RandomSteeringMutator::AffectedTimeRange() const {
             settings_.minimumTimeMs, settings_.maximumTimeMs};
 }
 
-void RandomSteeringMutator::MutateSparse(
-        SparseMutationTimeline &timeline,
-        const SparseMutationRequest &request) const {
-    std::mt19937 random = ModifierRandom(
-            settings_.seed, request.iterationIndex, request.passIndex);
-    std::vector<SparseMutationTimeline::EventHandle> eligible =
-            timeline.CollectEligible(
-                    MutationEligibility::SteeringAnalog,
-                    settings_.minimumTimeMs,
-                    settings_.maximumTimeMs);
-    for (const SparseMutationTimeline::EventHandle &handle : eligible) {
-        SandboxInputEvent event = handle.event;
-        AnalogInputState value = RandomSteering(random);
-        if (value == event.value.analog) {
-            value = value == kAnalogInputMaximum
-                    ? kAnalogInputMinimum
-                    : kAnalogInputMaximum;
-        }
-        event.value.analog = value;
-        timeline.ReplaceEvent(handle, std::move(event));
-    }
-}
-
 }  // namespace forevertas

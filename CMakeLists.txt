@@ -110,8 +110,6 @@ add_library(forevertas_core STATIC
     src/mutations/input_insertion_mutator.h
     src/mutations/input_mutator.h
     src/mutations/modifier_utils.h
-    src/mutations/mutation_overlay.cpp
-    src/mutations/mutation_overlay.h
     src/mutations/random_steering_mutator.cpp
     src/mutations/random_steering_mutator.h
     src/mutations/smooth_steering_mutator.cpp
