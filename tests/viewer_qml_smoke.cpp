@@ -819,9 +819,17 @@ int main(int argc, char **argv) {
                     QObject *const simulationSourceTreeScrollBar =
                             root->findChild<QObject *>(QStringLiteral(
                                     "simulationSourceTreeScrollBar"));
-                    QObject *const simulationCodeViewer =
-                            root->findChild<QObject *>(
-                                    QStringLiteral("simulationCodeViewer"));
+                    auto *const simulationCodeViewer =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "simulationCodeViewer")));
+                    auto *const debuggerWaitingForPauseOverlay =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "debuggerWaitingForPauseOverlay")));
+                    QObject *const debuggerWaitingForPauseText =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "debuggerWaitingForPauseText"));
                     QObject *const simulationVariables =
                             root->findChild<QObject *>(
                                     QStringLiteral("simulationVariables"));
@@ -1550,6 +1558,22 @@ int main(int argc, char **argv) {
                             simulationSourceTree != nullptr &&
                             debuggerSourceTreeScrollable &&
                             simulationCodeViewer != nullptr &&
+                            debuggerWaitingForPauseOverlay != nullptr &&
+                            !debuggerWaitingForPauseOverlay->isVisible() &&
+                            debuggerWaitingForPauseOverlay->height() == 26.0 &&
+                            debuggerWaitingForPauseOverlay->width() <=
+                                    simulationCodeViewer->width() - 15.0 &&
+                            debuggerWaitingForPauseText != nullptr &&
+                            debuggerWaitingForPauseText
+                                            ->property("text")
+                                            .toString() ==
+                                    QStringLiteral("Waiting for pause") &&
+                            !debuggerWaitingForPauseText
+                                     ->property("truncated")
+                                     .toBool() &&
+                            !simulationDebuggerPanel
+                                     ->property("waitingForPause")
+                                     .toBool() &&
                             simulationVariables != nullptr &&
                             restartLiveSimulationButton != nullptr &&
                             resetLiveEditsButton != nullptr &&

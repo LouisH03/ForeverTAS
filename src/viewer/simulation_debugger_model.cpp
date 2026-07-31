@@ -1408,13 +1408,10 @@ void SimulationDebuggerModel::handleSourceStop(
     }
     SourceFile &source = sources_[static_cast<std::size_t>(index)];
     source.executableLines.insert(line);
-    selectFile(relative);
-    emit filesChanged();
-    emit executionChanged();
-    emit linesChanged();
-
     const bool userBreakpoint = source.breakpoints.contains(line);
-    if (userBreakpoint && lastBreakpointKey_ != currentLineKey_) {
+    const bool stopsAtUserBreakpoint =
+            userBreakpoint && lastBreakpointKey_ != currentLineKey_;
+    if (stopsAtUserBreakpoint) {
         lastBreakpointKey_ = currentLineKey_;
         setRunning(false);
         cancelStep();
@@ -1424,6 +1421,12 @@ void SimulationDebuggerModel::handleSourceStop(
     } else if (!userBreakpoint) {
         lastBreakpointKey_.clear();
     }
+    if (!running_ || stepping_) {
+        selectFile(relative);
+    }
+    emit filesChanged();
+    emit executionChanged();
+    emit linesChanged();
 
     if (stepping_ && stepMode_ == StepMode::Tick) {
         if (!executedLinesThisTick_.contains(currentLineKey_) &&

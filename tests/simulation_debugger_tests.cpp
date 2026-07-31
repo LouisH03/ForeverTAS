@@ -15,6 +15,8 @@ namespace {
 
 constexpr auto kVehicleSource =
         "src/simulation/runtime/replay_vehicle_simulation.cpp";
+constexpr auto kStableInspectionSource =
+        "src/engine/physics/world/physics_step.cpp";
 constexpr int kApplyControlsLine = 31;
 constexpr int kRelocatedBreakpointRequestLine = 34;
 constexpr int kRelocatedBreakpointLine = 37;
@@ -90,6 +92,20 @@ QVariantMap FileEntry(
     return {};
 }
 
+bool ActiveLineIsSelectedAndMarked(
+        forevertas::viewer::SimulationDebuggerModel &model) {
+    if (model.activeLine() <= 0 ||
+        model.selectedFilePath() != model.activeFilePath()) {
+        return false;
+    }
+    const QVariantList lines = model.lines();
+    return model.activeLine() <= static_cast<int>(lines.size()) &&
+           lines[model.activeLine() - 1]
+                   .toMap()
+                   .value(QStringLiteral("active"))
+                   .toBool();
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -159,6 +175,18 @@ int main(int argc, char **argv) {
     qint64 framesBeforeSteps = -1;
     QString sourceStepFile;
     int sourceStepLine = -1;
+    QString heldInspectionFile;
+    int selectionChangesWhileRunning = 0;
+
+    QObject::connect(
+            model,
+            &forevertas::viewer::SimulationDebuggerModel::selectionChanged,
+            &application,
+            [&]() {
+                if (model->running()) {
+                    ++selectionChangesWhileRunning;
+                }
+            });
 
     QObject::connect(
             model,
@@ -179,6 +207,12 @@ int main(int argc, char **argv) {
                                     frame.value(QStringLiteral("durationMs"))
                                             .toLongLong(),
                             "live viewer did not retain the replay duration");
+                    okay &= Check(
+                            model->selectFile(QString::fromLatin1(
+                                    kStableInspectionSource)),
+                            "could not select a stable inspection file before "
+                            "continuous playback");
+                    heldInspectionFile = model->selectedFilePath();
                     phase = Phase::WaitingApplyControls;
                     viewer.play();
                 } else if (phase == Phase::WaitingTickStep && tick == 1) {
@@ -228,6 +262,13 @@ int main(int argc, char **argv) {
             model->activeFilePath() == QString::fromLatin1(kVehicleSource) &&
             model->activeLine() == kApplyControlsLine) {
             okay &= Check(
+                    !heldInspectionFile.isEmpty() &&
+                            heldInspectionFile != model->activeFilePath() &&
+                            selectionChangesWhileRunning == 0 &&
+                            ActiveLineIsSelectedAndMarked(*model),
+                    "continuous playback moved the inspected source file or "
+                    "failed to restore the exact breakpoint location");
+            okay &= Check(
                     !model->lines().at(kRelocatedBreakpointRequestLine - 1)
                                     .toMap()
                                     .value(QStringLiteral("breakpoint"))
@@ -256,6 +297,7 @@ int main(int argc, char **argv) {
             okay &= Check(
                     model->executionTick() == stepTick &&
                             viewer.tickCount() == framesBeforeSteps &&
+                            ActiveLineIsSelectedAndMarked(*model) &&
                             model->statusText().startsWith(QStringLiteral(
                                     "Source-line step completed")),
                     "edited source-line step advanced a physics tick or did "
@@ -275,6 +317,7 @@ int main(int argc, char **argv) {
             okay &= Check(
                     model->executionTick() == stepTick &&
                             viewer.tickCount() == framesBeforeSteps &&
+                            ActiveLineIsSelectedAndMarked(*model) &&
                             model->statusText().startsWith(
                                     QStringLiteral("Substep completed")),
                     "native substep advanced a physics tick or lost its source "
@@ -291,6 +334,7 @@ int main(int argc, char **argv) {
             okay &= Check(
                     model->executionTick() == stepTick &&
                             viewer.tickCount() == framesBeforeSteps &&
+                            ActiveLineIsSelectedAndMarked(*model) &&
                             (model->activeFilePath() != sourceStepFile ||
                              model->activeLine() != sourceStepLine),
                     "source-line step did not advance to a new source line");
@@ -400,7 +444,9 @@ int main(int argc, char **argv) {
                 model->activeLine() > 0 && !model->variables().isEmpty() &&
                 model->statusText().startsWith(QStringLiteral("Paused"))) {
             okay &= Check(
-                    !model->activeFilePath().isEmpty(),
+                    !model->activeFilePath().isEmpty() &&
+                            ActiveLineIsSelectedAndMarked(*model) &&
+                            selectionChangesWhileRunning == 0,
                     "normal pause did not settle at a real source line");
             viewer.stopSimulationDebugger();
             phase = Phase::Finished;

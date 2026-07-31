@@ -11,6 +11,7 @@ Item {
     readonly property var debuggerModel: viewer.simulationDebugger
     property var editingLine: null
     property bool hasDraftEdit: false
+    readonly property bool waitingForPause: root.debuggerModel.running
 
     implicitHeight: 760
 
@@ -80,8 +81,11 @@ Item {
     }
 
     function revealExecutingLine() {
+        if (root.waitingForPause)
+            return
         Qt.callLater(function() {
-            if (root.debuggerModel.selectedFilePath
+            if (!root.waitingForPause
+                    && root.debuggerModel.selectedFilePath
                     === root.debuggerModel.activeFilePath
                     && root.debuggerModel.activeLine > 0) {
                 codeList.forceLayout()
@@ -404,7 +408,14 @@ Item {
 
                     width: Math.max(codeList.width, codeRow.implicitWidth + 12)
                     height: 28
-                    color: codeLine.modelData.active
+                    readonly property bool displayedActive:
+                        codeLine.modelData.active
+                        && !root.waitingForPause
+                        && root.debuggerModel.selectedFilePath
+                           === root.debuggerModel.activeFilePath
+                        && codeLine.modelData.number
+                           === root.debuggerModel.activeLine
+                    color: codeLine.displayedActive
                            ? AppTheme.codeActive
                            : (index % 2 === 0
                               ? AppTheme.codeSurface
@@ -471,7 +482,7 @@ Item {
                             Layout.preferredWidth: 23
                             text: codeLine.modelData.number
                             horizontalAlignment: Text.AlignRight
-                            color: codeLine.modelData.active
+                            color: codeLine.displayedActive
                                    ? AppTheme.info : AppTheme.codeLineNumber
                             font.family: "monospace"
                             font.pixelSize: 10
@@ -536,6 +547,41 @@ Item {
                             leftPadding: 8
                         }
                     }
+                }
+            }
+
+            Rectangle {
+                id: waitingForPauseOverlay
+
+                objectName: "debuggerWaitingForPauseOverlay"
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.topMargin: 8
+                width: Math.min(Math.max(0, parent.width - 16),
+                                waitingForPauseLabel.implicitWidth + 18)
+                height: 26
+                visible: root.waitingForPause
+                z: 2
+                color: AppTheme.overlay
+                border.width: 1
+                border.color: AppTheme.overlayBorder
+                radius: 4
+                opacity: 0.92
+
+                Label {
+                    id: waitingForPauseLabel
+
+                    objectName: "debuggerWaitingForPauseText"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    text: qsTr("Waiting for pause")
+                    color: AppTheme.textMuted
+                    font.pixelSize: 10
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
                 }
             }
         }
@@ -688,6 +734,11 @@ Item {
         function onLinesChanged() {
             root.revealExecutingLine()
         }
+    }
+
+    onWaitingForPauseChanged: {
+        if (!root.waitingForPause)
+            root.revealExecutingLine()
     }
 
     onVisibleChanged: {
