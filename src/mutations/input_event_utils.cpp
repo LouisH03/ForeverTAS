@@ -1,5 +1,7 @@
 #include "mutations/input_event_utils.h"
 
+#include "mutations/input_mutator.h"
+
 #include <algorithm>
 #include <limits>
 
@@ -214,6 +216,29 @@ std::size_t EffectiveInputChangeCount(
         if (!SameInputEvent(baseline[index], iterationInputs[index])) ++count;
     }
     return count;
+}
+
+std::vector<SandboxInputEvent> ApplyInputWindowPatch(
+        const std::vector<SandboxInputEvent> &baseline,
+        const MutationWindowPatch &patch) {
+    std::vector<SandboxInputEvent> result;
+    const auto first = std::lower_bound(
+            baseline.begin(), baseline.end(), patch.minimumTimeMs,
+            [](const SandboxInputEvent &event, std::int64_t timeMs) {
+                return event.timeMs < timeMs;
+            });
+    const auto last = std::upper_bound(
+            first, baseline.end(), patch.maximumTimeMs,
+            [](std::int64_t timeMs, const SandboxInputEvent &event) {
+                return timeMs < event.timeMs;
+            });
+    result.reserve(
+            baseline.size() - static_cast<std::size_t>(last - first) +
+            patch.events.size());
+    result.insert(result.end(), baseline.begin(), first);
+    result.insert(result.end(), patch.events.begin(), patch.events.end());
+    result.insert(result.end(), last, baseline.end());
+    return result;
 }
 
 AnalogInputState SteeringStateAt(

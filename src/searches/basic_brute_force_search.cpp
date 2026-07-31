@@ -1115,21 +1115,32 @@ SearchResult BasicBruteForceSearch::Run(
                  iterationIndex,
                  0u,
                  context.tickDurationMs,
-                 earliestMutationTimeMs});
+                 earliestMutationTimeMs,
+                 true});
         CheckCancellation(context.control);
         ++iterations;
         bool improved = false;
         if (mutation.mutationCount != 0u) {
             totalMutationCount += mutation.mutationCount;
-            const std::size_t overallMutationCount =
-                    EffectiveInputChangeCount(
-                            baselineInputs, mutation.inputs);
-            Require(context.sandbox.ReplaceInputs(std::move(mutation.inputs)),
-                    "replacing iteration inputs");
+            if (mutation.windowPatch) {
+                Require(context.sandbox.ReplaceInputWindow(
+                                mutation.windowPatch->minimumTimeMs,
+                                mutation.windowPatch->maximumTimeMs,
+                                std::move(mutation.windowPatch->events)),
+                        "replacing iteration input window");
+            } else {
+                Require(context.sandbox.ReplaceInputs(
+                                std::move(mutation.inputs)),
+                        "replacing iteration inputs");
+            }
             improved = evaluateTimeline(
                     SearchWinnerSource::Mutation,
                     iterationIndex,
-                    overallMutationCount);
+                    mutation.mutationCount);
+            if (improved && autoPromoteBest_) {
+                best.mutationCount = EffectiveInputChangeCount(
+                        baselineInputs, best.inputs);
+            }
         }
         if (autoPromoteBest_) {
             std::optional<std::vector<PhysicsSandboxInputEvent>>

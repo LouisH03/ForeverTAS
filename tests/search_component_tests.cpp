@@ -700,6 +700,58 @@ bool TestModifierDeterminism() {
     return okay;
 }
 
+bool TestExistingEventWindowPatchParity() {
+    const auto *const registration = forevertas::FindModifier(
+            forevertas::kExistingEventPerturbationModifierId);
+    if (registration == nullptr) {
+        return Check(false,
+                     "existing-event perturbation modifier was not registered");
+    }
+    OptionSettings settings = registration->defaultSettings;
+    settings["minTimeMs"] = "100";
+    settings["maxTimeMs"] = "1000";
+    settings["minCount"] = "1";
+    settings["maxCount"] = "6";
+    settings["maxTimeShiftMs"] = "100";
+    settings["steerDeltaMin"] = "-1";
+    settings["steerDeltaMax"] = "1";
+    std::unique_ptr<InputMutator> modifier =
+            registration->create(settings, 10u);
+    const std::vector<SandboxInputEvent> baseline{
+            Steering(0, -30000),
+            Switch(90, SandboxInputAction::Accelerate, true),
+            Steering(100, -20000),
+            Steering(250, -10000),
+            Switch(400, SandboxInputAction::Brake, true),
+            Steering(700, 10000),
+            Switch(900, SandboxInputAction::Accelerate, false),
+            Steering(1000, 20000),
+            Steering(1100, 30000),
+            Switch(1500, SandboxInputAction::Brake, false)};
+    bool okay = true;
+    for (std::uint64_t iteration = 0u; iteration < 128u; ++iteration) {
+        const MutationResult legacy = modifier->Mutate(
+                {baseline, iteration, 0u, 10u, 100, false});
+        const MutationResult window = modifier->Mutate(
+                {baseline, iteration, 0u, 10u, 100, true});
+        if (!window.windowPatch) {
+            return Check(false,
+                         "existing-event fast path did not return a window patch");
+        }
+        const std::vector<SandboxInputEvent> materialized =
+                forevertas::ApplyInputWindowPatch(
+                        baseline, *window.windowPatch);
+        okay &= Check(
+                SameEvents(legacy.inputs, materialized),
+                "window-local existing-event mutation changed semantics");
+        okay &= Check(
+                legacy.mutationCount == window.mutationCount,
+                "window-local existing-event mutation count changed");
+        if (!okay) return false;
+    }
+    return okay;
+}
+
 bool TestInputScriptFormatting() {
     NumericLocaleGuard locale;
     if (!locale.ActivateCommaDecimalLocale()) {
@@ -1623,6 +1675,7 @@ int main() {
             TestEvaluationTargets() &&
             TestModifierComposition() &&
             TestModifierDeterminism() &&
+            TestExistingEventWindowPatchParity() &&
             TestInputScriptFormatting() &&
             TestInputScriptParsingAndBaseline() &&
             TestAnalogInputRepresentation() &&

@@ -101,6 +101,7 @@ struct SearchRunControl {
     std::optional<std::int64_t> evaluationEndTimeLimitMs;
     std::uint64_t iterationIndexOffset = 0u;
     std::uint64_t iterationIndexStride = 1u;
+    bool sampleImprovementTimelines = true;
     bool sampleBestTimeline = true;
     bool reuseLoadedSandbox = false;
 };

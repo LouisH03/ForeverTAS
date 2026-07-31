@@ -65,24 +65,19 @@ public:
         : settings_(settings) {}
 
     MutationResult Mutate(const MutationRequest &request) const override {
-        std::vector<SandboxInputEvent> inputs = request.baselineInputs;
-        std::vector<std::size_t> eligibleIndices;
-        for (std::size_t index = 0u; index < inputs.size(); ++index) {
-            const SandboxInputEvent &event = inputs[index];
-            if (event.timeMs < settings_.window.minimumTimeMs ||
-                event.timeMs > settings_.window.maximumTimeMs) {
-                continue;
+        PrepareWindow(request.baselineInputs);
+        std::vector<SandboxInputEvent> inputs = cachedWindowInputs_;
+        std::vector<std::size_t> eligibleIndices = cachedEligibleIndices_;
+        if (eligibleIndices.empty()) {
+            MutationWindowPatch patch{
+                    settings_.window.minimumTimeMs,
+                    settings_.window.maximumTimeMs,
+                    std::move(inputs)};
+            if (request.preferWindowPatch) {
+                return {{}, 0u, std::move(patch)};
             }
-            if ((IsSteerAction(event.action) &&
-                 event.value.kind == forevervalidator::experimental::
-                         PhysicsSandboxInputValueKind::Analog) ||
-                (settings_.toggleAccelerate &&
-                 IsAccelerateAction(event.action)) ||
-                (settings_.toggleBrake && IsBrakeAction(event.action))) {
-                eligibleIndices.push_back(index);
-            }
+            return {ApplyInputWindowPatch(request.baselineInputs, patch), 0u};
         }
-        if (eligibleIndices.empty()) return {inputs, 0u};
 
         std::mt19937 random = ModifierRandom(
                 settings_.window.seed, request.iterationIndex, request.passIndex);
@@ -104,7 +99,9 @@ public:
                             shiftTicks * tick,
                     settings_.window.minimumTimeMs,
                     settings_.window.maximumTimeMs));
-            if (IsSteerAction(event.action)) {
+            if ((IsSteerAction(event.action) &&
+                 event.value.kind == forevervalidator::experimental::
+                         PhysicsSandboxInputValueKind::Analog)) {
                 if (settings_.absoluteSteering) {
                     event.value.analog = RandomInteger<AnalogInputState>(
                             random,
@@ -133,12 +130,18 @@ public:
                                   PhysicsSandboxSwitchState::Pressed;
             }
         }
-        NormalizeMutableInputEvents(inputs,
-                                    request.baselineInputs,
-                                    request.tickDurationMs,
-                                    request.mutableFromTimeMs);
-        return {inputs,
-                EffectiveInputChangeCount(request.baselineInputs, inputs)};
+        NormalizeInputEvents(inputs, request.tickDurationMs);
+        const std::size_t mutationCount =
+                EffectiveInputChangeCount(cachedWindowInputs_, inputs);
+        MutationWindowPatch patch{
+                settings_.window.minimumTimeMs,
+                settings_.window.maximumTimeMs,
+                std::move(inputs)};
+        if (request.preferWindowPatch) {
+            return {{}, mutationCount, std::move(patch)};
+        }
+        return {ApplyInputWindowPatch(request.baselineInputs, patch),
+                mutationCount};
     }
 
     std::int64_t EarliestMutationTimeMs() const override {
@@ -146,7 +149,66 @@ public:
     }
 
 private:
+    void PrepareWindow(
+            const std::vector<SandboxInputEvent> &baseline) const {
+        std::uint64_t fingerprint = baseline.size();
+        const auto first = std::lower_bound(
+                baseline.begin(), baseline.end(),
+                settings_.window.minimumTimeMs,
+                [](const SandboxInputEvent &event, std::int64_t timeMs) {
+                    return event.timeMs < timeMs;
+                });
+        const auto last = std::upper_bound(
+                first, baseline.end(), settings_.window.maximumTimeMs,
+                [](std::int64_t timeMs, const SandboxInputEvent &event) {
+                    return timeMs < event.timeMs;
+                });
+        for (auto it = first; it != last; ++it) {
+            fingerprint = fingerprint * 1099511628211ull ^
+                    static_cast<std::uint64_t>(it->timeMs);
+            fingerprint = fingerprint * 1099511628211ull ^
+                    static_cast<std::uint64_t>(it->action);
+            fingerprint = fingerprint * 1099511628211ull ^
+                    static_cast<std::uint64_t>(it->value.kind);
+            std::uint64_t value = 0u;
+            if (it->value.kind == forevervalidator::experimental::
+                                          PhysicsSandboxInputValueKind::Analog) {
+                value = static_cast<std::uint64_t>(
+                        static_cast<std::int64_t>(it->value.analog));
+            } else if (it->value.kind == forevervalidator::experimental::
+                                                 PhysicsSandboxInputValueKind::Switch) {
+                value = static_cast<std::uint64_t>(
+                        it->value.switchState);
+            }
+            fingerprint = fingerprint * 1099511628211ull ^ value;
+        }
+        if (cachedBaseline_ == &baseline &&
+            cachedFingerprint_ == fingerprint) {
+            return;
+        }
+        cachedBaseline_ = &baseline;
+        cachedFingerprint_ = fingerprint;
+        cachedWindowInputs_.assign(first, last);
+        cachedEligibleIndices_.clear();
+        for (std::size_t index = 0u;
+             index < cachedWindowInputs_.size(); ++index) {
+            const SandboxInputEvent &event = cachedWindowInputs_[index];
+            if ((IsSteerAction(event.action) &&
+                 event.value.kind == forevervalidator::experimental::
+                         PhysicsSandboxInputValueKind::Analog) ||
+                (settings_.toggleAccelerate &&
+                 IsAccelerateAction(event.action)) ||
+                (settings_.toggleBrake && IsBrakeAction(event.action))) {
+                cachedEligibleIndices_.push_back(index);
+            }
+        }
+    }
+
     Settings settings_;
+    mutable const std::vector<SandboxInputEvent> *cachedBaseline_ = nullptr;
+    mutable std::uint64_t cachedFingerprint_ = 0u;
+    mutable std::vector<SandboxInputEvent> cachedWindowInputs_;
+    mutable std::vector<std::size_t> cachedEligibleIndices_;
 };
 
 }  // namespace

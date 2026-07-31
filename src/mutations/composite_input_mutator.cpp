@@ -14,15 +14,21 @@ CompositeInputMutator::CompositeInputMutator(
 
 MutationResult CompositeInputMutator::Mutate(
         const MutationRequest &request) const {
+    if (modifiers_.size() == 1u && request.preferWindowPatch) {
+        return modifiers_.front()->Mutate(request);
+    }
     std::vector<SandboxInputEvent> current = request.baselineInputs;
     for (std::size_t index = 0u; index < modifiers_.size(); ++index) {
-        const MutationResult pass = modifiers_[index]->Mutate({
+        MutationResult pass = modifiers_[index]->Mutate({
                 current,
                 request.iterationIndex,
                 static_cast<std::uint32_t>(index),
                 request.tickDurationMs,
-                request.mutableFromTimeMs});
-        current = pass.inputs;
+                request.mutableFromTimeMs,
+                false});
+        current = pass.windowPatch
+                ? ApplyInputWindowPatch(current, *pass.windowPatch)
+                : std::move(pass.inputs);
     }
     NormalizeMutableInputEvents(current,
                                 request.baselineInputs,
