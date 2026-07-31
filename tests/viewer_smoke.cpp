@@ -303,6 +303,23 @@ int main(int argc, char **argv) {
                                         .toMap()
                                         .value(QStringLiteral("geometry"))
                                         .value<QObject *>();
+                        const bool previewToggleInitiallyVisible =
+                                viewer.hasTrajectoryForRun(
+                                        QStringLiteral("preview")) &&
+                                viewer.trajectoryVisibleForRun(
+                                        QStringLiteral("preview"));
+                        viewer.setTrajectoryVisibleForRun(
+                                QStringLiteral("preview"), false);
+                        const bool previewToggleHidden =
+                                !viewer.trajectoryVisibleForRun(
+                                        QStringLiteral("preview")) &&
+                                !viewer.trajectoryPaths()
+                                         .front()
+                                         .toMap()
+                                         .value(QStringLiteral("visible"))
+                                         .toBool();
+                        viewer.setTrajectoryVisibleForRun(
+                                QStringLiteral("preview"), true);
                         viewer.jumpToEnd();
                         const QVector3D shortAccelerationPosition =
                                 viewer.carPosition();
@@ -393,6 +410,8 @@ int main(int argc, char **argv) {
                         });
                         trajectoryPreviewValid =
                                 trajectoryGeometryValid &&
+                                previewToggleInitiallyVisible &&
+                                previewToggleHidden &&
                                 valueEditApplied &&
                                 eventEditApplied &&
                                 playbackContinuedAfterEdit &&

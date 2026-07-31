@@ -826,6 +826,10 @@ int main(int argc, char **argv) {
                     auto *const runSelector = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("runSelector")));
+                    auto *const trajectoryVisibilityToggle =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "trajectoryVisibilityToggle")));
                     auto *const resetViewButton =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(
@@ -1690,6 +1694,7 @@ int main(int argc, char **argv) {
                             raceViewerHeader != nullptr &&
                             headerControlsRow != nullptr &&
                             raceViewerTitleBlock != nullptr &&
+                            trajectoryVisibilityToggle != nullptr &&
                             runSelector != nullptr &&
                             renderModeSelector != nullptr &&
                             resetViewButton != nullptr &&
@@ -1703,6 +1708,9 @@ int main(int argc, char **argv) {
                                     headerControlsRow &&
                             resetViewButton->parentItem() ==
                                     headerControlsRow &&
+                            trajectoryVisibilityToggle->x() +
+                                            trajectoryVisibilityToggle->width() <=
+                                    runSelector->x() + 0.1 &&
                             std::abs(rowCenter(raceViewerTitleBlock) -
                                      rowCenter(runSelector)) < 0.6 &&
                             std::abs(rowCenter(runSelector) -
@@ -4221,24 +4229,92 @@ int main(int argc, char **argv) {
                     QCoreApplication::processEvents();
                     const QVariantList improvementPaths =
                             viewer.trajectoryPaths();
-                    const bool improvementTrajectoryUiValid =
-                            viewer.trajectoryCount() == 3 &&
-                            improvementPaths.size() == 3 &&
+                    const bool bestToggleInitiallyVisible =
+                            trajectoryVisibilityToggle != nullptr &&
+                            trajectoryVisibilityToggle
+                                    ->property("enabled").toBool() &&
+                            trajectoryVisibilityToggle
+                                    ->property("checked").toBool() &&
+                            viewer.hasTrajectoryForRun(
+                                    QStringLiteral("best")) &&
+                            viewer.trajectoryVisibleForRun(
+                                    QStringLiteral("best"));
+                    viewer.setTrajectoryVisibleForRun(
+                            QStringLiteral("best"), false);
+                    QCoreApplication::processEvents();
+                    QObject *const bestTrajectoryGeometry =
                             improvementPaths.at(1)
+                                    .toMap()
+                                    .value(QStringLiteral("geometry"))
+                                    .value<QObject *>();
+                    const auto hiddenBestModel =
+                            [bestTrajectoryGeometry](
+                                    const QList<QObject *> &models) {
+                                return std::any_of(
+                                        models.begin(),
+                                        models.end(),
+                                        [bestTrajectoryGeometry](
+                                                const QObject *model) {
+                                            return model->property("geometry")
+                                                                   .value<
+                                                                           QObject *>() ==
+                                                    bestTrajectoryGeometry &&
+                                                    !model->property("visible")
+                                                             .toBool();
+                                        });
+                            };
+                    const bool bestRasterModelHidden = hiddenBestModel(
+                            root->findChildren<QObject *>(QStringLiteral(
+                                    "trajectoryPathModel")));
+                    const bool bestRayModelHidden = hiddenBestModel(
+                            root->findChildren<QObject *>(QStringLiteral(
+                                    "rayTracingTrajectoryPathModel")));
+                    const bool bestToggleHidesOnlyBest =
+                            trajectoryVisibilityToggle != nullptr &&
+                            !trajectoryVisibilityToggle
+                                     ->property("checked").toBool() &&
+                            !viewer.trajectoryVisibleForRun(
+                                    QStringLiteral("best")) &&
+                            bestRasterModelHidden &&
+                            bestRayModelHidden &&
+                            viewer.trajectoryVisibleForRun(
+                                    QStringLiteral("preview"));
+                    viewer.setTrajectoryVisibleForRun(
+                            QStringLiteral("best"), true);
+                    QCoreApplication::processEvents();
+                    const bool improvementTrajectoryUiValid =
+                            bestToggleInitiallyVisible &&
+                            bestToggleHidesOnlyBest &&
+                            trajectoryVisibilityToggle != nullptr &&
+                            trajectoryVisibilityToggle
+                                    ->property("checked").toBool() &&
+                            viewer.trajectoryCount() == 4 &&
+                            improvementPaths.size() == 4 &&
+                            improvementPaths.at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("name"))
+                                            .toString() ==
+                                    QStringLiteral("Best") &&
+                            improvementPaths.at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("runId"))
+                                            .toString() ==
+                                    QStringLiteral("best") &&
+                            improvementPaths.at(2)
                                             .toMap()
                                             .value(QStringLiteral("name"))
                                             .toString() ==
                                     QStringLiteral("Improvement 1") &&
-                            improvementPaths.at(1)
+                            improvementPaths.at(2)
                                             .toMap()
                                             .value(QStringLiteral("opacity"))
                                             .toDouble() < 0.31 &&
-                            improvementPaths.at(2)
+                            improvementPaths.at(3)
                                             .toMap()
                                             .value(QStringLiteral("name"))
                                             .toString() ==
                                     QStringLiteral("Improvement 2") &&
-                            improvementPaths.at(2)
+                            improvementPaths.at(3)
                                             .toMap()
                                             .value(QStringLiteral("opacity"))
                                             .toDouble() > 0.95;
@@ -4944,6 +5020,18 @@ int main(int argc, char **argv) {
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
                                                         "whiteboardModeToggleLabel"));
+                                QObject *const whiteboardInactiveListButton =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardInactiveListButton"));
+                                QObject *const whiteboardActiveListButton =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardActiveListButton"));
+                                QObject *const whiteboardPlaceButton =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "whiteboardPlaceButton"));
                                 QObject *const whiteboardDrawingInput =
                                         root->findChild<QObject *>(
                                                 QStringLiteral(
@@ -5034,6 +5122,20 @@ int main(int argc, char **argv) {
                                                         .toInt() == 2 &&
                                         VisibleModelCount(visualModels) ==
                                                 initialVisibleVisualModels;
+                                const auto buttonTextFits = [](QObject *button) {
+                                    QObject *const content = button == nullptr
+                                            ? nullptr
+                                            : button->property("contentItem")
+                                                      .value<QObject *>();
+                                    return content != nullptr &&
+                                            !content->property("truncated")
+                                                     .toBool();
+                                };
+                                const bool whiteboardActionTextFits =
+                                        buttonTextFits(whiteboardModeToggle) &&
+                                        buttonTextFits(
+                                                whiteboardActiveListButton) &&
+                                        buttonTextFits(whiteboardPlaceButton);
                                 auto *const compactCameraFocusToolbar =
                                         qobject_cast<QQuickItem *>(
                                                 root->findChild<QObject *>(
@@ -5569,6 +5671,10 @@ int main(int argc, char **argv) {
                                 QCoreApplication::processEvents();
                                 whiteboard->setActive(false);
                                 QCoreApplication::processEvents();
+                                const bool inactiveWhiteboardActionTextFits =
+                                        buttonTextFits(whiteboardModeToggle) &&
+                                        buttonTextFits(
+                                                whiteboardInactiveListButton);
                                 const QColor lightWhiteboardModeText =
                                         whiteboardModeToggleLabel != nullptr
                                         ? whiteboardModeToggleLabel
@@ -5614,7 +5720,8 @@ int main(int argc, char **argv) {
                                         !whiteboardDrawingInput
                                                  ->property("enabled")
                                                  .toBool() &&
-                                        whiteboardToolbar->width() <= 198.1 &&
+                                        whiteboardActionTextFits &&
+                                        inactiveWhiteboardActionTextFits &&
                                         whiteboard->count() == 0 &&
                                         whiteboard->boardCount() == 1 &&
                                         whiteboardDrawingRepeater
@@ -5975,7 +6082,18 @@ int main(int argc, char **argv) {
                                             << ", restored=" << restoredState
                                             << ", whiteboard="
                                             << whiteboardActiveState << "/"
-                                            << whiteboardIntegrated << "/"
+                                            << whiteboardIntegrated << "("
+                                            << compactWhiteboardToolbarsSeparated
+                                            << "/"
+                                            << compactWhiteboardListSeparated
+                                            << "/"
+                                            << whiteboardActionTextFits
+                                            << "/w="
+                                            << (whiteboardToolbar
+                                                        ? whiteboardToolbar
+                                                                  ->width()
+                                                        : -1.0)
+                                            << ")/"
                                             << whiteboardToolThemeContrast << "/"
                                             << whiteboardModeThemeContrast << "/"
                                             << lightWhiteboardToolText

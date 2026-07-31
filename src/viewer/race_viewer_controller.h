@@ -295,6 +295,10 @@ public slots:
     Q_INVOKABLE void setManualInput(const QString &input, bool active);
     Q_INVOKABLE void releaseManualInputs();
     Q_INVOKABLE QString currentInputScript() const;
+    Q_INVOKABLE bool hasTrajectoryForRun(const QString &runId) const;
+    Q_INVOKABLE bool trajectoryVisibleForRun(const QString &runId) const;
+    Q_INVOKABLE void setTrajectoryVisibleForRun(const QString &runId,
+                                                bool visible);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
                             const QString &replayPath);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
@@ -329,6 +333,9 @@ private:
     bool appendImprovementTrajectory(
             std::uint64_t searchId,
             std::uint64_t improvementNumber,
+            const std::vector<RaceViewerFrame> &frames);
+    void updateBestTrajectory(
+            const QString &name,
             const std::vector<RaceViewerFrame> &frames);
     void scheduleInputPreviewRebuild();
     void startInputPreviewBuild();
@@ -406,6 +413,7 @@ private:
     QVariantList visualMaterials_;
     QVariantList trajectoryPaths_;
     RaceGeometry inputPreviewGeometry_;
+    RaceGeometry bestTrajectoryGeometry_;
     std::vector<std::unique_ptr<RaceGeometry>> trajectoryGeometries_;
     std::vector<QString> trajectoryKeys_;
     QVector3D carPosition_{};

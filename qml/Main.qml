@@ -2119,6 +2119,7 @@ ApplicationWindow {
 
                                 objectName: "trajectoryPathModel"
                                 visible: window.viewer.loaded
+                                         && (modelData.visible ?? true)
                                 geometry: modelData.geometry
                                 castsShadows: false
                                 receivesShadows: false
@@ -2269,6 +2270,7 @@ ApplicationWindow {
 
                                 objectName:
                                     "rayTracingTrajectoryPathModel"
+                                visible: modelData.visible ?? true
                                 geometry: modelData.geometry
                                 castsShadows: false
                                 receivesShadows: false
@@ -2689,6 +2691,36 @@ ApplicationWindow {
                                     font.pixelSize: 11
                                     elide: Text.ElideRight
                                 }
+                            }
+
+                            ThemedCheckBox {
+                                id: trajectoryVisibilityToggle
+
+                                objectName: "trajectoryVisibilityToggle"
+                                Layout.preferredWidth: 30
+                                Layout.preferredHeight: 30
+                                Layout.alignment: Qt.AlignVCenter
+                                text: ""
+                                enabled: window.viewer.hasTrajectoryForRun(
+                                             window.viewer.selectedRunId)
+                                         && !window.viewer.manualDriving
+                                checked: {
+                                    const paths = window.viewer.trajectoryPaths
+                                    return window.viewer
+                                        .trajectoryVisibleForRun(
+                                            window.viewer.selectedRunId)
+                                }
+                                Accessible.name: qsTr(
+                                    "Show selected run trajectory")
+                                onClicked:
+                                    window.viewer.setTrajectoryVisibleForRun(
+                                        window.viewer.selectedRunId,
+                                        checked)
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: checked
+                                    ? qsTr("Hide selected run trajectory")
+                                    : qsTr("Show selected run trajectory")
                             }
 
                             StyledComboBox {

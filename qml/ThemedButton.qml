@@ -6,6 +6,7 @@ Button {
 
     readonly property bool themedControl: true
     property string contentObjectName: ""
+    property bool elideText: true
     readonly property color effectiveBackgroundColor:
         !enabled ? AppTheme.disabledSurface
         : (highlighted || checked)
@@ -38,7 +39,7 @@ Button {
         color: control.effectiveTextColor
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+        elide: control.elideText ? Text.ElideRight : Text.ElideNone
     }
 
     background: Rectangle {

@@ -336,9 +336,14 @@ Item {
         x: 14
         y: root.boardTop + 10
         z: 20
-        width: root.model.active
-               ? Math.min(parent.width - 28, 522)
-               : 198
+        width: Math.min(
+                   parent.width - 28,
+                   Math.max(root.model.active ? 522 : 198,
+                            (root.model.active
+                             ? toolbarContent.implicitWidth
+                             : modeToggle.width +
+                               inactiveListButton.width +
+                               primaryToolbarRow.spacing) + 20))
         height: root.model.active ? 84 : 46
         radius: 6
         color: AppTheme.viewerOverlayStrong
@@ -356,17 +361,19 @@ Item {
             spacing: 4
 
             Row {
+                id: primaryToolbarRow
                 spacing: 4
 
                 ThemedButton {
                     id: modeToggle
                     objectName: "whiteboardModeToggle"
                     contentObjectName: "whiteboardModeToggleLabel"
-                    width: 98
+                    width: Math.max(98, implicitWidth + 4)
                     height: 34
                     checkable: true
                     checked: root.model.active
                     enabled: root.available
+                    elideText: false
                     text: qsTr("Whiteboard")
                     onToggled: root.model.active = checked
 
@@ -409,9 +416,11 @@ Item {
                         objectName: "whiteboardToolButton_" + modelData.id
                         visible: root.model.active
                         height: 32
-                        width: modelData.buttonWidth
+                        width: Math.max(modelData.buttonWidth,
+                                        implicitWidth + 4)
                         checkable: true
                         autoExclusive: true
+                        elideText: false
                         checked: root.model.tool === modelData.id
                         text: modelData.label
                         onClicked: root.model.tool = modelData.id
@@ -420,10 +429,12 @@ Item {
                 }
 
                 ThemedButton {
+                    id: inactiveListButton
                     objectName: "whiteboardInactiveListButton"
                     visible: !root.model.active
-                    width: 76
+                    width: Math.max(76, implicitWidth + 4)
                     height: 32
+                    elideText: false
                     text: qsTr("Drawings")
                     onClicked:
                         root.drawingListOpen = !root.drawingListOpen
@@ -526,8 +537,9 @@ Item {
                     enabled: root.model.count > 0
                              && root.model.mapKey.length > 0
                              && root.model.mapName.length > 0
-                    width: 58
+                    width: Math.max(58, implicitWidth + 4)
                     height: 32
+                    elideText: false
                     text: qsTr("Place")
                     onClicked: {
                         const index = root.model.captureCurrentBoard(
@@ -546,8 +558,9 @@ Item {
                 ThemedButton {
                     objectName: "whiteboardActiveListButton"
                     visible: root.model.active
-                    width: 72
+                    width: Math.max(72, implicitWidth + 4)
                     height: 32
+                    elideText: false
                     text: qsTr("Drawings")
                     onClicked:
                         root.drawingListOpen = !root.drawingListOpen
@@ -762,6 +775,7 @@ Item {
                 ThemedButton {
                     objectName: "whiteboardImportButton"
                     Layout.fillWidth: true
+                    elideText: false
                     text: qsTr("Import")
                     onClicked: importDialog.open()
                 }
@@ -770,6 +784,7 @@ Item {
                     objectName: "whiteboardExportButton"
                     Layout.fillWidth: true
                     enabled: root.model.boardCount > 0
+                    elideText: false
                     text: qsTr("Export set")
                     onClicked: exportDialog.open()
                 }

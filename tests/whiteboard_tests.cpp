@@ -889,6 +889,8 @@ int main(int argc, char **argv) {
                 QStringLiteral("whiteboardDrawingRepeater"));
         QObject *const placeButton = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardPlaceButton"));
+        QObject *const inactiveListButton = overlay->findChild<QObject *>(
+                QStringLiteral("whiteboardInactiveListButton"));
         QObject *const drawingList = overlay->findChild<QObject *>(
                 QStringLiteral("whiteboardDrawingList"));
         QObject *const importButton = overlay->findChild<QObject *>(
@@ -1060,7 +1062,41 @@ int main(int argc, char **argv) {
         textEditor->setProperty("visible", true);
         model.setActive(false);
         QCoreApplication::processEvents();
-        expect(toolbar != nullptr && Near(toolbar->width(), 198.0) &&
+        QObject *const inactiveListContent = inactiveListButton == nullptr
+                ? nullptr
+                : inactiveListButton->property("contentItem")
+                          .value<QObject *>();
+        if (toolbar == nullptr || toolbar->width() < 198.0 ||
+            toolbar->width() > 240.0 || inactiveListContent == nullptr ||
+            inactiveListContent->property("truncated").toBool() ||
+            input == nullptr || input->property("enabled").toBool() ||
+            toggle == nullptr || toggle->property("checked").toBool() ||
+            textEditor->property("visible").toBool()) {
+            std::cerr << "inactive whiteboard: toolbar="
+                      << (toolbar != nullptr ? toolbar->width() : -1.0)
+                      << ", list=" << (inactiveListButton != nullptr)
+                      << ", content=" << (inactiveListContent != nullptr)
+                      << ", truncated="
+                      << (inactiveListContent != nullptr
+                                  ? inactiveListContent
+                                            ->property("truncated")
+                                            .toBool()
+                                  : true)
+                      << ", input="
+                      << (input != nullptr
+                                  ? input->property("enabled").toBool()
+                                  : true)
+                      << ", toggle="
+                      << (toggle != nullptr
+                                  ? toggle->property("checked").toBool()
+                                  : true)
+                      << ", editor="
+                      << textEditor->property("visible").toBool() << '\n';
+        }
+        expect(toolbar != nullptr && toolbar->width() >= 198.0 &&
+                       toolbar->width() <= 240.0 &&
+                       inactiveListContent != nullptr &&
+                       !inactiveListContent->property("truncated").toBool() &&
                        input != nullptr &&
                        !input->property("enabled").toBool() &&
                        toggle != nullptr &&

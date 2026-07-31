@@ -1596,7 +1596,7 @@ bool RaceViewerController::appendImprovementTrajectory(
 
     try {
         const float radius = static_cast<float>(
-                std::clamp(sceneRadius_ * 0.0008, 0.03, 0.3));
+                std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
         RaceViewerMeshBuffers mesh =
                 BuildTrajectoryLineMesh(frames, radius * 2.0f);
         if (mesh.wire.isEmpty()) {
@@ -1632,6 +1632,7 @@ bool RaceViewerController::appendImprovementTrajectory(
         path.insert(QStringLiteral("color"),
                     QStringLiteral("#ffb84d"));
         path.insert(QStringLiteral("opacity"), 0.96);
+        path.insert(QStringLiteral("visible"), true);
         path.insert(QStringLiteral("searchId"),
                     QVariant::fromValue<qulonglong>(searchId));
         path.insert(
@@ -1664,6 +1665,63 @@ bool RaceViewerController::appendImprovementTrajectory(
                 "Adding search improvement trajectory failed unexpectedly."));
     }
     return false;
+}
+
+void RaceViewerController::updateBestTrajectory(
+        const QString &name,
+        const std::vector<RaceViewerFrame> &frames) {
+    try {
+        const float radius = static_cast<float>(
+                std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
+        RaceViewerMeshBuffers mesh = BuildTrajectoryMesh(frames, radius);
+        if (mesh.filled.isEmpty()) {
+            return;
+        }
+        bestTrajectoryGeometry_.setMesh(
+                std::move(mesh.filled),
+                static_cast<int>(sizeof(FilledVertex)),
+                QQuick3DGeometry::PrimitiveType::Triangles,
+                true,
+                mesh.boundsMin,
+                mesh.boundsMax);
+
+        QVariantList paths = trajectoryPaths_;
+        const auto existing = std::find_if(
+                paths.begin(), paths.end(), [](const QVariant &entry) {
+                    return entry.toMap()
+                                   .value(QStringLiteral("runId"))
+                                   .toString() == QStringLiteral("best");
+                });
+        const bool visible = existing == paths.end() ||
+                existing->toMap()
+                        .value(QStringLiteral("visible"), true)
+                        .toBool();
+        QVariantMap path;
+        path.insert(QStringLiteral("kind"), QStringLiteral("run"));
+        path.insert(QStringLiteral("runId"), QStringLiteral("best"));
+        path.insert(QStringLiteral("name"), name);
+        path.insert(QStringLiteral("color"), QStringLiteral("#58a6ff"));
+        path.insert(QStringLiteral("opacity"), 0.9);
+        path.insert(QStringLiteral("visible"), visible);
+        path.insert(
+                QStringLiteral("geometry"),
+                QVariant::fromValue(
+                        static_cast<QObject *>(&bestTrajectoryGeometry_)));
+        if (existing == paths.end()) {
+            paths.push_back(path);
+        } else {
+            *existing = path;
+        }
+        trajectoryPaths_ = std::move(paths);
+        emit trajectoriesChanged();
+    } catch (const std::exception &exception) {
+        setStatusText(
+                QStringLiteral("Updating the Best trajectory failed: %1")
+                        .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setStatusText(QStringLiteral(
+                "Updating the Best trajectory failed unexpectedly."));
+    }
 }
 
 void RaceViewerController::setTimeMs(qint64 value) {
@@ -2462,6 +2520,56 @@ QString RaceViewerController::currentInputScript() const {
     return QString::fromStdString(FormatInputScript(inputs));
 }
 
+bool RaceViewerController::hasTrajectoryForRun(const QString &runId) const {
+    return std::any_of(
+            trajectoryPaths_.begin(),
+            trajectoryPaths_.end(),
+            [&runId](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("runId"))
+                               .toString() == runId;
+            });
+}
+
+bool RaceViewerController::trajectoryVisibleForRun(
+        const QString &runId) const {
+    const auto path = std::find_if(
+            trajectoryPaths_.begin(),
+            trajectoryPaths_.end(),
+            [&runId](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("runId"))
+                               .toString() == runId;
+            });
+    return path != trajectoryPaths_.end() &&
+            path->toMap()
+                    .value(QStringLiteral("visible"), true)
+                    .toBool();
+}
+
+void RaceViewerController::setTrajectoryVisibleForRun(
+        const QString &runId,
+        bool visible) {
+    QVariantList paths = trajectoryPaths_;
+    const auto path = std::find_if(
+            paths.begin(), paths.end(), [&runId](const QVariant &entry) {
+                return entry.toMap()
+                               .value(QStringLiteral("runId"))
+                               .toString() == runId;
+            });
+    if (path == paths.end()) {
+        return;
+    }
+    QVariantMap updated = path->toMap();
+    if (updated.value(QStringLiteral("visible"), true).toBool() == visible) {
+        return;
+    }
+    updated.insert(QStringLiteral("visible"), visible);
+    *path = std::move(updated);
+    trajectoryPaths_ = std::move(paths);
+    emit trajectoriesChanged();
+}
+
 void RaceViewerController::scheduleInputPreviewRebuild() {
     if (!loaded_ || manualRuntime_ == nullptr || manualDriving_) {
         return;
@@ -2488,7 +2596,7 @@ void RaceViewerController::startInputPreviewBuild() {
     const PhysicsBackend backend = loadedBackend_;
     const QString script = previewInputScript_;
     const float trajectoryRadius = static_cast<float>(
-            std::clamp(sceneRadius_ * 0.0008, 0.03, 0.3));
+            std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
     std::shared_ptr<ManualDriveRuntime> runtime = inputPreviewRuntime_;
     auto result = std::make_shared<RaceViewerInputPreviewResult>();
 
@@ -2558,6 +2666,7 @@ void RaceViewerController::applyInputPreviewResult(
     QVariantList paths = trajectoryPaths_;
     QVariantMap path;
     path.insert(QStringLiteral("kind"), QStringLiteral("preview"));
+    path.insert(QStringLiteral("runId"), QStringLiteral("preview"));
     path.insert(QStringLiteral("name"), QStringLiteral("Inputs"));
     path.insert(QStringLiteral("color"), QStringLiteral("#41c979"));
     path.insert(QStringLiteral("opacity"), 0.94);
@@ -2571,6 +2680,12 @@ void RaceViewerController::applyInputPreviewResult(
                                .value(QStringLiteral("kind"))
                                .toString() == QStringLiteral("preview");
             });
+    path.insert(
+            QStringLiteral("visible"),
+            existingPath == paths.end() ||
+                    existingPath->toMap()
+                            .value(QStringLiteral("visible"), true)
+                            .toBool());
     if (existingPath == paths.end()) {
         paths.prepend(path);
     } else {
@@ -2870,6 +2985,7 @@ void RaceViewerController::applyLoadResult(
     selectedRunId_.clear();
     trajectoryPaths_.clear();
     inputPreviewGeometry_.clearMesh();
+    bestTrajectoryGeometry_.clearMesh();
     inputPreviewVisible_ = false;
     trajectoryGeometries_.clear();
     trajectoryKeys_.clear();
@@ -2994,6 +3110,9 @@ void RaceViewerController::upsertRun(QString id,
                                      bool select) {
     if (frames.empty()) {
         return;
+    }
+    if (id == QStringLiteral("best")) {
+        updateBestTrajectory(name, frames);
     }
     auto existing = std::find_if(
             runs_.begin(), runs_.end(), [&id](const RaceViewerRun &run) {
