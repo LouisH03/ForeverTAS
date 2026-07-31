@@ -763,7 +763,7 @@ void SearchController::browseForPacksDirectory() {
             nullptr,
             QStringLiteral("Select Packs directory"),
             initialDirectory,
-            QFileDialog::ShowDirsOnly | QFileDialog::DontUseNativeDialog);
+            QFileDialog::ShowDirsOnly);
     if (!selected.isEmpty()) {
         setPacksDirectory(selected);
     }
@@ -788,9 +788,7 @@ void SearchController::browseForReplay() {
             initialPath,
             QStringLiteral(
                     "TrackMania replays (*.Replay.Gbx *.Gbx);;"
-                    "All files (*)"),
-            nullptr,
-            QFileDialog::DontUseNativeDialog);
+                    "All files (*)"));
     if (!selected.isEmpty()) {
         setReplayPath(selected);
     }

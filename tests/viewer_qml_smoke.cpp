@@ -272,6 +272,41 @@ int main(int argc, char **argv) {
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    const QString initialPacksDirectory =
+            controller.packsDirectory();
+    const QString initialReplayPath = controller.replayPath();
+    const auto browseUsesNativeDialog = [](auto openDialog) {
+        bool inspected = false;
+        bool usesNativeDialog = false;
+        QTimer::singleShot(50, [&]() {
+            for (QWidget *const widget :
+                 QApplication::topLevelWidgets()) {
+                auto *const dialog =
+                        qobject_cast<QFileDialog *>(widget);
+                if (dialog == nullptr) {
+                    continue;
+                }
+                inspected = true;
+                usesNativeDialog = !dialog->testOption(
+                        QFileDialog::DontUseNativeDialog);
+                dialog->reject();
+            }
+        });
+        openDialog();
+        QCoreApplication::processEvents();
+        return inspected && usesNativeDialog;
+    };
+    const bool nativeBrowseDialogsValid =
+            browseUsesNativeDialog(
+                    [&]() {
+                        controller.browseForPacksDirectory();
+                    }) &&
+            browseUsesNativeDialog(
+                    [&]() {
+                        controller.browseForReplay();
+                    }) &&
+            controller.packsDirectory() == initialPacksDirectory &&
+            controller.replayPath() == initialReplayPath;
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
     QObject::connect(
@@ -323,13 +358,18 @@ int main(int argc, char **argv) {
     QObject *const whiteboardImageExportDialog =
             root->findChild<QObject *>(
                     QStringLiteral("whiteboardImageExportDialog"));
-    const auto usesApplicationFileDialog =
+    const auto usesNativeFileDialog =
             [](const QObject *dialog) {
                 return dialog != nullptr &&
                        (dialog->property("options").toInt() &
                         static_cast<int>(
-                                QFileDialog::DontUseNativeDialog)) != 0;
+                                QFileDialog::DontUseNativeDialog)) == 0;
             };
+    const bool nativeFileDialogsValid =
+            nativeBrowseDialogsValid &&
+            usesNativeFileDialog(whiteboardImportDialog) &&
+            usesNativeFileDialog(whiteboardExportDialog) &&
+            usesNativeFileDialog(whiteboardImageExportDialog);
     QObject *const initialMainMapLight =
             root->findChild<QObject *>(QStringLiteral("mainMapLight"));
     QObject *const initialFillMapLight =
@@ -500,9 +540,7 @@ int main(int argc, char **argv) {
     const bool darkThemeValid =
             controller.darkMode() && darkModeToggle != nullptr &&
             darkModeToggle->property("checked").toBool() &&
-            usesApplicationFileDialog(whiteboardImportDialog) &&
-            usesApplicationFileDialog(whiteboardExportDialog) &&
-            usesApplicationFileDialog(whiteboardImageExportDialog) &&
+            nativeFileDialogsValid &&
             root->property("color").value<QColor>() != lightWindowColor &&
             settingsPanel != nullptr &&
             settingsPanel->property("color").value<QColor>() !=
@@ -574,6 +612,8 @@ int main(int argc, char **argv) {
                   << ", themed-controls=" << themedControls.size()
                   << ", interactive-states="
                   << interactiveControlStates
+                  << ", native-dialogs="
+                  << nativeFileDialogsValid
                   << ", unthemed="
                   << unthemedControlTypes.join(QLatin1Char(','))
                              .toStdString()

@@ -859,7 +859,6 @@ Item {
         objectName: "whiteboardImportDialog"
         title: qsTr("Import whiteboard set")
         fileMode: FileDialog.OpenFile
-        options: FileDialog.DontUseNativeDialog
         nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
         onAccepted: root.model.importBoardSet(selectedFile)
     }
@@ -869,7 +868,6 @@ Item {
         objectName: "whiteboardExportDialog"
         title: qsTr("Export named whiteboard set")
         fileMode: FileDialog.SaveFile
-        options: FileDialog.DontUseNativeDialog
         defaultSuffix: "json"
         nameFilters: [qsTr("ForeverTAS whiteboards (*.json)")]
         onAccepted: root.model.exportBoardSet(selectedFile)
@@ -882,7 +880,6 @@ Item {
                ? qsTr("Export drawing with full background")
                : qsTr("Export transparent drawing")
         fileMode: FileDialog.SaveFile
-        options: FileDialog.DontUseNativeDialog
         defaultSuffix: "png"
         nameFilters: [qsTr("PNG images (*.png)")]
         onAccepted: {
