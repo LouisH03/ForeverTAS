@@ -330,13 +330,26 @@ Item {
     Rectangle {
         id: toolbar
         objectName: "whiteboardToolbar"
+        readonly property real primaryPreferredContentWidth:
+            root.model.active
+                ? primaryLeadingControls.width
+                    + 4 + primaryTrailingControls.width
+                : modeToggle.width + 4 + inactiveListButton.width
+        readonly property real secondaryPreferredContentWidth:
+            root.model.active
+                ? secondaryLeadingControls.width
+                    + 4 + secondaryTrailingControls.width
+                : 0
+        readonly property real preferredContentWidth:
+            Math.max(primaryPreferredContentWidth,
+                     secondaryPreferredContentWidth)
         x: 14
         y: root.boardTop + 10
         z: 20
         width: Math.min(
                    parent.width - 28,
                    root.toolbarMaximumWidth,
-                   root.model.active ? 552 : 198)
+                   preferredContentWidth + 12)
         height: root.model.active
                 ? toolbarContent.height + 12 : 46
         radius: 6
@@ -361,7 +374,9 @@ Item {
                 id: primaryToolbarRow
                 objectName: "whiteboardPrimaryToolbarRow"
                 width: parent.width
-                height: !root.model.active || width >= 530 ? 34 : 72
+                height: !root.model.active
+                        || width >= toolbar.primaryPreferredContentWidth
+                        ? 34 : 72
 
                 Row {
                     id: primaryLeadingControls
@@ -416,24 +431,30 @@ Item {
                         buttonWidth: 48
                     }
 
-                    ThemedButton {
-                        id: inactiveListButton
-                        objectName: "whiteboardInactiveListButton"
-                        visible: !root.model.active
-                        width: Math.max(76, implicitWidth + 4)
-                        height: 32
-                        elideText: false
-                        text: qsTr("Drawings")
-                        onClicked:
-                            root.drawingListOpen = !root.drawingListOpen
-                    }
+                }
+
+                ThemedButton {
+                    id: inactiveListButton
+                    objectName: "whiteboardInactiveListButton"
+                    visible: !root.model.active
+                    x: modeToggle.width + 4
+                    width: Math.max(76, implicitWidth + 4)
+                    height: 32
+                    elideText: false
+                    text: qsTr("Drawings")
+                    onClicked:
+                        root.drawingListOpen = !root.drawingListOpen
                 }
 
                 Row {
                     id: primaryTrailingControls
-                    x: root.model.active && primaryToolbarRow.width >= 530
+                    x: root.model.active
+                       && primaryToolbarRow.width >=
+                          toolbar.primaryPreferredContentWidth
                        ? primaryLeadingControls.width + 4 : 0
-                    y: root.model.active && primaryToolbarRow.width < 530
+                    y: root.model.active
+                       && primaryToolbarRow.width <
+                          toolbar.primaryPreferredContentWidth
                        ? 38 : 0
                     spacing: 4
 
@@ -466,7 +487,8 @@ Item {
                 visible: root.model.active
                 width: parent.width
                 y: primaryToolbarRow.height + 4
-                height: width >= 510 ? 34 : 72
+                height: width >= toolbar.secondaryPreferredContentWidth
+                        ? 34 : 72
 
                 Row {
                     id: secondaryLeadingControls
@@ -544,9 +566,11 @@ Item {
 
                 Row {
                     id: secondaryTrailingControls
-                    x: secondaryToolbarRow.width >= 510
+                    x: secondaryToolbarRow.width >=
+                       toolbar.secondaryPreferredContentWidth
                        ? secondaryLeadingControls.width + 4 : 0
-                    y: secondaryToolbarRow.width < 510 ? 38 : 0
+                    y: secondaryToolbarRow.width <
+                       toolbar.secondaryPreferredContentWidth ? 38 : 0
                     spacing: 4
 
                     ThemedToolButton {

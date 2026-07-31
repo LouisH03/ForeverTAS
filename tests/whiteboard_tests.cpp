@@ -954,10 +954,34 @@ int main(int argc, char **argv) {
         expect(board != nullptr && Near(board->y(), 52.0) &&
                        Near(board->height(), 648.0),
                "drawing surface overlays the viewer below its header");
-        expect(toolbar != nullptr && Near(toolbar->width(), 552.0) &&
+        expect(toolbar != nullptr && toolbar->width() <= 570.0 &&
                        toolbar->height() >= 84.0 &&
                        toolbar->height() <= 90.0,
                "active toolbar hugs its controls in a desktop viewport");
+        const QQuickItem *const eraserButton = toolButtons.isEmpty()
+                ? nullptr : toolButtons.constLast();
+        const QPointF activeLeftPosition =
+                toggleItem != nullptr && toolbar != nullptr
+                ? toggleItem->mapToItem(toolbar, QPointF()) : QPointF();
+        const QPointF eraserPosition =
+                eraserButton != nullptr && toolbar != nullptr
+                ? eraserButton->mapToItem(toolbar, QPointF()) : QPointF();
+        const QPointF activeListPosition =
+                activeListButtonItem != nullptr && toolbar != nullptr
+                ? activeListButtonItem->mapToItem(toolbar, QPointF())
+                : QPointF();
+        const qreal activeControlsRight = std::max(
+                eraserPosition.x() +
+                        (eraserButton != nullptr ? eraserButton->width() : 0.0),
+                activeListPosition.x() +
+                        (activeListButtonItem != nullptr
+                                 ? activeListButtonItem->width() : 0.0));
+        expect(toolbar != nullptr && toggleItem != nullptr &&
+                       eraserButton != nullptr &&
+                       activeListButtonItem != nullptr &&
+                       Near(activeLeftPosition.x(),
+                            toolbar->width() - activeControlsRight, 0.6),
+               "active toolbar has matching left and right padding");
         const QPointF togglePosition =
                 toggleItem != nullptr && primaryToolbarRow != nullptr
                 ? toggleItem->mapToItem(primaryToolbarRow, QPointF())
@@ -1191,7 +1215,7 @@ int main(int argc, char **argv) {
                 ? nullptr
                 : inactiveListButton->property("contentItem")
                           .value<QObject *>();
-        if (toolbar == nullptr || toolbar->width() < 198.0 ||
+        if (toolbar == nullptr || toolbar->width() < 190.0 ||
             toolbar->width() > 240.0 || inactiveListContent == nullptr ||
             inactiveListContent->property("truncated").toBool() ||
             input == nullptr || input->property("enabled").toBool() ||
@@ -1218,7 +1242,7 @@ int main(int argc, char **argv) {
                       << ", editor="
                       << textEditor->property("visible").toBool() << '\n';
         }
-        expect(toolbar != nullptr && toolbar->width() >= 198.0 &&
+        expect(toolbar != nullptr && toolbar->width() >= 190.0 &&
                        toolbar->width() <= 240.0 &&
                        inactiveListContent != nullptr &&
                        !inactiveListContent->property("truncated").toBool() &&
@@ -1228,6 +1252,30 @@ int main(int argc, char **argv) {
                        !toggle->property("checked").toBool() &&
                        !textEditor->property("visible").toBool(),
                "normal 3D mode collapses controls and releases input");
+        const QPointF inactiveLeftPosition =
+                toggleItem != nullptr && toolbar != nullptr
+                ? toggleItem->mapToItem(toolbar, QPointF()) : QPointF();
+        const auto *const inactiveListItem =
+                qobject_cast<QQuickItem *>(inactiveListButton);
+        const QPointF inactiveListPosition =
+                inactiveListItem != nullptr && toolbar != nullptr
+                ? inactiveListItem->mapToItem(toolbar, QPointF()) : QPointF();
+        const qreal inactiveControlsRight = inactiveListPosition.x() +
+                (inactiveListItem != nullptr ? inactiveListItem->width() : 0.0);
+        if (toolbar != nullptr && toggleItem != nullptr &&
+            inactiveListItem != nullptr &&
+            !Near(inactiveLeftPosition.x(),
+                  toolbar->width() - inactiveControlsRight, 0.6)) {
+            std::cerr << "inactive padding: left="
+                      << inactiveLeftPosition.x() << ", right="
+                      << toolbar->width() - inactiveControlsRight
+                      << ", listX=" << inactiveListPosition.x() << '\n';
+        }
+        expect(toolbar != nullptr && toggleItem != nullptr &&
+                       inactiveListItem != nullptr &&
+                       Near(inactiveLeftPosition.x(),
+                            toolbar->width() - inactiveControlsRight, 0.6),
+               "inactive toolbar has matching left and right padding");
         expect(drawingRepeater != nullptr &&
                        drawingRepeater->property("count").toInt() ==
                                retainedCount &&
