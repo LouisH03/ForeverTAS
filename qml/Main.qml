@@ -14,6 +14,7 @@ ApplicationWindow {
     required property var viewer
 
     property string renderMode: "textured"
+    property bool codeEditorExpanded: false
     readonly property bool rayTracingEnabled:
         renderMode === "textured-rt"
     property real measuredFps: 0
@@ -292,8 +293,12 @@ ApplicationWindow {
         orientation: Qt.Horizontal
 
         Rectangle {
+            id: workspaceContent
+
+            objectName: "workspaceContent"
             SplitView.fillWidth: true
             SplitView.minimumWidth: 680
+            visible: !window.codeEditorExpanded
             color: AppTheme.window
 
             RowLayout {
@@ -2692,10 +2697,15 @@ ApplicationWindow {
         }
 
         Rectangle {
+            id: settingsPanel
+
             objectName: "settingsPanel"
-            SplitView.preferredWidth: 390
-            SplitView.minimumWidth: 340
-            SplitView.maximumWidth: 480
+            SplitView.fillWidth: window.codeEditorExpanded
+            SplitView.preferredWidth: window.codeEditorExpanded
+                                      ? window.width : 390
+            SplitView.minimumWidth: window.codeEditorExpanded ? 0 : 340
+            SplitView.maximumWidth: window.codeEditorExpanded
+                                    ? window.width : 480
             color: AppTheme.panel
 
             ScrollView {
@@ -3049,6 +3059,7 @@ ApplicationWindow {
                                 if (window.viewer.loaded)
                                     window.viewer.startSimulationDebugger()
                             } else {
+                                window.codeEditorExpanded = false
                                 window.viewer.stopSimulationDebugger()
                             }
                         }
@@ -3514,8 +3525,10 @@ ApplicationWindow {
 
                     }
 
-                    SimulationDebuggerPanel {
-                        objectName: "simulationDebuggerPanel"
+                    Item {
+                        id: simulationDebuggerPanelHost
+
+                        objectName: "simulationDebuggerPanelHost"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
@@ -3523,7 +3536,33 @@ ApplicationWindow {
                                                     650,
                                                     settingsScroll.height - 185)
                         visible: toolTabs.currentIndex === 1
-                        viewer: window.viewer
+                                 && !window.codeEditorExpanded
+
+                        SimulationDebuggerPanel {
+                            id: simulationDebuggerPanel
+
+                            objectName: "simulationDebuggerPanel"
+                            parent: window.codeEditorExpanded
+                                    ? settingsPanel
+                                    : simulationDebuggerPanelHost
+                            anchors.fill: parent
+                            z: window.codeEditorExpanded ? 10 : 0
+                            visible: toolTabs.currentIndex === 1
+                            expanded: window.codeEditorExpanded
+                            viewer: window.viewer
+                            onExpansionRequested: function(expanded) {
+                                window.codeEditorExpanded = expanded
+                                if (!expanded) {
+                                    Qt.callLater(function() {
+                                        settingsScroll.contentItem.contentY =
+                                            Math.max(
+                                                0,
+                                                simulationDebuggerPanelHost.y
+                                                - toolTabs.height - 18)
+                                    })
+                                }
+                            }
+                        }
                     }
 
                     Item {

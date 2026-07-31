@@ -856,6 +856,21 @@ int main(int argc, char **argv) {
                                     root->findChild<QObject *>(
                                             QStringLiteral(
                                                     "simulationDebuggerPanel")));
+                    auto *const simulationDebuggerPanelHost =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "simulationDebuggerPanelHost")));
+                    auto *const workspaceContent =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "workspaceContent")));
+                    auto *const settingsPanel =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "settingsPanel")));
+                    QObject *const toggleCodeEditorExpansionButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "toggleCodeEditorExpansionButton"));
                     auto *const referenceLoadingWarning =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
@@ -1654,6 +1669,102 @@ int main(int argc, char **argv) {
                         QCoreApplication::processEvents();
                         return overflowState && movedToEnd;
                     }();
+                    const bool codeExpansionValid = [&]() {
+                        if (simulationDebuggerPanel == nullptr ||
+                            simulationDebuggerPanelHost == nullptr ||
+                            workspaceContent == nullptr ||
+                            settingsPanel == nullptr ||
+                            toggleCodeEditorExpansionButton == nullptr ||
+                            simulationCodeViewer == nullptr ||
+                            bruteforceTabContent == nullptr) {
+                            return false;
+                        }
+                        const int originalWidth =
+                                root->property("width").toInt();
+                        const int originalHeight =
+                                root->property("height").toInt();
+                        simulationDebuggerPanelHost->setVisible(true);
+                        simulationDebuggerPanel->setVisible(true);
+                        bruteforceTabContent->setVisible(false);
+                        QCoreApplication::processEvents();
+                        const qreal compactWidth =
+                                simulationDebuggerPanel->width();
+                        const QString compactIcon =
+                                toggleCodeEditorExpansionButton
+                                        ->property("text")
+                                        .toString();
+                        const bool expanded =
+                                QMetaObject::invokeMethod(
+                                        toggleCodeEditorExpansionButton,
+                                        "clicked",
+                                        Qt::DirectConnection);
+                        QCoreApplication::processEvents();
+                        QCoreApplication::processEvents();
+                        bool valid =
+                                expanded &&
+                                root->property("codeEditorExpanded")
+                                        .toBool() &&
+                                simulationDebuggerPanel
+                                        ->property("expanded")
+                                        .toBool() &&
+                                simulationDebuggerPanel->parentItem() ==
+                                        settingsPanel &&
+                                !workspaceContent->isVisible() &&
+                                settingsPanel->width() >=
+                                        originalWidth - 1.0 &&
+                                simulationDebuggerPanel->width() >=
+                                        originalWidth - 1.0 &&
+                                simulationDebuggerPanel->height() >=
+                                        originalHeight - 1.0 &&
+                                simulationDebuggerPanel->width() >
+                                        compactWidth * 2.0 &&
+                                toggleCodeEditorExpansionButton
+                                                ->property("text")
+                                                .toString() != compactIcon;
+
+                        root->setProperty("width", 1240);
+                        root->setProperty("height", 580);
+                        QCoreApplication::processEvents();
+                        QCoreApplication::processEvents();
+                        valid &= settingsPanel->width() >= 1239.0 &&
+                                simulationDebuggerPanel->width() >= 1239.0 &&
+                                simulationDebuggerPanel->height() >= 579.0 &&
+                                simulationCodeViewer->width() > 1100.0 &&
+                                simulationCodeViewer->height() >= 145.0;
+
+                        const bool collapsed =
+                                QMetaObject::invokeMethod(
+                                        toggleCodeEditorExpansionButton,
+                                        "clicked",
+                                        Qt::DirectConnection);
+                        root->setProperty("width", originalWidth);
+                        root->setProperty("height", originalHeight);
+                        QEventLoop settle;
+                        QTimer::singleShot(
+                                60, &settle, &QEventLoop::quit);
+                        settle.exec();
+                        valid &= collapsed &&
+                                !root->property("codeEditorExpanded")
+                                         .toBool() &&
+                                !simulationDebuggerPanel
+                                         ->property("expanded")
+                                         .toBool() &&
+                                simulationDebuggerPanel->parentItem() ==
+                                        simulationDebuggerPanelHost &&
+                                workspaceContent->isVisible() &&
+                                settingsPanel->width() <= 480.0;
+                        simulationDebuggerPanelHost->setVisible(false);
+                        simulationDebuggerPanel->setVisible(false);
+                        bruteforceTabContent->setVisible(true);
+                        QObject *const settingsContent =
+                                settingsScroll->property("contentItem")
+                                        .value<QObject *>();
+                        if (settingsContent != nullptr) {
+                            settingsContent->setProperty("contentY", 0.0);
+                        }
+                        QCoreApplication::processEvents();
+                        return valid;
+                    }();
                     const bool debuggerUiValid =
                             toolTabs != nullptr &&
                             toolTabs->property("count").toInt() == 2 &&
@@ -1748,6 +1859,7 @@ int main(int argc, char **argv) {
                                             ->property("text")
                                             .toString() ==
                                     QStringLiteral("Tick Step") &&
+                            codeExpansionValid &&
                             debuggerCombinedNameValid;
 
                     bool globalComboWheelValid = false;
@@ -2122,6 +2234,7 @@ int main(int argc, char **argv) {
                                     "text", originalBestInputs);
                             QCoreApplication::processEvents();
 
+                            simulationDebuggerPanelHost->setVisible(true);
                             simulationDebuggerPanel->setVisible(true);
                             bruteforceTabContent->setVisible(false);
                             QCoreApplication::processEvents();
@@ -2137,6 +2250,7 @@ int main(int argc, char **argv) {
                                     sourceTreeWheelValid &&
                                     codeViewerWheelValid;
                             simulationDebuggerPanel->setVisible(false);
+                            simulationDebuggerPanelHost->setVisible(false);
                             bruteforceTabContent->setVisible(true);
                             QCoreApplication::processEvents();
                         }
@@ -3017,6 +3131,7 @@ int main(int argc, char **argv) {
                                 << ", comboText=" << settingComboTextValid
                                 << ", passLayout=" << modifierPassLayoutValid
                                 << ", debugger=" << debuggerUiValid
+                                << "/" << codeExpansionValid
                                 << ", wheel=" << wheelScrollingValid
                                 << "/" << globalComboWheelValid
                                 << "/" << globalSliderWheelValid

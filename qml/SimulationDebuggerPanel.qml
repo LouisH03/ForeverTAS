@@ -8,12 +8,20 @@ Item {
     id: root
 
     required property var viewer
+    property bool expanded: false
     readonly property var debuggerModel: viewer.simulationDebugger
     property var editingLine: null
     property bool hasDraftEdit: false
     readonly property bool waitingForPause: root.debuggerModel.running
+    signal expansionRequested(bool expanded)
 
     implicitHeight: 760
+
+    Rectangle {
+        anchors.fill: parent
+        z: -1
+        color: AppTheme.panel
+    }
 
     Binding {
         target: root.debuggerModel
@@ -199,6 +207,20 @@ Item {
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Restore all in-memory source edits")
             }
+
+            ThemedToolButton {
+                id: editorExpansionButton
+
+                objectName: "toggleCodeEditorExpansionButton"
+                text: root.expanded ? "\u2715" : "\u26f6"
+                font.pixelSize: root.expanded ? 15 : 18
+                onClicked: root.expansionRequested(!root.expanded)
+                Accessible.name: root.expanded
+                                 ? qsTr("Restore code panel")
+                                 : qsTr("Expand code panel")
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+            }
         }
 
         Rectangle {
@@ -287,7 +309,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 118
+            Layout.preferredHeight: root.expanded ? 104 : 118
             color: AppTheme.surface
             border.width: 1
             border.color: AppTheme.border
@@ -409,7 +431,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 250
+            Layout.minimumHeight: root.expanded ? 150 : 250
             color: AppTheme.codeSurface
             border.width: 1
             border.color: AppTheme.border
@@ -745,7 +767,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 132
+            Layout.preferredHeight: root.expanded ? 100 : 132
             color: AppTheme.surface
             border.width: 1
             border.color: AppTheme.border

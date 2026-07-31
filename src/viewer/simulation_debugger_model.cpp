@@ -857,7 +857,9 @@ QString SimulationDebuggerModel::syntaxHighlighted(const QString &text,
                 QStringLiteral("<span style=\"color:%1\">").arg(commentColor) +
                 escaped.mid(comment) + QStringLiteral("</span>");
     }
-    return escaped;
+    return QStringLiteral(
+                   "<pre style=\"margin:0; white-space:pre\">%1</pre>")
+            .arg(escaped);
 }
 
 SimulationDebuggerModel::ProcessedDebuggerOutput

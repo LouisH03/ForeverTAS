@@ -1012,12 +1012,18 @@ int main(int argc, char **argv) {
                                 .toMap()
                                 .value(QStringLiteral("highlighted"))
                                 .toString();
-                okay &= Check(model->darkMode() &&
+                okay &= Check(lightHighlight.startsWith(
+                                      QStringLiteral(
+                                              "<pre style=\"margin:0; "
+                                              "white-space:pre\">")) &&
+                                      lightHighlight.endsWith(
+                                              QStringLiteral("</pre>")) &&
+                                      model->darkMode() &&
                                       darkHighlight != lightHighlight &&
                                       darkHighlight.contains(
                                               QStringLiteral("#80b9ef")),
-                              "source syntax colors did not switch to the dark "
-                              "theme");
+                              "source highlighting did not preserve whitespace "
+                              "or switch to the dark theme");
                 model->setDarkMode(false);
                 const int originalLineCount = model->lines().size();
                 const qulonglong originalApplyId =
@@ -1162,6 +1168,16 @@ int main(int argc, char **argv) {
                         editedLine.value(QStringLiteral("modified")).toBool() &&
                                 editedLine.value(QStringLiteral("breakpoint"))
                                         .toBool() &&
+                                editedLine.value(QStringLiteral("text"))
+                                                .toString()
+                                                .startsWith(
+                                                        QStringLiteral("  ")) &&
+                                editedLine.value(
+                                                   QStringLiteral("highlighted"))
+                                                .toString()
+                                                .contains(QStringLiteral(
+                                                        "\">  car_"
+                                                        ".ApplyControlInput")) &&
                                 editedLine.value(QStringLiteral("original"))
                                                 .toString() ==
                                         originalApplyLine &&
@@ -1174,8 +1190,8 @@ int main(int argc, char **argv) {
                                 editedBreakpointEntry
                                         .value(QStringLiteral("breakpoint"))
                                         .toBool(),
-                        "combined line edit and persistent file breakpoint "
-                        "tracking failed");
+                        "source indentation, line edit, or persistent file "
+                        "breakpoint tracking failed");
                 phase = Phase::WaitingInitialFrame;
                 responsivenessClock.start();
                 lastUiPulse = 0;
