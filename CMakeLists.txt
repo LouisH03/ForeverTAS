@@ -166,6 +166,8 @@ add_library(forevertas_gui STATIC
     src/app/pose_target_model.cpp
     src/app/pose_target_model.h
     src/app/search_completion.h
+    src/app/input_preview_binding.cpp
+    src/app/input_preview_binding.h
     src/app/search_controller.cpp
     src/app/search_controller.h
     src/app/packs_directory_finder.cpp

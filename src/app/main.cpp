@@ -1,4 +1,5 @@
 #include "app/search_controller.h"
+#include "app/input_preview_binding.h"
 #include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
 
@@ -24,6 +25,7 @@ int main(int argc, char **argv) {
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    forevertas::app::BindInputPreview(controller, viewer);
     QObject::connect(
             &controller,
             &forevertas::app::SearchController::searchImprovement,

@@ -1,3 +1,4 @@
+#include "app/input_preview_binding.h"
 #include "app/search_controller.h"
 #include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
@@ -7,10 +8,12 @@
 #include <QFileInfo>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
+#include <QVector3D>
 
 #include <iostream>
 
@@ -28,10 +31,21 @@ bool PreviewSceneIsVisible(
             QStringLiteral("runCarFilledModel"));
     const QList<QObject *> visualModels = root->findChildren<QObject *>(
             QStringLiteral("trackVisualModel"));
+    const QVector3D cameraPosition = viewer.carCameraPosition();
+    const QVector3D cameraTarget = viewer.carCameraTarget();
+    const QVector3D carPosition = viewer.carPosition();
+    const QVector3D cameraLook = cameraTarget - cameraPosition;
+    const QVector3D cameraToCar = carPosition - cameraPosition;
+    const bool cameraFollowsPreview = viewer.carCameraAvailable() &&
+            cameraLook.lengthSquared() > 0.000001f &&
+            cameraToCar.lengthSquared() > 0.000001f &&
+            QVector3D::dotProduct(cameraLook.normalized(),
+                                  cameraToCar.normalized()) > 0.0f;
     const bool okay = viewer.loaded() && viewer.runCount() == 1 &&
             viewer.tickCount() > 1 && viewer.durationMs() > 0 &&
             viewer.selectedRunId() == QStringLiteral("preview") &&
             viewer.trajectoryCount() == 1 &&
+            cameraFollowsPreview &&
             viewer.ellipsoidCount() > 0 &&
             viewer.visualBatchCount() > 0 &&
             roots.size() == 1 &&
@@ -75,18 +89,29 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName(
             QStringLiteral("ViewerReloadQmlSmoke"));
     QStandardPaths::setTestModeEnabled(true);
+    QSettings().clear();
 
     const QString packs = QString::fromLocal8Bit(argv[1]);
     const QString replays[]{
             QString::fromLocal8Bit(argv[2]),
             QString::fromLocal8Bit(argv[3]),
             QString::fromLocal8Bit(argv[2])};
-    forevertas::app::SearchController controller;
-    controller.setPacksDirectory(packs);
-    controller.setReplayPath(replays[0]);
     const QString protectedDraft = QStringLiteral("0.00 press up");
-    controller.setBaseInputScript(protectedDraft);
+    {
+        forevertas::app::SearchController previousSession;
+        previousSession.setPacksDirectory(packs);
+        previousSession.setReplayPath(replays[0]);
+        previousSession.setBaseInputScript(protectedDraft);
+    }
+    forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    forevertas::app::BindInputPreview(controller, viewer);
+    if (controller.baseInputScript() != protectedDraft ||
+        viewer.previewInputScript() != protectedDraft) {
+        std::cerr << "persisted input script was not installed in the viewer "
+                     "before QML startup\n";
+        return 1;
+    }
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
     engine.setInitialProperties({

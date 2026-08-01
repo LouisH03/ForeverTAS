@@ -1,3 +1,4 @@
+#include "app/input_preview_binding.h"
 #include "app/search_controller.h"
 #include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
@@ -303,6 +304,7 @@ int main(int argc, char **argv) {
 
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
+    forevertas::app::BindInputPreview(controller, viewer);
     const QString initialPacksDirectory =
             controller.packsDirectory();
     const QString initialReplayPath = controller.replayPath();

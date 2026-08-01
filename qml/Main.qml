@@ -28,12 +28,6 @@ ApplicationWindow {
         value: window.controller.darkMode
     }
 
-    Binding {
-        target: window.viewer
-        property: "previewInputScript"
-        value: window.controller.baseInputScript
-    }
-
     FrameAnimation {
         id: frameRateMonitor
         objectName: "frameRateMonitor"
