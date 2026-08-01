@@ -5,7 +5,7 @@ if(CMAKE_HOST_APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 project(ForeverTAS
-    VERSION 0.1.1
+    VERSION 0.2.0
     DESCRIPTION "Native TrackMania Nations Forever tool-assisted search tool"
     HOMEPAGE_URL "https://github.com/Skycrafter-dev/ForeverTAS"
     LANGUAGES CXX)
@@ -30,7 +30,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 include(CTest)
 include(GNUInstallDirs)
-find_package(Git REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(ZLIB REQUIRED)
 find_program(FOREVERTAS_LLDB_EXECUTABLE NAMES lldb)
@@ -67,20 +66,8 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG 75e633d28d1136e14490aff8529111ccbd07bfa4
-    GIT_SHALLOW FALSE
-    PATCH_COMMAND
-        "${CMAKE_COMMAND}"
-        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
-        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-cpu-multithreading.patch"
-        "-DSOURCE_DIR=<SOURCE_DIR>"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake"
-        COMMAND
-        "${CMAKE_COMMAND}"
-        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
-        "-DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/forevervalidator-race-camera-api.patch"
-        "-DSOURCE_DIR=<SOURCE_DIR>"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatch.cmake")
+    GIT_TAG 40d351b27797c9081f4c1d2751a21cd0620ab875
+    GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
 add_library(forevertas_core STATIC
