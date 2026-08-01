@@ -99,9 +99,12 @@ portable layout.
 
 ## GitHub Actions
 
-`.github/workflows/package.yml` runs on version tags and manual dispatch. It
-builds and tests the same revision natively on Linux and Windows, then uploads
-each portable artifact and its checksum.
+`.github/workflows/package.yml` runs CPU verification on GitHub-hosted runners.
+For trusted pushes, version tags, and manual dispatches, it builds the Linux
+bundle on the `forevertas-linux` self-hosted runner inside an Ubuntu 22.04
+container, then uploads the AppImage and its checksum. Pull requests never run
+on the self-hosted machine. Windows packaging remains available through the
+local PowerShell script but is not currently part of the Actions matrix.
 
 ## Settings and writable data
 
