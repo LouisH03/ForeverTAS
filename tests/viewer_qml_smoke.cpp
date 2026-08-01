@@ -886,6 +886,9 @@ int main(int argc, char **argv) {
                     QObject *const freeCameraButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("freeCameraButton"));
+                    QObject *const orbitalCameraButton =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("orbitalCameraButton"));
                     QObject *const focusCarButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("focusCarButton"));
@@ -1327,22 +1330,28 @@ int main(int argc, char **argv) {
                             cameraPositionTelemetry->isVisible() &&
                             cameraPositionTelemetryText != nullptr &&
                             freeCameraButton != nullptr &&
+                            orbitalCameraButton != nullptr &&
                             focusCarButton != nullptr &&
                             nearCameraButton != nullptr &&
                             internalCameraButton != nullptr &&
                             focusObjectButton != nullptr &&
                             !viewport->property("freeCamera").toBool() &&
+                            !viewport->property("orbitalCamera").toBool() &&
                             viewport->property("carCameraActive").toBool() &&
                             viewport->property("cameraFocusMode")
                                             .toString() ==
                                     QStringLiteral("preset") &&
                             !freeCameraButton->property("highlighted").toBool() &&
+                            orbitalCameraButton->property("enabled").toBool() &&
+                            !orbitalCameraButton->property("highlighted").toBool() &&
                             focusCarButton->property("enabled").toBool() &&
                             focusCarButton->property("highlighted").toBool() &&
                             nearCameraButton->property("enabled").toBool() &&
                             internalCameraButton->property("enabled").toBool() &&
                             freeCameraButton->property("text").toString() ==
                                     QStringLiteral("Free") &&
+                            orbitalCameraButton->property("text").toString() ==
+                                    QStringLiteral("Orbital") &&
                             focusCarButton->property("text").toString() ==
                                     QStringLiteral("Far") &&
                             nearCameraButton->property("text").toString() ==
@@ -1361,7 +1370,7 @@ int main(int argc, char **argv) {
                                     std::abs(value) < 0.005f ? 0.0 : value;
                             return QString::number(normalized, 'f', 2);
                         };
-                        return QStringLiteral("X %1   Y %2   Z %3")
+                        return QStringLiteral("Camera pos: X %1   Y %2   Z %3")
                                 .arg(coordinate(position.x()),
                                      coordinate(position.y()),
                                      coordinate(position.z()));
@@ -1400,6 +1409,7 @@ int main(int argc, char **argv) {
                                             : std::string("missing"))
                                 << ", buttons="
                                 << (freeCameraButton != nullptr) << '/'
+                                << (orbitalCameraButton != nullptr) << '/'
                                 << (focusCarButton != nullptr) << '/'
                                 << (nearCameraButton != nullptr) << '/'
                                 << (internalCameraButton != nullptr)
@@ -1416,6 +1426,55 @@ int main(int argc, char **argv) {
                                                       .toBool()
                                             : false)
                                 << '\n';
+                    }
+                    if (freeCameraUiValid) {
+                        const double orbitalYawBefore =
+                                viewport->property("orbitYaw").toDouble();
+                        const double orbitalPitchBefore =
+                                viewport->property("orbitPitch").toDouble();
+                        const double orbitalDistanceBefore =
+                                viewport->property("orbitDistance").toDouble();
+                        QVariant zoomed;
+                        freeCameraUiValid &=
+                                QMetaObject::invokeMethod(
+                                        orbitalCameraButton, "clicked") &&
+                                viewport->property("orbitalCamera").toBool() &&
+                                !viewport->property("freeCamera").toBool() &&
+                                !viewport->property("carCameraActive").toBool() &&
+                                viewport->property("cameraFocusMode")
+                                                .toString() ==
+                                        QStringLiteral("orbital") &&
+                                orbitalCameraButton
+                                        ->property("highlighted").toBool() &&
+                                viewport->property("cameraTarget")
+                                                .value<QVector3D>() ==
+                                        viewer.carPosition() &&
+                                QMetaObject::invokeMethod(
+                                        viewport, "beginViewRotation") &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "updateViewRotation",
+                                        Q_ARG(QVariant, QVariant(12.0)),
+                                        Q_ARG(QVariant, QVariant(-7.0))) &&
+                                std::abs(viewport->property("orbitYaw").toDouble()
+                                         - (orbitalYawBefore - 12.0)) < 0.001 &&
+                                std::abs(viewport->property("orbitPitch").toDouble()
+                                         - (orbitalPitchBefore + 7.0)) < 0.001 &&
+                                QMetaObject::invokeMethod(
+                                        viewport,
+                                        "zoomOrbit",
+                                        Q_RETURN_ARG(QVariant, zoomed),
+                                        Q_ARG(QVariant, QVariant(120.0))) &&
+                                zoomed.toBool() &&
+                                viewport->property("orbitDistance").toDouble() <
+                                        orbitalDistanceBefore &&
+                                QMetaObject::invokeMethod(
+                                        focusCarButton, "clicked") &&
+                                !viewport->property("orbitalCamera").toBool() &&
+                                viewport->property("carCameraActive").toBool() &&
+                                viewport->property("cameraFocusMode")
+                                                .toString() ==
+                                        QStringLiteral("preset");
                     }
                     if (freeCameraUiValid) {
                         const QVector3D carTargetBeforeFree =
@@ -1736,6 +1795,8 @@ int main(int argc, char **argv) {
                                         "focusCurrentCar") &&
                                 !viewport->property("freeCamera").toBool() &&
                                 !viewport->property("cuboidFocused")
+                                         .toBool() &&
+                                !viewport->property("orbitalCamera")
                                          .toBool() &&
                                 viewport->property("cameraFocusMode")
                                                 .toString() ==
@@ -4595,6 +4656,7 @@ int main(int argc, char **argv) {
                     const bool compactSplitLayout =
                             checkpointSplitOverlay != nullptr &&
                             cameraFocusToolbar != nullptr &&
+                            cameraPositionTelemetry != nullptr &&
                             playbackDock != nullptr &&
                             checkpointSplitOverlay->x() >= 13.9 &&
                             checkpointSplitOverlay->width() >= 197.9 &&
@@ -4604,8 +4666,9 @@ int main(int argc, char **argv) {
                                     cameraFocusToolbar->x() -
                                             cameraFocusToolbar->width()) <= 2.1 &&
                             checkpointSplitOverlay->y() >=
-                                    cameraFocusToolbar->y() +
-                                            cameraFocusToolbar->height() + 7.9 &&
+                                    cameraPositionTelemetry->y() +
+                                            cameraPositionTelemetry->height() +
+                                            7.9 &&
                             checkpointSplitOverlay->y() +
                                             checkpointSplitOverlay->height() <=
                                     playbackDock->y() - 7.9;

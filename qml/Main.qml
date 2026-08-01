@@ -499,6 +499,7 @@ ApplicationWindow {
                     property real orbitDistance: 38
                     property real cameraFieldOfView: 55
                     property bool freeCamera: false
+                    property bool orbitalCamera: false
                     property vector3d freeCameraPosition:
                         Qt.vector3d(0, 0, 0)
                     function formatCameraCoordinate(value) {
@@ -506,13 +507,14 @@ ApplicationWindow {
                         return Number(normalized).toFixed(2)
                     }
                     readonly property string cameraPositionText:
-                        "X " + formatCameraCoordinate(viewCamera.scenePosition.x)
+                        "Camera pos: X "
+                        + formatCameraCoordinate(viewCamera.scenePosition.x)
                         + "   Y "
                         + formatCameraCoordinate(viewCamera.scenePosition.y)
                         + "   Z "
                         + formatCameraCoordinate(viewCamera.scenePosition.z)
                     readonly property bool carCameraActive:
-                        !freeCamera && !cuboidFocused
+                        !freeCamera && !orbitalCamera && !cuboidFocused
                         && window.viewer.carCameraAvailable
                         && window.viewer.runCount > 0
                     readonly property vector3d cameraForward: {
@@ -562,6 +564,7 @@ ApplicationWindow {
                     readonly property string cameraFocusMode:
                         freeCamera ? "free"
                         : cuboidFocused ? "object"
+                        : orbitalCamera ? "orbital"
                         : carCameraActive ? "preset" : "car"
                     property bool freeMoveForward: false
                     property bool freeMoveBackward: false
@@ -770,6 +773,16 @@ ApplicationWindow {
                         return true
                     }
 
+                    function zoomOrbit(wheelDeltaY) {
+                        if (carCameraActive)
+                            return false
+                        leaveExactWhiteboardView()
+                        const factor = Math.exp(-wheelDeltaY / 1200)
+                        orbitDistance = Math.max(
+                            3, Math.min(1000, orbitDistance * factor))
+                        return true
+                    }
+
                     function beginViewRotation() {
                         viewRotationTargetYaw = orbitYaw
                         viewRotationTargetPitch = orbitPitch
@@ -820,6 +833,7 @@ ApplicationWindow {
 
                     function enableFreeCamera() {
                         window.viewer.releaseManualInputs()
+                        orbitalCamera = false
                         const wasCarCamera = carCameraActive
                         const forward = cameraForward
                         const position = freeCamera
@@ -866,6 +880,18 @@ ApplicationWindow {
                         cameraFieldOfView = 55
                     }
 
+                    function enableOrbitalCamera() {
+                        window.viewer.releaseManualInputs()
+                        releaseFreeMovement()
+                        beginViewRotation()
+                        exactWhiteboardBoardIndex = -1
+                        exactWhiteboardBoardId = ""
+                        cameraFieldOfView = 55
+                        freeCamera = false
+                        cuboidFocused = false
+                        orbitalCamera = true
+                    }
+
                     function focusCurrentCar() {
                         releaseFreeMovement()
                         beginViewRotation()
@@ -874,6 +900,7 @@ ApplicationWindow {
                         cameraFieldOfView = 55
                         freeCamera = false
                         cuboidFocused = false
+                        orbitalCamera = false
                     }
 
                     function resetCameraFocus() {
@@ -939,6 +966,7 @@ ApplicationWindow {
                         cameraFieldOfView = 55
                         freeCamera = false
                         cuboidFocused = true
+                        orbitalCamera = false
                     }
 
                     function focusCuboid(center, size) {
@@ -953,6 +981,7 @@ ApplicationWindow {
                         hasObjectFocus = true
                         freeCamera = false
                         cuboidFocused = true
+                        orbitalCamera = false
                         orbitDistance = Math.max(
                             3,
                             Math.min(1000,
@@ -1046,6 +1075,7 @@ ApplicationWindow {
                         hasObjectFocus = true
                         freeCamera = false
                         cuboidFocused = true
+                        orbitalCamera = false
                         orbitYaw = board.yaw
                         orbitPitch = board.pitch
                         beginViewRotation()
@@ -2643,13 +2673,8 @@ ApplicationWindow {
                             viewport.cuboidPointerCaptured = false
                         }
                         onWheel: wheel => {
-                            viewport.leaveExactWhiteboardView()
-                            const factor = Math.exp(
-                                -wheel.angleDelta.y / 1200)
-                            viewport.orbitDistance = Math.max(
-                                3,
-                                Math.min(1000,
-                                         viewport.orbitDistance * factor))
+                            if (viewport.zoomOrbit(wheel.angleDelta.y))
+                                wheel.accepted = true
                         }
                     }
 
@@ -2726,6 +2751,25 @@ ApplicationWindow {
                                 ToolTip.visible: hovered
                                 ToolTip.delay: 350
                                 ToolTip.text: qsTr("Free camera")
+                            }
+
+                            ThemedButton {
+                                objectName: "orbitalCameraButton"
+                                Layout.preferredWidth: Math.max(70, implicitWidth)
+                                Layout.preferredHeight: 32
+                                text: qsTr("Orbital")
+                                enabled: window.viewer.runCount > 0
+                                highlighted: enabled
+                                             && viewport.orbitalCamera
+                                Accessible.name: qsTr("Orbital camera")
+                                onClicked: {
+                                    viewport.enableOrbitalCamera()
+                                    manualInputFocus.forceActiveFocus()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr(
+                                    "Orbit around the car with drag and wheel")
                             }
 
                             ThemedButton {
@@ -3299,7 +3343,7 @@ ApplicationWindow {
                         objectName: "checkpointSplitOverlay"
                         anchors.right: parent.right
                         anchors.rightMargin: 14
-                        anchors.top: cameraFocusToolbar.bottom
+                        anchors.top: cameraPositionTelemetry.bottom
                         anchors.topMargin: 8
                         z: 3
                         width: 198
