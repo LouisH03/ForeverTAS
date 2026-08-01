@@ -88,6 +88,7 @@ try {
 
     $Python = (Get-Command python -ErrorAction Stop).Source
     $Launcher = Join-Path $RepoRoot "packaging/ci/cuda_compiler_launcher.py"
+    $CudaCompiler = Join-Path $env:CUDA_PATH "bin/nvcc.exe"
     $VcpkgToolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT "scripts/buildsystems/vcpkg.cmake"
     $RuntimeDirectory = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed/x64-windows/bin"
     $MsvcRuntimeDirectory = Join-Path $env:VCToolsRedistDir "x64/Microsoft.VC143.CRT"
@@ -95,7 +96,8 @@ try {
     cmake -S $RepoRoot -B $BuildDirectory -G Ninja `
         -DCMAKE_BUILD_TYPE=Release `
         "-DCMAKE_CUDA_ARCHITECTURES=$env:CUDA_ARCHITECTURES" `
-        -DCMAKE_CUDA_HOST_COMPILER=cl.exe `
+        "-DCMAKE_CUDA_COMPILER=$CudaCompiler" `
+        "-DCMAKE_CUDA_HOST_COMPILER=cl.exe" `
         -DCMAKE_CXX_COMPILER=clang-cl `
         "-DCMAKE_CUDA_COMPILER_LAUNCHER=$Python;$Launcher;$env:SCCACHE_PATH" `
         "-DCMAKE_CXX_COMPILER_LAUNCHER=$env:SCCACHE_PATH" `
