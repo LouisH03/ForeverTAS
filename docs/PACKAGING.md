@@ -121,11 +121,12 @@ confirms every required cubin and PTX image. Cache keys include the toolchain,
 compiler, complete architecture list, split-compile setting, and pinned
 ForeverValidator source.
 
-The Windows runner uses the same architecture and split-compile invariants.
-It keeps vcpkg binaries, sccache data, the installed CUDA toolkit, and the
-validated CUDA search object on the runner between jobs. The Windows ZIP is
-checked for dependency closure and launched in QML smoke-test mode before it is
-uploaded.
+The Windows runner uses the same architecture and split-compile invariants. It
+assembles CUDA from pinned, checksummed NVIDIA redistributable archives, so no
+administrator-only installer is required. It keeps that toolkit, vcpkg
+binaries, sccache data, and the validated CUDA search object on the runner
+between jobs. The Windows ZIP is checked for dependency closure and launched in
+QML smoke-test mode before it is uploaded.
 
 ## Settings and writable data
 
