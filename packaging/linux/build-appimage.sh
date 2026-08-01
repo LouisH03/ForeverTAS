@@ -6,10 +6,20 @@ build_dir="${FOREVERTAS_BUILD_DIR:-${repo_root}/build/package-linux}"
 dist_dir="${FOREVERTAS_DIST_DIR:-${repo_root}/dist}"
 tools_dir="${FOREVERTAS_TOOLS_DIR:-${repo_root}/build/package-tools}"
 appdir="${FOREVERTAS_APPDIR:-${build_dir}/AppDir}"
+linuxdeploy_version="${LINUXDEPLOY_VERSION:-1-alpha-20251107-1}"
+qt_plugin_version="${LINUXDEPLOY_PLUGIN_QT_VERSION:-1-alpha-20250213-1}"
 
 case "$(uname -m)" in
-    x86_64|amd64) appimage_arch="x86_64" ;;
-    aarch64|arm64) appimage_arch="aarch64" ;;
+    x86_64|amd64)
+        appimage_arch="x86_64"
+        linuxdeploy_sha256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+        qt_plugin_sha256="15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724"
+        ;;
+    aarch64|arm64)
+        appimage_arch="aarch64"
+        linuxdeploy_sha256="620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff"
+        qt_plugin_sha256="bf1c24aff6d749b5cf423afad6f15abd4440f81dec1aab95706b25f6667cdcf1"
+        ;;
     *)
         echo "Unsupported AppImage architecture: $(uname -m)" >&2
         exit 2
@@ -24,17 +34,31 @@ qt_plugin="${LINUXDEPLOY_PLUGIN_QT:-${tools_dir}/linuxdeploy-plugin-qt-${appimag
 download_tool() {
     local destination="$1"
     local url="$2"
-    if [[ ! -x "${destination}" ]]; then
-        echo "Downloading $(basename "${destination}")"
-        curl --fail --location --retry 3 --output "${destination}" "${url}"
-        chmod +x "${destination}"
+    local expected_sha256="$3"
+    local temporary
+    if [[ -f "${destination}" ]] &&
+            ! echo "${expected_sha256}  ${destination}" | sha256sum -c - >/dev/null 2>&1; then
+        echo "Discarding invalid cached tool $(basename "${destination}")" >&2
+        rm -f "${destination}"
     fi
+    if [[ ! -f "${destination}" ]]; then
+        echo "Downloading $(basename "${destination}")"
+        temporary="${destination}.tmp.$$"
+        rm -f "${temporary}"
+        curl --fail --location --retry 3 --output "${temporary}" "${url}"
+        echo "${expected_sha256}  ${temporary}" | sha256sum -c -
+        chmod +x "${temporary}"
+        mv "${temporary}" "${destination}"
+    fi
+    test -x "${destination}"
 }
 
 download_tool "${linuxdeploy}" \
-    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${appimage_arch}.AppImage"
+    "https://github.com/linuxdeploy/linuxdeploy/releases/download/${linuxdeploy_version}/linuxdeploy-${appimage_arch}.AppImage" \
+    "${linuxdeploy_sha256}"
 download_tool "${qt_plugin}" \
-    "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${appimage_arch}.AppImage"
+    "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/${qt_plugin_version}/linuxdeploy-plugin-qt-${appimage_arch}.AppImage" \
+    "${qt_plugin_sha256}"
 
 cmake_args=(
     -S "${repo_root}"

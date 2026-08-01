@@ -5,6 +5,7 @@ ARG CMAKE_VERSION=4.4.0
 ARG AQTINSTALL_VERSION=3.3.0
 ARG SCCACHE_VERSION=0.17.0
 ARG SCCACHE_SHA256=67c4a96dd237c1f518f6b36083f270f9976d516f1e57fce891755ea782e50006
+ARG CUDA_KEYRING_SHA256=d93190d50b98ad4699ff40f4f7af50f16a76dac3bb8da1eaaf366d47898ff8df
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         appstream build-essential ca-certificates curl desktop-file-utils \
@@ -23,12 +24,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN wget -q \
         https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
         -O /tmp/cuda-keyring.deb \
+    && echo "${CUDA_KEYRING_SHA256}  /tmp/cuda-keyring.deb" | sha256sum -c - \
     && dpkg -i /tmp/cuda-keyring.deb \
     && rm /tmp/cuda-keyring.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        cuda-cccl-12-8 cuda-cudart-12-8 cuda-cuobjdump-12-8 \
-        cuda-nvcc-12-8 cuda-nvrtc-dev-12-8 libnvjitlink-dev-12-8 \
+        cuda-cccl-12-8=12.8.90-1 cuda-cudart-12-8=12.8.90-1 \
+        cuda-cuobjdump-12-8=12.8.90-1 cuda-nvcc-12-8=12.8.93-1 \
+        cuda-nvrtc-dev-12-8=12.8.93-1 libnvjitlink-dev-12-8=12.8.93-1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --no-cache-dir \

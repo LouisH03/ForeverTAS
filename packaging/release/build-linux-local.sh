@@ -10,6 +10,8 @@ import json, shlex, sys
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 values = {
     "FOREVERTAS_VERSION": m["release"]["version"],
+    "LINUXDEPLOY_VERSION": m["toolchains"]["linux"]["linuxdeploy"],
+    "LINUXDEPLOY_PLUGIN_QT_VERSION": m["toolchains"]["linux"]["linuxdeploy_plugin_qt"],
     "CUDA_VERSION": m["cuda"]["version"],
     "CUDA_ARCHITECTURES": m["cuda"]["cmake_architectures"],
     "CUDA_ARCHITECTURE_KEY": m["cuda"]["architecture_key"],
@@ -38,6 +40,8 @@ docker run --rm --init \
     --env FOREVERVALIDATOR_COMMIT \
     --env FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS \
     --env FOREVERTAS_VERSION \
+    --env LINUXDEPLOY_VERSION \
+    --env LINUXDEPLOY_PLUGIN_QT_VERSION \
     --env FOREVERTAS_TOOLCHAIN_IMAGE="${toolchain_image}" \
     --env SCCACHE_CACHE_SIZE=50G \
     --volume "${repo_root}:/workspace" \

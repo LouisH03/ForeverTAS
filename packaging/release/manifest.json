@@ -30,7 +30,9 @@
       "base": "ubuntu-22.04",
       "qt": "6.9.3",
       "cmake": "4.4.0",
-      "sccache": "0.17.0"
+      "sccache": "0.17.0",
+      "linuxdeploy": "1-alpha-20251107-1",
+      "linuxdeploy_plugin_qt": "1-alpha-20250213-1"
     },
     "windows": {
       "host": "builder@192.168.122.50",

@@ -145,6 +145,7 @@ FOREVERTAS_DIST_DIR="${dist_dir}" \
 FOREVERTAS_ENABLE_CUDA=ON \
 FOREVERTAS_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
 FOREVERTAS_VALIDATOR_SOURCE="${validator_root}" \
+FOREVERTAS_TOOLS_DIR="${cache_root}/appimage-tools" \
     "${repo_root}/packaging/linux/build-appimage.sh"
 
 verify_build_dir="${repo_root}/build/verify-release"
