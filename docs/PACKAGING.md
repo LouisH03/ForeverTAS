@@ -102,9 +102,9 @@ portable layout.
 `.github/workflows/package.yml` runs CPU verification on GitHub-hosted runners.
 For trusted pushes, version tags, and manual dispatches, it builds the Linux
 bundle on the `forevertas-linux` self-hosted runner inside an Ubuntu 22.04
-container, then uploads the AppImage and its checksum. Pull requests never run
-on the self-hosted machine. Windows packaging remains available through the
-local PowerShell script but is not currently part of the Actions matrix.
+container and builds the Windows bundle on a GitHub-hosted Windows 2022 runner,
+then uploads both portable bundles and their checksums. Pull requests never run
+package jobs on the self-hosted machine.
 
 ## Settings and writable data
 
