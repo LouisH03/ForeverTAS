@@ -499,6 +499,8 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
     configuration.modifiers = *context.cudaModifiers;
     configuration.evaluator = *context.cudaEvaluator;
+    configuration.useSessionSpecialization =
+            context.useCudaSessionSpecialization;
     std::optional<PhysicsSandboxCudaSearchSession> session;
     session.emplace(Require(
             CreatePhysicsSandboxCudaSearchSession(

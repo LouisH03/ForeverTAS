@@ -6,6 +6,9 @@
 #include "searches/search_runner.h"
 
 #include <forevervalidator/native.h>
+#if FOREVERVALIDATOR_HAS_CUDA
+#include "simulation/backends/cuda/cuda_session_specialization.h"
+#endif
 
 #include <chrono>
 #include <exception>
@@ -193,6 +196,65 @@ bool CheckAutoPromoteSemantics(
 }
 
 #if FOREVERVALIDATOR_HAS_CUDA
+bool CheckCudaKernelModeLifecycle(
+        const char *packsDirectory,
+        const char *replayPath) {
+    const forevertas::InputScriptParseResult parsed =
+            forevertas::ParseInputScript(
+                    forevertas::ExtractReplayInputScript(
+                            packsDirectory, replayPath));
+    if (!parsed) {
+        throw std::runtime_error(*parsed.error);
+    }
+
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    request.baseInputCommands = parsed.commands;
+    request.backend = forevertas::PhysicsBackend::Cuda;
+    request.parallelSampleCount = 64u;
+    request.useCudaSessionSpecialization = false;
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 0u;
+    control.sampleBestTimeline = false;
+    control.reuseLoadedSandbox = true;
+
+    const std::uint64_t before =
+            forevervalidator::simulation::cuda::specialization::
+                    SessionModuleBuildCountForTesting();
+    const forevertas::SearchResult regular =
+            forevertas::RunSearch(request, &control);
+    const std::uint64_t afterMapLoad =
+            forevervalidator::simulation::cuda::specialization::
+                    SessionModuleBuildCountForTesting();
+
+    request.useCudaSessionSpecialization = true;
+    const forevertas::SearchResult specialized =
+            forevertas::RunSearch(request, &control);
+    const std::uint64_t afterModeSwitch =
+            forevervalidator::simulation::cuda::specialization::
+                    SessionModuleBuildCountForTesting();
+
+    const bool sameResult =
+            regular.winnerSource == specialized.winnerSource &&
+            regular.bestScore == specialized.bestScore &&
+            regular.bestEvaluationTimeMs ==
+                    specialized.bestEvaluationTimeMs &&
+            forevertas::FormatInputScript(regular.bestInputs) ==
+                    forevertas::FormatInputScript(
+                            specialized.bestInputs);
+    if (afterMapLoad != before + 1u ||
+        afterModeSwitch != afterMapLoad || !sameResult) {
+        std::cerr
+                << "CUDA kernel modes did not share one map-load "
+                   "specialization: builds="
+                << before << "/" << afterMapLoad << "/"
+                << afterModeSwitch << " same_result=" << sameResult
+                << '\n';
+        return false;
+    }
+    return true;
+}
+
 bool CheckCudaAutoPromoteAcrossBatches(
         const char *packsDirectory,
         const char *replayPath) {
@@ -473,6 +535,11 @@ bool CheckStuntTargetBackend(
     forevertas::SearchRequest request{packsDirectory, replayPath};
     request.backend = backend;
     request.baseInputCommands = parsed.commands;
+#if FOREVERVALIDATOR_HAS_CUDA
+    if (backend == forevertas::PhysicsBackend::Cuda) {
+        request.useCudaSessionSpecialization = false;
+    }
+#endif
     request.evaluationTarget = {
             forevertas::kStuntPointsEvaluationId,
             {{"targetTimeMs", "6000"}}};
@@ -984,6 +1051,7 @@ int main(int argc, char **argv) {
     try {
         if (!CheckAutoPromoteSemantics(argv[1], argv[2]) ||
 #if FOREVERVALIDATOR_HAS_CUDA
+            !CheckCudaKernelModeLifecycle(argv[1], argv[2]) ||
             !CheckCudaAutoPromoteAcrossBatches(argv[1], argv[2]) ||
 #endif
             !CheckCachedScriptIsolation(argv[1], argv[2]) ||

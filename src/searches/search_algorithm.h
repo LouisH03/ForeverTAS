@@ -137,6 +137,7 @@ struct SearchExecutionContext {
     const SearchRunControl *control = nullptr;
     std::uint32_t cudaBatchSize = 1u;
     bool calibrateCudaBatchSize = false;
+    bool useCudaSessionSpecialization = false;
     const std::vector<forevervalidator::experimental::
                               PhysicsSandboxCudaModifier>
             *cudaModifiers = nullptr;

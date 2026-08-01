@@ -39,6 +39,7 @@ struct SearchRequest {
     OptionConfiguration evaluationTarget =
             DefaultEvaluationTargetConfiguration();
     std::vector<ParsedInputCommand> baseInputCommands = {};
+    bool useCudaSessionSpecialization = true;
 };
 
 SearchResult RunSearch(

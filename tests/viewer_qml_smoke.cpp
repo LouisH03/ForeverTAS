@@ -935,6 +935,16 @@ int main(int argc, char **argv) {
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
                                             "cudaCalibrationCheckBox")));
+                    auto *const cudaSessionSpecializationSection =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "cudaSessionSpecializationSection")));
+                    QObject *const cudaSessionSpecializationSwitch =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "cudaSessionSpecializationSwitch"));
+                    QObject *const cudaSessionSpecializationWarning =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "cudaSessionSpecializationWarning"));
 #endif
                     QObject *const settingsScroll = root->findChild<QObject *>(
                             QStringLiteral("settingsScroll"));
@@ -2066,6 +2076,44 @@ int main(int argc, char **argv) {
                                     !cudaCalibrationCheckBox
                                              ->property("checked")
                                              .toBool() &&
+                                    cudaSessionSpecializationSection != nullptr &&
+                                    cudaSessionSpecializationSection->isVisible() &&
+                                    searchSection != nullptr &&
+                                    cudaSessionSpecializationSection->parentItem() ==
+                                            searchSection->parentItem() &&
+                                    cudaSessionSpecializationSection->y() >=
+                                            searchSection->y() +
+                                                    searchSection->height() &&
+                                    qobject_cast<QQuickItem *>(
+                                            startSearchButton) != nullptr &&
+                                    cudaSessionSpecializationSection->y() +
+                                                    cudaSessionSpecializationSection
+                                                            ->height() <=
+                                            qobject_cast<QQuickItem *>(
+                                                    startSearchButton)
+                                                    ->mapToItem(
+                                                            cudaSessionSpecializationSection
+                                                                    ->parentItem(),
+                                                            QPointF{})
+                                                    .y() &&
+                                    cudaSessionSpecializationSwitch != nullptr &&
+                                    cudaSessionSpecializationSwitch
+                                            ->property("checked")
+                                            .toBool() &&
+                                    cudaSessionSpecializationWarning != nullptr &&
+                                    cudaSessionSpecializationWarning
+                                            ->property("text")
+                                            .toString()
+                                            .contains(QStringLiteral("stunts")) &&
+                                    cudaSessionSpecializationWarning
+                                            ->property("text")
+                                            .toString()
+                                            .contains(QStringLiteral("respawns")) &&
+                                    cudaSessionSpecializationWarning
+                                            ->property("text")
+                                            .toString()
+                                            .contains(QStringLiteral(
+                                                    "Regular CUDA is safer")) &&
                                     ContainsText(
                                             root,
                                             QStringLiteral(
@@ -2077,6 +2125,8 @@ int main(int argc, char **argv) {
                             controller.setCudaCalibrationEnabled(true);
                             controller.setCudaParallelSampleCount(
                                     QStringLiteral("512"));
+                            controller.setCudaSessionSpecializationEnabled(
+                                    false);
                             QCoreApplication::processEvents();
                             backendSelectorValid &=
                                     cudaCalibrationCheckBox
@@ -2085,12 +2135,37 @@ int main(int argc, char **argv) {
                                     cudaParallelSampleCountField
                                                     ->property("text")
                                                     .toString() ==
-                                            QStringLiteral("512");
+                                            QStringLiteral("512") &&
+                                    !cudaSessionSpecializationSwitch
+                                             ->property("checked")
+                                             .toBool() &&
+                                    cudaSessionSpecializationWarning
+                                            ->property("text")
+                                            .toString()
+                                            .startsWith(QStringLiteral(
+                                                    "Fast mode is off."));
+                            controller.setCudaSessionSpecializationEnabled(
+                                    true);
+                            QCoreApplication::processEvents();
+                            backendSelectorValid &=
+                                    cudaSessionSpecializationSwitch
+                                            ->property("checked")
+                                            .toBool() &&
+                                    cudaSessionSpecializationWarning
+                                            ->property("text")
+                                            .toString()
+                                            .startsWith(QStringLiteral(
+                                                    "Fast mode is on."));
                         }
 #endif
                         controller.setSimulationBackendId(
                                 QStringLiteral("reference"));
                         QCoreApplication::processEvents();
+#if FOREVERVALIDATOR_HAS_CUDA
+                        backendSelectorValid &=
+                                cudaSessionSpecializationSection != nullptr &&
+                                !cudaSessionSpecializationSection->isVisible();
+#endif
                     }
                     const bool algorithmSelectorsValid =
                             searchAlgorithmCombo != nullptr &&

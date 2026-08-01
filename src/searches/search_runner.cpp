@@ -504,6 +504,7 @@ SearchResult RunLoadedSearch(
                     executionControl,
                     request.parallelSampleCount,
                     request.calibrateCudaParallelSampleCount,
+                    request.useCudaSessionSpecialization,
                     cudaModifiers.empty() ? nullptr : &cudaModifiers,
                     cudaEvaluator ? &*cudaEvaluator : nullptr});
             if (asyncImprovementSampler) {
@@ -1150,6 +1151,10 @@ SearchResult RunSearch(const SearchRequest &request,
     PhysicsSandboxOptions options;
     options.backend = ToForeverValidatorBackend(request.backend);
     options.tickDurationMs = kSearchTickDurationMs;
+#if FOREVERVALIDATOR_HAS_CUDA
+    options.prepareCudaSearchSpecialization =
+            request.backend == PhysicsBackend::Cuda;
+#endif
     if (control != nullptr && control->reuseLoadedSandbox) {
         const std::shared_ptr<CachedSearchSandbox> cached =
                 CachedSandboxFor(request);

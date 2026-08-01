@@ -4050,6 +4050,41 @@ ApplicationWindow {
                         }
                     }
 
+                    ConfigurationSection {
+                        objectName: "cudaSessionSpecializationSection"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        visible: window.controller.simulationBackendId
+                                 === "cuda"
+                        title: qsTr("CUDA fast mode")
+
+                        ThemedSwitch {
+                            objectName: "cudaSessionSpecializationSwitch"
+                            Layout.fillWidth: true
+                            text: qsTr("Use the faster CUDA kernel")
+                            checked: window.controller
+                                .cudaSessionSpecializationEnabled
+                            enabled: !window.controller.running
+                            onToggled: window.controller
+                                .cudaSessionSpecializationEnabled = checked
+                            Accessible.name: text
+                        }
+
+                        Label {
+                            objectName: "cudaSessionSpecializationWarning"
+                            Layout.fillWidth: true
+                            text: (window.controller
+                                       .cudaSessionSpecializationEnabled
+                                   ? qsTr("Fast mode is on. ")
+                                   : qsTr("Fast mode is off. "))
+                                  + qsTr("Fast mode is for normal Stadium runs. It can give wrong results or fail when the run uses stunts, respawns, car resets, or unusual map physics. Turn it off for those runs. Regular CUDA is safer, but slower.")
+                            color: AppTheme.textMuted
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
+                    }
+
                     Label {
                         Layout.fillWidth: true
                         Layout.leftMargin: 20

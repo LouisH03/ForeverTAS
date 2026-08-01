@@ -56,6 +56,10 @@ class SearchController final : public QObject {
     Q_PROPERTY(bool cudaCalibrationEnabled READ cudaCalibrationEnabled WRITE
                        setCudaCalibrationEnabled NOTIFY
                        cudaCalibrationEnabledChanged)
+    Q_PROPERTY(bool cudaSessionSpecializationEnabled READ
+                       cudaSessionSpecializationEnabled WRITE
+                       setCudaSessionSpecializationEnabled NOTIFY
+                       cudaSessionSpecializationEnabledChanged)
     Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
                        darkModeChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
@@ -121,6 +125,7 @@ public:
     QString cpuWorkerCount() const;
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
+    bool cudaSessionSpecializationEnabled() const;
     bool darkMode() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
@@ -157,6 +162,7 @@ public slots:
     void setCpuWorkerCount(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
+    void setCudaSessionSpecializationEnabled(bool value);
     void setDarkMode(bool value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
@@ -196,6 +202,7 @@ signals:
     void cpuWorkerCountChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
+    void cudaSessionSpecializationEnabledChanged();
     void darkModeChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
@@ -272,6 +279,7 @@ private:
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);
     bool cudaCalibrationEnabled_ = false;
+    bool cudaSessionSpecializationEnabled_ = true;
     bool darkMode_ = false;
     SearchConfigurationModel configuration_;
     CuboidTargetModel cuboidTargets_;

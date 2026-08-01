@@ -809,6 +809,8 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
                   "unexpected default CUDA parallel sample count");
     okay &= Check(!controller.cudaCalibrationEnabled(),
                   "CUDA calibration was unexpectedly enabled by default");
+    okay &= Check(controller.cudaSessionSpecializationEnabled(),
+                  "CUDA fast mode was not enabled by default");
     okay &= Check(controller.searchAlgorithmOptions().size() == 1,
                   "unexpected search algorithm count");
     okay &= Check(
@@ -910,6 +912,14 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     okay &= Check(!controller.canStart(),
                   "manual CUDA mode ignored its invalid sample count");
     controller.setCudaParallelSampleCount(QStringLiteral("512"));
+    controller.setCudaSessionSpecializationEnabled(false);
+    okay &= Check(!controller.cudaSessionSpecializationEnabled() &&
+                          controller.canStart(),
+                  "regular CUDA mode was not selectable");
+    controller.setCudaSessionSpecializationEnabled(true);
+    okay &= Check(controller.cudaSessionSpecializationEnabled() &&
+                          controller.canStart(),
+                  "CUDA fast mode was not selectable");
     controller.setSimulationBackendId(QStringLiteral("optimized-cpu"));
 #endif
     controller.setSimulationBackendId(QStringLiteral("missing-backend"));
@@ -1044,6 +1054,7 @@ bool TestPersistence(const QString &packsDirectory,
         controller.setCpuWorkerCount(QStringLiteral("6"));
         controller.setCudaParallelSampleCount(QStringLiteral("384"));
         controller.setCudaCalibrationEnabled(true);
+        controller.setCudaSessionSpecializationEnabled(false);
         controller.setDarkMode(true);
         controller.setSearchAlgorithmSetting(
                 QStringLiteral("autoPromoteBest"),
@@ -1080,6 +1091,8 @@ bool TestPersistence(const QString &packsDirectory,
                   "CPU worker count was not persisted");
     okay &= Check(restored.cudaCalibrationEnabled(),
                   "CUDA calibration mode was not persisted");
+    okay &= Check(!restored.cudaSessionSpecializationEnabled(),
+                  "CUDA fast mode selection was not persisted");
     okay &= Check(restored.darkMode(),
                   "dark appearance mode was not persisted");
     QSignalSpy darkModeSpy(&restored, &SearchController::darkModeChanged);
@@ -1131,6 +1144,10 @@ bool TestPersistence(const QString &packsDirectory,
                                   "backends/cuda/calibrationEnabled"))
                                   .toBool(),
                   "CUDA calibration mode was not stored canonically");
+    okay &= Check(!QSettings().value(QStringLiteral(
+                                  "backends/cuda/sessionSpecializationEnabled"))
+                                   .toBool(),
+                  "CUDA fast mode was not stored canonically");
     return okay;
 }
 
@@ -1220,17 +1237,17 @@ bool TestDescriptiveSearchStageStatuses() {
             "cuda");
     okay &= Check(
             cudaInitialization.contains(QStringLiteral("CUDA")) &&
-                    cudaInitialization.contains(
-                            QStringLiteral("GPU availability")) &&
                     cudaReplayLoad.contains(
-                            QStringLiteral("GPU availability")) &&
-                    cudaBaseline.contains(
-                            QStringLiteral("GPU availability")) &&
+                            QStringLiteral("building the optional fast CUDA")) &&
+                    cudaBaseline.contains(QStringLiteral("CUDA baseline")) &&
                     cudaCalibration.contains(
+                            QStringLiteral("CUDA throughput")) &&
+                    cudaMutations.contains(QStringLiteral("Searching on CUDA")) &&
+                    !cudaInitialization.contains(
                             QStringLiteral("GPU availability")) &&
-                    cudaMutations.contains(
+                    !cudaReplayLoad.contains(
                             QStringLiteral("GPU availability")),
-            "CUDA wait-prone stages did not explain GPU availability waits");
+            "CUDA stages did not describe the actual work clearly");
     okay &= Check(
             SearchStageStatus(
                     SearchProgressStage::FinalSamplingSetup,

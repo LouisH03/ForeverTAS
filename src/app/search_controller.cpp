@@ -32,6 +32,8 @@ constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
 constexpr char kCudaCalibrationEnabledKey[] =
         "backends/cuda/calibrationEnabled";
+constexpr char kCudaSessionSpecializationEnabledKey[] =
+        "backends/cuda/sessionSpecializationEnabled";
 constexpr char kDarkModeKey[] = "appearance/darkMode";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
@@ -199,6 +201,11 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     cudaCalibrationEnabled_ = QSettings()
             .value(QLatin1String(kCudaCalibrationEnabledKey), false)
             .toBool();
+    cudaSessionSpecializationEnabled_ = QSettings()
+            .value(QLatin1String(
+                           kCudaSessionSpecializationEnabledKey),
+                   true)
+            .toBool();
     darkMode_ =
             QSettings().value(QLatin1String(kDarkModeKey), false).toBool();
     ApplyApplicationPalette(darkMode_);
@@ -324,6 +331,10 @@ QString SearchController::cudaParallelSampleCount() const {
 
 bool SearchController::cudaCalibrationEnabled() const {
     return cudaCalibrationEnabled_;
+}
+
+bool SearchController::cudaSessionSpecializationEnabled() const {
+    return cudaSessionSpecializationEnabled_;
 }
 
 bool SearchController::darkMode() const {
@@ -529,6 +540,16 @@ void SearchController::setCudaCalibrationEnabled(bool value) {
             QLatin1String(kCudaCalibrationEnabledKey), value);
     emit cudaCalibrationEnabledChanged();
     refreshValidation();
+}
+
+void SearchController::setCudaSessionSpecializationEnabled(bool value) {
+    if (cudaSessionSpecializationEnabled_ == value) {
+        return;
+    }
+    cudaSessionSpecializationEnabled_ = value;
+    QSettings().setValue(
+            QLatin1String(kCudaSessionSpecializationEnabledKey), value);
+    emit cudaSessionSpecializationEnabledChanged();
 }
 
 void SearchController::setDarkMode(bool value) {
@@ -1101,7 +1122,8 @@ SearchController::ValidationResult SearchController::validate() const {
                     configuration.searchAlgorithm,
                     configuration.modifiers,
                     configuration.evaluationTarget,
-                    parsedBaseInputCommands_},
+                    parsedBaseInputCommands_,
+                    cudaSessionSpecializationEnabled_},
             {}};
 }
 

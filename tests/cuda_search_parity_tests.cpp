@@ -73,12 +73,14 @@ SearchResult Run(const char *packs,
                  std::optional<std::int64_t>
                          evaluationEndTimeLimitMs = std::nullopt,
                  bool *calibrationCompleted = nullptr,
-                 bool stopAfterCalibration = false) {
+                 bool stopAfterCalibration = false,
+                 bool useSessionSpecialization = true) {
     SearchRequest request{packs, replay};
     request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = backend;
     request.parallelSampleCount = batchSize;
     request.calibrateCudaParallelSampleCount = calibrate;
+    request.useCudaSessionSpecialization = useSessionSpecialization;
     request.modifiers = std::move(modifiers);
     request.evaluationTarget = std::move(evaluator);
     forevertas::SearchRunControl control;
@@ -255,6 +257,52 @@ bool CheckParity(const char *packs,
     }
     return SameAuthoritativeResult(authoritative, cuda, label) &&
             (!requireMutationWinner || mutationWinner);
+}
+
+bool CheckCudaKernelModeParity(
+        const char *packs,
+        const char *replay) {
+    OptionConfiguration modifier = DefaultModifier(
+            forevertas::kRandomSteeringModifierId);
+    modifier.settings["minTimeMs"] = "1000";
+    modifier.settings["maxTimeMs"] = "1000";
+    OptionConfiguration evaluator = DefaultEvaluator(
+            forevertas::kVelocityEvaluationId);
+    evaluator.settings["minTimeMs"] = "1020";
+    evaluator.settings["maxTimeMs"] = "1020";
+
+    const SearchResult regular = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Cuda,
+            8u,
+            8u,
+            {modifier},
+            evaluator,
+            false,
+            nullptr,
+            false,
+            std::nullopt,
+            nullptr,
+            false,
+            false);
+    const SearchResult specialized = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Cuda,
+            8u,
+            8u,
+            {modifier},
+            evaluator,
+            false,
+            nullptr,
+            false,
+            std::nullopt,
+            nullptr,
+            false,
+            true);
+    return SameAuthoritativeResult(
+            regular, specialized, "regular/specialized CUDA");
 }
 
 bool CheckCancellation(const char *packs, const char *replay) {
@@ -438,7 +486,7 @@ int main(int argc, char **argv) {
         if (preciseFinishOnly) {
             return CheckPreciseFinishParity(packs, replay) ? 0 : 1;
         }
-        bool okay = true;
+        bool okay = CheckCudaKernelModeParity(packs, replay);
         const OptionConfiguration velocity =
                 DefaultEvaluator(forevertas::kVelocityEvaluationId);
         OptionConfiguration coverageVelocity = velocity;

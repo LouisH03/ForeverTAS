@@ -102,8 +102,7 @@ QString SearchStageStatus(SearchProgressStage stage,
     case SearchProgressStage::CreatingSimulation:
         if (cuda) {
             return QStringLiteral(
-                    "Initializing CUDA simulation; waiting for GPU "
-                    "availability...");
+                    "Initializing CUDA simulation...");
         }
         if (backendId == "optimized-cpu") {
             return QStringLiteral("Initializing optimized CPU simulation...");
@@ -112,29 +111,25 @@ QString SearchStageStatus(SearchProgressStage stage,
     case SearchProgressStage::LoadingReplay:
         if (cuda) {
             return QStringLiteral(
-                    "Loading replay onto the GPU; waiting for GPU "
-                    "availability...");
+                    "Loading the map and building the optional fast CUDA "
+                    "kernel...");
         }
         return QStringLiteral("Loading replay into the simulation...");
     case SearchProgressStage::RestoringSimulation:
         if (cuda) {
             return QStringLiteral(
-                    "Restoring the prepared CUDA simulation; waiting for GPU "
-                    "availability...");
+                    "Restoring the prepared CUDA simulation...");
         }
         return QStringLiteral("Restoring the prepared simulation...");
     case SearchProgressStage::ApplyingBaselineInputs:
         if (cuda) {
             return QStringLiteral(
-                    "Applying baseline inputs to CUDA; waiting for GPU "
-                    "availability...");
+                    "Applying baseline inputs to CUDA...");
         }
         return QStringLiteral("Applying the baseline input sequence...");
     case SearchProgressStage::PreparingSearch:
         if (cuda) {
-            return QStringLiteral(
-                    "Preparing CUDA search components; waiting for GPU "
-                    "availability...");
+            return QStringLiteral("Preparing CUDA search...");
         }
         if (multiThreadedCpu) {
             return QStringLiteral(
@@ -143,19 +138,13 @@ QString SearchStageStatus(SearchProgressStage stage,
         return QStringLiteral("Preparing search components...");
     case SearchProgressStage::Baseline:
         return cuda
-                ? QStringLiteral(
-                          "Evaluating CUDA baseline; waiting for GPU "
-                          "availability...")
+                ? QStringLiteral("Evaluating CUDA baseline...")
                 : QStringLiteral("Evaluating baseline...");
     case SearchProgressStage::Calibration:
-        return QStringLiteral(
-                "Calibrating CUDA throughput; waiting for GPU "
-                "availability...");
+        return QStringLiteral("Calibrating CUDA throughput...");
     case SearchProgressStage::Mutations:
         if (cuda) {
-            return QStringLiteral(
-                    "Searching on CUDA; waiting for GPU availability "
-                    "as needed...");
+            return QStringLiteral("Searching on CUDA...");
         }
         return multiThreadedCpu
                 ? QStringLiteral(
@@ -163,9 +152,7 @@ QString SearchStageStatus(SearchProgressStage stage,
                 : QStringLiteral("Searching...");
     case SearchProgressStage::FinalSamplingSetup:
         return cuda
-                ? QStringLiteral(
-                          "Preparing final CUDA sampling; waiting for GPU "
-                          "availability...")
+                ? QStringLiteral("Preparing final best-run sampling...")
                 : QStringLiteral("Preparing final best-run sampling...");
     case SearchProgressStage::FinalSampling:
         return QStringLiteral("Sampling best run...");
@@ -212,6 +199,7 @@ void SearchWorker::run() {
     emit stageChanged(QStringLiteral("Preparing search..."), true);
 
     SearchRunControl control;
+    control.reuseLoadedSandbox = true;
     control.stopRequested = [flag = stopRequested_]() {
         return flag->load(std::memory_order_relaxed);
     };

@@ -632,6 +632,10 @@ if(BUILD_TESTING)
             tests/search_smoke.cpp)
         target_link_libraries(forevertas-search-smoke PRIVATE
             forevertas_core)
+        if(FOREVERTAS_ENABLE_CUDA)
+            target_include_directories(forevertas-search-smoke PRIVATE
+                "${forevervalidator_SOURCE_DIR}/src")
+        endif()
         if(FOREVERTAS_WARNING_OPTIONS)
             target_compile_options(forevertas-search-smoke PRIVATE
                 ${FOREVERTAS_WARNING_OPTIONS})
