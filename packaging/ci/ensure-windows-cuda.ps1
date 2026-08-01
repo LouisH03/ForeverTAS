@@ -49,7 +49,10 @@ function Test-CudaToolkit([string]$Root) {
         (Join-Path $Root "lib/x64/nvrtc.lib"),
         (Join-Path $Root "lib/x64/nvJitLink.lib")
     )
-    return ($Required | Where-Object { -not (Test-Path $_ -PathType Leaf) }).Count -eq 0
+    $Missing = @($Required | Where-Object {
+        -not (Test-Path $_ -PathType Leaf)
+    })
+    return $Missing.Count -eq 0
 }
 
 if ((Test-Path $CompleteMarker -PathType Leaf) -and (Test-CudaToolkit $CudaRoot)) {
