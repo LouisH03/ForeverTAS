@@ -204,6 +204,35 @@ BatchKey MakeBatchKey(ReplacementMaterialClass materialClass,
     return {materialClass, purpose, vertexColors, defaultVisible};
 }
 
+bool UsesRandomizedTerrainTiles(
+        ReplacementMaterialClass materialClass,
+        PhysicsSandboxScenePurpose purpose) {
+    if (materialClass != ReplacementMaterialClass::Grass &&
+        materialClass != ReplacementMaterialClass::Dirt) {
+        return false;
+    }
+    // Random rotation requires splitting triangles at every crossed texture
+    // tile. That is appropriate for track-sized ground surfaces, but scene
+    // environment meshes can span tens of kilometres and must retain their
+    // ordinary repeating world-space UVs.
+    switch (purpose) {
+    case PhysicsSandboxScenePurpose::PlacedBlock:
+    case PhysicsSandboxScenePurpose::Clip:
+    case PhysicsSandboxScenePurpose::Terrain:
+    case PhysicsSandboxScenePurpose::Generated:
+        return true;
+    case PhysicsSandboxScenePurpose::Environment:
+    case PhysicsSandboxScenePurpose::SubMobil:
+    case PhysicsSandboxScenePurpose::Helper:
+    case PhysicsSandboxScenePurpose::CheckpointTrigger:
+    case PhysicsSandboxScenePurpose::DedicatedInitialCollision:
+    case PhysicsSandboxScenePurpose::Pylon:
+    case PhysicsSandboxScenePurpose::Decoration:
+        return false;
+    }
+    return false;
+}
+
 struct DuplicateInstanceKey {
     std::uint32_t meshIndex = 0u;
     std::uint32_t materialIndex = 0u;
@@ -1073,8 +1102,7 @@ BuildStaticVisualBatches(const PhysicsSandboxRenderScene &scene) {
         if (!preparedMesh.has_value()) {
             preparedMesh.emplace(PrepareMesh(mesh));
         }
-        if (materialClass == ReplacementMaterialClass::Grass ||
-            materialClass == ReplacementMaterialClass::Dirt) {
+        if (UsesRandomizedTerrainTiles(materialClass, instance.purpose)) {
             AppendRandomizedTiledInstance(
                     accumulators[key], *preparedMesh,
                     mesh.indices, instance.worldTransform,

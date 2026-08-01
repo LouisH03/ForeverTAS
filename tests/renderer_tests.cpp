@@ -688,6 +688,82 @@ bool TestStaticBatching() {
     return okay;
 }
 
+bool TestLargeEnvironmentGrassDoesNotTessellate() {
+    constexpr float MinimumX = -20739.1f;
+    constexpr float MaximumX = 23353.9f;
+    constexpr float MinimumZ = -20733.5f;
+    constexpr float MaximumZ = 24526.8f;
+
+    PhysicsSandboxRenderMesh mesh = TriangleMesh();
+    mesh.vertices[0].position = {MinimumX, 0.0f, MinimumZ};
+    mesh.vertices[1].position = {MaximumX, 0.0f, MinimumZ};
+    mesh.vertices[2].position = {MinimumX, 0.0f, MaximumZ};
+    mesh.boundsMin = {MinimumX, 0.0f, MinimumZ};
+    mesh.boundsMax = {MaximumX, 0.0f, MaximumZ};
+
+    PhysicsSandboxRenderMaterial grass;
+    grass.surfaceMaterialId = 2u;
+
+    PhysicsSandboxRenderInstance environment;
+    environment.meshIndex = 0u;
+    environment.materialIndex = 0u;
+    environment.purpose = PhysicsSandboxScenePurpose::Environment;
+    environment.provenance.descriptorPath =
+            "Bay\\Media\\Solid\\B1C002CAC3AD9D4D908D52046B47ACECE6";
+
+    PhysicsSandboxRenderScene scene;
+    scene.meshes.push_back(std::move(mesh));
+    scene.materials.push_back(grass);
+    scene.instances.push_back(environment);
+
+    const auto result = forevertas::viewer::BuildStaticVisualBatches(scene);
+    const auto repeat = forevertas::viewer::BuildStaticVisualBatches(scene);
+    const auto batch = std::find_if(
+            result.batches.cbegin(), result.batches.cend(),
+            [](const StaticVisualBatch &entry) {
+                return entry.materialClass == ReplacementMaterialClass::Grass &&
+                       entry.purpose ==
+                               PhysicsSandboxScenePurpose::Environment;
+            });
+    const auto repeated = std::find_if(
+            repeat.batches.cbegin(), repeat.batches.cend(),
+            [](const StaticVisualBatch &entry) {
+                return entry.materialClass == ReplacementMaterialClass::Grass &&
+                       entry.purpose ==
+                               PhysicsSandboxScenePurpose::Environment;
+            });
+    if (batch == result.batches.cend()) {
+        return Check(false,
+                     "large grass-classified environment geometry was lost");
+    }
+
+    constexpr qsizetype VertexStride =
+            static_cast<qsizetype>(17u * sizeof(float));
+    const auto *vertices = reinterpret_cast<const float *>(
+            batch->vertices.constData());
+    const bool worldSpaceUvRepeats =
+            batch->vertices.size() >= 3 * VertexStride &&
+            (std::fabs(vertices[17u + 9u]) > 1.0f ||
+             std::fabs(vertices[17u + 10u]) > 1.0f ||
+             std::fabs(vertices[34u + 9u]) > 1.0f ||
+             std::fabs(vertices[34u + 10u]) > 1.0f);
+    return Check(
+            result.defaultVisibleInstanceCount == 1u &&
+                    result.defaultTriangleCount == 1u &&
+                    result.batches.size() == 1u &&
+                    batch->sourceInstanceCount == 1u &&
+                    batch->triangleCount == 1u &&
+                    batch->vertices.size() == 3 * VertexStride &&
+                    batch->indices.size() ==
+                            static_cast<qsizetype>(3u * sizeof(std::uint32_t)) &&
+                    worldSpaceUvRepeats &&
+                    repeated != repeat.batches.cend() &&
+                    batch->vertices == repeated->vertices &&
+                    batch->indices == repeated->indices,
+            "large environment scenery was subdivided into texture-tile "
+            "geometry instead of retaining one repeating-UV triangle");
+}
+
 bool TestIndexedGeometry() {
     constexpr int FloatCount = 17;
     std::array<float, FloatCount * 3> vertices{};
@@ -824,6 +900,7 @@ int main(int argc, char **argv) {
     okay &= TestReplacementParametersAndTextures();
     okay &= TestClipPlanesAndPurposeFiltering();
     okay &= TestStaticBatching();
+    okay &= TestLargeEnvironmentGrassDoesNotTessellate();
     okay &= TestIndexedGeometry();
     okay &= TestRayTracingShaders();
     return okay ? 0 : 1;
