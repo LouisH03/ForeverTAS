@@ -85,10 +85,6 @@ try {
             if ($Dependency -match "^(api-ms-win-|ext-ms-win-)") {
                 continue
             }
-            if ($Dependency -ieq "nvcuda.dll") {
-                continue
-            }
-
             $BesideApplication = Join-Path $ApplicationDirectory $Dependency
             $BesideBinary = Join-Path $Binary.Directory.FullName $Dependency
             $InSystemDirectory = Join-Path $SystemDirectory $Dependency
@@ -107,14 +103,6 @@ try {
     if ($MissingDependencies.Count -ne 0) {
         $Details = ($MissingDependencies | Sort-Object) -join "`n  "
         throw "The portable tree has unresolved DLL dependencies:`n  $Details"
-    }
-
-    $DriverAvailable = Test-Path `
-        (Join-Path $SystemDirectory "nvcuda.dll") -PathType Leaf
-    if (-not $DriverAvailable) {
-        Write-Host `
-            "Portable ZIP dependency closure passed; QML startup skipped because the host NVIDIA driver is unavailable."
-        return
     }
 
     $env:PATH = "$SystemDirectory;$env:SystemRoot"

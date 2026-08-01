@@ -191,43 +191,45 @@ fi
     --plugin qt \
     --output appimage
 
-if [[ "${FOREVERTAS_FORCE_DRIVERLESS_SMOKE:-0}" != "1" ]] &&
-   ldconfig -p 2>/dev/null | grep -q 'libcuda\.so\.1'; then
-    QT_QPA_PLATFORM=offscreen \
-    QSG_RHI_BACKEND=software \
-    APPIMAGE_EXTRACT_AND_RUN=1 \
-        "${output}" --qml-smoke-test
-else
-    smoke_root="$(mktemp -d)"
-    trap 'rm -rf "${smoke_root}"' EXIT
-    (
-        cd "${smoke_root}"
-        "${output}" --appimage-extract >/dev/null
-    )
-    extracted_appdir="${smoke_root}/squashfs-root"
-    test -x "${extracted_appdir}/usr/bin/ForeverTAS"
+smoke_root="$(mktemp -d)"
+trap 'rm -rf "${smoke_root}"' EXIT
+(
+    cd "${smoke_root}"
+    "${output}" --appimage-extract >/dev/null
+)
+extracted_appdir="${smoke_root}/squashfs-root"
+test -x "${extracted_appdir}/usr/bin/ForeverTAS"
 
-    if find "${extracted_appdir}" \
-            \( -type f -o -type l \) \
-            -name 'libcuda.so*' -print -quit | grep -q .; then
-        echo "AppImage must not bundle the host NVIDIA driver." >&2
-        exit 1
-    fi
-
-    unexpected_missing_libraries="$(
-        ldd "${extracted_appdir}/usr/bin/ForeverTAS" |
-            awk '/not found/ && $1 != "libcuda.so.1" { print $1 }' |
-            sort -u
-    )"
-    if [[ -n "${unexpected_missing_libraries}" ]]; then
-        echo "Unexpected missing AppImage libraries:" >&2
-        printf '%s\n' "${unexpected_missing_libraries}" >&2
-        exit 1
-    fi
-    echo "Validated driverless AppImage; libcuda.so.1 remains host-provided."
-    rm -rf "${smoke_root}"
-    trap - EXIT
+if find "${extracted_appdir}" \
+        \( -type f -o -type l \) \
+        -name 'libcuda.so*' -print -quit | grep -q .; then
+    echo "AppImage must not bundle the host NVIDIA driver." >&2
+    exit 1
 fi
+if readelf -d "${extracted_appdir}/usr/bin/ForeverTAS" |
+        grep -Eq 'NEEDED.*libcuda\.so'; then
+    echo "ForeverTAS must not require the NVIDIA driver at process startup." >&2
+    exit 1
+fi
+
+unexpected_missing_libraries="$(
+    ldd "${extracted_appdir}/usr/bin/ForeverTAS" |
+        awk '/not found/ { print $1 }' |
+        sort -u
+)"
+if [[ -n "${unexpected_missing_libraries}" ]]; then
+    echo "Unexpected missing AppImage libraries:" >&2
+    printf '%s\n' "${unexpected_missing_libraries}" >&2
+    exit 1
+fi
+
+QT_QPA_PLATFORM=offscreen \
+QSG_RHI_BACKEND=software \
+APPIMAGE_EXTRACT_AND_RUN=1 \
+    "${output}" --qml-smoke-test
+echo "Validated AppImage startup without requiring an NVIDIA driver."
+rm -rf "${smoke_root}"
+trap - EXIT
 
 (
     cd "${dist_dir}"

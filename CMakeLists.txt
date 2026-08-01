@@ -68,7 +68,7 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG f56eafbf6a2d79cb6158b4bd1f6a95a14c15fb71
+    GIT_TAG 1873e388babd4204875c6a64f0895d45d5c30f43
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
@@ -239,10 +239,10 @@ file(GLOB_RECURSE FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES
     "${forevervalidator_SOURCE_DIR}/src/validation/planning/*.cpp"
     "${forevervalidator_SOURCE_DIR}/src/platform/native/*.cpp")
 # The debugger executes the reference/native engine and deliberately does not
-# link the CUDA driver. Session specialization is a CUDA host-side facility,
-# not part of the editable reference simulation path.
+# link CUDA. Driver dispatch and session specialization are CUDA host-side
+# facilities, not part of the editable reference simulation path.
 list(FILTER FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES EXCLUDE REGEX
-    "/src/simulation/backends/cuda/cuda_session_specialization\.cpp$")
+    "/src/simulation/backends/cuda/(cuda_driver_shim|cuda_session_specialization)\.cpp$")
 add_executable(forevertas-simulation-debug-worker
     src/debugger/simulation_debug_worker.cpp
     ${FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES})
