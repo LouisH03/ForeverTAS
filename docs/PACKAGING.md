@@ -126,7 +126,9 @@ assembles CUDA from pinned, checksummed NVIDIA redistributable archives, so no
 administrator-only installer is required. It keeps that toolkit, vcpkg
 binaries, sccache data, and the validated CUDA search object on the runner
 between jobs. The Windows ZIP is checked for dependency closure and launched in
-QML smoke-test mode before it is uploaded.
+QML smoke-test mode before it is uploaded. CUDA 12.8 is invoked with NVIDIA's
+host-version override on runners newer than Visual Studio 2022; the full build
+and portable smoke test remain the compatibility check.
 
 ## Settings and writable data
 

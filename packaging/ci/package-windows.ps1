@@ -56,6 +56,7 @@ $CompilerIdentity = @(
     "architectures=$env:CUDA_ARCHITECTURES"
     "architecture_key=$env:CUDA_ARCHITECTURE_KEY"
     "split_compile_jobs=$SplitCompileJobs"
+    "cuda_host_compatibility=allow-unsupported-compiler"
     "validator=$ActualValidatorCommit"
     (& clang-cl --version | Out-String)
     $env:VCToolsVersion
@@ -98,6 +99,7 @@ try {
         "-DCMAKE_CUDA_ARCHITECTURES=$env:CUDA_ARCHITECTURES" `
         "-DCMAKE_CUDA_COMPILER=$CudaCompiler" `
         "-DCMAKE_CUDA_HOST_COMPILER=cl.exe" `
+        "-DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler" `
         -DCMAKE_CXX_COMPILER=clang-cl `
         "-DCMAKE_CUDA_COMPILER_LAUNCHER=$Python;$Launcher;$env:SCCACHE_PATH" `
         "-DCMAKE_CXX_COMPILER_LAUNCHER=$env:SCCACHE_PATH" `
@@ -148,6 +150,7 @@ try {
             "cuda=$env:CUDA_VERSION"
             "architectures=$env:CUDA_ARCHITECTURES"
             "split_compile_jobs=$SplitCompileJobs"
+            "cuda_host_compatibility=allow-unsupported-compiler"
             "validator=$ActualValidatorCommit"
         ) | Set-Content (Join-Path $TemporaryDirectory "metadata.txt")
         Move-Item $TemporaryDirectory $SearchCacheDirectory
