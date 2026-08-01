@@ -333,6 +333,8 @@ public slots:
     Q_INVOKABLE bool trajectoryVisibleForRun(const QString &runId) const;
     Q_INVOKABLE void setTrajectoryVisibleForRun(const QString &runId,
                                                 bool visible);
+    Q_INVOKABLE bool hasPreviewTrajectories() const;
+    Q_INVOKABLE void clearPreviewTrajectories();
     Q_INVOKABLE void loadMap(const QString &packsDirectory,
                             const QString &replayPath);
     Q_INVOKABLE void loadMap(const QString &packsDirectory,

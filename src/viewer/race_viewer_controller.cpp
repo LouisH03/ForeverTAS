@@ -3023,6 +3023,52 @@ void RaceViewerController::setTrajectoryVisibleForRun(
     emit trajectoriesChanged();
 }
 
+
+bool RaceViewerController::hasPreviewTrajectories() const {
+    return !pendingImprovements_.empty() ||
+            !trajectoryGeometries_.empty() ||
+            std::any_of(
+                    trajectoryPaths_.begin(),
+                    trajectoryPaths_.end(),
+                    [](const QVariant &entry) {
+                        return entry.toMap()
+                                       .value(QStringLiteral("kind"))
+                                       .toString() ==
+                                QStringLiteral("improvement");
+                    });
+}
+
+void RaceViewerController::clearPreviewTrajectories() {
+    if (!hasPreviewTrajectories()) {
+        return;
+    }
+
+    QVariantList paths = trajectoryPaths_;
+    paths.erase(
+            std::remove_if(
+                    paths.begin(),
+                    paths.end(),
+                    [](const QVariant &entry) {
+                        return entry.toMap()
+                                       .value(QStringLiteral("kind"))
+                                       .toString() ==
+                                QStringLiteral("improvement");
+                    }),
+            paths.end());
+    const bool pathsChanged = paths.size() != trajectoryPaths_.size();
+    trajectoryPaths_ = std::move(paths);
+
+    std::vector<std::unique_ptr<RaceGeometry>>().swap(
+            trajectoryGeometries_);
+    std::vector<QString>().swap(trajectoryKeys_);
+    std::vector<PendingImprovement>().swap(pendingImprovements_);
+
+    if (pathsChanged) {
+        emit trajectoriesChanged();
+    }
+    setStatusText(QStringLiteral("Preview trajectories cleared"));
+}
+
 void RaceViewerController::scheduleInputPreviewRebuild() {
     if (!loaded_ || manualRuntime_ == nullptr || manualDriving_) {
         return;

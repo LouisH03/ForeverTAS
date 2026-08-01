@@ -3006,6 +3006,31 @@ ApplicationWindow {
                                 }
                             }
 
+
+                            ThemedButton {
+                                id: clearPreviewTrajectoriesButton
+                                objectName: "clearPreviewTrajectoriesButton"
+                                Layout.preferredWidth:
+                                    raceViewerHeader.width < 650 ? 82 : 104
+                                Layout.alignment: Qt.AlignVCenter
+                                visible: window.viewer.selectedRunId === "best"
+                                enabled: {
+                                    const paths = window.viewer.trajectoryPaths
+                                    return visible
+                                        && window.viewer
+                                            .hasPreviewTrajectories()
+                                        && !window.viewer.manualDriving
+                                }
+                                text: qsTr("Clear previews")
+                                font.pixelSize: 10
+                                onClicked:
+                                    window.viewer.clearPreviewTrajectories()
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr(
+                                    "Remove all search preview trajectories")
+                            }
+
                             StyledComboBox {
                                 id: renderModeSelector
                                 objectName: "renderModeSelector"

@@ -836,6 +836,10 @@ int main(int argc, char **argv) {
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(QStringLiteral(
                                             "trajectoryVisibilityToggle")));
+                    auto *const clearPreviewTrajectoriesButton =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "clearPreviewTrajectoriesButton")));
                     auto *const resetViewButton =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(
@@ -4374,6 +4378,8 @@ int main(int argc, char **argv) {
                                             .value(QStringLiteral("name"))
                                             .toString() ==
                                     QStringLiteral("Inputs") &&
+                            clearPreviewTrajectoriesButton != nullptr &&
+                            !clearPreviewTrajectoriesButton->isVisible() &&
                             trajectoryModels.size() == 1 &&
                             rayTracingTrajectoryModels.size() == 1 &&
                             rayTracingTrajectoryOverlay != nullptr &&
@@ -4591,6 +4597,102 @@ int main(int argc, char **argv) {
                                             .toMap()
                                             .value(QStringLiteral("opacity"))
                                             .toDouble() > 0.95;
+                    const QObject *const inputTrajectoryGeometry =
+                            improvementPaths.at(0)
+                                    .toMap()
+                                    .value(QStringLiteral("geometry"))
+                                    .value<QObject *>();
+                    const bool clearButtonReady =
+                            clearPreviewTrajectoriesButton != nullptr &&
+                            clearPreviewTrajectoriesButton->isVisible() &&
+                            clearPreviewTrajectoriesButton
+                                    ->property("enabled").toBool() &&
+                            clearPreviewTrajectoriesButton
+                                    ->property("text").toString() ==
+                                    QStringLiteral("Clear previews") &&
+                            viewer.hasPreviewTrajectories();
+                    const bool firstClearInvoked =
+                            clearButtonReady &&
+                            QMetaObject::invokeMethod(
+                                    clearPreviewTrajectoriesButton,
+                                    "clicked");
+                    QCoreApplication::processEvents();
+                    QCoreApplication::sendPostedEvents(
+                            nullptr, QEvent::DeferredDelete);
+                    QCoreApplication::processEvents();
+                    const QVariantList firstClearedPaths =
+                            viewer.trajectoryPaths();
+                    const bool firstClearRemovedPreviews =
+                            firstClearInvoked &&
+                            viewer.selectedRunId() ==
+                                    QStringLiteral("best") &&
+                            viewer.trajectoryCount() == 2 &&
+                            !viewer.hasPreviewTrajectories() &&
+                            firstClearedPaths.size() == 2 &&
+                            firstClearedPaths.at(0)
+                                            .toMap()
+                                            .value(QStringLiteral("kind"))
+                                            .toString() ==
+                                    QStringLiteral("preview") &&
+                            firstClearedPaths.at(0)
+                                            .toMap()
+                                            .value(QStringLiteral("geometry"))
+                                            .value<QObject *>() ==
+                                    inputTrajectoryGeometry &&
+                            firstClearedPaths.at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("runId"))
+                                            .toString() ==
+                                    QStringLiteral("best") &&
+                            firstClearedPaths.at(1)
+                                            .toMap()
+                                            .value(QStringLiteral("geometry"))
+                                            .value<QObject *>() ==
+                                    bestTrajectoryGeometry &&
+                            clearPreviewTrajectoriesButton->isVisible() &&
+                            !clearPreviewTrajectoriesButton
+                                     ->property("enabled").toBool();
+                    viewer.addSearchImprovement(
+                            QString::fromLocal8Bit(argv[1]),
+                            QString::fromLocal8Bit(argv[2]),
+                            firstImprovement,
+                            QStringLiteral("optimized-cpu"),
+                            9u,
+                            1u);
+                    QCoreApplication::processEvents();
+                    const bool clearedKeyWasReleased =
+                            viewer.hasPreviewTrajectories() &&
+                            viewer.trajectoryCount() == 3 &&
+                            clearPreviewTrajectoriesButton
+                                    ->property("enabled").toBool();
+                    const bool secondClearInvoked =
+                            QMetaObject::invokeMethod(
+                                    clearPreviewTrajectoriesButton,
+                                    "clicked");
+                    QCoreApplication::processEvents();
+                    QCoreApplication::sendPostedEvents(
+                            nullptr, QEvent::DeferredDelete);
+                    QCoreApplication::processEvents();
+                    const QVariantList finalClearedPaths =
+                            viewer.trajectoryPaths();
+                    const bool clearPreviewTrajectoriesUiValid =
+                            improvementTrajectoryUiValid &&
+                            firstClearRemovedPreviews &&
+                            clearedKeyWasReleased &&
+                            secondClearInvoked &&
+                            viewer.trajectoryCount() == 2 &&
+                            !viewer.hasPreviewTrajectories() &&
+                            finalClearedPaths.size() == 2 &&
+                            std::none_of(
+                                    finalClearedPaths.begin(),
+                                    finalClearedPaths.end(),
+                                    [](const QVariant &entry) {
+                                        return entry.toMap()
+                                                       .value(QStringLiteral(
+                                                               "kind"))
+                                                       .toString() ==
+                                                QStringLiteral("improvement");
+                                    });
                     viewer.jumpToStart();
                     QCoreApplication::processEvents();
                     auto *const checkpointSplitOverlay =
@@ -4757,6 +4859,7 @@ int main(int argc, char **argv) {
                              rayTracingTrajectoryOverlay,
                              trajectoryPreviewUiValid,
                              improvementTrajectoryUiValid,
+                             clearPreviewTrajectoriesUiValid,
                              checkpointSplitOverlayUiValid]() {
                                 QCoreApplication::sendPostedEvents(
                                         nullptr, QEvent::DeferredDelete);
@@ -6577,6 +6680,7 @@ int main(int argc, char **argv) {
                                                         loadedSceneThemeInvariant &&
                                                         trajectoryPreviewUiValid &&
                                                         improvementTrajectoryUiValid &&
+                                                        clearPreviewTrajectoriesUiValid &&
                                                         checkpointSplitOverlayUiValid &&
                                                         allTrajectoryModelsRendered &&
                                                         copyCurrentRaceInputsValid &&
@@ -6626,6 +6730,8 @@ int main(int argc, char **argv) {
                                             << viewer.trajectoryCount()
                                             << "/"
                                             << improvementTrajectoryUiValid
+                                            << "/clear="
+                                            << clearPreviewTrajectoriesUiValid
                                             << "/splits="
                                             << checkpointSplitOverlayUiValid
                                             << "/"
