@@ -91,6 +91,10 @@ def source_state(manifest: dict, validator_root: Path) -> dict:
         raise SystemExit("ForeverTAS CMake version does not match the manifest")
     if state["forevervalidator"] != manifest["sources"]["forevervalidator"]["commit"]:
         raise SystemExit("ForeverValidator checkout does not match the manifest commit")
+    validator_tag = manifest["sources"]["forevervalidator"]["tag"]
+    validator_tag_target = git("rev-parse", f"{validator_tag}^{{}}", cwd=validator_root)
+    if validator_tag_target != state["forevervalidator"]:
+        raise SystemExit("ForeverValidator tag does not point at the manifest commit")
     return state
 
 
