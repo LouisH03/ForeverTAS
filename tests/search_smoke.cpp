@@ -233,6 +233,11 @@ bool CheckCudaKernelModeLifecycle(
     const std::uint64_t afterModeSwitch =
             forevervalidator::simulation::cuda::specialization::
                     SessionModuleBuildCountForTesting();
+    const forevertas::SearchResult specializedAgain =
+            forevertas::RunSearch(request, &control);
+    const std::uint64_t afterSpecializedReuse =
+            forevervalidator::simulation::cuda::specialization::
+                    SessionModuleBuildCountForTesting();
 
     const bool sameResult =
             regular.winnerSource == specialized.winnerSource &&
@@ -241,15 +246,17 @@ bool CheckCudaKernelModeLifecycle(
                     specialized.bestEvaluationTimeMs &&
             forevertas::FormatInputScript(regular.bestInputs) ==
                     forevertas::FormatInputScript(
-                            specialized.bestInputs);
-    if (afterMapLoad != before + 1u ||
-        afterModeSwitch != afterMapLoad || !sameResult) {
+                            specialized.bestInputs) &&
+            specialized.bestScore == specializedAgain.bestScore;
+    if (afterMapLoad != before ||
+        afterModeSwitch != before + 1u ||
+        afterSpecializedReuse != afterModeSwitch || !sameResult) {
         std::cerr
-                << "CUDA kernel modes did not share one map-load "
-                   "specialization: builds="
+                << "CUDA fast mode did not skip or reuse specialization "
+                   "correctly: builds="
                 << before << "/" << afterMapLoad << "/"
-                << afterModeSwitch << " same_result=" << sameResult
-                << '\n';
+                << afterModeSwitch << "/" << afterSpecializedReuse
+                << " same_result=" << sameResult << '\n';
         return false;
     }
     return true;

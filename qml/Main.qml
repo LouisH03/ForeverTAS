@@ -4076,8 +4076,8 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             text: (window.controller
                                        .cudaSessionSpecializationEnabled
-                                   ? qsTr("Fast mode is on. ")
-                                   : qsTr("Fast mode is off. "))
+                                   ? qsTr("Fast mode is on. Its kernel is built once for this map. ")
+                                   : qsTr("Fast mode is off. Its kernel will not be built. "))
                                   + qsTr("Fast mode is for normal Stadium runs. It can give wrong results or fail when the run uses stunts, respawns, car resets, or unusual map physics. Turn it off for those runs. Regular CUDA is safer, but slower.")
                             color: AppTheme.textMuted
                             wrapMode: Text.WordWrap

@@ -1153,7 +1153,8 @@ SearchResult RunSearch(const SearchRequest &request,
     options.tickDurationMs = kSearchTickDurationMs;
 #if FOREVERVALIDATOR_HAS_CUDA
     options.prepareCudaSearchSpecialization =
-            request.backend == PhysicsBackend::Cuda;
+            request.backend == PhysicsBackend::Cuda &&
+            request.useCudaSessionSpecialization;
 #endif
     if (control != nullptr && control->reuseLoadedSandbox) {
         const std::shared_ptr<CachedSearchSandbox> cached =

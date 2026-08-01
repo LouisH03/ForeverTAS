@@ -14,7 +14,8 @@
 namespace forevertas::app {
 
 QString SearchStageStatus(SearchProgressStage stage,
-                          std::string_view backendId);
+                          std::string_view backendId,
+                          bool useCudaSessionSpecialization = false);
 bool TryBeginSearchIteration(
         const std::shared_ptr<std::atomic<SearchIterationPhase>> &phase);
 bool TryCancelBeforeSearchIteration(

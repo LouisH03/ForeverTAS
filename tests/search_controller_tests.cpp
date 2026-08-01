@@ -1223,9 +1223,14 @@ bool TestDescriptiveSearchStageStatuses() {
     const QString cudaInitialization = SearchStageStatus(
             SearchProgressStage::CreatingSimulation,
             "cuda");
-    const QString cudaReplayLoad = SearchStageStatus(
+    const QString cudaReplayLoadRegular = SearchStageStatus(
             SearchProgressStage::LoadingReplay,
-            "cuda");
+            "cuda",
+            false);
+    const QString cudaReplayLoadFast = SearchStageStatus(
+            SearchProgressStage::LoadingReplay,
+            "cuda",
+            true);
     const QString cudaBaseline = SearchStageStatus(
             SearchProgressStage::Baseline,
             "cuda");
@@ -1237,15 +1242,19 @@ bool TestDescriptiveSearchStageStatuses() {
             "cuda");
     okay &= Check(
             cudaInitialization.contains(QStringLiteral("CUDA")) &&
-                    cudaReplayLoad.contains(
-                            QStringLiteral("building the optional fast CUDA")) &&
+                    cudaReplayLoadRegular ==
+                            QStringLiteral("Loading the map onto CUDA...") &&
+                    cudaReplayLoadFast.contains(
+                            QStringLiteral("building the fast CUDA kernel")) &&
                     cudaBaseline.contains(QStringLiteral("CUDA baseline")) &&
                     cudaCalibration.contains(
                             QStringLiteral("CUDA throughput")) &&
                     cudaMutations.contains(QStringLiteral("Searching on CUDA")) &&
                     !cudaInitialization.contains(
                             QStringLiteral("GPU availability")) &&
-                    !cudaReplayLoad.contains(
+                    !cudaReplayLoadRegular.contains(
+                            QStringLiteral("building")) &&
+                    !cudaReplayLoadRegular.contains(
                             QStringLiteral("GPU availability")),
             "CUDA stages did not describe the actual work clearly");
     okay &= Check(

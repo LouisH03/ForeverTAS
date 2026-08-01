@@ -90,7 +90,8 @@ QString FilePathFromUtf8(const std::string &path) {
 }  // namespace
 
 QString SearchStageStatus(SearchProgressStage stage,
-                          std::string_view backendId) {
+                          std::string_view backendId,
+                          bool useCudaSessionSpecialization) {
     const bool cuda = backendId == "cuda";
     const bool multiThreadedCpu =
             backendId == "multi-threaded-cpu";
@@ -110,9 +111,11 @@ QString SearchStageStatus(SearchProgressStage stage,
         return QStringLiteral("Initializing reference simulation...");
     case SearchProgressStage::LoadingReplay:
         if (cuda) {
-            return QStringLiteral(
-                    "Loading the map and building the optional fast CUDA "
-                    "kernel...");
+            return useCudaSessionSpecialization
+                    ? QStringLiteral(
+                              "Loading the map and building the fast CUDA "
+                              "kernel...")
+                    : QStringLiteral("Loading the map onto CUDA...");
         }
         return QStringLiteral("Loading replay into the simulation...");
     case SearchProgressStage::RestoringSimulation:
@@ -129,7 +132,9 @@ QString SearchStageStatus(SearchProgressStage stage,
         return QStringLiteral("Applying the baseline input sequence...");
     case SearchProgressStage::PreparingSearch:
         if (cuda) {
-            return QStringLiteral("Preparing CUDA search...");
+            return useCudaSessionSpecialization
+                    ? QStringLiteral("Preparing fast CUDA search...")
+                    : QStringLiteral("Preparing regular CUDA search...");
         }
         if (multiThreadedCpu) {
             return QStringLiteral(
@@ -232,7 +237,9 @@ void SearchWorker::run() {
         }
         emit stageChanged(
                 SearchStageStatus(
-                        progress.stage, PhysicsBackendId(request_.backend)),
+                        progress.stage,
+                        PhysicsBackendId(request_.backend),
+                        request_.useCudaSessionSpecialization),
                 true);
     };
     control.cudaBatchSizeChanged = [this](std::uint32_t batchSize) {
