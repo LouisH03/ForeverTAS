@@ -186,6 +186,7 @@ fi
     --appdir "${appdir}" \
     --desktop-file "${appdir}/usr/share/applications/dev.skycrafter.forevertas.desktop" \
     --icon-file "${appdir}/usr/share/icons/hicolor/256x256/apps/dev.skycrafter.forevertas.png" \
+    --exclude-library 'libcuda.so*' \
     --executable "${appdir}/usr/bin/ForeverTAS" \
     --plugin qt \
     --output appimage
