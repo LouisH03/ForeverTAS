@@ -99,12 +99,33 @@ portable layout.
 
 ## GitHub Actions
 
-`.github/workflows/package.yml` runs CPU verification on GitHub-hosted runners.
-For trusted pushes, version tags, and manual dispatches, it builds the Linux
-bundle on the `forevertas-linux` self-hosted runner inside an Ubuntu 22.04
-container, then uploads the AppImage and its checksum. Pull requests never run
-on the self-hosted machine. Windows packaging remains available through the
-local PowerShell script but is not currently part of the Actions matrix.
+`.github/workflows/package.yml` runs CPU verification on GitHub-hosted runners
+for pushes and pull requests. Packaging runs only for version tags and manual
+dispatches, so ordinary changes and untrusted pull requests never reach either
+self-hosted runner. Linux and Windows packaging jobs run in parallel.
+
+The Linux runner builds or reuses a content-addressed toolchain image from
+`packaging/ci/linux-toolchain.Dockerfile`. The image pins Ubuntu 22.04, CUDA
+12.8, Qt 6.9.3, CMake, and sccache instead of reinstalling them for every job.
+Prebuild the current image on the runner with:
+
+```sh
+./packaging/ci/ensure-linux-toolchain.sh
+```
+
+The package job mounts a runner-local cache below
+`$RUNNER_TOOL_CACHE/forevertas`. sccache persistently stores the regular C++
+and CUDA compilations there. The large CUDA search translation unit bypasses
+sccache and is stored as a separately keyed object only after `cuobjdump`
+confirms every required cubin and PTX image. Cache keys include the toolchain,
+compiler, complete architecture list, split-compile setting, and pinned
+ForeverValidator source.
+
+The Windows runner uses the same architecture and split-compile invariants.
+It keeps vcpkg binaries, sccache data, the installed CUDA toolkit, and the
+validated CUDA search object on the runner between jobs. The Windows ZIP is
+checked for dependency closure and launched in QML smoke-test mode before it is
+uploaded.
 
 ## Settings and writable data
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Route oversized CUDA compilation around sccache.
+"""Route the explicitly object-cached CUDA search build around sccache.
 
 CMake invokes this as:
     python cuda_compiler_launcher.py <sccache> <nvcc> <nvcc args...>
 
-The general search executor can produce an object large enough to terminate the
-Windows sccache server. Compile that one object directly while retaining cache
-coverage for the smaller CUDA translation units and the compact LTO IR image.
+The general search executor is cached as a complete validated object because it
+is unusually expensive and large. Compile that object directly while retaining
+sccache coverage for smaller CUDA translation units and the compact LTO image.
 """
 
 from __future__ import annotations
