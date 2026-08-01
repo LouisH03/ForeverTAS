@@ -458,7 +458,7 @@ if(WIN32)
             "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/cudart64_*.dll")
         file(GLOB forevertas_nvrtc_runtime_dlls
             LIST_DIRECTORIES FALSE
-            "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/nvrtc64_*.dll")
+            "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/nvrtc64_[0-9]*.dll")
         file(GLOB forevertas_nvrtc_builtins_runtime_dlls
             LIST_DIRECTORIES FALSE
             "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/nvrtc-builtins64_*.dll")
