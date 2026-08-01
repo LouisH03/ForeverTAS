@@ -15,7 +15,11 @@ split_compile_jobs="${FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS:-4}"
 : "${FOREVERVALIDATOR_COMMIT:?FOREVERVALIDATOR_COMMIT is required}"
 : "${FOREVERTAS_TOOLCHAIN_IMAGE:?FOREVERTAS_TOOLCHAIN_IMAGE is required}"
 
-actual_validator_commit="$(git -C "${validator_root}" rev-parse HEAD)"
+if [[ -d "${validator_root}/.git" ]]; then
+    actual_validator_commit="$(git -C "${validator_root}" rev-parse HEAD)"
+else
+    actual_validator_commit="$(<"${validator_root}/.release-source-commit")"
+fi
 if [[ "${actual_validator_commit}" != "${FOREVERVALIDATOR_COMMIT}" ]]; then
     echo "ForeverValidator checkout does not match the pinned commit" >&2
     exit 1

@@ -23,8 +23,15 @@ foreach ($Name in @(
     }
 }
 
-$ActualValidatorCommit = (git -C $ValidatorRoot rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $ActualValidatorCommit -ne $env:FOREVERVALIDATOR_COMMIT) {
+$ValidatorMarker = Join-Path $ValidatorRoot ".release-source-commit"
+if (Test-Path (Join-Path $ValidatorRoot ".git")) {
+    $ActualValidatorCommit = (git -C $ValidatorRoot rev-parse HEAD).Trim()
+} elseif (Test-Path $ValidatorMarker) {
+    $ActualValidatorCommit = (Get-Content $ValidatorMarker -Raw).Trim()
+} else {
+    throw "ForeverValidator source commit marker is missing"
+}
+if ($ActualValidatorCommit -ne $env:FOREVERVALIDATOR_COMMIT) {
     throw "ForeverValidator checkout does not match the pinned commit"
 }
 

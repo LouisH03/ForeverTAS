@@ -128,6 +128,12 @@ def prepare_tree(manifest: dict, validator_root: Path, state: dict, destination:
         state["forevervalidator"],
         destination / ".dependencies" / "ForeverValidator",
     )
+    (destination / ".release-source-commit").write_text(
+        state["forevertas"] + "\n", encoding="ascii"
+    )
+    (destination / ".dependencies" / "ForeverValidator" / ".release-source-commit").write_text(
+        state["forevervalidator"] + "\n", encoding="ascii"
+    )
 
 
 def verify_artifacts(manifest: dict, dist: Path) -> None:
