@@ -55,7 +55,32 @@ function Test-CudaToolkit([string]$Root) {
     return $Missing.Count -eq 0
 }
 
-if ((Test-Path $CompleteMarker -PathType Leaf) -and (Test-CudaToolkit $CudaRoot)) {
+function Get-CudaTreeHash([string]$Root) {
+    $Prefix = $Root.TrimEnd('\') + '\'
+    $Lines = @(Get-ChildItem $Root -Recurse -File |
+        Where-Object { $_.FullName -ne $CompleteMarker } |
+        Sort-Object FullName |
+        ForEach-Object {
+            $Relative = $_.FullName.Substring($Prefix.Length).Replace('\', '/')
+            "$Relative $((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant())"
+        })
+    $Sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $Bytes = [Text.Encoding]::UTF8.GetBytes(($Lines -join "`n"))
+        return ([BitConverter]::ToString($Sha256.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $Sha256.Dispose()
+    }
+}
+
+$CachedToolkitValid = (Test-Path $CompleteMarker -PathType Leaf) -and
+    (Test-CudaToolkit $CudaRoot)
+if ($CachedToolkitValid) {
+    $ExpectedMarker = "$env:CUDA_VERSION`n$(Get-CudaTreeHash $CudaRoot)"
+    $CachedToolkitValid = (Get-Content $CompleteMarker -Raw).Trim() -eq $ExpectedMarker
+}
+
+if ($CachedToolkitValid) {
     Write-Host "Reusing portable CUDA toolkit $CudaRoot"
 } else {
     if (Test-Path $CudaRoot) {
@@ -100,7 +125,8 @@ if ((Test-Path $CompleteMarker -PathType Leaf) -and (Test-CudaToolkit $CudaRoot)
         $env:CUDA_PATH = $StagingRoot
         & (Join-Path $StagingRoot "bin/nvcc.exe") --version
         if ($LASTEXITCODE -ne 0) { throw "Portable nvcc failed to execute" }
-        Set-Content -NoNewline (Join-Path $StagingRoot ".complete") $env:CUDA_VERSION
+        $TreeHash = Get-CudaTreeHash $StagingRoot
+        Set-Content -NoNewline (Join-Path $StagingRoot ".complete") "$env:CUDA_VERSION`n$TreeHash"
         Move-Item $StagingRoot $CudaRoot
         Write-Host "Installed portable CUDA toolkit $CudaRoot"
     } finally {

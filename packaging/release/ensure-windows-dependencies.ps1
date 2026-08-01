@@ -27,9 +27,14 @@ git -C $VcpkgRoot checkout --detach --force $env:VCPKG_COMMIT
 if ($LASTEXITCODE -ne 0) { throw "Failed to check out pinned vcpkg commit" }
 
 $Vcpkg = Join-Path $VcpkgRoot "vcpkg.exe"
-if (-not (Test-Path $Vcpkg)) {
+$VcpkgMarker = Join-Path $VcpkgRoot ".forevertas-bootstrap-commit"
+$BootstrapCurrent = (Test-Path $Vcpkg) -and (Test-Path $VcpkgMarker) -and
+    ((Get-Content $VcpkgMarker -Raw).Trim() -eq $env:VCPKG_COMMIT)
+if (-not $BootstrapCurrent) {
+    Remove-Item $Vcpkg -Force -ErrorAction SilentlyContinue
     & (Join-Path $VcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
     if ($LASTEXITCODE -ne 0) { throw "Failed to bootstrap vcpkg" }
+    Set-Content -NoNewline $VcpkgMarker $env:VCPKG_COMMIT
 }
 
 $env:VCPKG_BINARY_SOURCES = "clear;files,$BinaryCache,readwrite"
