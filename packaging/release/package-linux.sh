@@ -13,6 +13,7 @@ split_compile_jobs="${FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS:-4}"
 : "${CUDA_ARCHITECTURES:?CUDA_ARCHITECTURES is required}"
 : "${CUDA_ARCHITECTURE_KEY:?CUDA_ARCHITECTURE_KEY is required}"
 : "${FOREVERVALIDATOR_COMMIT:?FOREVERVALIDATOR_COMMIT is required}"
+: "${FOREVERTAS_VERSION:?FOREVERTAS_VERSION is required}"
 : "${FOREVERTAS_TOOLCHAIN_IMAGE:?FOREVERTAS_TOOLCHAIN_IMAGE is required}"
 
 if [[ -d "${validator_root}/.git" ]]; then
@@ -24,6 +25,11 @@ if [[ "${actual_validator_commit}" != "${FOREVERVALIDATOR_COMMIT}" ]]; then
     echo "ForeverValidator checkout does not match the pinned commit" >&2
     exit 1
 fi
+actual_tas_commit="$(<"${repo_root}/.release-source-commit")"
+[[ "${actual_tas_commit}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "ForeverTAS source commit marker is invalid" >&2
+    exit 1
+}
 
 export SCCACHE_DIR="${cache_root}/sccache"
 export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-50G}"
@@ -169,12 +175,17 @@ done
 
 final_binary="${build_dir}/ForeverTAS"
 verify_architectures "${final_binary}"
-cat > "${dist_dir}/cuda-fatbinary-linux.json" <<'JSON'
+cat > "${dist_dir}/cuda-fatbinary-linux.json" <<JSON
 {
   "cuda": "12.8.1",
   "cubin_architectures": [50, 52, 61, 70, 75, 86, 89, 120],
   "ptx_architecture": 120,
   "split_compile_jobs": 4,
-  "scope": "all CUDA objects and final ForeverTAS ELF"
+  "scope": "all CUDA objects and final ForeverTAS ELF",
+  "resolved_sources": {
+    "forevertas": "${actual_tas_commit}",
+    "forevervalidator": "${actual_validator_commit}",
+    "version": "${FOREVERTAS_VERSION}"
+  }
 }
 JSON

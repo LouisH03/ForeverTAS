@@ -27,6 +27,8 @@ Thumbs.db
 .env.*
 *.local
 /aqtinstall.log
+__pycache__/
+*.py[cod]
 
 # Profiling, benchmarks, and experimental output
 *.benchmark

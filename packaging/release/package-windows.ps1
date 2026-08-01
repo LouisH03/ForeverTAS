@@ -13,6 +13,7 @@ foreach ($Name in @(
     "CUDA_ARCHITECTURES",
     "CUDA_ARCHITECTURE_KEY",
     "FOREVERVALIDATOR_COMMIT",
+    "FOREVERTAS_VERSION",
     "FOREVERTAS_WINDOWS_SEARCH_CACHE",
     "SCCACHE_PATH",
     "VCPKG_INSTALLATION_ROOT",
@@ -34,6 +35,10 @@ if (Test-Path (Join-Path $ValidatorRoot ".git")) {
 if ($ActualValidatorCommit -ne $env:FOREVERVALIDATOR_COMMIT) {
     throw "ForeverValidator checkout does not match the pinned commit"
 }
+$TasMarker = Join-Path $RepoRoot ".release-source-commit"
+if (-not (Test-Path $TasMarker)) { throw "ForeverTAS source commit marker is missing" }
+$ActualTasCommit = (Get-Content $TasMarker -Raw).Trim()
+if ($ActualTasCommit -notmatch '^[0-9a-f]{40}$') { throw "ForeverTAS source commit marker is invalid" }
 
 function Get-TextHash([string]$Text) {
     $Sha256 = [Security.Cryptography.SHA256]::Create()
@@ -209,6 +214,11 @@ try {
         ptx_architecture = 120
         split_compile_jobs = 4
         scope = "all CUDA objects and final ForeverTAS.exe"
+        resolved_sources = [ordered]@{
+            forevertas = $ActualTasCommit
+            forevervalidator = $ActualValidatorCommit
+            version = $env:FOREVERTAS_VERSION
+        }
     } | ConvertTo-Json | Set-Content `
         (Join-Path $DistDirectory "cuda-fatbinary-windows.json")
 } finally {

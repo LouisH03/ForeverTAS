@@ -141,6 +141,22 @@ def prepare_tree(manifest: dict, validator_root: Path, state: dict, destination:
 
 
 def verify_artifacts(manifest: dict, dist: Path) -> None:
+    lock_path = dist / "release-lock.json"
+    if not lock_path.is_file():
+        raise SystemExit("missing release source lock")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if lock.get("schema") != 1 or lock.get("manifest") != manifest:
+        raise SystemExit("release source lock does not match the manifest")
+    resolved = lock.get("resolved_sources", {})
+    if resolved.get("version") != manifest["release"]["version"]:
+        raise SystemExit("release source lock has the wrong ForeverTAS version")
+    if resolved.get("forevervalidator") != manifest["sources"]["forevervalidator"]["commit"]:
+        raise SystemExit("release source lock has the wrong ForeverValidator commit")
+    tas_commit = resolved.get("forevertas", "")
+    if len(tas_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in tas_commit
+    ):
+        raise SystemExit("release source lock has an invalid ForeverTAS commit")
     expected = [manifest["artifacts"]["linux"], manifest["artifacts"]["windows"]]
     for name in expected:
         artifact = dist / name
@@ -168,6 +184,8 @@ def verify_artifacts(manifest: dict, dist: Path) -> None:
             raise SystemExit(f"incomplete {platform} CUDA cubin set")
         if data["ptx_architecture"] != manifest["cuda"]["ptx_architecture"]:
             raise SystemExit(f"incorrect {platform} CUDA PTX fallback")
+        if data.get("resolved_sources") != resolved:
+            raise SystemExit(f"{platform} package was not built from the locked sources")
     print("PASS release checksums, archive structure, and CUDA fatbinary evidence")
 
 
@@ -185,6 +203,7 @@ def command_linux(args: argparse.Namespace, manifest: dict) -> None:
     require_clean(REPO_ROOT)
     require_clean(validator_root)
     state = source_state(manifest, validator_root)
+    write_lock(args.manifest, manifest, state, Path(args.lock).resolve())
     tree = Path(args.work).resolve() / "linux-source"
     prepare_tree(manifest, validator_root, state, tree)
     command = [str(tree / "packaging/release/build-linux-local.sh"), str(args.manifest.resolve())]
@@ -206,6 +225,7 @@ def command_windows(args: argparse.Namespace, manifest: dict) -> None:
     require_clean(REPO_ROOT)
     require_clean(validator_root)
     state = source_state(manifest, validator_root)
+    write_lock(args.manifest, manifest, state, Path(args.lock).resolve())
     local_tree = Path(args.work).resolve() / "windows-source"
     prepare_tree(manifest, validator_root, state, local_tree)
     host = manifest["toolchains"]["windows"]["host"]

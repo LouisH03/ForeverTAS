@@ -9,6 +9,7 @@ eval "$(python3 - "${manifest}" <<'PY'
 import json, shlex, sys
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 values = {
+    "FOREVERTAS_VERSION": m["release"]["version"],
     "CUDA_VERSION": m["cuda"]["version"],
     "CUDA_ARCHITECTURES": m["cuda"]["cmake_architectures"],
     "CUDA_ARCHITECTURE_KEY": m["cuda"]["architecture_key"],
@@ -36,6 +37,7 @@ docker run --rm --init \
     --env CUDA_ARCHITECTURE_KEY \
     --env FOREVERVALIDATOR_COMMIT \
     --env FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS \
+    --env FOREVERTAS_VERSION \
     --env FOREVERTAS_TOOLCHAIN_IMAGE="${toolchain_image}" \
     --env SCCACHE_CACHE_SIZE=50G \
     --volume "${repo_root}:/workspace" \

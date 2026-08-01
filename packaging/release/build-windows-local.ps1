@@ -19,6 +19,7 @@ if ($Release.cuda.version -ne "12.8.1" -or
 
 . C:\Tools\Enter-BuildEnv.ps1
 $env:CUDA_VERSION = $Release.cuda.version
+$env:FOREVERTAS_VERSION = $Release.release.version
 $env:CUDA_ARCHITECTURES = $Release.cuda.cmake_architectures
 $env:CUDA_ARCHITECTURE_KEY = $Release.cuda.architecture_key
 $env:FOREVERVALIDATOR_COMMIT = $Release.sources.forevervalidator.commit
