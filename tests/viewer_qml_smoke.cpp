@@ -898,6 +898,15 @@ int main(int argc, char **argv) {
                     QObject *const focusObjectButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("focusObjectButton"));
+                    auto *const cameraPositionTelemetry =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(
+                                            QStringLiteral(
+                                                    "cameraPositionTelemetry")));
+                    QObject *const cameraPositionTelemetryText =
+                            root->findChild<QObject *>(
+                                    QStringLiteral(
+                                            "cameraPositionTelemetryText"));
                     QObject *const stepBackward = root->findChild<QObject *>(
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
@@ -1314,6 +1323,9 @@ int main(int argc, char **argv) {
                             viewport != nullptr &&
                             cameraFocusToolbar != nullptr &&
                             cameraFocusToolbar->isVisible() &&
+                            cameraPositionTelemetry != nullptr &&
+                            cameraPositionTelemetry->isVisible() &&
+                            cameraPositionTelemetryText != nullptr &&
                             freeCameraButton != nullptr &&
                             focusCarButton != nullptr &&
                             nearCameraButton != nullptr &&
@@ -1343,6 +1355,26 @@ int main(int argc, char **argv) {
                                             ->property("implicitWidth")
                                             .toDouble() &&
                             !focusObjectButton->property("enabled").toBool();
+                    const auto cameraTelemetryText = [](QVector3D position) {
+                        const auto coordinate = [](float value) {
+                            const double normalized =
+                                    std::abs(value) < 0.005f ? 0.0 : value;
+                            return QString::number(normalized, 'f', 2);
+                        };
+                        return QStringLiteral("X %1   Y %2   Z %3")
+                                .arg(coordinate(position.x()),
+                                     coordinate(position.y()),
+                                     coordinate(position.z()));
+                    };
+                    freeCameraUiValid &=
+                            viewCamera != nullptr &&
+                            cameraPositionTelemetryText != nullptr &&
+                            cameraPositionTelemetryText->property("text")
+                                            .toString() ==
+                                    cameraTelemetryText(
+                                            viewCamera
+                                                    ->property("scenePosition")
+                                                    .value<QVector3D>());
                     if (!freeCameraUiValid) {
                         std::cerr
                                 << "camera UI initial state: loaded="
@@ -1429,6 +1461,11 @@ int main(int argc, char **argv) {
                                  freePositionBeforeLook)
                                                 .lengthSquared() <
                                         0.0001f &&
+                                cameraPositionTelemetryText
+                                                ->property("text")
+                                                .toString() ==
+                                        cameraTelemetryText(
+                                                freePositionBeforeLook) &&
                                 (viewport->property("cameraTarget")
                                          .value<QVector3D>() -
                                  freeTargetBeforeLook)

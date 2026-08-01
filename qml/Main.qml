@@ -501,6 +501,16 @@ ApplicationWindow {
                     property bool freeCamera: false
                     property vector3d freeCameraPosition:
                         Qt.vector3d(0, 0, 0)
+                    function formatCameraCoordinate(value) {
+                        const normalized = Math.abs(value) < 0.005 ? 0 : value
+                        return Number(normalized).toFixed(2)
+                    }
+                    readonly property string cameraPositionText:
+                        "X " + formatCameraCoordinate(viewCamera.scenePosition.x)
+                        + "   Y "
+                        + formatCameraCoordinate(viewCamera.scenePosition.y)
+                        + "   Z "
+                        + formatCameraCoordinate(viewCamera.scenePosition.z)
                     readonly property bool carCameraActive:
                         !freeCamera && !cuboidFocused
                         && window.viewer.carCameraAvailable
@@ -2798,6 +2808,35 @@ ApplicationWindow {
                                 ToolTip.delay: 350
                                 ToolTip.text: qsTr("Focus selected target")
                             }
+                        }
+                    }
+
+                    Rectangle {
+                        id: cameraPositionTelemetry
+                        objectName: "cameraPositionTelemetry"
+                        anchors.top: cameraFocusToolbar.bottom
+                        anchors.topMargin: 6
+                        anchors.right: cameraFocusToolbar.right
+                        z: 3
+                        width: cameraPositionTelemetryText.implicitWidth + 20
+                        height: 30
+                        radius: 6
+                        color: AppTheme.viewerOverlay
+                        border.width: 1
+                        border.color: AppTheme.viewerOverlayBorder
+                        visible: window.viewer.loaded
+                                 && !viewport.exportingWhiteboardImage
+
+                        Label {
+                            id: cameraPositionTelemetryText
+                            objectName: "cameraPositionTelemetryText"
+                            anchors.centerIn: parent
+                            text: viewport.cameraPositionText
+                            color: AppTheme.viewerOverlayText
+                            font.pixelSize: 12
+                            font.family: "monospace"
+                            Accessible.name: qsTr("Camera position")
+                            Accessible.description: text
                         }
                     }
 
