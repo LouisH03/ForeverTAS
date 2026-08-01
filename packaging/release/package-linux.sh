@@ -171,11 +171,17 @@ if [[ ${#cuda_objects[@]} -eq 0 ]]; then
     exit 1
 fi
 for object in "${cuda_objects[@]}"; do
-    verify_architectures "${object}"
+    if ! verify_architectures "${object}"; then
+        echo "CUDA architecture validation failed: ${object}" >&2
+        exit 1
+    fi
 done
 
-final_binary="${build_dir}/ForeverTAS"
-verify_architectures "${final_binary}"
+final_binary="${build_dir}/bin/ForeverTAS"
+if ! verify_architectures "${final_binary}"; then
+    echo "Final ForeverTAS ELF CUDA architecture validation failed" >&2
+    exit 1
+fi
 cat > "${dist_dir}/cuda-fatbinary-linux.json" <<JSON
 {
   "cuda": "12.8.1",

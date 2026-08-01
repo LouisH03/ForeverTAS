@@ -188,7 +188,7 @@ try {
             throw "CUDA architecture validation failed: $($CudaObject.FullName)"
         }
     }
-    $FinalExecutable = Join-Path $BuildDirectory "ForeverTAS.exe"
+    $FinalExecutable = Join-Path $BuildDirectory "bin/ForeverTAS.exe"
     if (-not (Test-CudaArchitectures $FinalExecutable)) {
         throw "Final ForeverTAS.exe CUDA architecture validation failed"
     }
