@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Build, verify, and stage a ForeverTAS release on local machines."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import zipfile
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
+DEFAULT_MANIFEST = SCRIPT_DIR / "manifest.json"
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
+) -> str:
+    print("+ " + shlex.join(command), flush=True)
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        text=True,
+        check=True,
+        env=env,
+        stdout=subprocess.PIPE if capture else None,
+    )
+    return result.stdout.strip() if capture else ""
+
+
+def git(*args: str, cwd: Path = REPO_ROOT) -> str:
+    return run(["git", "-C", str(cwd), *args], capture=True)
+
+
+def load_manifest(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    if manifest.get("schema") != 1:
+        raise SystemExit("unsupported release manifest schema")
+    cuda = manifest["cuda"]
+    expected = "50-real;52-real;61-real;70-real;75-real;86-real;89-real;120-real;120-virtual"
+    if cuda["version"] != "12.8.1" or cuda["cmake_architectures"] != expected:
+        raise SystemExit("manifest changed the pinned CUDA release or architecture floor")
+    if cuda["split_compile_jobs"] != 4:
+        raise SystemExit("manifest changed the validated CUDA split-compile value")
+    if manifest["release"]["tag"] != f"v{manifest['release']['version']}":
+        raise SystemExit("release tag and version do not match")
+    return manifest
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def source_state(manifest: dict, validator_root: Path) -> dict:
+    tas_version = next(
+        line.split("VERSION", 1)[1].split()[0]
+        for line in (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("VERSION")
+    )
+    validator_cmake = (validator_root / "CMakeLists.txt").read_text(encoding="utf-8")
+    expected_validator_version = manifest["sources"]["forevervalidator"]["version"]
+    if f"project(ForeverValidator VERSION {expected_validator_version}" not in validator_cmake:
+        raise SystemExit("ForeverValidator CMake version does not match the manifest")
+    validator_vcpkg = json.loads((validator_root / "vcpkg.json").read_text(encoding="utf-8"))
+    if validator_vcpkg["version-string"] != expected_validator_version:
+        raise SystemExit("ForeverValidator vcpkg and CMake versions do not match")
+    state = {
+        "forevertas": git("rev-parse", "HEAD"),
+        "forevervalidator": git("rev-parse", "HEAD", cwd=validator_root),
+        "version": tas_version,
+    }
+    if state["version"] != manifest["release"]["version"]:
+        raise SystemExit("ForeverTAS CMake version does not match the manifest")
+    if state["forevervalidator"] != manifest["sources"]["forevervalidator"]["commit"]:
+        raise SystemExit("ForeverValidator checkout does not match the manifest commit")
+    return state
+
+
+def require_clean(root: Path) -> None:
+    status = git("status", "--porcelain=v1", "--untracked-files=all", cwd=root)
+    if status:
+        raise SystemExit(f"release source is not clean: {root}\n{status}")
+
+
+def write_lock(manifest_path: Path, manifest: dict, state: dict, output: Path) -> None:
+    lock = {
+        "schema": 1,
+        "manifest_sha256": sha256(manifest_path),
+        "manifest": manifest,
+        "resolved_sources": state,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def export_source(root: Path, commit: str, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(suffix=".tar") as archive:
+        run(["git", "-C", str(root), "archive", "--format=tar", "-o", archive.name, commit])
+        with tarfile.open(archive.name) as stream:
+            stream.extractall(destination, filter="data")
+
+
+def prepare_tree(manifest: dict, validator_root: Path, state: dict, destination: Path) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
+    export_source(REPO_ROOT, state["forevertas"], destination)
+    export_source(
+        validator_root,
+        state["forevervalidator"],
+        destination / ".dependencies" / "ForeverValidator",
+    )
+
+
+def verify_artifacts(manifest: dict, dist: Path) -> None:
+    expected = [manifest["artifacts"]["linux"], manifest["artifacts"]["windows"]]
+    for name in expected:
+        artifact = dist / name
+        checksum = Path(str(artifact) + ".sha256")
+        if not artifact.is_file() or not checksum.is_file():
+            raise SystemExit(f"missing release artifact or checksum: {name}")
+        recorded = checksum.read_text(encoding="utf-8").split()[0].lower()
+        actual = sha256(artifact)
+        if recorded != actual:
+            raise SystemExit(f"checksum mismatch: {name}")
+        if artifact.suffix == ".zip":
+            with zipfile.ZipFile(artifact) as bundle:
+                names = bundle.namelist()
+                if not any(name.endswith("/ForeverTAS.exe") for name in names):
+                    raise SystemExit("Windows bundle does not contain ForeverTAS.exe")
+                if any(name.startswith("/") or ".." in Path(name).parts for name in names):
+                    raise SystemExit("unsafe path in Windows bundle")
+        else:
+            if artifact.stat().st_mode & 0o111 == 0:
+                raise SystemExit("Linux AppImage is not executable")
+    for platform in ("linux", "windows"):
+        evidence = dist / f"cuda-fatbinary-{platform}.json"
+        data = json.loads(evidence.read_text(encoding="utf-8"))
+        if data["cubin_architectures"] != manifest["cuda"]["architectures"]:
+            raise SystemExit(f"incomplete {platform} CUDA cubin set")
+        if data["ptx_architecture"] != manifest["cuda"]["ptx_architecture"]:
+            raise SystemExit(f"incorrect {platform} CUDA PTX fallback")
+    print("PASS release checksums, archive structure, and CUDA fatbinary evidence")
+
+
+def command_check(args: argparse.Namespace, manifest: dict) -> None:
+    validator_root = Path(args.validator).resolve()
+    require_clean(REPO_ROOT)
+    require_clean(validator_root)
+    state = source_state(manifest, validator_root)
+    write_lock(args.manifest, manifest, state, Path(args.lock).resolve())
+    print(json.dumps(state, indent=2))
+
+
+def command_linux(args: argparse.Namespace, manifest: dict) -> None:
+    validator_root = Path(args.validator).resolve()
+    require_clean(REPO_ROOT)
+    require_clean(validator_root)
+    state = source_state(manifest, validator_root)
+    tree = Path(args.work).resolve() / "linux-source"
+    prepare_tree(manifest, validator_root, state, tree)
+    command = [str(tree / "packaging/release/build-linux-local.sh"), str(args.manifest.resolve())]
+    if args.cold:
+        command.append("--cold")
+    environment = os.environ.copy()
+    environment["FOREVERTAS_RELEASE_CACHE"] = str(
+        REPO_ROOT / manifest["cache"]["linux"]
+    )
+    run(command, cwd=tree, env=environment)
+    dist = Path(args.dist).resolve()
+    dist.mkdir(parents=True, exist_ok=True)
+    for item in (tree / "dist").iterdir():
+        shutil.copy2(item, dist / item.name)
+
+
+def command_windows(args: argparse.Namespace, manifest: dict) -> None:
+    validator_root = Path(args.validator).resolve()
+    require_clean(REPO_ROOT)
+    require_clean(validator_root)
+    state = source_state(manifest, validator_root)
+    local_tree = Path(args.work).resolve() / "windows-source"
+    prepare_tree(manifest, validator_root, state, local_tree)
+    host = manifest["toolchains"]["windows"]["host"]
+    remote = "C:/src/forevertas-release"
+    run(["ssh", host, f"Remove-Item -Recurse -Force '{remote}' -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force '{remote}' | Out-Null"])
+    run(["scp", "-r", str(local_tree) + "/.", f"{host}:{remote}/"])
+    cold = " -Cold" if args.cold else ""
+    run(["ssh", host, f"& '{remote}/packaging/release/build-windows-local.ps1' -Manifest '{remote}/packaging/release/manifest.json'{cold}"])
+    dist = Path(args.dist).resolve()
+    dist.mkdir(parents=True, exist_ok=True)
+    run(["scp", f"{host}:{remote}/dist/*", str(dist) + "/"])
+
+
+def command_draft(args: argparse.Namespace, manifest: dict) -> None:
+    tag = manifest["release"]["tag"]
+    repository = manifest["release"]["repository"]
+    target = git("rev-list", "-n", "1", tag)
+    if target != git("rev-parse", "HEAD"):
+        raise SystemExit("release tag does not point at the built commit")
+    verify_artifacts(manifest, Path(args.dist).resolve())
+    assets = [str(path) for path in sorted(Path(args.dist).resolve().iterdir())]
+    run(["gh", "release", "create", tag, "--repo", repository, "--draft", "--verify-tag", "--generate-notes", *assets])
+
+
+def command_publish(args: argparse.Namespace, manifest: dict) -> None:
+    if args.confirm != manifest["release"]["tag"]:
+        raise SystemExit("publish requires --confirm with the exact release tag")
+    tag = manifest["release"]["tag"]
+    repository = manifest["release"]["repository"]
+    with tempfile.TemporaryDirectory() as temporary:
+        run(["gh", "release", "download", tag, "--repo", repository, "--dir", temporary])
+        verify_artifacts(manifest, Path(temporary))
+    run(["gh", "release", "edit", tag, "--repo", repository, "--draft=false"])
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--validator", default=str(REPO_ROOT.parent / "ForeverValidator"))
+    parser.add_argument("--work", default=str(REPO_ROOT / ".release-work"))
+    parser.add_argument("--dist", default=str(REPO_ROOT / "dist/release"))
+    parser.add_argument("--lock", default=str(REPO_ROOT / "dist/release/release-lock.json"))
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("check")
+    for name in ("linux", "windows"):
+        build = subparsers.add_parser(name)
+        build.add_argument("--cold", action="store_true")
+    subparsers.add_parser("verify")
+    subparsers.add_parser("draft")
+    publish = subparsers.add_parser("publish")
+    publish.add_argument("--confirm", required=True)
+    args = parser.parse_args()
+    args.manifest = args.manifest.resolve()
+    manifest = load_manifest(args.manifest)
+    if args.command == "check":
+        command_check(args, manifest)
+    elif args.command == "linux":
+        command_linux(args, manifest)
+    elif args.command == "windows":
+        command_windows(args, manifest)
+    elif args.command == "verify":
+        verify_artifacts(manifest, Path(args.dist).resolve())
+    elif args.command == "draft":
+        command_draft(args, manifest)
+    else:
+        command_publish(args, manifest)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,14 +1,14 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ([string]::IsNullOrWhiteSpace($env:RUNNER_TOOL_CACHE)) {
-    throw "RUNNER_TOOL_CACHE is required"
+if ([string]::IsNullOrWhiteSpace($env:FOREVERTAS_CACHE_ROOT)) {
+    throw "FOREVERTAS_CACHE_ROOT is required"
 }
 if ($env:CUDA_VERSION -ne "12.8.1") {
     throw "The portable CUDA manifest is pinned to CUDA 12.8.1"
 }
 
-$CacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "forevertas/cuda"
+$CacheRoot = Join-Path $env:FOREVERTAS_CACHE_ROOT "cuda"
 $CudaRoot = Join-Path $CacheRoot $env:CUDA_VERSION
 $DownloadRoot = Join-Path $CacheRoot "downloads/$env:CUDA_VERSION"
 $CompleteMarker = Join-Path $CudaRoot ".complete"
@@ -108,8 +108,8 @@ if ((Test-Path $CompleteMarker -PathType Leaf) -and (Test-CudaToolkit $CudaRoot)
     }
 }
 
-"CUDA_PATH=$CudaRoot" >> $env:GITHUB_ENV
-"CUDA_PATH_V12_8=$CudaRoot" >> $env:GITHUB_ENV
-"$CudaRoot\bin" >> $env:GITHUB_PATH
+$env:CUDA_PATH = $CudaRoot
+$env:CUDA_PATH_V12_8 = $CudaRoot
+$env:Path = "$CudaRoot\bin;$env:Path"
 & (Join-Path $CudaRoot "bin/nvcc.exe") --version
 if ($LASTEXITCODE -ne 0) { throw "Portable nvcc validation failed" }

@@ -97,38 +97,34 @@ installer or registry write is required to launch it.
 Code signing is recommended for public downloads but remains separate from the
 portable layout.
 
-## GitHub Actions
+## Reproducible local release builds
 
-`.github/workflows/package.yml` runs CPU verification on GitHub-hosted runners
-for pushes and pull requests. Packaging runs only for version tags and manual
-dispatches, so ordinary changes and untrusted pull requests never reach either
-self-hosted runner. Linux and Windows packaging jobs run in parallel.
+`packaging/release/local-release.py` reads `packaging/release/manifest.json`
+and coordinates exact-source Linux and Windows builds. Run the two platform
+builds sequentially so they do not compete for host CPU and memory.
 
-The Linux runner builds or reuses a content-addressed toolchain image from
-`packaging/ci/linux-toolchain.Dockerfile`. The image pins Ubuntu 22.04, CUDA
+The Linux build reuses a content-addressed toolchain image from
+`packaging/release/linux-toolchain.Dockerfile`. The image pins Ubuntu 22.04, CUDA
 12.8, Qt 6.9.3, CMake, and sccache instead of reinstalling them for every job.
-Prebuild the current image on the runner with:
+Prebuild the current image with:
 
 ```sh
-./packaging/ci/ensure-linux-toolchain.sh
+./packaging/release/ensure-linux-toolchain.sh
 ```
 
-The package job mounts a runner-local cache below
-`$RUNNER_TOOL_CACHE/forevertas`. sccache persistently stores the regular C++
-and CUDA compilations there. The large CUDA search translation unit bypasses
-sccache and is stored as a separately keyed object only after `cuobjdump`
-confirms every required cubin and PTX image. Cache keys include the toolchain,
-compiler, complete architecture list, split-compile setting, and pinned
-ForeverValidator source.
+The release cache stays under `.release-cache/`. sccache persistently stores
+regular C++ and CUDA compilations. The large CUDA search translation unit is
+stored separately only after `cuobjdump` confirms every required cubin and PTX
+image. Cache keys include the toolchain, compiler, complete architecture list,
+split-compile setting, and pinned ForeverValidator source.
 
-The Windows runner uses the same architecture and split-compile invariants. It
+The Windows VM uses the same architecture and split-compile invariants. It
 assembles CUDA from pinned, checksummed NVIDIA redistributable archives, so no
 administrator-only installer is required. It keeps that toolkit, vcpkg
-binaries, sccache data, and the validated CUDA search object on the runner
-between jobs. The Windows ZIP is checked for dependency closure and launched in
-QML smoke-test mode before it is uploaded. CUDA 12.8 is invoked with NVIDIA's
-host-version override on runners newer than Visual Studio 2022; the full build
-and portable smoke test remain the compatibility check.
+binaries, sccache data, and the validated CUDA search object between builds.
+The Windows ZIP is checked for dependency closure and launched in QML smoke
+mode. CUDA 12.8 uses NVIDIA's host-version override with the VM's current Visual
+Studio 2022 toolset; the full build and portable smoke test are the check.
 
 ## Settings and writable data
 

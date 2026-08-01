@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-dockerfile="${repo_root}/packaging/ci/linux-toolchain.Dockerfile"
-context="${repo_root}/packaging/ci"
+dockerfile="${repo_root}/packaging/release/linux-toolchain.Dockerfile"
+context="${repo_root}/packaging/release"
 dockerfile_hash="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
 image="forevertas-linux-toolchain:${dockerfile_hash:0:16}"
 

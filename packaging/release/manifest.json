@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "release": {
+    "product": "ForeverTAS",
+    "version": "0.2.1",
+    "tag": "v0.2.1",
+    "repository": "Skycrafter-dev/ForeverTAS"
+  },
+  "sources": {
+    "forevertas": {
+      "ref": "HEAD"
+    },
+    "forevervalidator": {
+      "repository": "https://github.com/Skycrafter-dev/ForeverValidator.git",
+      "commit": "1873e388babd4204875c6a64f0895d45d5c30f43",
+      "version": "0.2.0",
+      "tag": "v0.2.0"
+    }
+  },
+  "cuda": {
+    "version": "12.8.1",
+    "architectures": [50, 52, 61, 70, 75, 86, 89, 120],
+    "ptx_architecture": 120,
+    "cmake_architectures": "50-real;52-real;61-real;70-real;75-real;86-real;89-real;120-real;120-virtual",
+    "architecture_key": "sm50-sm52-sm61-sm70-sm75-sm86-sm89-sm120-ptx120",
+    "split_compile_jobs": 4
+  },
+  "toolchains": {
+    "linux": {
+      "base": "ubuntu-22.04",
+      "qt": "6.9.3",
+      "cmake": "4.4.0",
+      "sccache": "0.17.0"
+    },
+    "windows": {
+      "host": "builder@192.168.122.50",
+      "qt": "6.11.1",
+      "cmake": "4.4.0",
+      "ninja": "1.13.0",
+      "sccache": "0.17.0",
+      "vcpkg_commit": "39344dff01c5a5a0134caf2624cdd492f05d30ea"
+    }
+  },
+  "cache": {
+    "linux": ".release-cache/linux",
+    "windows": "C:\\release-cache\\forevertas"
+  },
+  "artifacts": {
+    "linux": "ForeverTAS-0.2.1-linux-x86_64.AppImage",
+    "windows": "ForeverTAS-0.2.1-windows-x86_64.zip"
+  }
+}

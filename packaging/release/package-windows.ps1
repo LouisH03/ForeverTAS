@@ -3,9 +3,9 @@ Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $ValidatorRoot = Join-Path $RepoRoot ".dependencies/ForeverValidator"
-$BuildDirectory = Join-Path $RepoRoot "build/ci"
+$BuildDirectory = Join-Path $RepoRoot "build/release"
 $DistDirectory = Join-Path $RepoRoot "dist"
-$SplitCompileJobs = "4"
+$SplitCompileJobs = $env:FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS
 
 foreach ($Name in @(
     "CUDA_PATH",
@@ -88,7 +88,7 @@ try {
     }
 
     $Python = (Get-Command python -ErrorAction Stop).Source
-    $Launcher = Join-Path $RepoRoot "packaging/ci/cuda_compiler_launcher.py"
+    $Launcher = Join-Path $RepoRoot "packaging/release/cuda_compiler_launcher.py"
     $CudaCompiler = Join-Path $env:CUDA_PATH "bin/nvcc.exe"
     $VcpkgToolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT "scripts/buildsystems/vcpkg.cmake"
     $RuntimeDirectory = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed/x64-windows/bin"
@@ -165,6 +165,22 @@ try {
     & "$env:CUDA_PATH\bin\cuobjdump.exe" --list-ptx $CachedSearchObject |
         Tee-Object (Join-Path $BuildDirectory "cuda-ptx-images.txt")
 
+    $CudaObjects = @(Get-ChildItem `
+        (Join-Path $BuildDirectory "_deps/forevervalidator-build") `
+        -Recurse -File | Where-Object { $_.Name -like "*.cu.obj" })
+    if ($CudaObjects.Count -eq 0) {
+        throw "No Windows CUDA objects were produced"
+    }
+    foreach ($CudaObject in $CudaObjects) {
+        if (-not (Test-CudaArchitectures $CudaObject.FullName)) {
+            throw "CUDA architecture validation failed: $($CudaObject.FullName)"
+        }
+    }
+    $FinalExecutable = Join-Path $BuildDirectory "ForeverTAS.exe"
+    if (-not (Test-CudaArchitectures $FinalExecutable)) {
+        throw "Final ForeverTAS.exe CUDA architecture validation failed"
+    }
+
     cpack --config (Join-Path $BuildDirectory "CPackConfig.cmake") `
         -C Release -G ZIP -B $DistDirectory
     if ($LASTEXITCODE -ne 0) { throw "CPack failed" }
@@ -179,6 +195,15 @@ try {
         Set-Content -NoNewline "$($Artifact.FullName).sha256"
     & (Join-Path $RepoRoot "packaging/windows/test-portable.ps1") `
         -Archive $Artifact.FullName
+
+    [ordered]@{
+        cuda = "12.8.1"
+        cubin_architectures = @(50, 52, 61, 70, 75, 86, 89, 120)
+        ptx_architecture = 120
+        split_compile_jobs = 4
+        scope = "all CUDA objects and final ForeverTAS.exe"
+    } | ConvertTo-Json | Set-Content `
+        (Join-Path $DistDirectory "cuda-fatbinary-windows.json")
 } finally {
     & $env:SCCACHE_PATH --show-stats
     & $env:SCCACHE_PATH --stop-server

@@ -2,6 +2,8 @@
 /build/
 /out/
 /dist/
+/.release-cache/
+/.release-work/
 /cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
@@ -24,6 +26,7 @@ Thumbs.db
 .env
 .env.*
 *.local
+/aqtinstall.log
 
 # Profiling, benchmarks, and experimental output
 *.benchmark

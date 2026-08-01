@@ -1,14 +1,14 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ([string]::IsNullOrWhiteSpace($env:RUNNER_TOOL_CACHE)) {
-    throw "RUNNER_TOOL_CACHE is required"
+if ([string]::IsNullOrWhiteSpace($env:FOREVERTAS_CACHE_ROOT)) {
+    throw "FOREVERTAS_CACHE_ROOT is required"
 }
 if ([string]::IsNullOrWhiteSpace($env:VCPKG_COMMIT)) {
     throw "VCPKG_COMMIT is required"
 }
 
-$CacheRoot = Join-Path $env:RUNNER_TOOL_CACHE "forevertas"
+$CacheRoot = $env:FOREVERTAS_CACHE_ROOT
 $VcpkgRoot = Join-Path $CacheRoot "vcpkg"
 $BinaryCache = Join-Path $CacheRoot "vcpkg-binary-cache"
 $SccacheDirectory = Join-Path $CacheRoot "sccache-windows"
@@ -36,8 +36,7 @@ $env:VCPKG_BINARY_SOURCES = "clear;files,$BinaryCache,readwrite"
 & $Vcpkg install --triplet x64-windows openssl zlib
 if ($LASTEXITCODE -ne 0) { throw "Failed to install Windows dependencies" }
 
-"VCPKG_INSTALLATION_ROOT=$VcpkgRoot" >> $env:GITHUB_ENV
-"VCPKG_BINARY_SOURCES=$env:VCPKG_BINARY_SOURCES" >> $env:GITHUB_ENV
-"SCCACHE_DIR=$SccacheDirectory" >> $env:GITHUB_ENV
-"SCCACHE_CACHE_SIZE=50G" >> $env:GITHUB_ENV
-"FOREVERTAS_WINDOWS_SEARCH_CACHE=$SearchCache" >> $env:GITHUB_ENV
+$env:VCPKG_INSTALLATION_ROOT = $VcpkgRoot
+$env:SCCACHE_DIR = $SccacheDirectory
+$env:SCCACHE_CACHE_SIZE = "50G"
+$env:FOREVERTAS_WINDOWS_SEARCH_CACHE = $SearchCache

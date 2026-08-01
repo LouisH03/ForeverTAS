@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 validator_root="${repo_root}/.dependencies/ForeverValidator"
-build_dir="${repo_root}/build/ci"
+build_dir="${repo_root}/build/release"
 dist_dir="${repo_root}/dist"
 cache_root="${FOREVERTAS_CACHE_ROOT:-/cache}"
 search_cache_root="${cache_root}/cuda-search"
@@ -78,7 +78,7 @@ mkdir -p "${build_dir}" "${dist_dir}"
 cmake -S "${repo_root}" -B "${build_dir}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     "-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
-    "-DCMAKE_CUDA_COMPILER_LAUNCHER=python3;${repo_root}/packaging/ci/cuda_compiler_launcher.py;sccache" \
+    "-DCMAKE_CUDA_COMPILER_LAUNCHER=python3;${repo_root}/packaging/release/cuda_compiler_launcher.py;sccache" \
     -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DBUILD_TESTING=OFF \
@@ -136,3 +136,41 @@ FOREVERTAS_ENABLE_CUDA=ON \
 FOREVERTAS_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
 FOREVERTAS_VALIDATOR_SOURCE="${validator_root}" \
     "${repo_root}/packaging/linux/build-appimage.sh"
+
+verify_build_dir="${repo_root}/build/verify-release"
+rm -rf "${verify_build_dir}"
+cmake -S "${repo_root}" -B "${verify_build_dir}" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+    -DBUILD_TESTING=ON \
+    -DFOREVERTAS_ENABLE_CUDA=OFF \
+    -DFOREVERVALIDATOR_ENABLE_RELEASE_IPO=OFF \
+    "-DFETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR=${validator_root}"
+cmake --build "${verify_build_dir}" --parallel
+QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=software \
+    ctest --test-dir "${verify_build_dir}" --output-on-failure --parallel 4
+
+cuda_objects=()
+while IFS= read -r -d '' object; do
+    cuda_objects+=("${object}")
+done < <(find "${build_dir}/_deps/forevervalidator-build" -type f \
+    \( -name '*.cu.o' -o -name '*.cu.obj' \) -print0)
+if [[ ${#cuda_objects[@]} -eq 0 ]]; then
+    echo "No CUDA objects were produced" >&2
+    exit 1
+fi
+for object in "${cuda_objects[@]}"; do
+    verify_architectures "${object}"
+done
+
+final_binary="${build_dir}/ForeverTAS"
+verify_architectures "${final_binary}"
+cat > "${dist_dir}/cuda-fatbinary-linux.json" <<'JSON'
+{
+  "cuda": "12.8.1",
+  "cubin_architectures": [50, 52, 61, 70, 75, 86, 89, 120],
+  "ptx_architecture": 120,
+  "split_compile_jobs": 4,
+  "scope": "all CUDA objects and final ForeverTAS ELF"
+}
+JSON
