@@ -7,7 +7,8 @@ context="${repo_root}/packaging/release"
 dockerfile_hash="$(sha256sum "${dockerfile}" | cut -d' ' -f1)"
 image="forevertas-linux-toolchain:${dockerfile_hash:0:16}"
 
-if docker image inspect "${image}" >/dev/null 2>&1; then
+if docker image inspect "${image}" >/dev/null 2>&1 &&
+        [[ "$(docker image inspect --format '{{ index .Config.Labels "dev.skycrafter.forevertas.toolchain-hash" }}' "${image}")" == "${dockerfile_hash}" ]]; then
     printf 'Reusing toolchain image %s\n' "${image}" >&2
 else
     printf 'Building toolchain image %s\n' "${image}" >&2
@@ -19,4 +20,4 @@ else
 fi
 
 docker image inspect "${image}" >/dev/null
-printf '%s\n' "${image}"
+docker image inspect --format '{{.Id}}' "${image}"
