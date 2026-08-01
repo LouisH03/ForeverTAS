@@ -16,6 +16,8 @@ set(FOREVERTAS_WINDOWS_RUNTIME_DIR "" CACHE PATH
     "Directory containing non-Qt runtime DLLs for Windows packaging")
 set(FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR "" CACHE PATH
     "Directory containing redistributable MSVC runtime DLLs")
+set(FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR "" CACHE PATH
+    "Directory containing redistributable CUDA runtime DLLs")
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -440,6 +442,47 @@ if(WIN32)
     file(GLOB forevertas_msvc_runtime_dlls
         LIST_DIRECTORIES FALSE
         "${FOREVERTAS_WINDOWS_MSVC_RUNTIME_DIR}/*.dll")
+    if(FOREVERTAS_ENABLE_CUDA)
+        if(NOT FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR
+                AND CMAKE_CUDA_COMPILER)
+            get_filename_component(FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR
+                "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+        endif()
+        if(NOT IS_DIRECTORY "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}")
+            message(FATAL_ERROR
+                "FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR must point to the "
+                "CUDA toolkit bin directory")
+        endif()
+        file(GLOB forevertas_cudart_runtime_dlls
+            LIST_DIRECTORIES FALSE
+            "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/cudart64_*.dll")
+        file(GLOB forevertas_nvrtc_runtime_dlls
+            LIST_DIRECTORIES FALSE
+            "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/nvrtc64_*.dll")
+        file(GLOB forevertas_nvrtc_builtins_runtime_dlls
+            LIST_DIRECTORIES FALSE
+            "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/nvrtc-builtins64_*.dll")
+        file(GLOB forevertas_nvjitlink_runtime_dlls
+            LIST_DIRECTORIES FALSE
+            "${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}/nvJitLink_*.dll")
+        foreach(forevertas_cuda_runtime_component IN ITEMS
+                cudart nvrtc nvrtc_builtins nvjitlink)
+            list(LENGTH
+                forevertas_${forevertas_cuda_runtime_component}_runtime_dlls
+                forevertas_${forevertas_cuda_runtime_component}_runtime_dll_count)
+            if(NOT forevertas_${forevertas_cuda_runtime_component}_runtime_dll_count EQUAL 1)
+                message(FATAL_ERROR
+                    "Expected exactly one ${forevertas_cuda_runtime_component} "
+                    "runtime DLL in ${FOREVERTAS_WINDOWS_CUDA_RUNTIME_DIR}; "
+                    "found ${forevertas_${forevertas_cuda_runtime_component}_runtime_dll_count}")
+            endif()
+        endforeach()
+        set(forevertas_cuda_runtime_dlls
+            ${forevertas_cudart_runtime_dlls}
+            ${forevertas_nvrtc_runtime_dlls}
+            ${forevertas_nvrtc_builtins_runtime_dlls}
+            ${forevertas_nvjitlink_runtime_dlls})
+    endif()
     list(LENGTH forevertas_openssl_runtime_dlls
         forevertas_openssl_runtime_dll_count)
     list(LENGTH forevertas_zlib_runtime_dlls
@@ -463,6 +506,7 @@ if(WIN32)
         ${forevertas_openssl_runtime_dlls}
         ${forevertas_zlib_runtime_dlls}
         ${forevertas_msvc_runtime_dlls}
+        ${forevertas_cuda_runtime_dlls}
         DESTINATION ".")
 endif()
 
