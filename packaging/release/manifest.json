@@ -12,9 +12,9 @@
     },
     "forevervalidator": {
       "repository": "https://github.com/Skycrafter-dev/ForeverValidator.git",
-      "commit": "9df471dbfb62e176717c0e855ee5488581f82585",
-      "version": "0.2.0",
-      "tag": "v0.2.0"
+      "commit": "c7d16f8658015075798967be5664b931f8a4726f",
+      "version": "0.2.1",
+      "tag": "v0.2.1"
     }
   },
   "cuda": {
