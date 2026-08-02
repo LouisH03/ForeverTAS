@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #if FOREVERVALIDATOR_HAS_CUDA
@@ -359,6 +360,41 @@ PhysicsSandboxStateView AdvanceTo(PhysicsSandbox &sandbox,
     return state;
 }
 
+void ClipMutationToReplay(
+        MutationResult &mutation,
+        const std::vector<PhysicsSandboxInputEvent> &baselineInputs,
+        std::int64_t replayEndTimeMs) {
+    const auto beyondReplay = [replayEndTimeMs](
+                                      const PhysicsSandboxInputEvent &event) {
+        return event.timeMs > replayEndTimeMs;
+    };
+    if (!mutation.windowPatch) {
+        mutation.inputs.erase(
+                std::remove_if(mutation.inputs.begin(),
+                               mutation.inputs.end(),
+                               beyondReplay),
+                mutation.inputs.end());
+        mutation.mutationCount = EffectiveInputChangeCount(
+                baselineInputs, mutation.inputs);
+        return;
+    }
+
+    MutationWindowPatch &patch = *mutation.windowPatch;
+    if (patch.minimumTimeMs > replayEndTimeMs) {
+        mutation.mutationCount = 0u;
+        return;
+    }
+    patch.maximumTimeMs = std::min(
+            patch.maximumTimeMs, replayEndTimeMs);
+    patch.events.erase(
+            std::remove_if(patch.events.begin(),
+                           patch.events.end(),
+                           beyondReplay),
+            patch.events.end());
+    mutation.mutationCount = EffectiveInputChangeCount(
+            baselineInputs, patch);
+}
+
 struct BestIteration {
     std::optional<EvaluationSample> evaluation;
     SearchWinnerSource source = SearchWinnerSource::Baseline;
@@ -476,6 +512,7 @@ SearchResult RunCudaBasicBruteForce(
         const PhysicsSandboxState &branch,
         const std::vector<PhysicsSandboxInputEvent>
                 &originalBaselineInputs,
+        std::int64_t replayEndTimeMs,
         bool autoPromoteBest,
         std::chrono::steady_clock::time_point started) {
     using namespace forevervalidator::experimental;
@@ -498,6 +535,15 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluationStartTimeMs = evaluationPlan.startTimeMs;
     configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
     configuration.modifiers = *context.cudaModifiers;
+    for (PhysicsSandboxCudaModifier &modifier : configuration.modifiers) {
+        std::visit(
+                [replayEndTimeMs](auto &configured) {
+                    configured.window.maximumTimeMs = std::min(
+                            configured.window.maximumTimeMs,
+                            replayEndTimeMs);
+                },
+                modifier);
+    }
     configuration.evaluator = *context.cudaEvaluator;
     configuration.useSessionSpecialization =
             context.useCudaSessionSpecialization;
@@ -995,6 +1041,7 @@ SearchResult BasicBruteForceSearch::Run(
                 earliestMutationTimeMs,
                 branch,
                 baselineInputs,
+                static_cast<std::int64_t>(current.durationMs),
                 autoPromoteBest_,
                 started);
     }
@@ -1123,6 +1170,10 @@ SearchResult BasicBruteForceSearch::Run(
                  mutationBaselineGeneration});
         CheckCancellation(context.control);
         ++iterations;
+        ClipMutationToReplay(
+                mutation,
+                mutationBaselineInputs,
+                static_cast<std::int64_t>(current.durationMs));
         bool improved = false;
         if (mutation.mutationCount != 0u) {
             totalMutationCount += mutation.mutationCount;

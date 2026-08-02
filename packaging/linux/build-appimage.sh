@@ -99,6 +99,20 @@ desktop-file-validate \
 appstreamcli validate --no-net \
     "${appdir}/usr/share/metainfo/dev.skycrafter.forevertas.appdata.xml"
 
+if [[ "${FOREVERTAS_ENABLE_CUDA:-OFF}" == "ON" ]]; then
+    nvrtc_builtins="${CUDA_PATH:?CUDA_PATH is required for a CUDA AppImage}/targets/${appimage_arch}-linux/lib/libnvrtc-builtins.so.12.8"
+    if [[ ! -e "${nvrtc_builtins}" ]]; then
+        echo "CUDA NVRTC builtins library does not exist: ${nvrtc_builtins}" >&2
+        exit 1
+    fi
+    nvrtc_builtins_real="$(readlink -f "${nvrtc_builtins}")"
+    mkdir -p "${appdir}/usr/lib"
+    cp -L "${nvrtc_builtins_real}" \
+        "${appdir}/usr/lib/$(basename "${nvrtc_builtins_real}")"
+    ln -sfn "$(basename "${nvrtc_builtins_real}")" \
+        "${appdir}/usr/lib/libnvrtc-builtins.so.12.8"
+fi
+
 version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "${build_dir}/CMakeCache.txt")"
 if [[ -z "${version}" ]]; then
     version="0.0.0"
@@ -175,6 +189,21 @@ filter_plugin_directory platforminputcontexts \
 rm -rf "${filtered_qt_plugins}/platformthemes" \
        "${filtered_qt_plugins}/styles"
 
+# linuxdeploy-plugin-qt deploys explicitly requested Wayland platform plugins,
+# but not the dynamically loaded client integrations they require at runtime.
+for plugin_directory in \
+        wayland-decoration-client \
+        wayland-graphics-integration-client \
+        wayland-shell-integration; do
+    if [[ ! -d "${filtered_qt_plugins}/${plugin_directory}" ]]; then
+        echo "Required Qt Wayland plugin directory is missing: ${plugin_directory}" >&2
+        exit 1
+    fi
+    mkdir -p "${appdir}/usr/plugins"
+    cp -a "${filtered_qt_plugins}/${plugin_directory}" \
+        "${appdir}/usr/plugins/"
+done
+
 qmake_wrapper="${build_dir}/qmake-forevertas"
 cat > "${qmake_wrapper}" <<'QMAKE_WRAPPER'
 #!/usr/bin/env bash
@@ -198,7 +227,7 @@ export FOREVERTAS_REAL_QMAKE="${real_qmake}"
 export FOREVERTAS_FILTERED_QT_PLUGINS="${filtered_qt_plugins}"
 export QMAKE="${qmake_wrapper}"
 export QML_SOURCES_PATHS="${repo_root}/qml"
-export EXTRA_PLATFORM_PLUGINS="${EXTRA_PLATFORM_PLUGINS:-libqoffscreen.so}"
+export EXTRA_PLATFORM_PLUGINS="${EXTRA_PLATFORM_PLUGINS:-libqoffscreen.so;libqwayland-egl.so;libqwayland-generic.so}"
 output="${dist_dir}/ForeverTAS-${version}-linux-${appimage_arch}.AppImage"
 rm -f "${output}" "${output}.sha256"
 export LDAI_OUTPUT="${output}"
@@ -228,6 +257,16 @@ trap 'rm -rf "${smoke_root}"' EXIT
 )
 extracted_appdir="${smoke_root}/squashfs-root"
 test -x "${extracted_appdir}/usr/bin/ForeverTAS"
+for platform_plugin in libqxcb.so libqoffscreen.so \
+        libqwayland-egl.so libqwayland-generic.so; do
+    test -f "${extracted_appdir}/usr/plugins/platforms/${platform_plugin}"
+done
+test -f "${extracted_appdir}/usr/plugins/wayland-shell-integration/libxdg-shell.so"
+test -f "${extracted_appdir}/usr/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so"
+test -f "${extracted_appdir}/usr/plugins/wayland-decoration-client/libadwaita.so"
+if [[ "${FOREVERTAS_ENABLE_CUDA:-OFF}" == "ON" ]]; then
+    test -f "${extracted_appdir}/usr/lib/libnvrtc-builtins.so.12.8"
+fi
 
 if find "${extracted_appdir}" \
         \( -type f -o -type l \) \
@@ -242,7 +281,16 @@ if readelf -d "${extracted_appdir}/usr/bin/ForeverTAS" |
 fi
 
 unexpected_missing_libraries="$(
-    ldd "${extracted_appdir}/usr/bin/ForeverTAS" |
+    while IFS= read -r -d '' candidate; do
+        ldd "${candidate}" 2>/dev/null || true
+    done < <(
+        find "${extracted_appdir}/usr/bin" \
+                 "${extracted_appdir}/usr/plugins/platforms" \
+                 "${extracted_appdir}/usr/plugins/wayland-decoration-client" \
+                 "${extracted_appdir}/usr/plugins/wayland-graphics-integration-client" \
+                 "${extracted_appdir}/usr/plugins/wayland-shell-integration" \
+                 -type f -print0
+    ) |
         awk '/not found/ { print $1 }' |
         sort -u
 )"

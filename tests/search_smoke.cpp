@@ -64,6 +64,34 @@ public:
             observedBaselines;
 };
 
+class OversizedWindowMutator final : public forevertas::InputMutator {
+public:
+    forevertas::MutationResult Mutate(
+            const forevertas::MutationRequest &) const override {
+        forevertas::MutationWindowPatch patch;
+        patch.minimumTimeMs = 10;
+        patch.maximumTimeMs = 100000;
+        PhysicsSandboxInputEvent inReplay;
+        inReplay.timeMs = 10;
+        inReplay.action = forevertas::SandboxInputAction::Steer;
+        inReplay.value.kind = PhysicsSandboxInputValueKind::Analog;
+        inReplay.value.analog = 4096;
+        PhysicsSandboxInputEvent beyondReplay = inReplay;
+        beyondReplay.timeMs = 100000;
+        beyondReplay.value.analog = 8192;
+        patch.events = {inReplay, beyondReplay};
+        return {{}, 2u, std::move(patch)};
+    }
+
+    std::int64_t EarliestMutationTimeMs() const override {
+        return 10;
+    }
+
+    forevertas::MutationTimeRange AffectedTimeRange() const override {
+        return {10, 100000};
+    }
+};
+
 class SteeringSession final
     : public forevertas::IterationEvaluationSession {
 public:
@@ -193,6 +221,32 @@ bool CheckAutoPromoteSemantics(
         return false;
     }
     return true;
+}
+
+bool CheckModifierWindowClippedToReplay(
+        const char *packsDirectory,
+        const char *replayPath) {
+    PhysicsSandbox sandbox =
+            CreateEmptyInputSandbox(packsDirectory, replayPath);
+    OversizedWindowMutator mutator;
+    SteeringEvaluator evaluator;
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 1u;
+    control.sampleBestTimeline = false;
+    const forevertas::SearchResult result =
+            forevertas::BasicBruteForceSearch(false).Run(
+                    {sandbox,
+                     forevertas::kSearchTickDurationMs,
+                     mutator,
+                     evaluator,
+                     &control});
+    const std::vector<PhysicsSandboxInputEvent> inputs =
+            Require(sandbox.ReadInputs(),
+                    "reading clipped modifier inputs");
+    return result.iterations == 1u &&
+            result.totalMutationCount == 1u &&
+            inputs.size() == 1u && inputs.front().timeMs == 10 &&
+            inputs.front().value.analog == 4096;
 }
 
 #if FOREVERVALIDATOR_HAS_CUDA
@@ -1057,6 +1111,7 @@ int main(int argc, char **argv) {
 
     try {
         if (!CheckAutoPromoteSemantics(argv[1], argv[2]) ||
+            !CheckModifierWindowClippedToReplay(argv[1], argv[2]) ||
 #if FOREVERVALIDATOR_HAS_CUDA
             !CheckCudaKernelModeLifecycle(argv[1], argv[2]) ||
             !CheckCudaAutoPromoteAcrossBatches(argv[1], argv[2]) ||
