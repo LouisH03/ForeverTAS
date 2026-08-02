@@ -74,13 +74,16 @@ SearchResult Run(const char *packs,
                          evaluationEndTimeLimitMs = std::nullopt,
                  bool *calibrationCompleted = nullptr,
                  bool stopAfterCalibration = false,
-                 bool useSessionSpecialization = true) {
+                 bool useSessionSpecialization = true,
+                 bool autoPromoteBest = false) {
     SearchRequest request{packs, replay};
     request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = backend;
     request.parallelSampleCount = batchSize;
     request.calibrateCudaParallelSampleCount = calibrate;
     request.useCudaSessionSpecialization = useSessionSpecialization;
+    request.searchAlgorithm.settings["autoPromoteBest"] =
+            autoPromoteBest ? "true" : "false";
     request.modifiers = std::move(modifiers);
     request.evaluationTarget = std::move(evaluator);
     forevertas::SearchRunControl control;
@@ -389,7 +392,7 @@ bool CheckCalibration(const char *packs, const char *replay) {
 }
 
 bool CheckPreciseFinishParity(const char *packs, const char *replay) {
-    constexpr std::uint64_t iterations = 2u;
+    constexpr std::uint64_t iterations = 32u;
     const std::vector<OptionConfiguration> modifiers{
             DefaultModifier(
                     forevertas::kRandomSteeringModifierId)};
@@ -405,7 +408,9 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
                         1u,
                         iterations,
                         modifiers,
-                        evaluator);
+                        evaluator,
+                        false, nullptr, false, std::nullopt,
+                        nullptr, false, true, true);
             });
     std::future<SearchResult> optimizedFuture = std::async(
             std::launch::async,
@@ -417,7 +422,9 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
                         1u,
                         iterations,
                         modifiers,
-                        evaluator);
+                        evaluator,
+                        false, nullptr, false, std::nullopt,
+                        nullptr, false, true, true);
             });
     const SearchResult cuda = Run(
             packs,
@@ -426,9 +433,34 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
             static_cast<std::uint32_t>(iterations),
             iterations,
             modifiers,
-            evaluator);
+            evaluator,
+            false, nullptr, false, std::nullopt,
+            nullptr, false, true, true);
     const SearchResult reference = referenceFuture.get();
     const SearchResult optimized = optimizedFuture.get();
+    OptionConfiguration promotionModifier = DefaultModifier(
+            forevertas::kExistingEventPerturbationModifierId);
+    promotionModifier.settings["minTimeMs"] = "4000";
+    promotionModifier.settings["maxTimeMs"] = "5720";
+    promotionModifier.settings["minCount"] = "1";
+    promotionModifier.settings["maxCount"] = "3";
+    const SearchResult promotionProbe = Run(
+            packs,
+            replay,
+            forevertas::PhysicsBackend::Cuda,
+            40000u,
+            40001u,
+            {promotionModifier},
+            evaluator,
+            false, nullptr, false, std::nullopt,
+            nullptr, false, true, true);
+    if (promotionProbe.iterations != 40001u ||
+        promotionProbe.mutationImprovementCount == 0u ||
+        !promotionProbe.winningIterationIndex) {
+        std::cerr << "precise finish CUDA did not exercise auto-promotion "
+                     "and its seeded follow-up batch\n";
+        return false;
+    }
     const auto exactFinishResult =
             [](const SearchResult &result, const char *label) {
                 if (!result.bestState.raceCompleted ||

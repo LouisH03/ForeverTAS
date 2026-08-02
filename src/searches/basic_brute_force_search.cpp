@@ -400,6 +400,9 @@ struct BestIteration {
     SearchWinnerSource source = SearchWinnerSource::Baseline;
     std::optional<std::uint64_t> iterationIndex;
     std::size_t mutationCount = 0u;
+    std::uint32_t evaluationTick = 0u;
+    double detail0 = 0.0;
+    double detail1 = 0.0;
     PhysicsSandboxStateView view;
     std::optional<PhysicsSandboxState> snapshot;
     std::vector<PhysicsSandboxInputEvent> inputs;
@@ -547,6 +550,7 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluator = *context.cudaEvaluator;
     configuration.useSessionSpecialization =
             context.useCudaSessionSpecialization;
+    configuration.captureBestState = !context.resolveCudaWinner;
     std::optional<PhysicsSandboxCudaSearchSession> session;
     session.emplace(Require(
             CreatePhysicsSandboxCudaSearchSession(
@@ -591,7 +595,7 @@ SearchResult RunCudaBasicBruteForce(
     };
     const auto adoptBest =
             [&](PhysicsSandboxCudaSearchBatch &batch) {
-                if (!batch.bestSnapshot) {
+                if (!batch.bestValid) {
                     return;
                 }
                 best.source = batch.bestIsMutation
@@ -599,13 +603,50 @@ SearchResult RunCudaBasicBruteForce(
                         : SearchWinnerSource::Baseline;
                 best.iterationIndex = batch.bestCandidateId;
                 best.mutationCount = batch.bestMutationCount;
+                best.evaluationTick = batch.bestEvaluationTick;
+                best.detail0 = batch.bestDetail0;
+                best.detail1 = batch.bestDetail1;
                 best.evaluation = EvaluationSample{
                         batch.bestScore,
                         batch.bestTimeMs,
                         CudaEvaluationDescription(
                                 *context.cudaEvaluator, batch)};
-                best.view = batch.bestState;
-                best.snapshot = std::move(*batch.bestSnapshot);
+                if (batch.bestSnapshot) {
+                    best.view = batch.bestState;
+                    best.snapshot = std::move(*batch.bestSnapshot);
+                } else if (context.resolveCudaWinner) {
+                    const std::uint64_t absoluteTick =
+                            static_cast<std::uint64_t>(
+                                    evaluationPlan.startTimeMs /
+                                    context.tickDurationMs) +
+                            batch.bestEvaluationTick;
+                    if (absoluteTick >
+                        std::numeric_limits<std::uint32_t>::max()) {
+                        throw std::overflow_error(
+                                "CUDA winner tick is out of range");
+                    }
+                    SearchExecutionContext::ResolvedCudaWinner resolved =
+                            context.resolveCudaWinner(
+                                    batch.bestInputs,
+                                    static_cast<std::uint32_t>(absoluteTick));
+                    best.view = resolved.view;
+                    best.snapshot = std::move(resolved.snapshot);
+                    if (std::holds_alternative<
+                                PhysicsSandboxCudaFinishTimeEvaluator>(
+                                *context.cudaEvaluator)) {
+                        if (!best.view.finishTime ||
+                            static_cast<double>(
+                                    best.view.finishTime->estimatedNs) !=
+                                    batch.bestScore) {
+                            throw std::runtime_error(
+                                    "optimized CPU winner finish time does not "
+                                    "match CUDA");
+                        }
+                    }
+                } else {
+                    throw std::runtime_error(
+                            "CUDA winner state was not captured");
+                }
                 best.inputs = std::move(batch.bestInputs);
             };
 
@@ -781,8 +822,8 @@ SearchResult RunCudaBasicBruteForce(
         const bool promote =
                 autoPromoteBest &&
                 batch.mutationImprovementCount != 0u &&
-                batch.bestSnapshot.has_value();
-        if (batch.bestChanged && batch.bestSnapshot) {
+                batch.bestValid;
+        if (batch.bestChanged && batch.bestValid) {
             adoptBest(batch);
             if (autoPromoteBest) {
                 best.mutationCount = EffectiveInputChangeCount(
@@ -848,37 +889,29 @@ SearchResult RunCudaBasicBruteForce(
                 }
             }
             configuration.maximumBatchSize = recreatedCapacity;
+            if (!best.evaluation) {
+                throw std::runtime_error(
+                        "promoted CUDA incumbent is unavailable");
+            }
+            PhysicsSandboxCudaSearchIncumbent incumbent;
+            incumbent.mutation =
+                    best.source == SearchWinnerSource::Mutation;
+            incumbent.candidateId = best.iterationIndex;
+            incumbent.mutationCount = best.mutationCount;
+            incumbent.evaluationTick = best.evaluationTick;
+            incumbent.score = best.evaluation->score;
+            incumbent.timeMs = best.evaluation->timeMs;
+            incumbent.detail0 = best.detail0;
+            incumbent.detail1 = best.detail1;
+            incumbent.preciseFinish = std::holds_alternative<
+                    PhysicsSandboxCudaFinishTimeEvaluator>(
+                    *context.cudaEvaluator);
+            configuration.incumbent = incumbent;
             session.emplace(Require(
                     CreatePhysicsSandboxCudaSearchSession(
                             context.sandbox, configuration),
                     "recreating promoted CUDA search session"));
             sessionCapacity = recreatedCapacity;
-            PhysicsSandboxCudaSearchBatch promotedBaseline = Require(
-                    session->EvaluateBaseline(
-                            [control = context.control]() {
-                                return control != nullptr &&
-                                        control->cancellationRequested &&
-                                        control->cancellationRequested();
-                            }),
-                    "evaluating promoted CUDA baseline");
-            if (promotedBaseline.cancelled) {
-                throw SearchCancelled();
-            }
-            if (calibrator) {
-                calibrationSafety.Observe(
-                        CudaCalibrationProfile(
-                                promotedBaseline,
-                                sessionCapacity));
-            }
-            evaluatorCalls += promotedBaseline.evaluatorCalls;
-            if (!promotedBaseline.bestSnapshot ||
-                !best.evaluation ||
-                promotedBaseline.bestScore != best.evaluation->score ||
-                promotedBaseline.bestTimeMs != best.evaluation->timeMs) {
-                throw std::runtime_error(
-                        "promoted CUDA baseline does not match the "
-                        "global best");
-            }
         }
         if (batch.mutationImprovementCount != 0u) {
             lastImprovementElapsed =
@@ -899,12 +932,9 @@ SearchResult RunCudaBasicBruteForce(
         throw std::runtime_error(
                 "no iteration satisfied the selected evaluation target");
     }
-    const PhysicsSandboxStateView restored = Require(
-            context.sandbox.RestoreState(*best.snapshot),
-            "restoring global CUDA best state");
-    if (!SameState(restored, best.view)) {
+    if (!SameState(best.snapshot->View(), best.view)) {
         throw std::runtime_error(
-                "restored CUDA global best does not match its captured state");
+                "resolved CUDA global best does not match its captured state");
     }
     const bool mutationWon =
             best.source == SearchWinnerSource::Mutation;

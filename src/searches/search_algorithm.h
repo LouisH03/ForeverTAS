@@ -130,6 +130,11 @@ public:
 };
 
 struct SearchExecutionContext {
+    struct ResolvedCudaWinner {
+        forevervalidator::experimental::PhysicsSandboxStateView view;
+        forevervalidator::experimental::PhysicsSandboxState snapshot;
+    };
+
     forevervalidator::experimental::PhysicsSandbox &sandbox;
     std::uint32_t tickDurationMs;
     const InputMutator &mutator;
@@ -143,6 +148,11 @@ struct SearchExecutionContext {
             *cudaModifiers = nullptr;
     const forevervalidator::experimental::PhysicsSandboxCudaEvaluator
             *cudaEvaluator = nullptr;
+    std::function<ResolvedCudaWinner(
+            const std::vector<forevervalidator::experimental::
+                                      PhysicsSandboxInputEvent> &,
+            std::uint32_t)>
+            resolveCudaWinner = {};
 };
 
 struct SearchResult {

@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <deque>
 #include <exception>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -336,6 +337,115 @@ private:
     std::thread worker_;
 };
 
+class CudaWinnerCpuWorker final {
+public:
+    CudaWinnerCpuWorker(
+            SearchRequest request,
+            forevervalidator::AssetBytes replay,
+            forevervalidator::ReplayIdentity identity)
+        : request_(std::move(request)),
+          replay_(std::move(replay)),
+          identity_(std::move(identity)) {
+        request_.backend = PhysicsBackend::OptimizedCpu;
+        worker_ = std::thread([this]() { Run(); });
+    }
+
+    ~CudaWinnerCpuWorker() {
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            stopRequested_ = true;
+        }
+        ready_.notify_one();
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
+
+    SearchExecutionContext::ResolvedCudaWinner Resolve(
+            const std::vector<forevervalidator::experimental::
+                                      PhysicsSandboxInputEvent> &inputs,
+            std::uint32_t tick) {
+        Task task;
+        task.inputs = inputs;
+        task.tick = tick;
+        std::future<SearchExecutionContext::ResolvedCudaWinner> future =
+                task.result.get_future();
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            if (stopRequested_ || pending_) {
+                throw std::runtime_error(
+                        "optimized CPU winner worker is unavailable");
+            }
+            pending_.emplace(std::move(task));
+        }
+        ready_.notify_one();
+        return future.get();
+    }
+
+private:
+    struct Task {
+        std::vector<forevervalidator::experimental::
+                            PhysicsSandboxInputEvent>
+                inputs;
+        std::uint32_t tick = 0u;
+        std::promise<SearchExecutionContext::ResolvedCudaWinner> result;
+    };
+
+    void Run() noexcept {
+        std::optional<TimelineSamplingRuntime> runtime;
+        for (;;) {
+            std::optional<Task> task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                ready_.wait(lock, [this]() {
+                    return stopRequested_ || pending_.has_value();
+                });
+                if (!pending_) {
+                    return;
+                }
+                task.emplace(std::move(*pending_));
+                pending_.reset();
+            }
+            try {
+                if (!runtime) {
+                    runtime.emplace(CreateTimelineSamplingRuntime(
+                            request_, replay_, identity_));
+                }
+                if (task->tick > runtime->finalTickCount) {
+                    throw std::out_of_range(
+                            "CUDA winner tick exceeds replay duration");
+                }
+                Require(runtime->sandbox.RestoreState(runtime->initialState),
+                        "restoring optimized CPU winner worker");
+                Require(runtime->sandbox.ReplaceInputs(task->inputs),
+                        "replacing optimized CPU winner inputs");
+                forevervalidator::experimental::PhysicsSandboxStateView view =
+                        task->tick == 0u
+                        ? Require(runtime->sandbox.ReadState(),
+                                  "reading optimized CPU winner state")
+                        : Require(runtime->sandbox.AdvanceTicks(task->tick),
+                                  "simulating optimized CPU winner");
+                forevervalidator::experimental::PhysicsSandboxState snapshot =
+                        Require(
+                                runtime->sandbox.CaptureState(),
+                                "capturing optimized CPU winner state");
+                task->result.set_value({view, std::move(snapshot)});
+            } catch (...) {
+                task->result.set_exception(std::current_exception());
+            }
+        }
+    }
+
+    SearchRequest request_;
+    forevervalidator::AssetBytes replay_;
+    forevervalidator::ReplayIdentity identity_;
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::optional<Task> pending_;
+    bool stopRequested_ = false;
+    std::thread worker_;
+};
+
 struct CachedSearchSandbox {
     std::mutex lock;
     forevervalidator::AssetBytes replay;
@@ -419,6 +529,13 @@ SearchResult RunLoadedSearch(
             asyncImprovementSampler;
     std::uint64_t sampledImprovementCount = 0u;
     bool sampledBaseline = false;
+#if FOREVERVALIDATOR_HAS_CUDA
+    std::unique_ptr<CudaWinnerCpuWorker> cudaWinnerWorker;
+    if (request.backend == PhysicsBackend::Cuda) {
+        cudaWinnerWorker = std::make_unique<CudaWinnerCpuWorker>(
+                request, replay, identity);
+    }
+#endif
     if (control != nullptr && control->liveChanged &&
         control->sampleImprovementTimelines) {
         instrumentedControl = *control;
@@ -506,7 +623,26 @@ SearchResult RunLoadedSearch(
                     request.calibrateCudaParallelSampleCount,
                     request.useCudaSessionSpecialization,
                     cudaModifiers.empty() ? nullptr : &cudaModifiers,
-                    cudaEvaluator ? &*cudaEvaluator : nullptr});
+                    cudaEvaluator ? &*cudaEvaluator : nullptr,
+#if FOREVERVALIDATOR_HAS_CUDA
+                    cudaWinnerWorker
+                            ? [worker = cudaWinnerWorker.get()](
+                                      const std::vector<
+                                              PhysicsSandboxInputEvent>
+                                              &inputs,
+                                      std::uint32_t tick) {
+                                  return worker->Resolve(inputs, tick);
+                              }
+                            : std::function<SearchExecutionContext::
+                                      ResolvedCudaWinner(
+                                              const std::vector<
+                                                      PhysicsSandboxInputEvent>
+                                                      &,
+                                              std::uint32_t)>{}
+#else
+                    {}
+#endif
+            });
             if (asyncImprovementSampler) {
                 const std::exception_ptr failure =
                         asyncImprovementSampler->Stop(false);

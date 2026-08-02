@@ -147,10 +147,25 @@ def release_assets(manifest: dict, dist: Path) -> list[Path]:
         Path(str(artifacts[0]) + ".sha256"),
         artifacts[1],
         Path(str(artifacts[1]) + ".sha256"),
-        dist / "cuda-fatbinary-linux.json",
-        dist / "cuda-fatbinary-windows.json",
-        dist / "release-lock.json",
     ]
+
+
+def release_notes(manifest: dict) -> str:
+    return f"""ForeverTAS {manifest['release']['version']} is built and verified entirely on local Linux and Windows machines with the pinned CUDA 12.8.1 toolchain.
+
+### Search performance
+
+- Precise finish-time candidates retain the state immediately before their finishing tick, so exact refinement replays one tick rather than a long fixed suffix.
+- CUDA winner reconstruction and auto-promotion verification run on a dedicated optimized-CPU worker instead of a one-thread, one-block CUDA replay.
+
+### CUDA compatibility
+
+The x86_64 packages contain native cubins for `sm_50`, `sm_52`, `sm_61`, `sm_70`, `sm_75`, `sm_86`, `sm_89`, and `sm_120`. On desktop NVIDIA hardware, cubins are forward-compatible within the same compute-capability major version, so the native set covers compute capabilities 5.0 and later 5.x, 6.1 and later 6.x, 7.0 and later 7.x, 8.6 and later 8.x, and 12.0 and later 12.x. In current product terms this includes supported Maxwell, Pascal except P100/GP100, Volta, Turing, Ampere RTX/A-series except A100/A30, Ada, and GeForce RTX 50 / RTX PRO Blackwell GPUs. See NVIDIA's [GPU compute-capability tables](https://developer.nvidia.com/cuda-gpus) and [binary-compatibility rules](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#cuda-binary-compatibility).
+
+The fatbinary also contains `compute_120` PTX. A future NVIDIA architecture above compute capability 12.x may work by driver JIT compilation, with a slower first startup while the driver cache is populated, but it was not available for hardware validation and is not guaranteed by this release.
+
+The CUDA backend definitely does not support compute capability below 5.0; compute capability 6.0 (Tesla P100 / Quadro GP100), 8.0 (A100 / A30), 9.0 (H100 / H200 / GH200), 10.0 or 10.3 (B200 / B300 / GB200 / GB300), or 11.0; non-NVIDIA GPUs; non-x86_64 systems; or systems whose NVIDIA driver cannot load CUDA 12.8 applications. Those devices have neither a compatible cubin nor a backward-compatible PTX target. CPU search remains available on supported x86_64 Linux and Windows systems.
+"""
 
 
 def verify_artifacts(manifest: dict, manifest_path: Path, dist: Path) -> dict:
@@ -268,7 +283,30 @@ def command_draft(args: argparse.Namespace, manifest: dict) -> None:
     if resolved["forevertas"] != target:
         raise SystemExit("release assets were not built from the tagged commit")
     assets = [str(path) for path in release_assets(manifest, dist)]
-    run(["gh", "release", "create", tag, "--repo", repository, "--draft", "--verify-tag", "--generate-notes", *assets])
+    notes = release_notes(manifest)
+    existing = subprocess.run(
+        ["gh", "release", "view", tag, "--repo", repository],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if existing:
+        run(["gh", "release", "edit", tag, "--repo", repository,
+             "--draft=true", "--title", tag, "--notes", notes])
+        for name in ("cuda-fatbinary-linux.json",
+                     "cuda-fatbinary-windows.json",
+                     "release-lock.json"):
+            subprocess.run(
+                ["gh", "release", "delete-asset", tag, name,
+                 "--repo", repository, "--yes"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        run(["gh", "release", "upload", tag, "--repo", repository,
+             "--clobber", *assets])
+    else:
+        run(["gh", "release", "create", tag, "--repo", repository,
+             "--draft", "--verify-tag", "--title", tag, "--notes", notes,
+             *assets])
 
 
 def command_publish(args: argparse.Namespace, manifest: dict) -> None:
@@ -279,11 +317,15 @@ def command_publish(args: argparse.Namespace, manifest: dict) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         run(["gh", "release", "download", tag, "--repo", repository, "--dir", temporary])
         downloaded = Path(temporary)
+        for name in manifest["artifacts"].values():
+            artifact = downloaded / name
+            checksum = downloaded / f"{name}.sha256"
+            if not artifact.is_file() or not checksum.is_file():
+                raise SystemExit(f"draft is missing release asset: {name}")
+            if checksum.read_text(encoding="utf-8").split()[0].lower() != sha256(artifact):
+                raise SystemExit(f"downloaded draft checksum mismatch: {name}")
         appimage = downloaded / manifest["artifacts"]["linux"]
         appimage.chmod(appimage.stat().st_mode | 0o111)
-        resolved = verify_artifacts(manifest, args.manifest, downloaded)
-        if git("rev-list", "-n", "1", tag) != resolved["forevertas"]:
-            raise SystemExit("draft assets were not built from the tagged commit")
     run(["gh", "release", "edit", tag, "--repo", repository, "--draft=false"])
 
 
