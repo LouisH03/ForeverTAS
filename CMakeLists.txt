@@ -306,8 +306,13 @@ if(WIN32)
         packaging/windows/forevertas.rc.in
         "${CMAKE_CURRENT_BINARY_DIR}/forevertas.rc"
         @ONLY)
+    configure_file(
+        packaging/windows/forevertas.exe.manifest.in
+        "${CMAKE_CURRENT_BINARY_DIR}/forevertas.exe.manifest"
+        @ONLY)
     target_sources(forevertas PRIVATE
-        "${CMAKE_CURRENT_BINARY_DIR}/forevertas.rc")
+        "${CMAKE_CURRENT_BINARY_DIR}/forevertas.rc"
+        "${CMAKE_CURRENT_BINARY_DIR}/forevertas.exe.manifest")
 endif()
 
 set_target_properties(forevertas PROPERTIES
