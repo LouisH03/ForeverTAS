@@ -87,6 +87,7 @@ mkdir -p "${build_dir}" "${dist_dir}"
 
 cmake -S "${repo_root}" -B "${build_dir}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
     "-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
     "-DCMAKE_CUDA_COMPILER_LAUNCHER=python3;${repo_root}/packaging/release/cuda_compiler_launcher.py;sccache" \
     -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
@@ -146,6 +147,7 @@ FOREVERTAS_ENABLE_CUDA=ON \
 FOREVERTAS_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
 FOREVERTAS_VALIDATOR_SOURCE="${validator_root}" \
 FOREVERTAS_TOOLS_DIR="${cache_root}/appimage-tools" \
+FOREVERTAS_SKIP_BUILD=1 \
     "${repo_root}/packaging/linux/build-appimage.sh"
 
 verify_build_dir="${repo_root}/build/verify-release"

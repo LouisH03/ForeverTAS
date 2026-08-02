@@ -83,8 +83,13 @@ if [[ -n "${FOREVERTAS_VALIDATOR_SOURCE:-}" ]]; then
         "-DFETCHCONTENT_SOURCE_DIR_FOREVERVALIDATOR=${FOREVERTAS_VALIDATOR_SOURCE}"
     )
 fi
-cmake "${cmake_args[@]}"
-cmake --build "${build_dir}" --parallel
+if [[ "${FOREVERTAS_SKIP_BUILD:-0}" == "1" ]]; then
+    test -f "${build_dir}/CMakeCache.txt"
+    test -x "${build_dir}/bin/ForeverTAS"
+else
+    cmake "${cmake_args[@]}"
+    cmake --build "${build_dir}" --parallel
+fi
 
 rm -rf "${appdir}"
 DESTDIR="${appdir}" cmake --install "${build_dir}"
