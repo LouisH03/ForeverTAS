@@ -142,7 +142,7 @@ try {
             throw "Cached CUDA search object was not used"
         }
     } elseif ($CompileCommands -notmatch "cuda_search_executor\.cu") {
-        throw "CUDA search translation unit is missing from the cold build"
+        throw "CUDA search translation unit is missing after a validated cache miss"
     }
 
     cmake --build $BuildDirectory --config Release `

@@ -3,7 +3,19 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 manifest="${1:-${repo_root}/packaging/release/manifest.json}"
-cold="${2:-}"
+cache_rebuild="${2:-}"
+cache_rebuild_confirmation="${3:-}"
+
+if [[ "${cache_rebuild}" == "--cold" ]]; then
+    printf 'ERROR: --cold is prohibited; repair or evict only the invalid cache entry first.\n' >&2
+    exit 2
+fi
+if [[ -n "${cache_rebuild}" ]] &&
+   [[ "${cache_rebuild}" != "--last-resort-rebuild-cache" ||
+      "${cache_rebuild_confirmation}" != "--confirm-cache-recovery-exhausted" ]]; then
+    printf 'ERROR: a full cache rebuild requires both last-resort confirmation arguments.\n' >&2
+    exit 2
+fi
 
 eval "$(python3 - "${manifest}" <<'PY'
 import json, shlex, sys
@@ -25,7 +37,7 @@ PY
 
 cache_root="${FOREVERTAS_RELEASE_CACHE:-${repo_root}/.release-cache/linux}"
 toolchain_image="$(${repo_root}/packaging/release/ensure-linux-toolchain.sh)"
-if [[ "${cold}" == "--cold" ]]; then
+if [[ "${cache_rebuild}" == "--last-resort-rebuild-cache" ]]; then
     rm -rf "${cache_root}"
 fi
 mkdir -p "${cache_root}/sccache" "${cache_root}/cuda-search"
@@ -51,4 +63,4 @@ docker run --rm --init \
     bash packaging/release/package-linux.sh
 
 test -s "${repo_root}/dist/cuda-fatbinary-linux.json"
-printf 'PASS Linux local release build (%s cache)\n' "$([[ "${cold}" == "--cold" ]] && echo cold || echo warm)"
+printf 'PASS Linux local release build (%s cache)\n' "$([[ -n "${cache_rebuild}" ]] && echo last-resort-rebuilt || echo warm)"

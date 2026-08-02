@@ -141,6 +141,20 @@ std::string LineError(std::size_t line, std::string message) {
     return "Line " + std::to_string(line) + ": " + std::move(message);
 }
 
+std::string FormatMilliseconds(std::int64_t timeMs) {
+    const bool negative = timeMs < 0;
+    const std::uint64_t magnitude = negative
+            ? static_cast<std::uint64_t>(-(timeMs + 1)) + 1u
+            : static_cast<std::uint64_t>(timeMs);
+    const std::uint64_t hundredths = magnitude / 10u;
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    if (negative) output << '-';
+    output << hundredths / 100u << '.' << std::setfill('0')
+           << std::setw(2) << hundredths % 100u << " s";
+    return output.str();
+}
+
 bool IsStructuralAction(SandboxInputAction action) {
     return action == SandboxInputAction::RaceRunning ||
             action == SandboxInputAction::FinishLine ||
@@ -279,7 +293,6 @@ InputScriptParseResult ParseInputScript(std::string_view script) {
 InputScriptBaselineResult BuildInputScriptBaseline(
         const std::vector<SandboxInputEvent> &replayInputs,
         const std::vector<ParsedInputCommand> &commands,
-        std::int64_t replayDurationMs,
         std::uint32_t tickDurationMs) {
     InputScriptBaselineResult result;
     std::int64_t originMs = 0;
@@ -304,13 +317,9 @@ InputScriptBaselineResult BuildInputScriptBaseline(
             *translated > std::numeric_limits<std::int32_t>::max()) {
             result.error = LineError(
                     command.sourceLine,
-                    "timestamp is outside the supported replay timeline.");
-            return result;
-        }
-        if (*translated > replayDurationMs) {
-            result.error = LineError(
-                    command.sourceLine,
-                    "timestamp exceeds the replay duration.");
+                    "input time " + FormatMilliseconds(command.userTimeMs) +
+                            " cannot be represented on the selected replay's "
+                            "timeline.");
             return result;
         }
         materialized.push_back({

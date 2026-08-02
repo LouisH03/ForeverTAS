@@ -15,6 +15,7 @@
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace {
@@ -868,8 +869,7 @@ bool CheckKeyboardSteeringPhysicsParity(const char *packsDirectory,
                             "opening analog parity Packs"),
                     options),
             "creating analog parity sandbox");
-    const PhysicsSandboxStateView initial = Require(
-            keyboard.LoadReplay({replay.data(), replay.size()}, identity),
+    Require(keyboard.LoadReplay({replay.data(), replay.size()}, identity),
             "loading keyboard parity replay");
     Require(analog.LoadReplay({replay.data(), replay.size()}, identity),
             "loading analog parity replay");
@@ -895,7 +895,6 @@ bool CheckKeyboardSteeringPhysicsParity(const char *packsDirectory,
             forevertas::BuildInputScriptBaseline(
                     replayInputs,
                     parsed.commands,
-                    static_cast<std::int64_t>(initial.durationMs),
                     forevertas::kSearchTickDurationMs);
     if (!materialized) {
         throw std::runtime_error(*materialized.error);
@@ -992,13 +991,27 @@ bool CheckSandboxCloneAndWindowParity(
                     forevertas::ExtractReplayInputScript(
                             packsDirectory, replayPath));
     if (!parsed) throw std::runtime_error(*parsed.error);
+    std::vector<forevertas::ParsedInputCommand> commands = parsed.commands;
+    forevertas::ParsedInputCommand postReplayInput;
+    postReplayInput.userTimeMs =
+            static_cast<std::int64_t>(initial.durationMs) + 1000;
+    postReplayInput.action = forevertas::SandboxInputAction::Steer;
+    postReplayInput.value.kind = PhysicsSandboxInputValueKind::Analog;
+    postReplayInput.value.analog = 12345;
+    postReplayInput.sourceLine = parsed.commands.size() + 1u;
+    commands.push_back(postReplayInput);
     forevertas::InputScriptBaselineResult baselineResult =
             forevertas::BuildInputScriptBaseline(
                     replayInputs,
-                    parsed.commands,
-                    static_cast<std::int64_t>(initial.durationMs),
+                    commands,
                     forevertas::kSearchTickDurationMs);
     if (!baselineResult) throw std::runtime_error(*baselineResult.error);
+    if (baselineResult.events.empty() ||
+        baselineResult.events.back().timeMs <=
+                static_cast<std::int64_t>(initial.durationMs)) {
+        std::cerr << "input beyond replay duration was not retained\n";
+        return false;
+    }
     forevertas::ConvertKeyboardSteeringToAnalog(baselineResult.events);
     Require(source.ReplaceInputs(baselineResult.events),
             "applying clone parity baseline");
@@ -1101,15 +1114,43 @@ bool CheckSandboxCloneAndWindowParity(
     return restored.timeMs == 500u;
 }
 
+bool CheckPostReplayInputScriptAccepted(const char *packsDirectory,
+                                        const char *replayPath) {
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    request.backend = forevertas::PhysicsBackend::OptimizedCpu;
+    forevertas::ParsedInputCommand postReplayInput;
+    postReplayInput.userTimeMs = 100000;
+    postReplayInput.action = forevertas::SandboxInputAction::Steer;
+    postReplayInput.value.kind = PhysicsSandboxInputValueKind::Analog;
+    postReplayInput.value.analog = 12345;
+    postReplayInput.sourceLine = 300u;
+    request.baseInputCommands = {postReplayInput};
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 0u;
+    control.sampleBestTimeline = false;
+    static_cast<void>(forevertas::RunSearch(request, &control));
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
+    const bool postReplayInputOnly =
+            argc == 4 &&
+            std::string_view(argv[1]) == "--post-replay-input-only";
+    if ((!postReplayInputOnly && argc != 3) ||
+        (postReplayInputOnly && argc != 4)) {
         std::cerr << "expected Packs directory and replay path\n";
         return 2;
     }
 
     try {
+        if (postReplayInputOnly) {
+            return CheckPostReplayInputScriptAccepted(argv[2], argv[3])
+                    ? 0
+                    : 1;
+        }
         if (!CheckAutoPromoteSemantics(argv[1], argv[2]) ||
             !CheckModifierWindowClippedToReplay(argv[1], argv[2]) ||
 #if FOREVERVALIDATOR_HAS_CUDA

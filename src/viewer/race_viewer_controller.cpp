@@ -1284,7 +1284,6 @@ RaceViewerInputPreviewResult BuildInputPreview(
         InputScriptBaselineResult baseline = BuildInputScriptBaseline(
                 runtime->fixedInputs,
                 parsed.commands,
-                static_cast<std::int64_t>(runtime->state.durationMs),
                 kViewerTickDurationMs);
         if (!baseline) {
             return result;

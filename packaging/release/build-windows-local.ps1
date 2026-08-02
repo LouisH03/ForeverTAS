@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$Manifest = "",
-    [switch]$Cold
+    [switch]$LastResortRebuildCache,
+    [switch]$ConfirmCacheRecoveryExhausted
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +28,10 @@ $env:VCPKG_COMMIT = $Release.toolchains.windows.vcpkg_commit
 $env:FOREVERTAS_CACHE_ROOT = $Release.cache.windows
 $env:FOREVERVALIDATOR_CUDA_SPLIT_COMPILE_JOBS = [string]$Release.cuda.split_compile_jobs
 
-if ($Cold -and (Test-Path $env:FOREVERTAS_CACHE_ROOT)) {
+if ($LastResortRebuildCache -ne $ConfirmCacheRecoveryExhausted) {
+    throw "A full cache rebuild requires both last-resort confirmation switches"
+}
+if ($LastResortRebuildCache -and (Test-Path $env:FOREVERTAS_CACHE_ROOT)) {
     Remove-Item $env:FOREVERTAS_CACHE_ROOT -Recurse -Force
 }
 New-Item -ItemType Directory -Force $env:FOREVERTAS_CACHE_ROOT | Out-Null
@@ -46,4 +50,4 @@ if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed" }
 if (-not (Test-Path (Join-Path $RepoRoot "dist/cuda-fatbinary-windows.json"))) {
     throw "Windows CUDA fatbinary evidence is missing"
 }
-Write-Host "PASS Windows local release build ($($(if ($Cold) { 'cold' } else { 'warm' })) cache)"
+Write-Host "PASS Windows local release build ($($(if ($LastResortRebuildCache) { 'last-resort-rebuilt' } else { 'warm' })) cache)"

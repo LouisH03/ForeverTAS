@@ -158,6 +158,10 @@ def release_notes(manifest: dict) -> str:
 - Precise finish-time candidates retain the state immediately before their finishing tick, so exact refinement replays one tick rather than a long fixed suffix.
 - CUDA winner reconstruction and auto-promotion verification run on a dedicated optimized-CPU worker instead of a one-thread, one-block CUDA replay.
 
+### Input timelines
+
+- Input scripts may extend beyond the source replay duration. Search and input preview preserve later commands instead of rejecting them against the recorded replay length.
+
 ### CUDA compatibility
 
 The x86_64 packages contain native cubins for `sm_50`, `sm_52`, `sm_61`, `sm_70`, `sm_75`, `sm_86`, `sm_89`, and `sm_120`. On desktop NVIDIA hardware, cubins are forward-compatible within the same compute-capability major version, so the native set covers compute capabilities 5.0 and later 5.x, 6.1 and later 6.x, 7.0 and later 7.x, 8.6 and later 8.x, and 12.0 and later 12.x. In current product terms this includes supported Maxwell, Pascal except P100/GP100, Volta, Turing, Ampere RTX/A-series except A100/A30, Ada, and GeForce RTX 50 / RTX PRO Blackwell GPUs. See NVIDIA's [GPU compute-capability tables](https://developer.nvidia.com/cuda-gpus) and [binary-compatibility rules](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#cuda-binary-compatibility).
@@ -238,8 +242,9 @@ def command_linux(args: argparse.Namespace, manifest: dict) -> None:
     tree = Path(args.work).resolve() / "linux-source"
     prepare_tree(manifest, validator_root, state, tree)
     command = [str(tree / "packaging/release/build-linux-local.sh"), str(args.manifest.resolve())]
-    if args.cold:
-        command.append("--cold")
+    if args.last_resort_rebuild_cache:
+        command.extend(["--last-resort-rebuild-cache",
+                        "--confirm-cache-recovery-exhausted"])
     environment = os.environ.copy()
     environment["FOREVERTAS_RELEASE_CACHE"] = str(
         REPO_ROOT / manifest["cache"]["linux"]
@@ -263,8 +268,11 @@ def command_windows(args: argparse.Namespace, manifest: dict) -> None:
     remote = "C:/src/forevertas-release"
     run(["ssh", host, f"Remove-Item -Recurse -Force '{remote}' -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force '{remote}' | Out-Null"])
     run(["scp", "-r", str(local_tree) + "/.", f"{host}:{remote}/"])
-    cold = " -Cold" if args.cold else ""
-    run(["ssh", host, f"& '{remote}/packaging/release/build-windows-local.ps1' -Manifest '{remote}/packaging/release/manifest.json'{cold}"])
+    cache_rebuild = (
+        " -LastResortRebuildCache -ConfirmCacheRecoveryExhausted"
+        if args.last_resort_rebuild_cache else ""
+    )
+    run(["ssh", host, f"& '{remote}/packaging/release/build-windows-local.ps1' -Manifest '{remote}/packaging/release/manifest.json'{cache_rebuild}"])
     dist = Path(args.dist).resolve()
     dist.mkdir(parents=True, exist_ok=True)
     artifact = manifest["artifacts"]["windows"]
@@ -340,12 +348,33 @@ def main() -> int:
     subparsers.add_parser("check")
     for name in ("linux", "windows"):
         build = subparsers.add_parser(name)
-        build.add_argument("--cold", action="store_true")
+        build.add_argument(
+            "--last-resort-rebuild-cache",
+            action="store_true",
+            help=(
+                "delete the persistent platform cache only after warm-build "
+                "retries and targeted cache repair have both failed"
+            ),
+        )
+        build.add_argument(
+            "--confirm-cache-recovery-exhausted",
+            action="store_true",
+            help=argparse.SUPPRESS,
+        )
     subparsers.add_parser("verify")
     subparsers.add_parser("draft")
     publish = subparsers.add_parser("publish")
     publish.add_argument("--confirm", required=True)
     args = parser.parse_args()
+    if getattr(args, "last_resort_rebuild_cache", False) != getattr(
+        args, "confirm_cache_recovery_exhausted", False
+    ):
+        raise SystemExit(
+            "last-resort cache rebuilding requires both "
+            "--last-resort-rebuild-cache and "
+            "--confirm-cache-recovery-exhausted after warm retries and "
+            "targeted cache repair have failed"
+        )
     args.manifest = args.manifest.resolve()
     manifest = load_manifest(args.manifest)
     if args.command == "check":

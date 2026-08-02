@@ -672,12 +672,10 @@ BuildBaselineOrThrow(
         const SearchRequest &request,
         const std::vector<
                 forevervalidator::experimental::PhysicsSandboxInputEvent>
-                &replayInputs,
-        std::int64_t replayDurationMs) {
+                &replayInputs) {
     InputScriptBaselineResult baseline = BuildInputScriptBaseline(
             replayInputs,
             request.baseInputCommands,
-            replayDurationMs,
             kSearchTickDurationMs);
     if (!baseline) {
         throw std::invalid_argument(*baseline.error);
@@ -788,8 +786,7 @@ SearchResult RunMultiThreadedCpuSearch(
             control, SearchProgressStage::ApplyingBaselineInputs, 0u, 0u);
     Require(sourceSandbox.ReplaceInputs(BuildBaselineOrThrow(
                     request,
-                    replayInputs,
-                    static_cast<std::int64_t>(initialView.durationMs))),
+                    replayInputs)),
             "applying shared CPU baseline");
 
     std::vector<PhysicsSandbox> workerSandboxes;
@@ -1348,9 +1345,6 @@ SearchResult RunSearch(const SearchRequest &request,
                             cached->initialInputs),
                     "restoring cached initial inputs");
         }
-        const PhysicsSandboxStateView initialView = Require(
-                cached->sandbox->ReadState(),
-                "reading cached initial state");
         ReportProgress(
                 control,
                 SearchProgressStage::ApplyingBaselineInputs,
@@ -1359,9 +1353,7 @@ SearchResult RunSearch(const SearchRequest &request,
         Require(
                 cached->sandbox->ReplaceInputs(BuildBaselineOrThrow(
                         request,
-                        cached->initialInputs,
-                        static_cast<std::int64_t>(
-                                initialView.durationMs))),
+                        cached->initialInputs)),
                 "applying base input script");
         CheckCancellation(control);
         return RunLoadedSearch(
@@ -1392,8 +1384,7 @@ SearchResult RunSearch(const SearchRequest &request,
             "creating sandbox");
     CheckCancellation(control);
     ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
-    const PhysicsSandboxStateView initialView = Require(
-            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay");
     const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
             sandbox.ReadInputs(), "reading replay inputs");
@@ -1405,8 +1396,7 @@ SearchResult RunSearch(const SearchRequest &request,
     Require(
             sandbox.ReplaceInputs(BuildBaselineOrThrow(
                     request,
-                    replayInputs,
-                    static_cast<std::int64_t>(initialView.durationMs))),
+                    replayInputs)),
             "applying base input script");
     CheckCancellation(control);
     return RunLoadedSearch(

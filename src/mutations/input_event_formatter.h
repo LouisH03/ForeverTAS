@@ -42,7 +42,6 @@ InputScriptParseResult ParseInputScript(std::string_view script);
 InputScriptBaselineResult BuildInputScriptBaseline(
         const std::vector<SandboxInputEvent> &replayInputs,
         const std::vector<ParsedInputCommand> &commands,
-        std::int64_t replayDurationMs,
         std::uint32_t tickDurationMs);
 
 std::string FormatInputScript(

@@ -210,9 +210,10 @@ Parsed commands retain user-relative milliseconds and their source line.
 Loading the replay establishes the `RaceRunning` origin, after which the runner
 applies the existing one-tick user-timeline offset. The runner preserves
 immutable pre-race history and structural `RaceRunning`, `FinishLine`, and
-unmapped events, replaces editable controls with the script commands, validates
-the translated times against the replay duration, and calls `ReplaceInputs`
-before capturing or evaluating the baseline. Cached sandboxes always restore
+unmapped events, replaces editable controls with the script commands, and calls
+`ReplaceInputs` before capturing or evaluating the baseline. Input commands may
+extend beyond the source replay duration; that duration never limits the editable
+input timeline. Cached sandboxes always restore
 the original replay snapshot before applying the current request's script.
 
 ### Canonical analog input representation
