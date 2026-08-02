@@ -52,7 +52,9 @@ public:
                                 const QString &key,
                                 const QString &value);
 
-    SearchConfigurationValidation validate(std::uint32_t tickDurationMs) const;
+    SearchConfigurationValidation validate(
+            std::uint32_t tickDurationMs,
+            std::uint32_t simulationHorizonMs) const;
 
 private:
     void loadSearchAlgorithmSettings();

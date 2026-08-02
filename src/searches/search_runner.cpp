@@ -16,6 +16,7 @@
 #include <deque>
 #include <exception>
 #include <future>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -56,6 +57,18 @@ void ReportProgress(const SearchRunControl *control,
         control->progressChanged(
                 {stage, completedWork, totalWork});
     }
+}
+
+forevervalidator::experimental::PhysicsSandboxOptions CanonicalOptions(
+        const SearchRequest &request,
+        forevervalidator::SimulationBackend backend) {
+    forevervalidator::experimental::PhysicsSandboxOptions options;
+    options.backend = backend;
+    options.tickDurationMs = kSearchTickDurationMs;
+    options.timelineMode = forevervalidator::experimental::
+            PhysicsSandboxTimelineMode::Canonical;
+    options.simulationHorizonMs = request.simulationHorizonMs;
+    return options;
 }
 
 SearchTimelineFrame ToTimelineFrame(
@@ -109,35 +122,29 @@ TimelineSamplingRuntime CreateTimelineSamplingRuntime(
     AssetSource source = Require(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory for timeline sampling");
-    PhysicsSandboxOptions options;
-    options.backend = ToForeverValidatorBackend(request.backend);
-    options.tickDurationMs = kSearchTickDurationMs;
+    PhysicsSandboxOptions options = CanonicalOptions(
+            request, ToForeverValidatorBackend(request.backend));
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating timeline-sampling sandbox");
-    const PhysicsSandboxStateView state = Require(
-            sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay for timeline sampling");
-    if (state.durationMs % kSearchTickDurationMs != 0u) {
-        throw std::runtime_error(
-                "replay duration is not aligned to the search tick duration");
-    }
     PhysicsSandboxState initialState = Require(
             sandbox.CaptureState(),
             "capturing timeline-sampling initial state");
     return {
             std::move(sandbox),
             std::move(initialState),
-            state.durationMs / kSearchTickDurationMs};
+            request.simulationHorizonMs / kSearchTickDurationMs};
 }
 
 TimelineSamplingRuntime CloneTimelineSamplingRuntime(
         const forevervalidator::experimental::PhysicsSandbox &source,
-        std::uint64_t durationMs) {
+        std::uint64_t simulationHorizonMs) {
     using namespace forevervalidator::experimental;
-    if (durationMs % kSearchTickDurationMs != 0u) {
+    if (simulationHorizonMs % kSearchTickDurationMs != 0u) {
         throw std::runtime_error(
-                "replay duration is not aligned to the search tick duration");
+                "Simulation horizon is not aligned to the search tick duration");
     }
     PhysicsSandbox sandbox = Require(
             ClonePhysicsSandbox(source),
@@ -147,7 +154,7 @@ TimelineSamplingRuntime CloneTimelineSamplingRuntime(
             "capturing cloned timeline-sampling initial state");
     return {std::move(sandbox),
             std::move(initialState),
-            durationMs / kSearchTickDurationMs};
+            simulationHorizonMs / kSearchTickDurationMs};
 }
 
 std::vector<SearchTimelineFrame> SampleTimeline(
@@ -181,7 +188,7 @@ std::vector<SearchTimelineFrame> SampleTimeline(
     }
 
     for (std::uint64_t tick = 1u;
-         tick <= runtime.finalTickCount;
+         tick <= runtime.finalTickCount && !state.raceCompleted;
          ++tick) {
         CheckCancellation(control);
         state = Require(runtime.sandbox.AdvanceTicks(1u),
@@ -413,7 +420,7 @@ private:
                 }
                 if (task->tick > runtime->finalTickCount) {
                     throw std::out_of_range(
-                            "CUDA winner tick exceeds replay duration");
+                            "CUDA winner tick exceeds the Simulation horizon");
                 }
                 Require(runtime->sandbox.RestoreState(runtime->initialState),
                         "restoring optimized CPU winner worker");
@@ -462,13 +469,19 @@ struct CachedSearchSandbox {
 
 std::shared_ptr<CachedSearchSandbox> CachedSandboxFor(
         const SearchRequest &request) {
-    using Key = std::tuple<std::string, std::string, PhysicsBackend>;
+    using Key = std::tuple<std::string,
+                           std::string,
+                           PhysicsBackend,
+                           std::uint32_t,
+                           bool>;
     static std::mutex cacheLock;
     static std::map<Key, std::shared_ptr<CachedSearchSandbox>> cache;
     const Key key{
             request.packDirectory,
             request.replayPath,
-            request.backend};
+            request.backend,
+            request.simulationHorizonMs,
+            request.useCudaSessionSpecialization};
     std::lock_guard<std::mutex> guard(cacheLock);
     auto &entry = cache[key];
     if (!entry) {
@@ -638,10 +651,11 @@ SearchResult RunLoadedSearch(
                                               const std::vector<
                                                       PhysicsSandboxInputEvent>
                                                       &,
-                                              std::uint32_t)>{}
+                                              std::uint32_t)>{},
 #else
-                    {}
+                    {},
 #endif
+                    request.simulationHorizonMs
             });
             if (asyncImprovementSampler) {
                 const std::exception_ptr failure =
@@ -672,9 +686,9 @@ BuildBaselineOrThrow(
         const SearchRequest &request,
         const std::vector<
                 forevervalidator::experimental::PhysicsSandboxInputEvent>
-                &replayInputs) {
+                &canonicalInputs) {
     InputScriptBaselineResult baseline = BuildInputScriptBaseline(
-            replayInputs,
+            canonicalInputs,
             request.baseInputCommands,
             kSearchTickDurationMs);
     if (!baseline) {
@@ -767,26 +781,24 @@ SearchResult RunMultiThreadedCpuSearch(
     AssetBytes replay = Require(
             ReadReplayFileUtf8(request.replayPath, identity),
             "reading shared CPU replay");
-    PhysicsSandboxOptions options;
-    options.backend = SimulationBackend::OptimizedCpu;
-    options.tickDurationMs = kSearchTickDurationMs;
+    PhysicsSandboxOptions options = CanonicalOptions(
+            request, SimulationBackend::OptimizedCpu);
     ReportProgress(control, SearchProgressStage::CreatingSimulation, 0u, 0u);
     PhysicsSandbox sourceSandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating shared CPU sandbox");
     ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
-    const PhysicsSandboxStateView initialView = Require(
-            sourceSandbox.LoadReplay(
+    Require(sourceSandbox.LoadReplay(
                     {replay.data(), replay.size()}, identity),
             "loading shared CPU replay");
-    const std::vector<SandboxInputEvent> replayInputs = Require(
+    const std::vector<SandboxInputEvent> canonicalInputs = Require(
             sourceSandbox.ReadInputs(),
-            "reading shared CPU replay inputs");
+            "reading shared CPU canonical inputs");
     ReportProgress(
             control, SearchProgressStage::ApplyingBaselineInputs, 0u, 0u);
     Require(sourceSandbox.ReplaceInputs(BuildBaselineOrThrow(
                     request,
-                    replayInputs)),
+                    canonicalInputs)),
             "applying shared CPU baseline");
 
     std::vector<PhysicsSandbox> workerSandboxes;
@@ -1105,7 +1117,7 @@ SearchResult RunMultiThreadedCpuSearch(
                                 std::make_unique<TimelineSamplingRuntime>(
                                         CloneTimelineSamplingRuntime(
                                                 sourceSandbox,
-                                                initialView.durationMs));
+                                                request.simulationHorizonMs));
                     }
                     aggregate.bestTimeline = SampleTimeline(
                             *timelineSampler,
@@ -1217,7 +1229,7 @@ SearchResult RunMultiThreadedCpuSearch(
         if (!timelineSampler) {
             timelineSampler = std::make_unique<TimelineSamplingRuntime>(
                     CloneTimelineSamplingRuntime(
-                            sourceSandbox, initialView.durationMs));
+                            sourceSandbox, request.simulationHorizonMs));
         }
         result.bestTimeline = SampleTimeline(
                 *timelineSampler,
@@ -1251,6 +1263,14 @@ SearchResult RunSearch(const SearchRequest &request,
         throw std::invalid_argument("unknown evaluation target: " +
                                     request.evaluationTarget.id);
     }
+    if (request.simulationHorizonMs < kSearchTickDurationMs ||
+        request.simulationHorizonMs > kMaximumSimulationHorizonMs ||
+        request.simulationHorizonMs % kSearchTickDurationMs != 0u) {
+        throw std::invalid_argument(
+                "Simulation horizon must be between 10 and " +
+                std::to_string(kMaximumSimulationHorizonMs) +
+                " ms and aligned to 10 ms");
+    }
     if (const auto error = searchRegistration->validateSettings(
                 request.searchAlgorithm.settings, kSearchTickDurationMs)) {
         throw std::invalid_argument(*error);
@@ -1259,6 +1279,10 @@ SearchResult RunSearch(const SearchRequest &request,
                 request.evaluationTarget.settings, kSearchTickDurationMs)) {
         throw std::invalid_argument(*error);
     }
+    std::int64_t earliestMutationTimeMs =
+            std::numeric_limits<std::int64_t>::max();
+    std::int64_t latestMutationTimeMs = 0;
+    std::string latestMutationId;
     for (const OptionConfiguration &modifier : request.modifiers) {
         const ModifierRegistration *const registration =
                 FindModifier(modifier.id);
@@ -1269,6 +1293,48 @@ SearchResult RunSearch(const SearchRequest &request,
                     modifier.settings, kSearchTickDurationMs)) {
             throw std::invalid_argument(*error);
         }
+        const std::unique_ptr<InputMutator> mutator = registration->create(
+                modifier.settings, kSearchTickDurationMs);
+        earliestMutationTimeMs = std::min(
+                earliestMutationTimeMs,
+                mutator->EarliestMutationTimeMs());
+        const std::int64_t passMaximumTimeMs =
+                mutator->AffectedTimeRange().maximumTimeMs;
+        if (passMaximumTimeMs > latestMutationTimeMs) {
+            latestMutationTimeMs = passMaximumTimeMs;
+            latestMutationId = modifier.id;
+        }
+    }
+    if (latestMutationTimeMs > request.simulationHorizonMs) {
+        throw std::invalid_argument(
+                "modifier " + latestMutationId +
+                " maximum time setting " +
+                std::to_string(UserTimelineTimeFromSimulationTime(
+                        latestMutationTimeMs, kSearchTickDurationMs)) +
+                " ms maps to simulation time " +
+                std::to_string(latestMutationTimeMs) +
+                " ms, which exceeds the Simulation horizon of " +
+                std::to_string(request.simulationHorizonMs) + " ms");
+    }
+    const std::unique_ptr<IterationEvaluator> evaluator =
+            evaluationRegistration->create(
+                    request.evaluationTarget.settings,
+                    kSearchTickDurationMs);
+    const EvaluationPlan evaluationPlan = evaluator->Plan(
+            request.simulationHorizonMs,
+            earliestMutationTimeMs,
+            kSearchTickDurationMs);
+    if (evaluationPlan.startTimeMs < earliestMutationTimeMs ||
+        evaluationPlan.endTimeMs < evaluationPlan.startTimeMs ||
+        evaluationPlan.endTimeMs > request.simulationHorizonMs ||
+        evaluationPlan.startTimeMs % kSearchTickDurationMs != 0 ||
+        evaluationPlan.endTimeMs % kSearchTickDurationMs != 0) {
+        throw std::invalid_argument(
+                "evaluation plan [" +
+                std::to_string(evaluationPlan.startTimeMs) + ", " +
+                std::to_string(evaluationPlan.endTimeMs) +
+                "] ms does not fit the Simulation horizon of " +
+                std::to_string(request.simulationHorizonMs) + " ms");
     }
 
     if (request.backend == PhysicsBackend::MultiThreadedCpu) {
@@ -1281,9 +1347,8 @@ SearchResult RunSearch(const SearchRequest &request,
 
     CheckCancellation(control);
     const ReplayIdentity identity{request.replayPath};
-    PhysicsSandboxOptions options;
-    options.backend = ToForeverValidatorBackend(request.backend);
-    options.tickDurationMs = kSearchTickDurationMs;
+    PhysicsSandboxOptions options = CanonicalOptions(
+            request, ToForeverValidatorBackend(request.backend));
 #if FOREVERVALIDATOR_HAS_CUDA
     options.prepareCudaSearchSpecialization =
             request.backend == PhysicsBackend::Cuda &&
@@ -1386,8 +1451,8 @@ SearchResult RunSearch(const SearchRequest &request,
     ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
     Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
             "loading replay");
-    const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
-            sandbox.ReadInputs(), "reading replay inputs");
+    const std::vector<PhysicsSandboxInputEvent> canonicalInputs = Require(
+            sandbox.ReadInputs(), "reading canonical inputs");
     ReportProgress(
             control,
             SearchProgressStage::ApplyingBaselineInputs,
@@ -1396,7 +1461,7 @@ SearchResult RunSearch(const SearchRequest &request,
     Require(
             sandbox.ReplaceInputs(BuildBaselineOrThrow(
                     request,
-                    replayInputs)),
+                    canonicalInputs)),
             "applying base input script");
     CheckCancellation(control);
     return RunLoadedSearch(

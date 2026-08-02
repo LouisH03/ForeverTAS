@@ -104,16 +104,6 @@ inline std::string TimeMetricDescription(const char *name, double timeMs) {
             FormatHumanDurationMilliseconds(timeMs);
 }
 
-inline EvaluationPlan ClampPlan(std::int64_t start,
-                                std::int64_t end,
-                                std::int64_t replayDurationMs,
-                                std::int64_t earliestMutationTimeMs) {
-    start = std::max(start, earliestMutationTimeMs);
-    end = std::min(end, replayDurationMs);
-    if (end < start) end = start;
-    return {start, end};
-}
-
 }  // namespace forevertas
 
 #endif

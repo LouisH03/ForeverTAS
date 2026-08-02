@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QUuid>
 #include <QVariantMap>
@@ -150,6 +151,9 @@ SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
                         QTimer::singleShot(
                                 0, this,
                                 &SimulationDebuggerModel::beginPendingSession);
+                    } else {
+                        QFile::remove(inputScriptPath_);
+                        inputScriptPath_.clear();
                     }
                     return;
                 }
@@ -158,6 +162,8 @@ SimulationDebuggerModel::SimulationDebuggerModel(QObject *parent)
                 }
                 setRunning(false);
                 active_ = false;
+                QFile::remove(inputScriptPath_);
+                inputScriptPath_.clear();
                 cancelStep();
                 clearExecutionLocation();
                 if (status == QProcess::NormalExit && exitCode == 0) {
@@ -180,6 +186,7 @@ SimulationDebuggerModel::~SimulationDebuggerModel() {
         debugger_.disconnect(this);
         debugger_.kill();
     }
+    QFile::remove(inputScriptPath_);
 }
 
 bool SimulationDebuggerModel::available() const {
@@ -642,7 +649,9 @@ void SimulationDebuggerModel::configure(const QString &backendName) {
 }
 
 bool SimulationDebuggerModel::startSession(const QString &packsDirectory,
-                                           const QString &replayPath) {
+                                           const QString &replayPath,
+                                           qint64 simulationHorizonMs,
+                                           const QString &inputScript) {
     if (packsDirectory.trimmed().isEmpty() || replayPath.trimmed().isEmpty()) {
         setStatus(QStringLiteral("Load a replay and Packs directory before "
                                  "starting native source debugging."));
@@ -650,6 +659,8 @@ bool SimulationDebuggerModel::startSession(const QString &packsDirectory,
     }
     pendingPacksDirectory_ = QDir::toNativeSeparators(packsDirectory);
     pendingReplayPath_ = QDir::toNativeSeparators(replayPath);
+    pendingInputScript_ = inputScript;
+    pendingSimulationHorizonMs_ = simulationHorizonMs;
     pendingStart_ = true;
     if (preparing_) {
         setStatus(
@@ -679,6 +690,23 @@ void SimulationDebuggerModel::beginPendingSession() {
     }
     packsDirectory_ = pendingPacksDirectory_;
     replayPath_ = pendingReplayPath_;
+    simulationHorizonMs_ = pendingSimulationHorizonMs_;
+    QFile::remove(inputScriptPath_);
+    QTemporaryFile inputFile(
+            QDir::tempPath() +
+            QStringLiteral("/forevertas-debug-input-XXXXXX.txt"));
+    inputFile.setAutoRemove(false);
+    const QByteArray encodedInputScript = pendingInputScript_.toUtf8();
+    if (!inputFile.open() ||
+        inputFile.write(encodedInputScript) != encodedInputScript.size() ||
+        !inputFile.flush()) {
+        pendingStart_ = false;
+        setStatus(QStringLiteral("Could not prepare the debugger input script."));
+        emit stateChanged();
+        return;
+    }
+    inputScriptPath_ = QDir::toNativeSeparators(inputFile.fileName());
+    inputFile.close();
     pendingStart_ = false;
     stopping_ = false;
     const quint64 generation = ++sessionGeneration_;
@@ -740,6 +768,7 @@ void SimulationDebuggerModel::stopSessionProcess(bool keepPendingStart) {
         pendingStart_ = false;
         pendingPacksDirectory_.clear();
         pendingReplayPath_.clear();
+        pendingInputScript_.clear();
     }
     ++sessionGeneration_;
     setRunning(false);
@@ -775,6 +804,8 @@ void SimulationDebuggerModel::stopSessionProcess(bool keepPendingStart) {
         });
     } else {
         stopping_ = false;
+        QFile::remove(inputScriptPath_);
+        inputScriptPath_.clear();
     }
     if (wasActive) {
         setStatus(QStringLiteral("Native source debugging stopped."));
@@ -903,9 +934,9 @@ SimulationDebuggerModel::processDebuggerOutput(const QString &output,
                     QStringLiteral("timeMs"),
                     static_cast<qint64>(
                             state.value(QStringLiteral("timeMs")).toDouble()));
-            frame.insert(QStringLiteral("durationMs"),
+            frame.insert(QStringLiteral("horizonMs"),
                          static_cast<qint64>(
-                                 state.value(QStringLiteral("durationMs"))
+                                 state.value(QStringLiteral("horizonMs"))
                                          .toDouble()));
             frame.insert(QStringLiteral("position"),
                          JsonVector(state.value(QStringLiteral("position"))));
@@ -1781,9 +1812,12 @@ void SimulationDebuggerModel::consumeDebuggerPrompts() {
                                              workerExecutablePath())));
                 queueCommand(
                         CommandKind::Setting,
-                        QStringLiteral("settings set -- target.run-args %1 %2")
+                        QStringLiteral(
+                                "settings set -- target.run-args %1 %2 %3 %4")
                                 .arg(quoteDebuggerArgument(packsDirectory_))
-                                .arg(quoteDebuggerArgument(replayPath_)));
+                                .arg(quoteDebuggerArgument(replayPath_))
+                                .arg(simulationHorizonMs_)
+                                .arg(quoteDebuggerArgument(inputScriptPath_)));
                 queueCommand(
                         CommandKind::Setting,
                         QStringLiteral(

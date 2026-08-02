@@ -102,7 +102,7 @@ private:
 
 OptionSettings DefaultInputDeletionSettings() {
     return {{"minTimeMs", "1000"},
-            {"maxTimeMs", "6000"},
+            {"maxTimeMs", "5990"},
             {"seed", "1179926867"},
             {"steerEnabled", "true"},
             {"steerMaxCount", "2"},

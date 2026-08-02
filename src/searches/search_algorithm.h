@@ -153,6 +153,7 @@ struct SearchExecutionContext {
                                       PhysicsSandboxInputEvent> &,
             std::uint32_t)>
             resolveCudaWinner = {};
+    std::uint32_t simulationHorizonMs = 6000u;
 };
 
 struct SearchResult {

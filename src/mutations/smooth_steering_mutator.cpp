@@ -109,7 +109,7 @@ private:
 
 OptionSettings DefaultSmoothSteeringSettings() {
     return {{"minTimeMs", "1000"},
-            {"maxTimeMs", "6000"},
+            {"maxTimeMs", "5990"},
             {"seed", "1179926867"},
             {"deformationCount", "1"},
             {"radiusMs", "200"},

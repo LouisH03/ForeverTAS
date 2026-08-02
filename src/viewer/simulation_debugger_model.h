@@ -84,7 +84,10 @@ class SimulationDebuggerModel final : public QObject {
     void setDarkMode(bool value);
 
     void configure(const QString &backendName);
-    bool startSession(const QString &packsDirectory, const QString &replayPath);
+    bool startSession(const QString &packsDirectory,
+                      const QString &replayPath,
+                      qint64 simulationHorizonMs,
+                      const QString &inputScript);
     void stopSession();
     void play();
     void pause();
@@ -285,8 +288,12 @@ class SimulationDebuggerModel final : public QObject {
     QString debuggerBuffer_;
     QString packsDirectory_;
     QString replayPath_;
+    QString inputScriptPath_;
+    qint64 simulationHorizonMs_ = 6000;
     QString pendingPacksDirectory_;
     QString pendingReplayPath_;
+    QString pendingInputScript_;
+    qint64 pendingSimulationHorizonMs_ = 6000;
     QString currentLineKey_;
     int activeLine_ = -1;
     int activeSourceLine_ = -1;

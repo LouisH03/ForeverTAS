@@ -661,7 +661,8 @@ bool TestUserTimelineConfigurationBoundary() {
                                   QStringLiteral("20")),
                   "failed to configure user timeline evaluation values");
 
-    const auto validated = configuration.validate(10u);
+    const auto validated = configuration.validate(
+            10u, forevertas::kDefaultSimulationHorizonMs);
     okay &= Check(validated.configuration.has_value() &&
                           validated.error.isEmpty(),
                   "zero-based user timeline settings did not validate");
@@ -766,6 +767,38 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     okay &= Check(controller.simulationBackendId() ==
                           QStringLiteral("reference"),
                   "Reference was not the default physics backend");
+    okay &= Check(controller.simulationHorizonMs() ==
+                          QStringLiteral("6000"),
+                  "Simulation horizon did not default to 6000 ms");
+    controller.setSimulationHorizonMs(QStringLiteral("5999"));
+    okay &= Check(!controller.canStart() &&
+                          controller.validationMessage().contains(
+                                  QStringLiteral("Simulation horizon")),
+                  "unaligned Simulation horizon enabled Start");
+    controller.setSimulationHorizonMs(QStringLiteral("6000"));
+    controller.setModifierPassSetting(
+            0, QStringLiteral("maxTimeMs"), QStringLiteral("6000"));
+    okay &= Check(!controller.canStart() &&
+                          controller.validationMessage().contains(
+                                  QStringLiteral("setting 6000 ms")) &&
+                          controller.validationMessage().contains(
+                                  QStringLiteral("simulation time 6010 ms")) &&
+                          controller.validationMessage().contains(
+                                  QStringLiteral("Simulation horizon of 6000 ms")),
+                  "translated modifier horizon error was not contextual");
+    controller.setModifierPassSetting(
+            0, QStringLiteral("maxTimeMs"), QStringLiteral("4990"));
+    controller.setSimulationHorizonMs(QStringLiteral("5000"));
+    okay &= Check(!controller.canStart() &&
+                          controller.validationMessage().contains(
+                                  QStringLiteral("Evaluation maximum time")),
+                  "evaluation window beyond the Simulation horizon was accepted");
+    controller.setSimulationHorizonMs(QStringLiteral("6010"));
+    okay &= Check(controller.canStart(),
+                  "valid Simulation horizon did not enable Start");
+    controller.setModifierPassSetting(
+            0, QStringLiteral("maxTimeMs"), QStringLiteral("5990"));
+    controller.setSimulationHorizonMs(QStringLiteral("6000"));
     okay &= Check(HasBackendOption(
                           controller.simulationBackendOptions(),
                           QStringLiteral("reference"),

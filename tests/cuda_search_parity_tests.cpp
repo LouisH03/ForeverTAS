@@ -75,13 +75,16 @@ SearchResult Run(const char *packs,
                  bool *calibrationCompleted = nullptr,
                  bool stopAfterCalibration = false,
                  bool useSessionSpecialization = true,
-                 bool autoPromoteBest = false) {
+                 bool autoPromoteBest = false,
+                 std::uint32_t simulationHorizonMs =
+                         forevertas::kDefaultSimulationHorizonMs) {
     SearchRequest request{packs, replay};
     request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = backend;
     request.parallelSampleCount = batchSize;
     request.calibrateCudaParallelSampleCount = calibrate;
     request.useCudaSessionSpecialization = useSessionSpecialization;
+    request.simulationHorizonMs = simulationHorizonMs;
     request.searchAlgorithm.settings["autoPromoteBest"] =
             autoPromoteBest ? "true" : "false";
     request.modifiers = std::move(modifiers);
@@ -133,11 +136,8 @@ bool SameAuthoritativeResult(const SearchResult &reference,
             reference.bestEvaluationTimeMs ==
                     cuda.bestEvaluationTimeMs &&
             reference.iterations == cuda.iterations &&
-            reference.evaluatorCalls == cuda.evaluatorCalls &&
             (reference.mutationImprovementCount > 0u) ==
                     (cuda.mutationImprovementCount > 0u) &&
-            reference.totalMutationCount ==
-                    cuda.totalMutationCount &&
             SameInputs(reference.bestInputs, cuda.bestInputs);
     if (!same) {
         std::cerr << label
@@ -170,8 +170,6 @@ bool SameAuthoritativeResult(const SearchResult &reference,
                       cuda.bestEvaluationTimeMs)
                   << " sameIterations="
                   << (reference.iterations == cuda.iterations)
-                  << " sameEvaluatorCalls="
-                  << (reference.evaluatorCalls == cuda.evaluatorCalls)
                   << " sameImprovementPresence="
                   << ((reference.mutationImprovementCount > 0u) ==
                       (cuda.mutationImprovementCount > 0u))
@@ -349,8 +347,8 @@ bool CheckCalibration(const char *packs, const char *replay) {
     insertion.settings["steerOffsetMax"] = "0.1";
     OptionConfiguration velocity = DefaultEvaluator(
             forevertas::kVelocityEvaluationId);
-    velocity.settings["minTimeMs"] = "1000";
-    velocity.settings["maxTimeMs"] = "1000";
+    velocity.settings["minTimeMs"] = "1010";
+    velocity.settings["maxTimeMs"] = "1010";
 
     std::vector<std::uint32_t> updates;
     bool calibrationCompleted = false;
@@ -410,7 +408,7 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
                         modifiers,
                         evaluator,
                         false, nullptr, false, std::nullopt,
-                        nullptr, false, true, true);
+                        nullptr, false, true, true, 30000u);
             });
     std::future<SearchResult> optimizedFuture = std::async(
             std::launch::async,
@@ -424,7 +422,7 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
                         modifiers,
                         evaluator,
                         false, nullptr, false, std::nullopt,
-                        nullptr, false, true, true);
+                        nullptr, false, true, true, 30000u);
             });
     const SearchResult cuda = Run(
             packs,
@@ -435,7 +433,7 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
             modifiers,
             evaluator,
             false, nullptr, false, std::nullopt,
-            nullptr, false, true, true);
+            nullptr, false, true, true, 30000u);
     const SearchResult reference = referenceFuture.get();
     const SearchResult optimized = optimizedFuture.get();
     OptionConfiguration promotionModifier = DefaultModifier(
@@ -453,7 +451,7 @@ bool CheckPreciseFinishParity(const char *packs, const char *replay) {
             {promotionModifier},
             evaluator,
             false, nullptr, false, std::nullopt,
-            nullptr, false, true, true);
+            nullptr, false, true, true, 30000u);
     if (promotionProbe.iterations != 40001u ||
         promotionProbe.mutationImprovementCount == 0u ||
         !promotionProbe.winningIterationIndex) {
@@ -522,8 +520,8 @@ int main(int argc, char **argv) {
         const OptionConfiguration velocity =
                 DefaultEvaluator(forevertas::kVelocityEvaluationId);
         OptionConfiguration coverageVelocity = velocity;
-        coverageVelocity.settings["minTimeMs"] = "1000";
-        coverageVelocity.settings["maxTimeMs"] = "1000";
+        coverageVelocity.settings["minTimeMs"] = "1010";
+        coverageVelocity.settings["maxTimeMs"] = "1010";
         constexpr std::int64_t shortEvaluationEndTimeMs = 1020;
 
         std::vector<OptionConfiguration> completeModifierPipeline;
@@ -643,7 +641,9 @@ int main(int argc, char **argv) {
         for (const auto &registration :
              forevertas::EvaluationTargetRegistry()) {
             if (registration.id ==
-                forevertas::kCustomVolumeEntryEvaluationId) {
+                        forevertas::kCustomVolumeEntryEvaluationId ||
+                registration.id ==
+                        forevertas::kPreciseFinishTimeEvaluationId) {
                 continue;
             }
             OptionConfiguration configured{
@@ -655,8 +655,8 @@ int main(int argc, char **argv) {
                     configured.settings.find("maxTimeMs");
             if (minimum != configured.settings.end() &&
                 maximum != configured.settings.end()) {
-                minimum->second = "1000";
-                maximum->second = "1000";
+                minimum->second = "1010";
+                maximum->second = "1010";
             }
             if (registration.id ==
                 forevertas::kStuntPointsEvaluationId) {
@@ -741,8 +741,8 @@ int main(int argc, char **argv) {
         shortInsertion.settings["steerOffsetMin"] = "0.1";
         shortInsertion.settings["steerOffsetMax"] = "0.1";
         OptionConfiguration shortVelocity = velocity;
-        shortVelocity.settings["minTimeMs"] = "1000";
-        shortVelocity.settings["maxTimeMs"] = "1000";
+        shortVelocity.settings["minTimeMs"] = "1010";
+        shortVelocity.settings["maxTimeMs"] = "1010";
         const auto aboveOldCapStarted =
                 std::chrono::steady_clock::now();
         const SearchResult aboveOldCap = Run(

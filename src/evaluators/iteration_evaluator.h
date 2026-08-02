@@ -35,7 +35,7 @@ public:
 class IterationEvaluator {
 public:
     virtual ~IterationEvaluator() = default;
-    virtual EvaluationPlan Plan(std::int64_t replayDurationMs,
+    virtual EvaluationPlan Plan(std::int64_t simulationHorizonMs,
                                 std::int64_t earliestMutationTimeMs,
                                 std::uint32_t tickDurationMs) const = 0;
     virtual std::unique_ptr<IterationEvaluationSession> CreateSession()

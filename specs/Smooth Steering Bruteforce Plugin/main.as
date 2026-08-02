@@ -16,7 +16,7 @@ bool m_bfKeepCPs;
 float m_minSpeed;
 
 uint m_evaluationMinTime;
-uint m_evaluationMaxTime;
+uint m_simulationHorizon = 6000;
 
 uint m_n_iterations_without_update;
 
@@ -130,9 +130,7 @@ class BruteforceController {
     // reset variables bruteforce needs
     void SetBruteforceVariables(SimulationManager@ simManager) {
         // General Variables
-        m_timeLimit = simManager.EventsDuration; // original time of the replay
-        if(TargetType(m_targetID) == TargetType::DistanceSpeed)
-            m_timeLimit = Math::Min(m_timeLimit, m_evaluationMaxTime);
+        m_timeLimit = int(m_simulationHorizon);
 
         m_iterations = 0;
         m_iterationsCounter = 0;

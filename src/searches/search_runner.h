@@ -18,6 +18,8 @@ inline constexpr std::uint32_t kSearchTickDurationMs =
         kInputTimelineTickDurationMs;
 inline constexpr std::uint32_t kDefaultCudaParallelSampleCount = 256u;
 inline constexpr std::uint32_t kMaximumCpuWorkerCount = 256u;
+inline constexpr std::uint32_t kDefaultSimulationHorizonMs = 6000u;
+inline constexpr std::uint32_t kMaximumSimulationHorizonMs = 2147481040u;
 
 inline std::uint32_t DefaultCpuWorkerCount() noexcept {
     const std::uint32_t detected = std::thread::hardware_concurrency();
@@ -40,6 +42,7 @@ struct SearchRequest {
             DefaultEvaluationTargetConfiguration();
     std::vector<ParsedInputCommand> baseInputCommands = {};
     bool useCudaSessionSpecialization = true;
+    std::uint32_t simulationHorizonMs = kDefaultSimulationHorizonMs;
 };
 
 SearchResult RunSearch(

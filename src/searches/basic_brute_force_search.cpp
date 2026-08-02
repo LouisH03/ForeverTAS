@@ -1,6 +1,7 @@
 #include "searches/basic_brute_force_search.h"
 
 #include "evaluators/evaluator_utils.h"
+#include "input_timeline_time.h"
 #include "searches/cuda_batch_calibrator.h"
 #include "searches/cuda_calibration_safety.h"
 #include "searches/option_settings_utils.h"
@@ -360,41 +361,6 @@ PhysicsSandboxStateView AdvanceTo(PhysicsSandbox &sandbox,
     return state;
 }
 
-void ClipMutationToReplay(
-        MutationResult &mutation,
-        const std::vector<PhysicsSandboxInputEvent> &baselineInputs,
-        std::int64_t replayEndTimeMs) {
-    const auto beyondReplay = [replayEndTimeMs](
-                                      const PhysicsSandboxInputEvent &event) {
-        return event.timeMs > replayEndTimeMs;
-    };
-    if (!mutation.windowPatch) {
-        mutation.inputs.erase(
-                std::remove_if(mutation.inputs.begin(),
-                               mutation.inputs.end(),
-                               beyondReplay),
-                mutation.inputs.end());
-        mutation.mutationCount = EffectiveInputChangeCount(
-                baselineInputs, mutation.inputs);
-        return;
-    }
-
-    MutationWindowPatch &patch = *mutation.windowPatch;
-    if (patch.minimumTimeMs > replayEndTimeMs) {
-        mutation.mutationCount = 0u;
-        return;
-    }
-    patch.maximumTimeMs = std::min(
-            patch.maximumTimeMs, replayEndTimeMs);
-    patch.events.erase(
-            std::remove_if(patch.events.begin(),
-                           patch.events.end(),
-                           beyondReplay),
-            patch.events.end());
-    mutation.mutationCount = EffectiveInputChangeCount(
-            baselineInputs, patch);
-}
-
 struct BestIteration {
     std::optional<EvaluationSample> evaluation;
     SearchWinnerSource source = SearchWinnerSource::Baseline;
@@ -515,7 +481,6 @@ SearchResult RunCudaBasicBruteForce(
         const PhysicsSandboxState &branch,
         const std::vector<PhysicsSandboxInputEvent>
                 &originalBaselineInputs,
-        std::int64_t replayEndTimeMs,
         bool autoPromoteBest,
         std::chrono::steady_clock::time_point started) {
     using namespace forevervalidator::experimental;
@@ -538,15 +503,6 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluationStartTimeMs = evaluationPlan.startTimeMs;
     configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
     configuration.modifiers = *context.cudaModifiers;
-    for (PhysicsSandboxCudaModifier &modifier : configuration.modifiers) {
-        std::visit(
-                [replayEndTimeMs](auto &configured) {
-                    configured.window.maximumTimeMs = std::min(
-                            configured.window.maximumTimeMs,
-                            replayEndTimeMs);
-                },
-                modifier);
-    }
     configuration.evaluator = *context.cudaEvaluator;
     configuration.useSessionSpecialization =
             context.useCudaSessionSpecialization;
@@ -1008,6 +964,8 @@ SearchResult BasicBruteForceSearch::Run(
 
     const std::int64_t earliestMutationTimeMs =
             context.mutator.EarliestMutationTimeMs();
+    const MutationTimeRange mutationRange =
+            context.mutator.AffectedTimeRange();
     if (earliestMutationTimeMs <
                 static_cast<std::int64_t>(context.tickDurationMs) ||
         earliestMutationTimeMs % context.tickDurationMs != 0) {
@@ -1015,12 +973,23 @@ SearchResult BasicBruteForceSearch::Run(
                 "modifier pipeline must begin on or after the first whole "
                 "tick");
     }
+    if (mutationRange.maximumTimeMs > context.simulationHorizonMs) {
+        throw std::invalid_argument(
+                "modifier maximum time setting " +
+                std::to_string(UserTimelineTimeFromSimulationTime(
+                        mutationRange.maximumTimeMs,
+                        context.tickDurationMs)) +
+                " ms maps to simulation time " +
+                std::to_string(mutationRange.maximumTimeMs) +
+                " ms, which exceeds the Simulation horizon of " +
+                std::to_string(context.simulationHorizonMs) + " ms");
+    }
 
     CheckCancellation(context.control);
     PhysicsSandboxStateView current = Require(
             context.sandbox.ReadState(), "reading initial sandbox state");
     EvaluationPlan evaluationPlan = context.evaluator.Plan(
-            static_cast<std::int64_t>(current.durationMs),
+            context.simulationHorizonMs,
             earliestMutationTimeMs,
             context.tickDurationMs);
     if (context.control != nullptr &&
@@ -1031,8 +1000,7 @@ SearchResult BasicBruteForceSearch::Run(
     }
     if (evaluationPlan.startTimeMs < earliestMutationTimeMs ||
         evaluationPlan.endTimeMs < evaluationPlan.startTimeMs ||
-        evaluationPlan.endTimeMs >
-                static_cast<std::int64_t>(current.durationMs) ||
+        evaluationPlan.endTimeMs > context.simulationHorizonMs ||
         evaluationPlan.startTimeMs % context.tickDurationMs != 0 ||
         evaluationPlan.endTimeMs % context.tickDurationMs != 0) {
         throw std::invalid_argument(
@@ -1043,8 +1011,8 @@ SearchResult BasicBruteForceSearch::Run(
                 std::to_string(evaluationPlan.startTimeMs) +
                 " end=" +
                 std::to_string(evaluationPlan.endTimeMs) +
-                " duration=" +
-                std::to_string(current.durationMs));
+                " Simulation horizon=" +
+                std::to_string(context.simulationHorizonMs));
     }
 
     const std::uint64_t branchTimeMs =
@@ -1071,7 +1039,6 @@ SearchResult BasicBruteForceSearch::Run(
                 earliestMutationTimeMs,
                 branch,
                 baselineInputs,
-                static_cast<std::int64_t>(current.durationMs),
                 autoPromoteBest_,
                 started);
     }
@@ -1132,6 +1099,7 @@ SearchResult BasicBruteForceSearch::Run(
             previous = state;
             ++evaluatorCalls;
             if (!sample) {
+                if (state.raceCompleted) break;
                 continue;
             }
             if (!std::isfinite(sample->score) ||
@@ -1141,6 +1109,7 @@ SearchResult BasicBruteForceSearch::Run(
             }
             if (best.evaluation &&
                 !context.evaluator.IsBetter(*sample, *best.evaluation)) {
+                if (state.raceCompleted) break;
                 continue;
             }
 
@@ -1162,6 +1131,7 @@ SearchResult BasicBruteForceSearch::Run(
             } else {
                 reportLive(false);
             }
+            if (state.raceCompleted) break;
         }
         return improved;
     };
@@ -1200,10 +1170,6 @@ SearchResult BasicBruteForceSearch::Run(
                  mutationBaselineGeneration});
         CheckCancellation(context.control);
         ++iterations;
-        ClipMutationToReplay(
-                mutation,
-                mutationBaselineInputs,
-                static_cast<std::int64_t>(current.durationMs));
         bool improved = false;
         if (mutation.mutationCount != 0u) {
             totalMutationCount += mutation.mutationCount;

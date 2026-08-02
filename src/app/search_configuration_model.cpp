@@ -45,6 +45,8 @@ void RemoveRetiredSearchBudget() {
             QStringLiteral("search"),
             QStringLiteral("serial-brute-force"),
             retiredKey));
+    storage.remove(QStringLiteral("search/minEvalTimeMs"));
+    storage.remove(QStringLiteral("search/maxEvalTimeMs"));
 }
 
 OptionSettings ToOptionSettings(const QVariantMap &values) {
@@ -345,7 +347,8 @@ bool SearchConfigurationModel::setModifierPassSetting(
 }
 
 SearchConfigurationValidation SearchConfigurationModel::validate(
-        std::uint32_t tickDurationMs) const {
+        std::uint32_t tickDurationMs,
+        std::uint32_t simulationHorizonMs) const {
     const SearchAlgorithmRegistration *const searchRegistration =
             FindSearchAlgorithm(searchAlgorithmId_.toStdString());
     if (searchRegistration == nullptr) {
@@ -376,6 +379,8 @@ SearchConfigurationValidation SearchConfigurationModel::validate(
     std::vector<OptionConfiguration> modifiers;
     std::int64_t earliestMutationTimeMs =
             std::numeric_limits<std::int64_t>::max();
+    std::int64_t latestMutationTimeMs = 0;
+    qsizetype latestMutationPass = 0;
     modifiers.reserve(static_cast<std::size_t>(modifierPasses_.size()));
     for (qsizetype index = 0; index < modifierPasses_.size(); ++index) {
         const QVariantMap pass = modifierPasses_.at(index).toMap();
@@ -394,26 +399,53 @@ SearchConfigurationValidation SearchConfigurationModel::validate(
                                 .arg(index + 1)
                                 .arg(QString::fromStdString(*error))};
         }
+        const std::unique_ptr<InputMutator> mutator =
+                registration->create(settings, tickDurationMs);
         earliestMutationTimeMs = std::min(
                 earliestMutationTimeMs,
-                registration->create(settings, tickDurationMs)
-                        ->EarliestMutationTimeMs());
+                mutator->EarliestMutationTimeMs());
+        const std::int64_t passMaximumTimeMs =
+                mutator->AffectedTimeRange().maximumTimeMs;
+        if (passMaximumTimeMs > latestMutationTimeMs) {
+            latestMutationTimeMs = passMaximumTimeMs;
+            latestMutationPass = index;
+        }
         modifiers.push_back({registration->id, settings});
     }
-    if (evaluationRegistration->id == kStuntPointsEvaluationId) {
-        const std::unique_ptr<IterationEvaluator> evaluator =
-                evaluationRegistration->create(
-                        evaluationSettings, tickDurationMs);
-        const EvaluationPlan plan = evaluator->Plan(
-                std::numeric_limits<std::int64_t>::max(),
-                earliestMutationTimeMs,
-                tickDurationMs);
-        if (plan.startTimeMs < earliestMutationTimeMs) {
-            return {{},
-                    QStringLiteral(
-                            "Stunt points target time must not precede the "
-                            "first modifier time.")};
-        }
+    if (latestMutationTimeMs > simulationHorizonMs) {
+        return {{},
+                QStringLiteral(
+                        "Modifier pass %1 maximum time setting %2 ms maps "
+                        "to simulation time %3 ms, which exceeds the "
+                        "Simulation horizon of %4 ms.")
+                        .arg(latestMutationPass + 1)
+                        .arg(UserTimelineTimeFromSimulationTime(
+                                latestMutationTimeMs, tickDurationMs))
+                        .arg(latestMutationTimeMs)
+                        .arg(simulationHorizonMs)};
+    }
+    const std::unique_ptr<IterationEvaluator> evaluator =
+            evaluationRegistration->create(
+                    evaluationSettings, tickDurationMs);
+    const EvaluationPlan plan = evaluator->Plan(
+            simulationHorizonMs,
+            earliestMutationTimeMs,
+            tickDurationMs);
+    if (plan.startTimeMs < earliestMutationTimeMs) {
+        return {{},
+                QStringLiteral(
+                        "Evaluation start time %1 ms precedes the first "
+                        "modifier time at %2 ms.")
+                        .arg(plan.startTimeMs)
+                        .arg(earliestMutationTimeMs)};
+    }
+    if (plan.endTimeMs > simulationHorizonMs) {
+        return {{},
+                QStringLiteral(
+                        "Evaluation maximum time %1 ms exceeds the "
+                        "Simulation horizon of %2 ms.")
+                        .arg(plan.endTimeMs)
+                        .arg(simulationHorizonMs)};
     }
 
     return {SearchComponentConfiguration{

@@ -214,7 +214,7 @@ std::optional<std::string> ValidateChannel(const ChannelSettings &channel,
 
 OptionSettings DefaultInputInsertionSettings() {
     return {{"minTimeMs", "1000"},
-            {"maxTimeMs", "6000"},
+            {"maxTimeMs", "5990"},
             {"seed", "1179926867"},
             {"steerEnabled", "true"},
             {"steerMode", "offset"},

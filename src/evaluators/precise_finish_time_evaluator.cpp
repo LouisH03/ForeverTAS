@@ -66,14 +66,11 @@ std::unique_ptr<IterationEvaluator> CreatePreciseFinishTimeEvaluator(
 }
 
 EvaluationPlan PreciseFinishTimeEvaluator::Plan(
-        std::int64_t replayDurationMs,
+        std::int64_t simulationHorizonMs,
         std::int64_t earliestMutationTimeMs,
         std::uint32_t tickDurationMs) const {
     static_cast<void>(tickDurationMs);
-    return ClampPlan(earliestMutationTimeMs,
-                     replayDurationMs,
-                     replayDurationMs,
-                     earliestMutationTimeMs);
+    return {earliestMutationTimeMs, simulationHorizonMs};
 }
 
 std::unique_ptr<IterationEvaluationSession>

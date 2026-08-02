@@ -34,14 +34,13 @@ public:
     explicit StuntPointsEvaluator(std::int64_t deadlineMs)
         : deadlineMs_(deadlineMs) {}
 
-    EvaluationPlan Plan(std::int64_t replayDurationMs,
+    EvaluationPlan Plan(std::int64_t simulationHorizonMs,
                         std::int64_t earliestMutationTimeMs,
                         std::uint32_t tickDurationMs) const override {
         static_cast<void>(earliestMutationTimeMs);
         static_cast<void>(tickDurationMs);
-        const std::int64_t deadline =
-                std::min(deadlineMs_, replayDurationMs);
-        return {deadline, deadline};
+        static_cast<void>(simulationHorizonMs);
+        return {deadlineMs_, deadlineMs_};
     }
 
     std::unique_ptr<IterationEvaluationSession> CreateSession()

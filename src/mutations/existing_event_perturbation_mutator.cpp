@@ -221,7 +221,7 @@ private:
 
 OptionSettings DefaultExistingEventPerturbationSettings() {
     return {{"minTimeMs", "1000"},
-            {"maxTimeMs", "6000"},
+            {"maxTimeMs", "5990"},
             {"seed", "1179926867"},
             {"minCount", "1"},
             {"maxCount", "3"},

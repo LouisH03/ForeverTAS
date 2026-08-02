@@ -254,8 +254,8 @@ bool TestInputOnlyTimelineTimeOrigin() {
     const forevertas::EvaluationPlan largeTimePlan =
             largeTimeEvaluator->Plan(10000, 1010, 10u);
     okay &= Check(
-            largeTimePlan.startTimeMs == 10000 &&
-                    largeTimePlan.endTimeMs == 10000,
+            largeTimePlan.startTimeMs == 9223372036854775800ll &&
+                    largeTimePlan.endTimeMs == 9223372036854775800ll,
             "a large non-input evaluation time was not preserved");
 
     const auto *const modifierRegistration = forevertas::FindModifier(
@@ -1162,44 +1162,27 @@ bool TestInputScriptParsingAndBaseline() {
             "valid input script was not parsed");
     if (!parsed) return false;
 
-    const std::vector<SandboxInputEvent> replayInputs{
-            Switch(-10, SandboxInputAction::Accelerate, true),
-            Switch(90, SandboxInputAction::Brake, true),
-            Switch(100, SandboxInputAction::RaceRunning, true),
-            Steering(110, 1234),
-            Switch(250, SandboxInputAction::Unmapped, true),
-            Switch(500, SandboxInputAction::FinishLine, true)};
+    const std::vector<SandboxInputEvent> fixedInputs{
+            Switch(0, SandboxInputAction::RaceRunning, true)};
     const forevertas::InputScriptBaselineResult baseline =
             forevertas::BuildInputScriptBaseline(
-                    replayInputs, parsed.commands, 10u);
+                    fixedInputs, parsed.commands, 10u);
     okay &= Check(
-            baseline && baseline.events.size() == 9u,
+            baseline && baseline.events.size() == 5u,
             "input script baseline was not materialized");
     if (baseline) {
         okay &= Check(
-                baseline.events[0].timeMs == -10 &&
+                baseline.events[0].timeMs == 0 &&
                         baseline.events[0].action ==
-                                SandboxInputAction::Accelerate &&
-                        baseline.events[1].timeMs == 90 &&
-                        baseline.events[1].action ==
-                                SandboxInputAction::Brake &&
-                        baseline.events[2].timeMs == 100 &&
-                        baseline.events[2].action ==
                                 SandboxInputAction::RaceRunning &&
-                        baseline.events[3].timeMs == 110 &&
-                        baseline.events[3].action ==
+                        baseline.events[1].timeMs == 10 &&
+                        baseline.events[1].action ==
                                 SandboxInputAction::Steer &&
-                        baseline.events[3].value.analog == -16384 &&
-                        baseline.events[4].timeMs == 250 &&
-                        baseline.events[4].action ==
-                                SandboxInputAction::Unmapped &&
-                        baseline.events[5].timeMs == 310 &&
-                        baseline.events[6].timeMs == 410 &&
-                        baseline.events[7].timeMs == 500 &&
-                        baseline.events[7].action ==
-                                SandboxInputAction::FinishLine &&
-                        baseline.events[8].timeMs == 1110,
-                "script controls did not replace replay controls correctly");
+                        baseline.events[1].value.analog == -16384 &&
+                        baseline.events[2].timeMs == 210 &&
+                        baseline.events[3].timeMs == 310 &&
+                        baseline.events[4].timeMs == 1010,
+                "script controls did not populate the canonical timeline");
     }
 
     const forevertas::InputScriptParseResult empty =
@@ -1231,19 +1214,19 @@ bool TestInputScriptParsingAndBaseline() {
 
     const forevertas::InputScriptParseResult tooLate =
             forevertas::ParseInputScript("2.00 press up");
-    const forevertas::InputScriptBaselineResult beyondReplay =
+    const forevertas::InputScriptBaselineResult lateInput =
             forevertas::BuildInputScriptBaseline(
-                    replayInputs, tooLate.commands, 10u);
+                    fixedInputs, tooLate.commands, 10u);
     okay &= Check(
-            beyondReplay && std::any_of(
-                    beyondReplay.events.begin(),
-                    beyondReplay.events.end(),
+            lateInput && std::any_of(
+                    lateInput.events.begin(),
+                    lateInput.events.end(),
                     [](const SandboxInputEvent &event) {
-                        return event.timeMs == 2110 &&
+                        return event.timeMs == 2010 &&
                                 event.action ==
                                 SandboxInputAction::Accelerate;
                     }),
-            "input after the source replay duration was rejected");
+            "late canonical input was rejected");
 
     std::string currentConfigurationScript;
     for (std::size_t line = 1u; line < 300u; ++line) {
@@ -1252,27 +1235,24 @@ bool TestInputScriptParsingAndBaseline() {
     currentConfigurationScript += "4.69 steer 65528";
     const forevertas::InputScriptParseResult currentConfiguration =
             forevertas::ParseInputScript(currentConfigurationScript);
-    const std::vector<SandboxInputEvent> currentReplayInputs{
-            Switch(1040, SandboxInputAction::RaceRunning, true),
-            Switch(5730, SandboxInputAction::FinishLine, true)};
     const forevertas::InputScriptBaselineResult currentAccepted =
             forevertas::BuildInputScriptBaseline(
-                    currentReplayInputs,
+                    fixedInputs,
                     currentConfiguration.commands,
                     10u);
     okay &= Check(
-            currentAccepted && currentAccepted.events.size() == 3u &&
-                    currentAccepted.events.back().timeMs == 5740 &&
+            currentAccepted && currentAccepted.events.size() == 2u &&
+                    currentAccepted.events.back().timeMs == 4700 &&
                     currentAccepted.events.back().action ==
                             SandboxInputAction::Steer,
-            "current persisted post-replay input was rejected");
+            "current persisted input was rejected");
 
-    const std::string formatted = forevertas::FormatInputScript(replayInputs);
+    const std::string formatted = forevertas::FormatInputScript(fixedInputs);
     const forevertas::InputScriptParseResult roundTrip =
             forevertas::ParseInputScript(formatted);
     const forevertas::InputScriptBaselineResult rebuilt =
             forevertas::BuildInputScriptBaseline(
-                    replayInputs, roundTrip.commands, 10u);
+                    fixedInputs, roundTrip.commands, 10u);
     okay &= Check(
             roundTrip && rebuilt &&
                     forevertas::FormatInputScript(rebuilt.events) == formatted,

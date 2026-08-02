@@ -27,6 +27,7 @@ constexpr char kPacksDirectoryKey[] = "paths/packsDirectory";
 constexpr char kReplayPathKey[] = "paths/replayPath";
 constexpr char kBaseInputScriptKey[] = "inputs/baseScript";
 constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
+constexpr char kSimulationHorizonKey[] = "search/simulationHorizonMs";
 constexpr char kCpuWorkerCountKey[] = "backends/cpu/workerCount";
 constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
@@ -195,6 +196,14 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     cudaParallelSampleCount_ = StoredValue(
             kCudaParallelSampleCountKey,
             QString::number(kDefaultCudaParallelSampleCount));
+    simulationHorizonMs_ = StoredValue(
+            kSimulationHorizonKey,
+            QString::number(kDefaultSimulationHorizonMs));
+    if (!QSettings().contains(QLatin1String(kSimulationHorizonKey))) {
+        QSettings().setValue(
+                QLatin1String(kSimulationHorizonKey),
+                simulationHorizonMs_);
+    }
     cpuWorkerCount_ = StoredValue(
             kCpuWorkerCountKey,
             QString::number(DefaultCpuWorkerCount()));
@@ -319,6 +328,10 @@ QVariantList SearchController::simulationBackendOptions() const {
 
 QString SearchController::simulationBackendId() const {
     return BackendId(simulationBackend_);
+}
+
+QString SearchController::simulationHorizonMs() const {
+    return simulationHorizonMs_;
 }
 
 QString SearchController::cpuWorkerCount() const {
@@ -508,6 +521,16 @@ void SearchController::setSimulationBackendId(const QString &value) {
     simulationBackend_ = *parsed;
     persist(kSimulationBackendKey, BackendId(simulationBackend_));
     emit simulationBackendIdChanged();
+    refreshValidation();
+}
+
+void SearchController::setSimulationHorizonMs(const QString &value) {
+    if (simulationHorizonMs_ == value) {
+        return;
+    }
+    simulationHorizonMs_ = value;
+    persist(kSimulationHorizonKey, value);
+    emit simulationHorizonMsChanged();
     refreshValidation();
 }
 
@@ -1053,8 +1076,27 @@ SearchController::ValidationResult SearchController::validate() const {
                             "The replay path must be a readable file.")};
     }
 
+    bool horizonParsed = false;
+    const QString trimmedHorizon = simulationHorizonMs_.trimmed();
+    const qulonglong horizonValue =
+            trimmedHorizon.toULongLong(&horizonParsed);
+    if (!horizonParsed || trimmedHorizon != simulationHorizonMs_ ||
+        horizonValue < kSearchTickDurationMs ||
+        horizonValue > kMaximumSimulationHorizonMs ||
+        horizonValue % kSearchTickDurationMs != 0u) {
+        return {
+                {},
+                QStringLiteral(
+                        "Simulation horizon must be a whole number of "
+                        "milliseconds between 10 and %1, aligned to 10 ms.")
+                        .arg(kMaximumSimulationHorizonMs)};
+    }
+    const std::uint32_t simulationHorizonMs =
+            static_cast<std::uint32_t>(horizonValue);
     const SearchConfigurationValidation configurationValidation =
-            configuration_.validate(kSearchTickDurationMs);
+            configuration_.validate(
+                    kSearchTickDurationMs,
+                    simulationHorizonMs);
     if (!configurationValidation.configuration) {
         return {{}, configurationValidation.error};
     }
@@ -1123,7 +1165,8 @@ SearchController::ValidationResult SearchController::validate() const {
                     configuration.modifiers,
                     configuration.evaluationTarget,
                     parsedBaseInputCommands_,
-                    cudaSessionSpecializationEnabled_},
+                    cudaSessionSpecializationEnabled_,
+                    simulationHorizonMs},
             {}};
 }
 

@@ -4049,6 +4049,18 @@ ApplicationWindow {
                         }
 
                         SettingTextField {
+                            objectName: "simulationHorizonSettings"
+                            fieldObjectName: "simulationHorizonField"
+                            label: qsTr("Simulation horizon (ms)")
+                            value: window.controller.simulationHorizonMs
+                            running: window.controller.running
+                            minimum: 10
+                            maximum: 2147481040
+                            onEdited: value =>
+                                window.controller.simulationHorizonMs = value
+                        }
+
+                        SettingTextField {
                             objectName: "cpuWorkerSettings"
                             visible: window.controller.simulationBackendId
                                      === "multi-threaded-cpu"

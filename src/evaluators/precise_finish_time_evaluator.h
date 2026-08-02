@@ -20,7 +20,7 @@ std::unique_ptr<IterationEvaluator> CreatePreciseFinishTimeEvaluator(
 
 class PreciseFinishTimeEvaluator final : public IterationEvaluator {
 public:
-    EvaluationPlan Plan(std::int64_t replayDurationMs,
+    EvaluationPlan Plan(std::int64_t simulationHorizonMs,
                         std::int64_t earliestMutationTimeMs,
                         std::uint32_t tickDurationMs) const override;
     std::unique_ptr<IterationEvaluationSession> CreateSession()

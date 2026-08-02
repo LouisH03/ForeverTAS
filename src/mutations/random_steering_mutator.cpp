@@ -34,7 +34,7 @@ std::optional<RandomSteeringSettings> ParseRandomSteeringSettings(
 }  // namespace
 
 RandomSteeringSettings DefaultRandomSteeringSettings() {
-    return {1000, 6000, 1179926867u};
+    return {1000, 5990, 1179926867u};
 }
 
 OptionSettings DefaultRandomSteeringOptionSettings() {

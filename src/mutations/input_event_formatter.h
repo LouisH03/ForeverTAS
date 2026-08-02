@@ -40,7 +40,7 @@ struct InputScriptBaselineResult {
 InputScriptParseResult ParseInputScript(std::string_view script);
 
 InputScriptBaselineResult BuildInputScriptBaseline(
-        const std::vector<SandboxInputEvent> &replayInputs,
+        const std::vector<SandboxInputEvent> &fixedInputs,
         const std::vector<ParsedInputCommand> &commands,
         std::uint32_t tickDurationMs);
 

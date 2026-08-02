@@ -599,19 +599,15 @@ QString SandboxErrorText(
 }
 
 std::vector<PhysicsSandboxInputEvent> ViewerFixedInputs(
-        const std::vector<PhysicsSandboxInputEvent> &replayInputs) {
+        const std::vector<PhysicsSandboxInputEvent> &canonicalInputs) {
     std::vector<PhysicsSandboxInputEvent> fixedInputs;
-    fixedInputs.reserve(replayInputs.size());
+    fixedInputs.reserve(canonicalInputs.size());
     std::copy_if(
-            replayInputs.begin(),
-            replayInputs.end(),
+            canonicalInputs.begin(),
+            canonicalInputs.end(),
             std::back_inserter(fixedInputs),
             [](const PhysicsSandboxInputEvent &event) {
-                // Inputs before race time zero have already affected the
-                // captured start state and are immutable in the sandbox.
-                // Keep them even when they are driver controls, then let the
-                // preview/manual script replace controls from zero.
-                return event.timeMs < 0 || !IsDriverInput(event.action);
+                return !IsDriverInput(event.action);
             });
     return fixedInputs;
 }
@@ -964,7 +960,8 @@ std::vector<ViewerTriangle> UnitEllipsoidTriangles() {
 
 RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
                                  const QString &replayPath,
-                                 PhysicsBackend backend) {
+                                 PhysicsBackend backend,
+                                 std::uint32_t simulationHorizonMs) {
     using namespace forevervalidator;
     using namespace forevervalidator::experimental;
 
@@ -986,6 +983,8 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
         PhysicsSandboxOptions options;
         options.backend = ToForeverValidatorBackend(backend);
         options.tickDurationMs = kViewerTickDurationMs;
+        options.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+        options.simulationHorizonMs = simulationHorizonMs;
         PhysicsSandbox sandbox = Require(
                 CreatePhysicsSandbox(std::move(source), options),
                 "creating replay sandbox failed");
@@ -1102,11 +1101,11 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
             result.carEllipsoids.push_back(std::move(item));
         }
 
-        const std::vector<PhysicsSandboxInputEvent> replayInputs =
+        const std::vector<PhysicsSandboxInputEvent> canonicalInputs =
                 Require(sandbox.ReadInputs(),
-                        "reading replay inputs for manual driving failed");
+                        "reading canonical inputs for manual driving failed");
         std::vector<PhysicsSandboxInputEvent> fixedInputs =
-                ViewerFixedInputs(replayInputs);
+                ViewerFixedInputs(canonicalInputs);
         PhysicsSandboxState manualStart = Require(
                 sandbox.CaptureState(),
                 "capturing manual-driving start state failed");
@@ -1126,7 +1125,8 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
 std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
         const QString &packsDirectory,
         const QString &replayPath,
-        PhysicsBackend backend) {
+        PhysicsBackend backend,
+        std::uint32_t simulationHorizonMs) {
     using namespace forevervalidator;
     using namespace forevervalidator::experimental;
 
@@ -1142,6 +1142,8 @@ std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
     PhysicsSandboxOptions options;
     options.backend = ToForeverValidatorBackend(backend);
     options.tickDurationMs = kViewerTickDurationMs;
+    options.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+    options.simulationHorizonMs = simulationHorizonMs;
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating input preview sandbox failed");
@@ -1150,7 +1152,7 @@ std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
             "loading replay for input preview failed");
     std::vector<PhysicsSandboxInputEvent> fixedInputs = ViewerFixedInputs(
             Require(sandbox.ReadInputs(),
-                    "reading replay inputs for input preview failed"));
+                    "reading canonical inputs for input preview failed"));
     PhysicsSandboxState initial = Require(
             sandbox.CaptureState(),
             "capturing input preview start state failed");
@@ -1256,6 +1258,7 @@ RaceViewerInputPreviewResult BuildInputPreview(
         const QString &packsDirectory,
         const QString &replayPath,
         PhysicsBackend backend,
+        std::uint32_t simulationHorizonMs,
         const QString &script,
         float trajectoryRadius,
         std::shared_ptr<ManualDriveRuntime> runtime) {
@@ -1273,7 +1276,10 @@ RaceViewerInputPreviewResult BuildInputPreview(
         }
         if (runtime == nullptr) {
             runtime = LoadInputPreviewRuntime(
-                    packsDirectory, replayPath, backend);
+                    packsDirectory,
+                    replayPath,
+                    backend,
+                    simulationHorizonMs);
         }
         result.runtime = runtime;
         if (canceled()) {
@@ -1309,8 +1315,8 @@ RaceViewerInputPreviewResult BuildInputPreview(
 
         PhysicsSandboxStateView state = initial.Value();
         const std::uint64_t remainingDuration =
-                state.durationMs > state.timeMs
-                ? state.durationMs - state.timeMs
+                simulationHorizonMs > state.timeMs
+                ? simulationHorizonMs - state.timeMs
                 : 0u;
         const std::uint64_t maximumTicks =
                 remainingDuration / kViewerTickDurationMs +
@@ -1322,7 +1328,7 @@ RaceViewerInputPreviewResult BuildInputPreview(
                 static_cast<std::size_t>(maximumTicks) + 1u);
         result.frames.push_back(ToViewerFrame(state));
         for (std::uint64_t tick = 0u;
-             tick < maximumTicks && state.timeMs < state.durationMs &&
+             tick < maximumTicks && state.timeMs < simulationHorizonMs &&
              !state.raceCompleted;
              ++tick) {
             if (canceled()) {
@@ -1572,6 +1578,10 @@ qint64 RaceViewerController::trajectoryCount() const {
 
 QString RaceViewerController::previewInputScript() const {
     return previewInputScript_;
+}
+
+qint64 RaceViewerController::simulationHorizonMs() const {
+    return simulationHorizonMs_;
 }
 
 QVariantList RaceViewerController::runOptions() const {
@@ -2216,6 +2226,31 @@ void RaceViewerController::setPreviewInputScript(const QString &value) {
     }
 }
 
+void RaceViewerController::setSimulationHorizonMs(qint64 value) {
+    constexpr qint64 maximumHorizonMs = 2147481040;
+    if (value < kViewerTickDurationMs || value > maximumHorizonMs ||
+        value % kViewerTickDurationMs != 0 ||
+        simulationHorizonMs_ == value) {
+        return;
+    }
+    simulationHorizonMs_ = value;
+    inputPreviewRuntime_.reset();
+    cancelInputPreviewBuild();
+    emit simulationHorizonMsChanged();
+    if (loadedPacksDirectory_.isEmpty() || loadedReplayPath_.isEmpty()) {
+        return;
+    }
+    stopSimulationDebugger();
+    stopManualDrive();
+    if (workerThread_ != nullptr) {
+        queuedMapLoad_ = MapLoadRequest{
+                loadedPacksDirectory_, loadedReplayPath_, loadedBackend_};
+        return;
+    }
+    beginMapLoad(
+            loadedPacksDirectory_, loadedReplayPath_, loadedBackend_);
+}
+
 void RaceViewerController::setTakeOverOnInput(bool value) {
     if (takeOverOnInput_ == value) {
         return;
@@ -2438,7 +2473,10 @@ bool RaceViewerController::startSimulationDebugger() {
         emit timeChanged();
     }
     const bool started = simulationDebugger_.startSession(
-            loadedPacksDirectory_, loadedReplayPath_);
+            loadedPacksDirectory_,
+            loadedReplayPath_,
+            simulationHorizonMs_,
+            previewInputScript_);
     setStatusText(simulationDebugger_.statusText());
     return started;
 }
@@ -3092,6 +3130,8 @@ void RaceViewerController::startInputPreviewBuild() {
     const QString packsDirectory = loadedPacksDirectory_;
     const QString replayPath = loadedReplayPath_;
     const PhysicsBackend backend = loadedBackend_;
+    const std::uint32_t simulationHorizonMs =
+            static_cast<std::uint32_t>(simulationHorizonMs_);
     const QString script = previewInputScript_;
     const float trajectoryRadius = static_cast<float>(
             std::clamp(sceneRadius_ * 0.0004, 0.015, 0.15));
@@ -3103,6 +3143,7 @@ void RaceViewerController::startInputPreviewBuild() {
              packsDirectory,
              replayPath,
              backend,
+             simulationHorizonMs,
              script,
              trajectoryRadius,
              runtime = std::move(runtime)]() mutable {
@@ -3110,6 +3151,7 @@ void RaceViewerController::startInputPreviewBuild() {
                         packsDirectory,
                         replayPath,
                         backend,
+                        simulationHorizonMs,
                         script,
                         trajectoryRadius,
                         std::move(runtime));
@@ -3339,10 +3381,21 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
             "Loading map geometry and materials..."));
 
     const std::uint64_t loadSerial = ++loadSerial_;
+    const std::uint32_t simulationHorizonMs =
+            static_cast<std::uint32_t>(simulationHorizonMs_);
     QThread *const thread = QThread::create(
-            [this, packsDirectory, replayPath, backend, loadSerial]() {
+            [this,
+             packsDirectory,
+             replayPath,
+             backend,
+             simulationHorizonMs,
+             loadSerial]() {
                 RaceViewerLoadResult result =
-                        LoadMapData(packsDirectory, replayPath, backend);
+                        LoadMapData(
+                                packsDirectory,
+                                replayPath,
+                                backend,
+                                simulationHorizonMs);
                 QMetaObject::invokeMethod(
                         this,
                         [this, loadSerial,
@@ -3838,7 +3891,7 @@ void RaceViewerController::appendSimulationDebuggerFrame(
     }
     durationMs_ = std::max<qint64>(
             static_cast<qint64>(found->frames.back().timeMs),
-            frame.value(QStringLiteral("durationMs")).toLongLong());
+            frame.value(QStringLiteral("horizonMs")).toLongLong());
     timeMs_ = found->frames.back().timeMs;
     updatePose();
     setStatusText(simulationDebugger_.statusText());
@@ -3869,7 +3922,7 @@ void RaceViewerController::advanceManualDrive() {
     bool changed = false;
     for (qint64 step = 0; step < steps; ++step) {
         if (manualRuntime_->state.timeMs >=
-            manualRuntime_->state.durationMs) {
+            static_cast<std::uint64_t>(simulationHorizonMs_)) {
             finishManualDrive(
                     QStringLiteral("Manual drive complete"), true);
             break;

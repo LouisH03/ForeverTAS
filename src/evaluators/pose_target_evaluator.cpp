@@ -86,14 +86,13 @@ private:
 class PoseEvaluator final : public IterationEvaluator {
 public:
     explicit PoseEvaluator(PoseSettings settings) : settings_(settings) {}
-    EvaluationPlan Plan(std::int64_t replayDurationMs,
+    EvaluationPlan Plan(std::int64_t simulationHorizonMs,
                         std::int64_t earliestMutationTimeMs,
                         std::uint32_t tickDurationMs) const override {
         static_cast<void>(tickDurationMs);
-        return ClampPlan(settings_.minimumTimeMs,
-                         settings_.maximumTimeMs,
-                         replayDurationMs,
-                         earliestMutationTimeMs);
+        static_cast<void>(simulationHorizonMs);
+        return {std::max(settings_.minimumTimeMs, earliestMutationTimeMs),
+                settings_.maximumTimeMs};
     }
     std::unique_ptr<IterationEvaluationSession> CreateSession()
             const override {

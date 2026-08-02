@@ -48,6 +48,8 @@ class SearchController final : public QObject {
                        simulationBackendOptions CONSTANT)
     Q_PROPERTY(QString simulationBackendId READ simulationBackendId WRITE
                        setSimulationBackendId NOTIFY simulationBackendIdChanged)
+    Q_PROPERTY(QString simulationHorizonMs READ simulationHorizonMs WRITE
+                       setSimulationHorizonMs NOTIFY simulationHorizonMsChanged)
     Q_PROPERTY(QString cpuWorkerCount READ cpuWorkerCount WRITE
                        setCpuWorkerCount NOTIFY cpuWorkerCountChanged)
     Q_PROPERTY(QString cudaParallelSampleCount READ cudaParallelSampleCount WRITE
@@ -122,6 +124,7 @@ public:
     QString replayInputStatusText() const;
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
+    QString simulationHorizonMs() const;
     QString cpuWorkerCount() const;
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
@@ -159,6 +162,7 @@ public slots:
     void setReplayPath(const QString &value);
     void setBaseInputScript(const QString &value);
     void setSimulationBackendId(const QString &value);
+    void setSimulationHorizonMs(const QString &value);
     void setCpuWorkerCount(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
@@ -199,6 +203,7 @@ signals:
     void baseInputScriptChanged();
     void replayInputStateChanged();
     void simulationBackendIdChanged();
+    void simulationHorizonMsChanged();
     void cpuWorkerCountChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
@@ -275,6 +280,8 @@ private:
     QString replayInputStatusText_;
     std::vector<ParsedInputCommand> parsedBaseInputCommands_;
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
+    QString simulationHorizonMs_ = QString::number(
+            kDefaultSimulationHorizonMs);
     QString cpuWorkerCount_ = QString::number(DefaultCpuWorkerCount());
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);

@@ -145,6 +145,8 @@ class RaceViewerController final : public QObject {
                        trajectoriesChanged)
     Q_PROPERTY(QString previewInputScript READ previewInputScript WRITE
                        setPreviewInputScript NOTIFY previewInputScriptChanged)
+    Q_PROPERTY(qint64 simulationHorizonMs READ simulationHorizonMs WRITE
+                       setSimulationHorizonMs NOTIFY simulationHorizonMsChanged)
     Q_PROPERTY(QVariantList runOptions READ runOptions NOTIFY runsChanged)
     Q_PROPERTY(QVariantList runPoses READ runPoses NOTIFY poseChanged)
     Q_PROPERTY(qint64 runCount READ runCount NOTIFY runsChanged)
@@ -232,6 +234,7 @@ public:
     QVariantList trajectoryPaths() const;
     qint64 trajectoryCount() const;
     QString previewInputScript() const;
+    qint64 simulationHorizonMs() const;
     QVariantList runOptions() const;
     QVariantList runPoses() const;
     qint64 runCount() const;
@@ -313,6 +316,7 @@ public slots:
     void setCurrentTick(qint64 tick);
     void setSelectedRunId(const QString &value);
     void setPreviewInputScript(const QString &value);
+    void setSimulationHorizonMs(qint64 value);
     void setTakeOverOnInput(bool value);
     void setCameraPreset(int value);
     Q_INVOKABLE void play();
@@ -357,6 +361,7 @@ signals:
     void selectedRunChanged();
     void trajectoriesChanged();
     void previewInputScriptChanged();
+    void simulationHorizonMsChanged();
     void cameraPresetChanged();
     void cameraChanged();
 
@@ -468,6 +473,7 @@ private:
     QString loadedPacksDirectory_;
     QString loadedReplayPath_;
     QString previewInputScript_;
+    qint64 simulationHorizonMs_ = 6000;
     std::vector<SandboxInputEvent> takeoverSourceInputs_;
     std::optional<std::int32_t> steeringTakeoverTimeMs_;
     std::optional<std::int32_t> longitudinalTakeoverTimeMs_;

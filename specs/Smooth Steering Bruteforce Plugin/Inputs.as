@@ -117,7 +117,7 @@ namespace Inputs{
 			} 
 
 			int minTime = 0;
-			int maxTime = (simManager.EventsDuration - 10) / 10;
+			int maxTime = (int(m_simulationHorizon) - 10) / 10;
 
 			// if no steering occurred at the start, add steering value of 0 to start
 			if (originalSteeringTimes.Length == 0 || originalSteeringTimes.Length > 0 && originalSteeringTimes[0] != 0) {
@@ -157,7 +157,7 @@ namespace Inputs{
             }
 
             int minTime = 0;
-            int maxTime = (simManager.EventsDuration - 10) / 10;
+            int maxTime = (int(m_simulationHorizon) - 10) / 10;
             
             // if no acceleration occurred at the start, add acceleration value of 0 to start
             if (originalAccelerationTimes.Length == 0 || originalAccelerationTimes.Length > 0 && originalAccelerationTimes[0] != 0) {
@@ -195,7 +195,7 @@ namespace Inputs{
             }
 
             int minTime = 0;
-            int maxTime = (simManager.EventsDuration - 10) / 10;
+            int maxTime = (int(m_simulationHorizon) - 10) / 10;
 
             // if no brake occurred at the start, add brake value of 0 to start
             if (originalBrakeTimes.Length == 0 || originalBrakeTimes.Length > 0 && originalBrakeTimes[0] != 0) {

@@ -12,7 +12,7 @@ ForeverTAS -> PhysicsSandbox -> ForeverValidator physics
 ## Dependency
 
 CMake `FetchContent` pins ForeverValidator to the exact commit
-`84c6e49615cf545b69c1b94a7f49e089dc862991`. The embedded build disables the
+`7c633f3a148a94a08f1add275aef07b597d7bf9c`. The embedded build disables the
 ForeverValidator CLI and tests and links its native asset adapter and core
 simulation library.
 
@@ -44,12 +44,6 @@ The committed dependency hash only needs to change when ForeverTAS deliberately
 adopts a tested ForeverValidator revision. Use the pinned preset as the final
 pre-push check.
 
-The pinned dependency is extended by
-`cmake/patches/forevervalidator-cpu-multithreading.patch`. It includes the
-native CUDA compatibility additions and the shared optimized-CPU sandbox and
-input-window APIs used by the multi-threaded search backend, without requiring
-a local Validator checkout at build time.
-
 ## Desktop application
 
 Build and launch the Qt 6 Quick application:
@@ -64,8 +58,10 @@ passes, then start the basic search. The replay supplies the map and scenario;
 only the editable script supplies the player-control baseline. **Extract inputs
 to script** imports the replay controls when that is the desired starting
 point. The application persists paths, the script draft, selections, pass
-order, and every option-owned configuration with the platform-native Qt
-settings store. Search, replay loading, validation, and physics stay in C++;
+order, the user-owned **Simulation horizon**, and every option-owned
+configuration with the platform-native Qt settings store. That horizon alone
+bounds search, preview, validation, and CPU/CUDA simulation; commands after it
+remain editable but unexecuted. Search, map loading, validation, and physics stay in C++;
 QML presents the controls and Race Viewer.
 
 The search runs indefinitely on a worker thread after Start is pressed. Each
@@ -79,7 +75,7 @@ that best input sequence instead of the original script-derived baseline.
 Iteration count, iterations per second, elapsed time, and time since the last
 improvement continue refreshing while the search runs. Pressing Stop
 finishes the current
-iteration, restores the global best, then performs one fresh full-replay
+iteration, restores the global best, then performs one fresh canonical
 simulation and records one viewer sample per physics tick. The completed Best
 run is added to the Race Viewer only after that Stop-triggered sampling pass.
 Analog script and iteration inputs use the exact signed integer state range

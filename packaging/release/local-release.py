@@ -160,7 +160,8 @@ def release_notes(manifest: dict) -> str:
 
 ### Input timelines
 
-- Input scripts may extend beyond the source replay duration. Search and input preview preserve later commands instead of rejecting them against the recorded replay length.
+- Replays supply the map and required scenario context, never the simulation length or controls. A persisted user-configured Simulation horizon bounds search, preview, CPU, and CUDA execution.
+- Input scripts remain valid beyond that horizon. Later commands are preserved for editing and reconstruction but are not executed unless the user increases the horizon.
 
 ### CUDA compatibility
 

@@ -409,9 +409,9 @@ int main(int argc, char **argv) {
                             "run or expose the Reference loading state");
                     okay &= Check(
                             viewer.durationMs() ==
-                                    frame.value(QStringLiteral("durationMs"))
+                                    frame.value(QStringLiteral("horizonMs"))
                                             .toLongLong(),
-                            "live viewer did not retain the replay duration");
+                            "live viewer did not retain the Simulation horizon");
                     okay &= Check(
                             model->toggleBreakpoint(
                                     QString::fromLatin1(kRuntimeSource),
@@ -1235,6 +1235,7 @@ int main(int argc, char **argv) {
         application.exit(1);
     });
 
+    viewer.setPreviewInputScript(QStringLiteral("0.00 press up"));
     viewer.loadMap(QString::fromLocal8Bit(argv[1]),
                    QString::fromLocal8Bit(argv[2]),
                    QStringLiteral("reference"));

@@ -341,14 +341,11 @@ public:
     explicit CustomVolumeEntryEvaluator(Prism prism)
         : prism_(std::move(prism)) {}
 
-    EvaluationPlan Plan(std::int64_t replayDurationMs,
+    EvaluationPlan Plan(std::int64_t simulationHorizonMs,
                         std::int64_t earliestMutationTimeMs,
                         std::uint32_t tickDurationMs) const override {
         static_cast<void>(tickDurationMs);
-        return ClampPlan(earliestMutationTimeMs,
-                         replayDurationMs,
-                         replayDurationMs,
-                         earliestMutationTimeMs);
+        return {earliestMutationTimeMs, simulationHorizonMs};
     }
 
     std::unique_ptr<IterationEvaluationSession> CreateSession()

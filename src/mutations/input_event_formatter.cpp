@@ -291,12 +291,12 @@ InputScriptParseResult ParseInputScript(std::string_view script) {
 }
 
 InputScriptBaselineResult BuildInputScriptBaseline(
-        const std::vector<SandboxInputEvent> &replayInputs,
+        const std::vector<SandboxInputEvent> &fixedInputs,
         const std::vector<ParsedInputCommand> &commands,
         std::uint32_t tickDurationMs) {
     InputScriptBaselineResult result;
     std::int64_t originMs = 0;
-    for (const SandboxInputEvent &event : replayInputs) {
+    for (const SandboxInputEvent &event : fixedInputs) {
         if (event.action == SandboxInputAction::RaceRunning) {
             originMs = event.timeMs;
             break;
@@ -318,7 +318,7 @@ InputScriptBaselineResult BuildInputScriptBaseline(
             result.error = LineError(
                     command.sourceLine,
                     "input time " + FormatMilliseconds(command.userTimeMs) +
-                            " cannot be represented on the selected replay's "
+                            " cannot be represented on the simulation "
                             "timeline.");
             return result;
         }
@@ -353,8 +353,8 @@ InputScriptBaselineResult BuildInputScriptBaseline(
         }
     }
 
-    result.events.reserve(replayInputs.size() + controls.size());
-    for (const SandboxInputEvent &event : replayInputs) {
+    result.events.reserve(fixedInputs.size() + controls.size());
+    for (const SandboxInputEvent &event : fixedInputs) {
         if (event.timeMs < originMs || IsStructuralAction(event.action)) {
             result.events.push_back(event);
         }

@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
@@ -147,6 +148,10 @@ PhysicsSandbox CreateEmptyInputSandbox(
     forevervalidator::experimental::PhysicsSandboxOptions options;
     options.backend = forevervalidator::SimulationBackend::Reference;
     options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    options.timelineMode = forevervalidator::experimental::
+            PhysicsSandboxTimelineMode::Canonical;
+    options.simulationHorizonMs =
+            forevertas::kDefaultSimulationHorizonMs;
     PhysicsSandbox sandbox = Require(
             forevervalidator::experimental::CreatePhysicsSandbox(
                     Require(
@@ -158,8 +163,6 @@ PhysicsSandbox CreateEmptyInputSandbox(
     Require(sandbox.LoadReplay(
                     {replay.data(), replay.size()}, identity),
             "loading auto-promote replay");
-    Require(sandbox.ReplaceInputs({}),
-            "clearing auto-promote baseline inputs");
     return sandbox;
 }
 
@@ -224,7 +227,7 @@ bool CheckAutoPromoteSemantics(
     return true;
 }
 
-bool CheckModifierWindowClippedToReplay(
+bool CheckModifierWindowRejectedByHorizon(
         const char *packsDirectory,
         const char *replayPath) {
     PhysicsSandbox sandbox =
@@ -234,20 +237,19 @@ bool CheckModifierWindowClippedToReplay(
     forevertas::SearchRunControl control;
     control.iterationLimit = 1u;
     control.sampleBestTimeline = false;
-    const forevertas::SearchResult result =
+    try {
+        static_cast<void>(
             forevertas::BasicBruteForceSearch(false).Run(
                     {sandbox,
                      forevertas::kSearchTickDurationMs,
                      mutator,
                      evaluator,
-                     &control});
-    const std::vector<PhysicsSandboxInputEvent> inputs =
-            Require(sandbox.ReadInputs(),
-                    "reading clipped modifier inputs");
-    return result.iterations == 1u &&
-            result.totalMutationCount == 1u &&
-            inputs.size() == 1u && inputs.front().timeMs == 10 &&
-            inputs.front().value.analog == 4096;
+                     &control}));
+    } catch (const std::invalid_argument &error) {
+        return std::string_view(error.what()).find("Simulation horizon") !=
+                std::string_view::npos;
+    }
+    return false;
 }
 
 #if FOREVERVALIDATOR_HAS_CUDA
@@ -409,9 +411,10 @@ bool RunBackend(const char *packsDirectory,
                     const bool completeTimeline =
                             (baselineTimeline || mutationTimeline) &&
                             live.bestTimeline.front().timeMs == 0 &&
-                            live.bestTimeline.back().timeMs ==
-                                    static_cast<std::int64_t>(
-                                            live.bestState.durationMs);
+                            (live.bestTimeline.back().raceCompleted ||
+                             live.bestTimeline.back().timeMs ==
+                                     forevertas::
+                                             kDefaultSimulationHorizonMs);
                     bool everyTick = true;
                     for (std::size_t index = 1u;
                          index < live.bestTimeline.size();
@@ -541,9 +544,11 @@ bool RunBackend(const char *packsDirectory,
             return false;
         }
         if (result.bestTimeline.front().timeMs != 0 ||
-            result.bestTimeline.back().timeMs !=
-                    static_cast<std::int64_t>(result.bestState.durationMs)) {
-            std::cerr << "best run sampling did not cover the full replay\n";
+            (!result.bestTimeline.back().raceCompleted &&
+             result.bestTimeline.back().timeMs !=
+                     forevertas::kDefaultSimulationHorizonMs)) {
+            std::cerr << "best run sampling did not reach completion or the "
+                         "Simulation horizon\n";
             return false;
         }
         for (std::size_t index = 1u;
@@ -804,6 +809,29 @@ bool CheckCachedScriptIsolation(const char *packsDirectory,
     return true;
 }
 
+bool CheckCachedHorizonIsolation(const char *packsDirectory,
+                                 const char *replayPath) {
+    forevertas::SearchRequest request{packsDirectory, replayPath};
+    request.backend = forevertas::PhysicsBackend::OptimizedCpu;
+    request.modifiers.front().settings["minTimeMs"] = "0";
+    request.modifiers.front().settings["maxTimeMs"] = "900";
+    request.evaluationTarget.settings["minTimeMs"] = "1000";
+    request.evaluationTarget.settings["maxTimeMs"] = "1000";
+    request.simulationHorizonMs = 1000u;
+
+    forevertas::SearchRunControl control;
+    control.iterationLimit = 0u;
+    const forevertas::SearchResult shortRun =
+            forevertas::RunSearch(request, &control);
+    request.simulationHorizonMs = 1200u;
+    const forevertas::SearchResult longRun =
+            forevertas::RunSearch(request, &control);
+    return !shortRun.bestTimeline.empty() &&
+            !longRun.bestTimeline.empty() &&
+            shortRun.bestTimeline.back().timeMs == 1000u &&
+            longRun.bestTimeline.back().timeMs == 1200u;
+}
+
 bool CheckKeyboardSteeringBaseline(const char *packsDirectory,
                                    const char *replayPath) {
     const forevertas::InputScriptParseResult parsed =
@@ -857,6 +885,9 @@ bool CheckKeyboardSteeringPhysicsParity(const char *packsDirectory,
     PhysicsSandboxOptions options;
     options.backend = SimulationBackend::Reference;
     options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    options.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+    options.simulationHorizonMs =
+            forevertas::kDefaultSimulationHorizonMs;
     PhysicsSandbox keyboard = Require(
             CreatePhysicsSandbox(
                     Require(OpenInstalledPackDirectory(packsDirectory),
@@ -975,41 +1006,44 @@ bool CheckSandboxCloneAndWindowParity(
     PhysicsSandboxOptions options;
     options.backend = SimulationBackend::OptimizedCpu;
     options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    options.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+    options.simulationHorizonMs =
+            forevertas::kDefaultSimulationHorizonMs;
     PhysicsSandbox source = Require(
             CreatePhysicsSandbox(
                     Require(OpenInstalledPackDirectory(packsDirectory),
                             "opening clone parity Packs"),
                     options),
             "creating clone parity sandbox");
-    const PhysicsSandboxStateView initial = Require(
-            source.LoadReplay({replay.data(), replay.size()}, identity),
+    Require(source.LoadReplay({replay.data(), replay.size()}, identity),
             "loading clone parity replay");
-    const std::vector<PhysicsSandboxInputEvent> replayInputs = Require(
-            source.ReadInputs(), "reading clone parity replay inputs");
+    const std::vector<PhysicsSandboxInputEvent> canonicalInputs = Require(
+            source.ReadInputs(), "reading clone parity canonical inputs");
     const forevertas::InputScriptParseResult parsed =
             forevertas::ParseInputScript(
                     forevertas::ExtractReplayInputScript(
                             packsDirectory, replayPath));
     if (!parsed) throw std::runtime_error(*parsed.error);
     std::vector<forevertas::ParsedInputCommand> commands = parsed.commands;
-    forevertas::ParsedInputCommand postReplayInput;
-    postReplayInput.userTimeMs =
-            static_cast<std::int64_t>(initial.durationMs) + 1000;
-    postReplayInput.action = forevertas::SandboxInputAction::Steer;
-    postReplayInput.value.kind = PhysicsSandboxInputValueKind::Analog;
-    postReplayInput.value.analog = 12345;
-    postReplayInput.sourceLine = parsed.commands.size() + 1u;
-    commands.push_back(postReplayInput);
+    forevertas::ParsedInputCommand lateInput;
+    lateInput.userTimeMs =
+            forevertas::kDefaultSimulationHorizonMs + 1000;
+    lateInput.action = forevertas::SandboxInputAction::Steer;
+    lateInput.value.kind = PhysicsSandboxInputValueKind::Analog;
+    lateInput.value.analog = 12345;
+    lateInput.sourceLine = parsed.commands.size() + 1u;
+    commands.push_back(lateInput);
     forevertas::InputScriptBaselineResult baselineResult =
             forevertas::BuildInputScriptBaseline(
-                    replayInputs,
+                    canonicalInputs,
                     commands,
                     forevertas::kSearchTickDurationMs);
     if (!baselineResult) throw std::runtime_error(*baselineResult.error);
     if (baselineResult.events.empty() ||
         baselineResult.events.back().timeMs <=
-                static_cast<std::int64_t>(initial.durationMs)) {
-        std::cerr << "input beyond replay duration was not retained\n";
+                static_cast<std::int64_t>(
+                        forevertas::kDefaultSimulationHorizonMs)) {
+        std::cerr << "input beyond the Simulation horizon was not retained\n";
         return false;
     }
     forevertas::ConvertKeyboardSteeringToAnalog(baselineResult.events);
@@ -1114,17 +1148,17 @@ bool CheckSandboxCloneAndWindowParity(
     return restored.timeMs == 500u;
 }
 
-bool CheckPostReplayInputScriptAccepted(const char *packsDirectory,
-                                        const char *replayPath) {
+bool CheckInputAfterHorizonAccepted(const char *packsDirectory,
+                                    const char *replayPath) {
     forevertas::SearchRequest request{packsDirectory, replayPath};
     request.backend = forevertas::PhysicsBackend::OptimizedCpu;
-    forevertas::ParsedInputCommand postReplayInput;
-    postReplayInput.userTimeMs = 100000;
-    postReplayInput.action = forevertas::SandboxInputAction::Steer;
-    postReplayInput.value.kind = PhysicsSandboxInputValueKind::Analog;
-    postReplayInput.value.analog = 12345;
-    postReplayInput.sourceLine = 300u;
-    request.baseInputCommands = {postReplayInput};
+    forevertas::ParsedInputCommand lateInput;
+    lateInput.userTimeMs = 100000;
+    lateInput.action = forevertas::SandboxInputAction::Steer;
+    lateInput.value.kind = PhysicsSandboxInputValueKind::Analog;
+    lateInput.value.analog = 12345;
+    lateInput.sourceLine = 300u;
+    request.baseInputCommands = {lateInput};
 
     forevertas::SearchRunControl control;
     control.iterationLimit = 0u;
@@ -1133,31 +1167,216 @@ bool CheckPostReplayInputScriptAccepted(const char *packsDirectory,
     return true;
 }
 
+bool CheckCanonicalHorizonAndLateInputs(const char *packsDirectory,
+                                        const char *replayPath) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+    const ReplayIdentity identity{replayPath};
+    const AssetBytes replay = Require(
+            forevertas::ReadReplayFileUtf8(replayPath, identity),
+            "reading canonical horizon replay");
+
+    PhysicsSandboxOptions recordedOptions;
+    recordedOptions.backend = SimulationBackend::Reference;
+    recordedOptions.tickDurationMs = forevertas::kSearchTickDurationMs;
+    PhysicsSandbox recorded = Require(
+            CreatePhysicsSandbox(
+                    Require(OpenInstalledPackDirectory(packsDirectory),
+                            "opening recorded horizon Packs"),
+                    recordedOptions),
+            "creating recorded horizon sandbox");
+    const PhysicsSandboxStateView recordedInitial = Require(
+            recorded.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading recorded horizon replay");
+    const std::uint32_t horizon = static_cast<std::uint32_t>(
+            ((recordedInitial.durationMs + 1009u) / 10u) * 10u);
+
+    PhysicsSandboxOptions canonicalOptions;
+    canonicalOptions.backend = SimulationBackend::Reference;
+    canonicalOptions.tickDurationMs = forevertas::kSearchTickDurationMs;
+    canonicalOptions.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+    canonicalOptions.simulationHorizonMs = horizon;
+    PhysicsSandbox canonical = Require(
+            CreatePhysicsSandbox(
+                    Require(OpenInstalledPackDirectory(packsDirectory),
+                            "opening canonical horizon Packs"),
+                    canonicalOptions),
+            "creating canonical horizon sandbox");
+    const PhysicsSandboxStateView canonicalInitial = Require(
+            canonical.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading canonical horizon replay");
+    const std::vector<PhysicsSandboxInputEvent> fixed = Require(
+            canonical.ReadInputs(), "reading canonical fixed inputs");
+    if (canonicalInitial.durationMs != horizon || fixed.size() != 1u ||
+        fixed.front().timeMs != 0 ||
+        fixed.front().action != PhysicsSandboxInputAction::RaceRunning) {
+        std::cerr << "canonical sandbox retained recorded timeline data\n";
+        return false;
+    }
+
+    forevertas::ParsedInputCommand inside;
+    inside.userTimeMs = recordedInitial.durationMs + 100;
+    inside.action = forevertas::SandboxInputAction::Steer;
+    inside.value.kind = PhysicsSandboxInputValueKind::Analog;
+    inside.value.analog = 12345;
+    inside.sourceLine = 1u;
+    forevertas::ParsedInputCommand late = inside;
+    late.userTimeMs = horizon + 100;
+    late.value.analog = -12345;
+    late.sourceLine = 2u;
+    const forevertas::InputScriptBaselineResult baseline =
+            forevertas::BuildInputScriptBaseline(
+                    fixed,
+                    {inside, late},
+                    forevertas::kSearchTickDurationMs);
+    if (!baseline) throw std::runtime_error(*baseline.error);
+    Require(canonical.ReplaceInputs(baseline.events),
+            "applying canonical late inputs");
+    const std::vector<PhysicsSandboxInputEvent> stored = Require(
+            canonical.ReadInputs(), "reading stored canonical late inputs");
+    if (stored.size() != 3u ||
+        stored.back().timeMs <= static_cast<std::int64_t>(horizon)) {
+        std::cerr << "late canonical input was not preserved\n";
+        return false;
+    }
+    const PhysicsSandboxStateView finalState = Require(
+            canonical.AdvanceTicks(
+                    horizon / forevertas::kSearchTickDurationMs),
+            "advancing canonical horizon");
+    return finalState.timeMs == horizon &&
+            finalState.steering ==
+                    static_cast<float>(inside.value.analog) /
+                            forevervalidator::kAnalogInputScale;
+}
+
+PhysicsSandboxStateView RunCanonicalFixture(
+        const char *packsDirectory,
+        const std::filesystem::path &replayPath,
+        forevervalidator::SimulationBackend backend) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+    const ReplayIdentity identity{replayPath.string()};
+    const AssetBytes replay = Require(
+            forevertas::ReadReplayFileUtf8(replayPath.string(), identity),
+            "reading paired canonical fixture");
+    PhysicsSandboxOptions options;
+    options.backend = backend;
+    options.tickDurationMs = forevertas::kSearchTickDurationMs;
+    options.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+    options.simulationHorizonMs =
+            forevertas::kDefaultSimulationHorizonMs;
+    PhysicsSandbox sandbox = Require(
+            CreatePhysicsSandbox(
+                    Require(OpenInstalledPackDirectory(packsDirectory),
+                            "opening paired fixture Packs"),
+                    options),
+            "creating paired canonical sandbox");
+    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
+            "loading paired canonical fixture");
+    std::vector<PhysicsSandboxInputEvent> inputs = Require(
+            sandbox.ReadInputs(), "reading paired canonical inputs");
+    inputs.push_back({10,
+                      PhysicsSandboxInputAction::Accelerate,
+                      {PhysicsSandboxInputValueKind::Switch,
+                       PhysicsSandboxSwitchState::Pressed,
+                       0}});
+    inputs.push_back({10,
+                      PhysicsSandboxInputAction::Steer,
+                      {PhysicsSandboxInputValueKind::Analog,
+                       PhysicsSandboxSwitchState::Released,
+                       8192}});
+    Require(sandbox.ReplaceInputs(std::move(inputs)),
+            "applying paired canonical inputs");
+    return Require(
+            sandbox.AdvanceTicks(
+                    forevertas::kDefaultSimulationHorizonMs /
+                    forevertas::kSearchTickDurationMs),
+            "advancing paired canonical fixture");
+}
+
+bool SameCanonicalResult(const PhysicsSandboxStateView &left,
+                         const PhysicsSandboxStateView &right) {
+    return left.timeMs == right.timeMs &&
+            left.car.position.x == right.car.position.x &&
+            left.car.position.y == right.car.position.y &&
+            left.car.position.z == right.car.position.z &&
+            left.car.rotationX == right.car.rotationX &&
+            left.car.rotationY == right.car.rotationY &&
+            left.car.rotationZ == right.car.rotationZ &&
+            left.car.rotationW == right.car.rotationW &&
+            left.car.linearSpeed.x == right.car.linearSpeed.x &&
+            left.car.linearSpeed.y == right.car.linearSpeed.y &&
+            left.car.linearSpeed.z == right.car.linearSpeed.z &&
+            left.steering == right.steering &&
+            left.accelerate == right.accelerate &&
+            left.brake == right.brake &&
+            left.checkpointsCollected == right.checkpointsCollected &&
+            left.raceCompleted == right.raceCompleted &&
+            left.finishTimeMs == right.finishTimeMs;
+}
+
+bool CheckPairedCanonicalFixtures(const char *packsDirectory,
+                                  const char *replayPath) {
+    const std::filesystem::path fixturesRoot =
+            std::filesystem::path(replayPath).parent_path().parent_path();
+    const std::filesystem::path first =
+            fixturesRoot /
+            "tmuf_exchange_1000_per_pair/Speed/DesertCar/"
+            "7220162.Replay.Gbx";
+    const std::filesystem::path second =
+            fixturesRoot /
+            "tmuf_exchange_4900/Speed/DesertCar/6966118.Replay.Gbx";
+    if (!std::filesystem::is_regular_file(first) ||
+        !std::filesystem::is_regular_file(second)) {
+        return true;
+    }
+    const std::vector<forevervalidator::SimulationBackend> backends{
+            forevervalidator::SimulationBackend::Reference,
+            forevervalidator::SimulationBackend::OptimizedCpu,
+#if FOREVERVALIDATOR_HAS_CUDA
+            forevervalidator::SimulationBackend::Cuda,
+#endif
+    };
+    for (const forevervalidator::SimulationBackend backend : backends) {
+        if (!SameCanonicalResult(
+                    RunCanonicalFixture(packsDirectory, first, backend),
+                    RunCanonicalFixture(packsDirectory, second, backend))) {
+            std::cerr << "paired canonical fixtures depended on recorded "
+                         "controls, markers, or duration\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
-    const bool postReplayInputOnly =
+    const bool inputAfterHorizonOnly =
             argc == 4 &&
-            std::string_view(argv[1]) == "--post-replay-input-only";
-    if ((!postReplayInputOnly && argc != 3) ||
-        (postReplayInputOnly && argc != 4)) {
+            std::string_view(argv[1]) == "--input-after-horizon-only";
+    if ((!inputAfterHorizonOnly && argc != 3) ||
+        (inputAfterHorizonOnly && argc != 4)) {
         std::cerr << "expected Packs directory and replay path\n";
         return 2;
     }
 
     try {
-        if (postReplayInputOnly) {
-            return CheckPostReplayInputScriptAccepted(argv[2], argv[3])
+        if (inputAfterHorizonOnly) {
+            return CheckInputAfterHorizonAccepted(argv[2], argv[3])
                     ? 0
                     : 1;
         }
         if (!CheckAutoPromoteSemantics(argv[1], argv[2]) ||
-            !CheckModifierWindowClippedToReplay(argv[1], argv[2]) ||
+            !CheckModifierWindowRejectedByHorizon(argv[1], argv[2]) ||
+            !CheckCanonicalHorizonAndLateInputs(argv[1], argv[2]) ||
+            !CheckPairedCanonicalFixtures(argv[1], argv[2]) ||
 #if FOREVERVALIDATOR_HAS_CUDA
             !CheckCudaKernelModeLifecycle(argv[1], argv[2]) ||
             !CheckCudaAutoPromoteAcrossBatches(argv[1], argv[2]) ||
 #endif
             !CheckCachedScriptIsolation(argv[1], argv[2]) ||
+            !CheckCachedHorizonIsolation(argv[1], argv[2]) ||
             !CheckKeyboardSteeringBaseline(argv[1], argv[2]) ||
             !CheckKeyboardSteeringPhysicsParity(argv[1], argv[2]) ||
             !CheckSandboxCloneAndWindowParity(argv[1], argv[2]) ||

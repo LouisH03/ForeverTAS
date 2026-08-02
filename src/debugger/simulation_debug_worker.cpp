@@ -1,11 +1,15 @@
 #include <forevervalidator/experimental/physics_sandbox.h>
 #include <forevervalidator/native.h>
 
+#include "mutations/input_event_formatter.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -69,13 +73,14 @@ void PrintJsonString(const std::string &value) {
     std::putchar('"');
 }
 
-void PrintState(const PhysicsSandboxStateView &state) {
+void PrintState(const PhysicsSandboxStateView &state,
+                std::uint32_t simulationHorizonMs) {
     const auto number = [](double value) {
         return std::isfinite(value) ? value : 0.0;
     };
     std::fputs("@FOREVERTAS_STATE {", stdout);
     std::printf(
-            "\"tick\":%llu,\"timeMs\":%llu,\"durationMs\":%llu,"
+            "\"tick\":%llu,\"timeMs\":%llu,\"horizonMs\":%u,"
             "\"position\":[%.17g,%.17g,%.17g],"
             "\"rotation\":[%.17g,%.17g,%.17g,%.17g],"
             "\"linearSpeed\":[%.17g,%.17g,%.17g],"
@@ -88,7 +93,7 @@ void PrintState(const PhysicsSandboxStateView &state) {
             "\"raceCompleted\":%s,\"respawnCount\":%u",
             static_cast<unsigned long long>(state.tick),
             static_cast<unsigned long long>(state.timeMs),
-            static_cast<unsigned long long>(state.durationMs),
+            simulationHorizonMs,
             number(state.car.position.x),
             number(state.car.position.y),
             number(state.car.position.z),
@@ -149,14 +154,33 @@ int main(int argc, char **argv) {
     using namespace forevervalidator;
     using namespace forevervalidator::experimental;
 
-    if (argc != 3) {
-        PrintError("worker requires a Packs directory and replay path");
+    if (argc != 5) {
+        PrintError("worker requires a Packs directory, replay path, Simulation horizon, and input script");
         return 2;
     }
 
     try {
         const std::string packsDirectory(argv[1]);
         const std::string replayPath(argv[2]);
+        const unsigned long parsedHorizon = std::stoul(argv[3]);
+        if (parsedHorizon < 10ul || parsedHorizon > 2147481040ul ||
+            parsedHorizon % 10ul != 0ul) {
+            throw std::invalid_argument("invalid Simulation horizon");
+        }
+        const std::uint32_t simulationHorizonMs =
+                static_cast<std::uint32_t>(parsedHorizon);
+        std::ifstream scriptFile(argv[4], std::ios::binary);
+        if (!scriptFile) {
+            throw std::runtime_error("opening debugger input script failed");
+        }
+        const std::string inputScript{
+                std::istreambuf_iterator<char>(scriptFile),
+                std::istreambuf_iterator<char>()};
+        const forevertas::InputScriptParseResult parsedInputs =
+                forevertas::ParseInputScript(inputScript);
+        if (!parsedInputs) {
+            throw std::runtime_error(*parsedInputs.error);
+        }
         const ReplayIdentity identity{replayPath};
         AssetSource source =
                 Require(OpenInstalledPackDirectory(packsDirectory),
@@ -167,20 +191,35 @@ int main(int argc, char **argv) {
         PhysicsSandboxOptions options;
         options.backend = SimulationBackend::Reference;
         options.tickDurationMs = 10u;
+        options.timelineMode = PhysicsSandboxTimelineMode::Canonical;
+        options.simulationHorizonMs = simulationHorizonMs;
         PhysicsSandbox sandbox =
                 Require(CreatePhysicsSandbox(std::move(source), options),
                         "creating reference sandbox failed");
         PhysicsSandboxStateView state = Require(
                 sandbox.LoadReplay({replay.data(), replay.size()}, identity),
                 "loading replay failed");
-        PrintState(state);
+        const forevertas::InputScriptBaselineResult baseline =
+                forevertas::BuildInputScriptBaseline(
+                        Require(sandbox.ReadInputs(),
+                                "reading canonical debugger inputs failed"),
+                        parsedInputs.commands,
+                        options.tickDurationMs);
+        if (!baseline) {
+            throw std::runtime_error(*baseline.error);
+        }
+        Require(sandbox.ReplaceInputs(baseline.events),
+                "applying debugger input script failed");
+        state = Require(sandbox.ReadState(),
+                        "reading debugger initial state failed");
+        PrintState(state, simulationHorizonMs);
         forevertas_debugger_tick_boundary();
 
-        while (state.timeMs < state.durationMs && !state.raceCompleted) {
+        while (state.timeMs < simulationHorizonMs && !state.raceCompleted) {
             state =
                     Require(sandbox.AdvanceTicks(1u),
                             "advancing reference simulation failed");
-            PrintState(state);
+            PrintState(state, simulationHorizonMs);
             forevertas_debugger_tick_boundary();
         }
         return 0;

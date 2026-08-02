@@ -188,10 +188,11 @@ viewer timeline.
 Pressing Stop finishes the current iteration and returns `SearchResult`. Only
 then does `RunSearch` perform the separate final-sampling stage:
 
-1. Open a fresh Reference-backend sandbox.
-2. Reload the original replay from tick zero.
+1. Open a fresh Reference-backend sandbox with the configured Simulation horizon.
+2. Reload the map into a canonical timeline from tick zero.
 3. Replace its inputs with the winning timeline.
-4. Advance exactly one physics tick at a time through the complete replay.
+4. Advance exactly one physics tick at a time until genuine completion or the
+   Simulation horizon.
 5. Record position, rotation, and input state for every tick.
 
 This Stop-triggered pass is intentionally separate from iteration evaluation.
@@ -207,14 +208,12 @@ Timestamps always use `.` decimals and do not depend on `LC_NUMERIC`; analog
 states are already canonical integers and are serialized verbatim.
 
 Parsed commands retain user-relative milliseconds and their source line.
-Loading the replay establishes the `RaceRunning` origin, after which the runner
-applies the existing one-tick user-timeline offset. The runner preserves
-immutable pre-race history and structural `RaceRunning`, `FinishLine`, and
-unmapped events, replaces editable controls with the script commands, and calls
-`ReplaceInputs` before capturing or evaluating the baseline. Input commands may
-extend beyond the source replay duration; that duration never limits the editable
-input timeline. Cached sandboxes always restore
-the original replay snapshot before applying the current request's script.
+Loading a map creates a canonical `RaceRunning` origin at zero, after which the
+runner applies the existing one-tick user-timeline offset. Recorded controls,
+finish markers, outcomes, and timing are not imported. Input commands may extend
+beyond the user-configured Simulation horizon; they remain in the script but are
+not executed or previewed past that horizon. Cached sandboxes always restore the
+canonical map snapshot before applying the current request's script.
 
 ### Canonical analog input representation
 

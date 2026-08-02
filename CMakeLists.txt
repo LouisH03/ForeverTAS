@@ -68,7 +68,7 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG 581f80c5a6a8ba88a1ebf78a1efa1d7a11f3e476
+    GIT_TAG 7c633f3a148a94a08f1add275aef07b597d7bf9c
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
@@ -247,8 +247,11 @@ list(FILTER FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES EXCLUDE REGEX
     "/src/simulation/backends/cuda/(cuda_driver_shim|cuda_session_specialization)\.cpp$")
 add_executable(forevertas-simulation-debug-worker
     src/debugger/simulation_debug_worker.cpp
+    src/mutations/input_event_formatter.cpp
+    src/mutations/input_event_utils.cpp
     ${FOREVERTAS_DEBUG_WORKER_ENGINE_SOURCES})
 target_include_directories(forevertas-simulation-debug-worker PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${forevervalidator_SOURCE_DIR}/include"
     "${forevervalidator_SOURCE_DIR}/src")
 target_link_libraries(forevertas-simulation-debug-worker PRIVATE
@@ -635,6 +638,10 @@ if(BUILD_TESTING)
 
     add_test(NAME forevertas-strategies
              COMMAND forevertas-strategy-tests)
+    add_test(NAME forevertas-no-replay-duration-control
+             COMMAND ${CMAKE_COMMAND}
+                -DFOREVERTAS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/no_replay_duration_control.cmake)
     add_test(NAME forevertas-controller
              COMMAND forevertas-controller-tests)
     set_tests_properties(forevertas-controller PROPERTIES
