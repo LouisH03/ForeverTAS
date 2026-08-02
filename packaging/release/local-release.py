@@ -140,13 +140,28 @@ def prepare_tree(manifest: dict, validator_root: Path, state: dict, destination:
     )
 
 
-def verify_artifacts(manifest: dict, dist: Path) -> None:
+def release_assets(manifest: dict, dist: Path) -> list[Path]:
+    artifacts = [dist / manifest["artifacts"][name] for name in ("linux", "windows")]
+    return [
+        artifacts[0],
+        Path(str(artifacts[0]) + ".sha256"),
+        artifacts[1],
+        Path(str(artifacts[1]) + ".sha256"),
+        dist / "cuda-fatbinary-linux.json",
+        dist / "cuda-fatbinary-windows.json",
+        dist / "release-lock.json",
+    ]
+
+
+def verify_artifacts(manifest: dict, manifest_path: Path, dist: Path) -> dict:
     lock_path = dist / "release-lock.json"
     if not lock_path.is_file():
         raise SystemExit("missing release source lock")
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     if lock.get("schema") != 1 or lock.get("manifest") != manifest:
         raise SystemExit("release source lock does not match the manifest")
+    if lock.get("manifest_sha256") != sha256(manifest_path):
+        raise SystemExit("release source lock has the wrong manifest hash")
     resolved = lock.get("resolved_sources", {})
     if resolved.get("version") != manifest["release"]["version"]:
         raise SystemExit("release source lock has the wrong ForeverTAS version")
@@ -187,6 +202,7 @@ def verify_artifacts(manifest: dict, dist: Path) -> None:
         if data.get("resolved_sources") != resolved:
             raise SystemExit(f"{platform} package was not built from the locked sources")
     print("PASS release checksums, archive structure, and CUDA fatbinary evidence")
+    return resolved
 
 
 def command_check(args: argparse.Namespace, manifest: dict) -> None:
@@ -247,8 +263,11 @@ def command_draft(args: argparse.Namespace, manifest: dict) -> None:
     target = git("rev-list", "-n", "1", tag)
     if target != git("rev-parse", "HEAD"):
         raise SystemExit("release tag does not point at the built commit")
-    verify_artifacts(manifest, Path(args.dist).resolve())
-    assets = [str(path) for path in sorted(Path(args.dist).resolve().iterdir())]
+    dist = Path(args.dist).resolve()
+    resolved = verify_artifacts(manifest, args.manifest, dist)
+    if resolved["forevertas"] != target:
+        raise SystemExit("release assets were not built from the tagged commit")
+    assets = [str(path) for path in release_assets(manifest, dist)]
     run(["gh", "release", "create", tag, "--repo", repository, "--draft", "--verify-tag", "--generate-notes", *assets])
 
 
@@ -259,7 +278,9 @@ def command_publish(args: argparse.Namespace, manifest: dict) -> None:
     repository = manifest["release"]["repository"]
     with tempfile.TemporaryDirectory() as temporary:
         run(["gh", "release", "download", tag, "--repo", repository, "--dir", temporary])
-        verify_artifacts(manifest, Path(temporary))
+        resolved = verify_artifacts(manifest, args.manifest, Path(temporary))
+        if git("rev-list", "-n", "1", tag) != resolved["forevertas"]:
+            raise SystemExit("draft assets were not built from the tagged commit")
     run(["gh", "release", "edit", tag, "--repo", repository, "--draft=false"])
 
 
@@ -289,7 +310,7 @@ def main() -> int:
     elif args.command == "windows":
         command_windows(args, manifest)
     elif args.command == "verify":
-        verify_artifacts(manifest, Path(args.dist).resolve())
+        verify_artifacts(manifest, args.manifest, Path(args.dist).resolve())
     elif args.command == "draft":
         command_draft(args, manifest)
     else:
