@@ -112,25 +112,32 @@ try {
     $env:QT_QPA_PLATFORM = "windows"
     $env:QSG_RHI_BACKEND = "software"
 
-    $StandardOutput = Join-Path $WorkingDirectory "smoke-stdout.txt"
-    $StandardError = Join-Path $WorkingDirectory "smoke-stderr.txt"
-    $Process = Start-Process `
-        -FilePath $Executable.FullName `
-        -ArgumentList "--qml-smoke-test" `
-        -WorkingDirectory $ApplicationDirectory `
-        -RedirectStandardOutput $StandardOutput `
-        -RedirectStandardError $StandardError `
-        -PassThru
+    $ProcessStartInfo = [Diagnostics.ProcessStartInfo]::new()
+    $ProcessStartInfo.FileName = $Executable.FullName
+    $ProcessStartInfo.Arguments = "--qml-smoke-test"
+    $ProcessStartInfo.WorkingDirectory = $ApplicationDirectory
+    $ProcessStartInfo.UseShellExecute = $false
+    $ProcessStartInfo.RedirectStandardOutput = $true
+    $ProcessStartInfo.RedirectStandardError = $true
+    $Process = [Diagnostics.Process]::new()
+    $Process.StartInfo = $ProcessStartInfo
+    if (-not $Process.Start()) {
+        throw "Failed to start the packaged application"
+    }
+    $StandardOutput = $Process.StandardOutput.ReadToEndAsync()
+    $StandardError = $Process.StandardError.ReadToEndAsync()
     if (-not $Process.WaitForExit(60000)) {
         $Process.Kill()
-        $Output = Get-Content $StandardOutput -Raw -ErrorAction SilentlyContinue
-        $ErrorOutput = Get-Content $StandardError -Raw -ErrorAction SilentlyContinue
+        $Process.WaitForExit()
+        $Output = $StandardOutput.GetAwaiter().GetResult()
+        $ErrorOutput = $StandardError.GetAwaiter().GetResult()
         throw "The packaged application did not finish its smoke test within 60 seconds." +
             "`n$Output`n$ErrorOutput"
     }
+    $Process.WaitForExit()
+    $Output = $StandardOutput.GetAwaiter().GetResult()
+    $ErrorOutput = $StandardError.GetAwaiter().GetResult()
     if ($Process.ExitCode -ne 0) {
-        $Output = Get-Content $StandardOutput -Raw -ErrorAction SilentlyContinue
-        $ErrorOutput = Get-Content $StandardError -Raw -ErrorAction SilentlyContinue
         throw "Packaged application exited with $($Process.ExitCode).`n$Output`n$ErrorOutput"
     }
 
