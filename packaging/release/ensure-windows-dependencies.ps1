@@ -34,7 +34,7 @@ if (-not $BootstrapCurrent) {
     Remove-Item $Vcpkg -Force -ErrorAction SilentlyContinue
     & (Join-Path $VcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
     if ($LASTEXITCODE -ne 0) { throw "Failed to bootstrap vcpkg" }
-    Set-Content -NoNewline $VcpkgMarker $env:VCPKG_COMMIT
+    Set-Content -NoNewline -Path $VcpkgMarker -Value $env:VCPKG_COMMIT
 }
 
 $env:VCPKG_BINARY_SOURCES = "clear;files,$BinaryCache,readwrite"

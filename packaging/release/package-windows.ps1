@@ -164,7 +164,7 @@ try {
             "split_compile_jobs=$SplitCompileJobs"
             "cuda_host_compatibility=allow-unsupported-compiler"
             "validator=$ActualValidatorCommit"
-        ) | Set-Content (Join-Path $TemporaryDirectory "metadata.txt")
+        ) | Set-Content -Path (Join-Path $TemporaryDirectory "metadata.txt")
         Move-Item $TemporaryDirectory $SearchCacheDirectory
         Write-Host "Cached CUDA search object $SearchKey"
     }
@@ -204,7 +204,7 @@ try {
     $Artifact = $Artifacts[0]
     $Hash = Get-FileHash -Algorithm SHA256 $Artifact.FullName
     "$($Hash.Hash.ToLowerInvariant())  $($Artifact.Name)" |
-        Set-Content -NoNewline "$($Artifact.FullName).sha256"
+        Set-Content -NoNewline -Path "$($Artifact.FullName).sha256"
     & (Join-Path $RepoRoot "packaging/windows/test-portable.ps1") `
         -Archive $Artifact.FullName
 
@@ -219,7 +219,7 @@ try {
             forevervalidator = $ActualValidatorCommit
             version = $env:FOREVERTAS_VERSION
         }
-    } | ConvertTo-Json | Set-Content `
+    } | ConvertTo-Json | Set-Content -Path `
         (Join-Path $DistDirectory "cuda-fatbinary-windows.json")
 } finally {
     & $env:SCCACHE_PATH --show-stats

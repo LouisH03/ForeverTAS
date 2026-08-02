@@ -126,7 +126,8 @@ if ($CachedToolkitValid) {
         & (Join-Path $StagingRoot "bin/nvcc.exe") --version
         if ($LASTEXITCODE -ne 0) { throw "Portable nvcc failed to execute" }
         $TreeHash = Get-CudaTreeHash $StagingRoot
-        Set-Content -NoNewline (Join-Path $StagingRoot ".complete") "$env:CUDA_VERSION`n$TreeHash"
+        Set-Content -NoNewline -Path (Join-Path $StagingRoot ".complete") `
+            -Value "$env:CUDA_VERSION`n$TreeHash"
         Move-Item $StagingRoot $CudaRoot
         Write-Host "Installed portable CUDA toolkit $CudaRoot"
     } finally {
