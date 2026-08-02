@@ -12,7 +12,7 @@
     },
     "forevervalidator": {
       "repository": "https://github.com/Skycrafter-dev/ForeverValidator.git",
-      "commit": "effafe50fe0eabe30fb5b51e5a643a5b1ab2ebf9",
+      "commit": "a38b388ef4c9ac001b537795fd8aa38372ea5fc5",
       "version": "0.2.1",
       "tag": "v0.2.1"
     }
