@@ -236,7 +236,9 @@ def command_windows(args: argparse.Namespace, manifest: dict) -> None:
     run(["ssh", host, f"& '{remote}/packaging/release/build-windows-local.ps1' -Manifest '{remote}/packaging/release/manifest.json'{cold}"])
     dist = Path(args.dist).resolve()
     dist.mkdir(parents=True, exist_ok=True)
-    run(["scp", f"{host}:{remote}/dist/*", str(dist) + "/"])
+    artifact = manifest["artifacts"]["windows"]
+    for name in (artifact, artifact + ".sha256", "cuda-fatbinary-windows.json"):
+        run(["scp", f"{host}:{remote}/dist/{name}", str(dist) + "/"])
 
 
 def command_draft(args: argparse.Namespace, manifest: dict) -> None:
