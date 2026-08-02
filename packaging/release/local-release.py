@@ -278,7 +278,10 @@ def command_publish(args: argparse.Namespace, manifest: dict) -> None:
     repository = manifest["release"]["repository"]
     with tempfile.TemporaryDirectory() as temporary:
         run(["gh", "release", "download", tag, "--repo", repository, "--dir", temporary])
-        resolved = verify_artifacts(manifest, args.manifest, Path(temporary))
+        downloaded = Path(temporary)
+        appimage = downloaded / manifest["artifacts"]["linux"]
+        appimage.chmod(appimage.stat().st_mode | 0o111)
+        resolved = verify_artifacts(manifest, args.manifest, downloaded)
         if git("rev-list", "-n", "1", tag) != resolved["forevertas"]:
             raise SystemExit("draft assets were not built from the tagged commit")
     run(["gh", "release", "edit", tag, "--repo", repository, "--draft=false"])
