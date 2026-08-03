@@ -1,5 +1,6 @@
 #include "app/input_preview_binding.h"
 #include "app/search_controller.h"
+#include "app/system_file_dialog.h"
 #include "viewer/race_timeline_item.h"
 #include "viewer/race_viewer_controller.h"
 
@@ -343,41 +344,17 @@ int main(int argc, char **argv) {
     forevertas::app::SearchController controller;
     forevertas::viewer::RaceViewerController viewer;
     forevertas::app::BindInputPreview(controller, viewer);
-    const QString initialPacksDirectory =
-            controller.packsDirectory();
-    const QString initialReplayPath = controller.replayPath();
-    const auto browseUsesNativeDialog = [](auto openDialog) {
-        bool inspected = false;
-        bool usesNativeDialog = false;
-        QTimer::singleShot(50, [&]() {
-            for (QWidget *const widget :
-                 QApplication::topLevelWidgets()) {
-                auto *const dialog =
-                        qobject_cast<QFileDialog *>(widget);
-                if (dialog == nullptr) {
-                    continue;
-                }
-                inspected = true;
-                usesNativeDialog = !dialog->testOption(
-                        QFileDialog::DontUseNativeDialog);
-                dialog->reject();
-            }
-        });
-        openDialog();
-        QCoreApplication::processEvents();
-        return inspected && usesNativeDialog;
-    };
+#if defined(Q_OS_LINUX)
     const bool nativeBrowseDialogsValid =
-            browseUsesNativeDialog(
-                    [&]() {
-                        controller.browseForPacksDirectory();
-                    }) &&
-            browseUsesNativeDialog(
-                    [&]() {
-                        controller.browseForReplay();
-                    }) &&
-            controller.packsDirectory() == initialPacksDirectory &&
-            controller.replayPath() == initialReplayPath;
+            forevertas::app::ActiveSystemFileDialogBackend() ==
+            forevertas::app::SystemFileDialogBackend::XdgDesktopPortal;
+#elif defined(Q_OS_WIN)
+    const bool nativeBrowseDialogsValid =
+            forevertas::app::ActiveSystemFileDialogBackend() ==
+            forevertas::app::SystemFileDialogBackend::WindowsIFileDialog;
+#else
+    const bool nativeBrowseDialogsValid = false;
+#endif
     forevertas::viewer::RegisterRaceViewerQmlTypes();
     QQmlApplicationEngine engine;
     QObject::connect(
@@ -5075,7 +5052,7 @@ int main(int argc, char **argv) {
                             renderedSplitTexts.contains(
                                     QStringLiteral("Finish")) &&
                             renderedSplitTexts.contains(
-                                    QStringLiteral("0.02"));
+                                    QStringLiteral("0.020"));
                     if (!checkpointSplitOverlayUiValid) {
                         std::cerr
                                 << "checkpoint split overlay checks failed: "

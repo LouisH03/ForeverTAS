@@ -1,7 +1,6 @@
 #include "searches/basic_brute_force_search.h"
 
 #include "evaluators/evaluator_utils.h"
-#include "input_timeline_time.h"
 #include "searches/cuda_batch_calibrator.h"
 #include "searches/cuda_calibration_safety.h"
 #include "searches/option_settings_utils.h"
@@ -985,10 +984,9 @@ SearchResult BasicBruteForceSearch::Run(
                 "tick duration must be greater than zero");
     }
 
-    const std::int64_t earliestMutationTimeMs =
-            context.mutator.EarliestMutationTimeMs();
-    const MutationTimeRange mutationRange =
-            context.mutator.AffectedTimeRange();
+    const std::int64_t earliestMutationTimeMs = std::min(
+            context.mutator.EarliestMutationTimeMs(),
+            static_cast<std::int64_t>(context.simulationHorizonMs));
     if (earliestMutationTimeMs <
                 static_cast<std::int64_t>(context.tickDurationMs) ||
         earliestMutationTimeMs % context.tickDurationMs != 0) {
@@ -996,18 +994,6 @@ SearchResult BasicBruteForceSearch::Run(
                 "modifier pipeline must begin on or after the first whole "
                 "tick");
     }
-    if (mutationRange.maximumTimeMs > context.simulationHorizonMs) {
-        throw std::invalid_argument(
-                "modifier maximum time setting " +
-                std::to_string(UserTimelineTimeFromSimulationTime(
-                        mutationRange.maximumTimeMs,
-                        context.tickDurationMs)) +
-                " ms maps to simulation time " +
-                std::to_string(mutationRange.maximumTimeMs) +
-                " ms, which exceeds the Simulation horizon of " +
-                std::to_string(context.simulationHorizonMs) + " ms");
-    }
-
     CheckCancellation(context.control);
     PhysicsSandboxStateView current = Require(
             context.sandbox.ReadState(), "reading initial sandbox state");
@@ -1215,6 +1201,19 @@ SearchResult BasicBruteForceSearch::Run(
         if (mutation.mutationCount != 0u) {
             totalMutationCount += mutation.mutationCount;
             if (mutation.windowPatch) {
+                mutation.windowPatch->minimumTimeMs = std::min(
+                        mutation.windowPatch->minimumTimeMs,
+                        static_cast<std::int64_t>(
+                                context.simulationHorizonMs));
+                mutation.windowPatch->maximumTimeMs = std::min(
+                        mutation.windowPatch->maximumTimeMs,
+                        static_cast<std::int64_t>(
+                                context.simulationHorizonMs));
+                for (PhysicsSandboxInputEvent &event :
+                     mutation.windowPatch->events) {
+                    event.timeMs = std::min<std::int64_t>(
+                            event.timeMs, context.simulationHorizonMs);
+                }
                 Require(context.sandbox.ReplaceInputWindow(
                                 mutation.windowPatch->minimumTimeMs,
                                 mutation.windowPatch->maximumTimeMs,

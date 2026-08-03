@@ -1,5 +1,6 @@
 #include "app/search_configuration_model.h"
 
+#include "input_timeline_time.h"
 #include "searches/algorithm_registry.h"
 
 #include <QByteArray>
@@ -406,8 +407,6 @@ SearchConfigurationValidation SearchConfigurationModel::validate(
     std::vector<OptionConfiguration> modifiers;
     std::int64_t earliestMutationTimeMs =
             std::numeric_limits<std::int64_t>::max();
-    std::int64_t latestMutationTimeMs = 0;
-    qsizetype latestMutationPass = 0;
     modifiers.reserve(static_cast<std::size_t>(modifierPasses_.size()));
     for (qsizetype index = 0; index < modifierPasses_.size(); ++index) {
         const QVariantMap pass = modifierPasses_.at(index).toMap();
@@ -426,30 +425,15 @@ SearchConfigurationValidation SearchConfigurationModel::validate(
                                 .arg(index + 1)
                                 .arg(QString::fromStdString(*error))};
         }
+        const OptionSettings executionSettings =
+                ClampInputWindowToSimulationHorizon(
+                        settings, tickDurationMs, simulationHorizonMs);
         const std::unique_ptr<InputMutator> mutator =
-                registration->create(settings, tickDurationMs);
+                registration->create(executionSettings, tickDurationMs);
         earliestMutationTimeMs = std::min(
                 earliestMutationTimeMs,
                 mutator->EarliestMutationTimeMs());
-        const std::int64_t passMaximumTimeMs =
-                mutator->AffectedTimeRange().maximumTimeMs;
-        if (passMaximumTimeMs > latestMutationTimeMs) {
-            latestMutationTimeMs = passMaximumTimeMs;
-            latestMutationPass = index;
-        }
         modifiers.push_back({registration->id, settings});
-    }
-    if (latestMutationTimeMs > simulationHorizonMs) {
-        return {{},
-                QStringLiteral(
-                        "Modifier pass %1 maximum time setting %2 ms maps "
-                        "to simulation time %3 ms, which exceeds the "
-                        "Simulation horizon of %4 ms.")
-                        .arg(latestMutationPass + 1)
-                        .arg(UserTimelineTimeFromSimulationTime(
-                                latestMutationTimeMs, tickDurationMs))
-                        .arg(latestMutationTimeMs)
-                        .arg(simulationHorizonMs)};
     }
     const std::unique_ptr<IterationEvaluator> evaluator =
             evaluationRegistration->create(

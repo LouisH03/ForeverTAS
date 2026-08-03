@@ -64,6 +64,7 @@ function Test-CudaArchitectures([string]$Object) {
 }
 
 $CompilerIdentity = @(
+    "cache_schema=cuda-search-object-v1"
     "cuda=$env:CUDA_VERSION"
     "architectures=$env:CUDA_ARCHITECTURES"
     "architecture_key=$env:CUDA_ARCHITECTURE_KEY"
@@ -73,8 +74,6 @@ $CompilerIdentity = @(
     (& clang-cl --version | Out-String)
     $env:VCToolsVersion
     (& nvcc --version | Out-String)
-    (Get-FileHash -Algorithm SHA256 (Join-Path $RepoRoot "CMakeLists.txt")).Hash
-    (Get-FileHash -Algorithm SHA256 (Join-Path $ValidatorRoot "CMakeLists.txt")).Hash
 ) -join "`n"
 $SearchKey = Get-TextHash $CompilerIdentity
 $SearchCacheDirectory = Join-Path $env:FOREVERTAS_WINDOWS_SEARCH_CACHE $SearchKey

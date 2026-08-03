@@ -304,6 +304,16 @@ bool TestHumanDurationFormatting() {
                     "1:02:03.000000004",
             "hour nanosecond formatting was incorrect");
     okay &= Check(
+            forevertas::FormatFixedDurationMilliseconds(0u) ==
+                            "00:00:00.000" &&
+                    forevertas::FormatFixedDurationMilliseconds(3723004u) ==
+                            "01:02:03.004" &&
+                    forevertas::FormatFixedSplitMilliseconds(1450u) ==
+                            "1.450" &&
+                    forevertas::FormatFixedSplitMilliseconds(7410u) ==
+                            "7.410",
+            "fixed millisecond formatting was incorrect");
+    okay &= Check(
             forevertas::FormatSignificantDurationMilliseconds(0u) == "0" &&
                     forevertas::FormatSignificantDurationMilliseconds(
                             14500u) == "14.5" &&

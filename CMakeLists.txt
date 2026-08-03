@@ -49,6 +49,9 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Quick3D
     QuickControls2
     Widgets)
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS DBus)
+endif()
 if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
     find_package(Qt6 QUIET COMPONENTS GuiPrivate ShaderTools)
 endif()
@@ -139,6 +142,8 @@ target_link_libraries(forevertas_core PUBLIC
 add_library(forevertas_gui STATIC
     src/app/compact_number_format.cpp
     src/app/compact_number_format.h
+    src/app/system_file_dialog.cpp
+    src/app/system_file_dialog.h
     src/viewer/gpu_ray_tracing_view.cpp
     src/viewer/gpu_ray_tracing_view.h
     src/viewer/custom_volume_geometry.cpp
@@ -231,6 +236,11 @@ target_link_libraries(forevertas_gui PUBLIC
     Qt6::Quick
     Qt6::Quick3D
     Qt6::Widgets)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(forevertas_gui PUBLIC Qt6::DBus)
+elseif(WIN32)
+    target_link_libraries(forevertas_gui PUBLIC ole32 shell32 uuid)
+endif()
 
 # The live-code worker is a separate, unoptimized instance of the real
 # ForeverValidator reference engine. Running it out of process keeps native
@@ -646,6 +656,14 @@ if(BUILD_TESTING)
              COMMAND ${CMAKE_COMMAND}
                 -DFOREVERTAS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/no_replay_duration_control.cmake)
+    add_test(NAME forevertas-system-file-dialog-control
+             COMMAND ${CMAKE_COMMAND}
+                -DFOREVERTAS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/system_file_dialog_control.cmake)
+    add_test(NAME forevertas-release-cache-control
+             COMMAND ${CMAKE_COMMAND}
+                -DFOREVERTAS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_cache_control.cmake)
     add_test(NAME forevertas-controller
              COMMAND forevertas-controller-tests)
     set_tests_properties(forevertas-controller PROPERTIES

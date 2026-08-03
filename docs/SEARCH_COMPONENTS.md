@@ -212,7 +212,9 @@ Loading a map creates a canonical `RaceRunning` origin at zero, after which the
 runner applies the existing one-tick user-timeline offset. Recorded controls,
 finish markers, outcomes, and timing are not imported. Input commands may extend
 beyond the user-configured Simulation horizon; they remain in the script but are
-not executed or previewed past that horizon. Cached sandboxes always restore the
+not executed or previewed past that horizon. Modifier windows may also extend
+beyond it in the saved configuration; execution silently limits them to the
+last input tick inside the horizon. Cached sandboxes always restore the
 canonical map snapshot before applying the current request's script.
 
 ### Canonical analog input representation

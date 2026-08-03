@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Shapes
 import QtQml.Models
 import QtQuick3D
 import "settings"
@@ -3354,27 +3353,23 @@ ApplicationWindow {
                                                 jumpStartButton.effectiveTextColor
                                         }
 
-                                        Shape {
+                                        Canvas {
                                             anchors.fill: parent
-
-                                            ShapePath {
-                                                strokeWidth: -1
-                                                fillColor:
-                                                    jumpStartButton.effectiveTextColor
-                                                startX: 15
-                                                startY: 2
-                                                PathLine {
-                                                    x: 6
-                                                    y: 9
-                                                }
-                                                PathLine {
-                                                    x: 15
-                                                    y: 16
-                                                }
-                                                PathLine {
-                                                    x: 15
-                                                    y: 2
-                                                }
+                                            property color iconColor:
+                                                jumpStartButton.effectiveTextColor
+                                            antialiasing: true
+                                            onIconColorChanged: requestPaint()
+                                            onPaint: {
+                                                const context = getContext("2d")
+                                                context.clearRect(0, 0,
+                                                                  width, height)
+                                                context.fillStyle = iconColor
+                                                context.beginPath()
+                                                context.moveTo(15, 2)
+                                                context.lineTo(6, 9)
+                                                context.lineTo(15, 16)
+                                                context.closePath()
+                                                context.fill()
                                             }
                                         }
                                     }
@@ -3400,31 +3395,27 @@ ApplicationWindow {
                                 onClicked: window.viewer.togglePlayback()
 
                                 contentItem: Item {
-                                    Shape {
+                                    Canvas {
                                         objectName: "playTransportIcon"
                                         anchors.centerIn: parent
                                         width: 18
                                         height: 18
                                         visible: !window.viewer.playing
-
-                                        ShapePath {
-                                            strokeWidth: -1
-                                            fillColor:
-                                                playPauseButton.effectiveTextColor
-                                            startX: 4
-                                            startY: 2
-                                            PathLine {
-                                                x: 16
-                                                y: 9
-                                            }
-                                            PathLine {
-                                                x: 4
-                                                y: 16
-                                            }
-                                            PathLine {
-                                                x: 4
-                                                y: 2
-                                            }
+                                        property color iconColor:
+                                            playPauseButton.effectiveTextColor
+                                        antialiasing: true
+                                        onIconColorChanged: requestPaint()
+                                        onPaint: {
+                                            const context = getContext("2d")
+                                            context.clearRect(0, 0,
+                                                              width, height)
+                                            context.fillStyle = iconColor
+                                            context.beginPath()
+                                            context.moveTo(4, 2)
+                                            context.lineTo(16, 9)
+                                            context.lineTo(4, 16)
+                                            context.closePath()
+                                            context.fill()
                                         }
                                     }
 
@@ -3480,27 +3471,23 @@ ApplicationWindow {
                                         width: 18
                                         height: 18
 
-                                        Shape {
+                                        Canvas {
                                             anchors.fill: parent
-
-                                            ShapePath {
-                                                strokeWidth: -1
-                                                fillColor:
-                                                    jumpEndButton.effectiveTextColor
-                                                startX: 3
-                                                startY: 2
-                                                PathLine {
-                                                    x: 12
-                                                    y: 9
-                                                }
-                                                PathLine {
-                                                    x: 3
-                                                    y: 16
-                                                }
-                                                PathLine {
-                                                    x: 3
-                                                    y: 2
-                                                }
+                                            property color iconColor:
+                                                jumpEndButton.effectiveTextColor
+                                            antialiasing: true
+                                            onIconColorChanged: requestPaint()
+                                            onPaint: {
+                                                const context = getContext("2d")
+                                                context.clearRect(0, 0,
+                                                                  width, height)
+                                                context.fillStyle = iconColor
+                                                context.beginPath()
+                                                context.moveTo(3, 2)
+                                                context.lineTo(12, 9)
+                                                context.lineTo(3, 16)
+                                                context.closePath()
+                                                context.fill()
                                             }
                                         }
 

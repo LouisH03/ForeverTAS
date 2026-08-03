@@ -1,5 +1,6 @@
 #include "searches/search_runner.h"
 
+#include "input_timeline_time.h"
 #include "mutations/composite_input_mutator.h"
 #include "mutations/input_event_utils.h"
 #include "replay_file_io.h"
@@ -1287,8 +1288,8 @@ SearchResult RunSearch(const SearchRequest &request,
     }
     std::int64_t earliestMutationTimeMs =
             std::numeric_limits<std::int64_t>::max();
-    std::int64_t latestMutationTimeMs = 0;
-    std::string latestMutationId;
+    std::vector<OptionConfiguration> executionModifiers;
+    executionModifiers.reserve(request.modifiers.size());
     for (const OptionConfiguration &modifier : request.modifiers) {
         const ModifierRegistration *const registration =
                 FindModifier(modifier.id);
@@ -1299,28 +1300,18 @@ SearchResult RunSearch(const SearchRequest &request,
                     modifier.settings, kSearchTickDurationMs)) {
             throw std::invalid_argument(*error);
         }
+        OptionSettings executionSettings =
+                ClampInputWindowToSimulationHorizon(
+                        modifier.settings,
+                        kSearchTickDurationMs,
+                        request.simulationHorizonMs);
         const std::unique_ptr<InputMutator> mutator = registration->create(
-                modifier.settings, kSearchTickDurationMs);
+                executionSettings, kSearchTickDurationMs);
         earliestMutationTimeMs = std::min(
                 earliestMutationTimeMs,
                 mutator->EarliestMutationTimeMs());
-        const std::int64_t passMaximumTimeMs =
-                mutator->AffectedTimeRange().maximumTimeMs;
-        if (passMaximumTimeMs > latestMutationTimeMs) {
-            latestMutationTimeMs = passMaximumTimeMs;
-            latestMutationId = modifier.id;
-        }
-    }
-    if (latestMutationTimeMs > request.simulationHorizonMs) {
-        throw std::invalid_argument(
-                "modifier " + latestMutationId +
-                " maximum time setting " +
-                std::to_string(UserTimelineTimeFromSimulationTime(
-                        latestMutationTimeMs, kSearchTickDurationMs)) +
-                " ms maps to simulation time " +
-                std::to_string(latestMutationTimeMs) +
-                " ms, which exceeds the Simulation horizon of " +
-                std::to_string(request.simulationHorizonMs) + " ms");
+        executionModifiers.push_back(
+                {registration->id, std::move(executionSettings)});
     }
     const std::unique_ptr<IterationEvaluator> evaluator =
             evaluationRegistration->create(
@@ -1343,9 +1334,12 @@ SearchResult RunSearch(const SearchRequest &request,
                 std::to_string(request.simulationHorizonMs) + " ms");
     }
 
+    SearchRequest executionRequest = request;
+    executionRequest.modifiers = std::move(executionModifiers);
+
     if (request.backend == PhysicsBackend::MultiThreadedCpu) {
         return RunMultiThreadedCpuSearch(
-                request,
+                executionRequest,
                 *searchRegistration,
                 *evaluationRegistration,
                 control);
@@ -1428,7 +1422,7 @@ SearchResult RunSearch(const SearchRequest &request,
                 "applying base input script");
         CheckCancellation(control);
         return RunLoadedSearch(
-                request,
+                executionRequest,
                 cached->replay,
                 identity,
                 *cached->sandbox,
@@ -1471,7 +1465,7 @@ SearchResult RunSearch(const SearchRequest &request,
             "applying base input script");
     CheckCancellation(control);
     return RunLoadedSearch(
-            request,
+            executionRequest,
             replay,
             identity,
             sandbox,

@@ -74,6 +74,26 @@ inline std::optional<OptionSettings> SimulationInputSettingsFromUserTimeline(
     return simulationSettings;
 }
 
+inline OptionSettings ClampInputWindowToSimulationHorizon(
+        const OptionSettings &userSettings,
+        std::uint32_t tickDurationMs,
+        std::int64_t simulationHorizonMs) {
+    OptionSettings clamped = userSettings;
+    const std::int64_t maximumUserTimeMs =
+            UserTimelineTimeFromSimulationTime(
+                    simulationHorizonMs, tickDurationMs);
+    for (const char *const key : {"minTimeMs", "maxTimeMs"}) {
+        const auto found = clamped.find(key);
+        if (found == clamped.end()) continue;
+        const std::optional<std::int64_t> time =
+                ParseSignedDecimal(found->second);
+        if (time && *time > maximumUserTimeMs) {
+            found->second = std::to_string(maximumUserTimeMs);
+        }
+    }
+    return clamped;
+}
+
 }  // namespace forevertas
 
 #endif

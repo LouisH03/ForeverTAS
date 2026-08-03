@@ -1384,8 +1384,9 @@ std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
 }
 
 QString FormatTime(qint64 milliseconds) {
-    return QString::fromStdString(FormatHumanDurationMilliseconds(
-            static_cast<double>(std::max<qint64>(0, milliseconds))));
+    return QString::fromStdString(FormatFixedDurationMilliseconds(
+            static_cast<std::uint64_t>(
+                    std::max<qint64>(0, milliseconds))));
 }
 
 std::vector<RaceViewerFrame> ToViewerFrames(
@@ -2002,7 +2003,7 @@ QVariantList RaceViewerController::checkpointSplits() const {
         item.insert(
                 QStringLiteral("time"),
                 QString::fromStdString(
-                        FormatSignificantDurationMilliseconds(
+                        FormatFixedSplitMilliseconds(
                                 static_cast<std::uint64_t>(
                                         std::max<std::int64_t>(
                                                 0, split.timeMs)))));

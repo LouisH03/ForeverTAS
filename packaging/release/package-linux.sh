@@ -46,6 +46,7 @@ trap report_cache EXIT
 
 search_key="$({
     printf '%s\n' \
+        "cache_schema=cuda-search-object-v1" \
         "toolchain=${FOREVERTAS_TOOLCHAIN_IMAGE}" \
         "cuda=${CUDA_VERSION}" \
         "architectures=${CUDA_ARCHITECTURES}" \
@@ -54,7 +55,6 @@ search_key="$({
         "validator=${actual_validator_commit}"
     nvcc --version
     c++ -dumpfullversion -dumpversion
-    sha256sum "${repo_root}/CMakeLists.txt" "${validator_root}/CMakeLists.txt"
 } | sha256sum | cut -d' ' -f1)"
 search_cache_dir="${search_cache_root}/${search_key}"
 cached_search_object="${search_cache_dir}/cuda_search_executor.cu.o"
@@ -124,6 +124,7 @@ if [[ "${cache_hit}" == false ]]; then
     cp "${built_search_object}" \
         "${temporary_cache_dir}/cuda_search_executor.cu.o"
     printf '%s\n' \
+        "cache_schema=cuda-search-object-v1" \
         "toolchain=${FOREVERTAS_TOOLCHAIN_IMAGE}" \
         "cuda=${CUDA_VERSION}" \
         "architectures=${CUDA_ARCHITECTURES}" \

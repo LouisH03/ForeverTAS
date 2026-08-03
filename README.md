@@ -55,6 +55,8 @@ Build and launch the Qt 6 Quick application:
 Select an installed TMUF `Packs` directory and either a replay or standalone
 `Challenge.Gbx`, enter a base input script, choose an evaluation target,
 assemble an ordered list of input modifier passes, then start the basic search.
+The Browse buttons always open the operating system's file picker rather than
+a Qt-provided dialog.
 The selected file supplies the map and scenario; only the editable script
 supplies the player-control baseline. **Extract inputs to script** is available
 for replays and imports their controls when that is the desired starting point.
@@ -62,9 +64,11 @@ The application persists paths, the script draft, selections, pass
 order, the user-owned **Simulation horizon**, and every option-owned
 configuration with the platform-native Qt settings store. That horizon alone
 bounds search, preview, validation, and CPU/CUDA simulation; commands after it
-remain editable but unexecuted. Modifier seeds are randomized and persisted on
-each Start by default; disabling that option preserves the entered seeds for
-reproducible reruns. Search, map loading, validation, and physics
+remain editable but unexecuted. Modifier time windows that extend past it are
+silently limited to the last executable input tick. Modifier seeds are
+randomized and persisted on each Start by default; disabling that option
+preserves the entered seeds for reproducible reruns. Search, map loading,
+validation, and physics
 stay in C++; QML presents the controls and Race Viewer.
 
 The search runs indefinitely on a worker thread after Start is pressed. Each

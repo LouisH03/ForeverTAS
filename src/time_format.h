@@ -64,6 +64,41 @@ inline std::string FormatHumanDurationMilliseconds(double milliseconds) {
     return stream.str();
 }
 
+inline std::string FormatFixedDurationMilliseconds(
+        std::uint64_t milliseconds) {
+    const std::uint64_t totalHours = milliseconds / 3600000u;
+    const std::uint64_t minutes = (milliseconds / 60000u) % 60u;
+    const std::uint64_t seconds = (milliseconds / 1000u) % 60u;
+    const std::uint64_t millis = milliseconds % 1000u;
+
+    std::ostringstream stream;
+    stream << std::setfill('0') << std::setw(2) << totalHours << ':'
+           << std::setw(2) << minutes << ':' << std::setw(2) << seconds
+           << '.' << std::setw(3) << millis;
+    return stream.str();
+}
+
+inline std::string FormatFixedSplitMilliseconds(
+        std::uint64_t milliseconds) {
+    const std::uint64_t totalSeconds = milliseconds / 1000u;
+    const std::uint64_t hours = totalSeconds / 3600u;
+    const std::uint64_t minutes = (totalSeconds / 60u) % 60u;
+    const std::uint64_t seconds = totalSeconds % 60u;
+
+    std::ostringstream stream;
+    stream << std::setfill('0');
+    if (hours != 0u) {
+        stream << hours << ':' << std::setw(2) << minutes << ':'
+               << std::setw(2) << seconds;
+    } else if (minutes != 0u) {
+        stream << minutes << ':' << std::setw(2) << seconds;
+    } else {
+        stream << seconds;
+    }
+    stream << '.' << std::setw(3) << (milliseconds % 1000u);
+    return stream.str();
+}
+
 inline std::string FormatSignificantDurationMilliseconds(
         std::uint64_t milliseconds) {
     constexpr std::uint64_t MillisecondsPerSecond = 1000u;

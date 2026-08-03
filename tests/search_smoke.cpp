@@ -227,7 +227,7 @@ bool CheckAutoPromoteSemantics(
     return true;
 }
 
-bool CheckModifierWindowRejectedByHorizon(
+bool CheckModifierWindowClampedToHorizon(
         const char *packsDirectory,
         const char *replayPath) {
     PhysicsSandbox sandbox =
@@ -237,19 +237,14 @@ bool CheckModifierWindowRejectedByHorizon(
     forevertas::SearchRunControl control;
     control.iterationLimit = 1u;
     control.sampleBestTimeline = false;
-    try {
-        static_cast<void>(
+    const forevertas::SearchResult result =
             forevertas::BasicBruteForceSearch(false).Run(
                     {sandbox,
                      forevertas::kSearchTickDurationMs,
                      mutator,
                      evaluator,
-                     &control}));
-    } catch (const std::invalid_argument &error) {
-        return std::string_view(error.what()).find("Simulation horizon") !=
-                std::string_view::npos;
-    }
-    return false;
+                     &control});
+    return result.iterations == 1u;
 }
 
 #if FOREVERVALIDATOR_HAS_CUDA
@@ -1418,7 +1413,7 @@ int main(int argc, char **argv) {
                     : 1;
         }
         if (!CheckAutoPromoteSemantics(argv[1], argv[2]) ||
-            !CheckModifierWindowRejectedByHorizon(argv[1], argv[2]) ||
+            !CheckModifierWindowClampedToHorizon(argv[1], argv[2]) ||
             !CheckCanonicalHorizonAndLateInputs(argv[1], argv[2]) ||
             !CheckPairedCanonicalFixtures(argv[1], argv[2]) ||
             (argc == 5 && !CheckStandaloneChallengeFixture(

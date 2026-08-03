@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -123,18 +124,18 @@ bool TestCompactNumberFormatting() {
             okay = false;
         }
     };
-    expect(0.0, "0");
-    expect(999.0, "999");
-    expect(1000.0, "1k");
+    expect(0.0, "0.00");
+    expect(999.0, "999.00");
+    expect(1000.0, "1.00k");
     expect(1230.0, "1.23k");
-    expect(999999.0, "1M");
+    expect(999999.0, "1.00M");
     expect(1250000.0, "1.25M");
     expect(1230000000.0, "1.23B");
     expect(1230000000000.0, "1.23T");
-    expect(999999999999999.0, "1Q");
+    expect(999999999999999.0, "1.00Q");
     expect(1230000000000000.0, "1.23Q");
-    expect(1000000000000000000.0, "1000Q");
-    expect(-12500.0, "-12.5k");
+    expect(1000000000000000000.0, "1000.00Q");
+    expect(-12500.0, "-12.50k");
     return okay;
 }
 
@@ -971,14 +972,10 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     controller.setSimulationHorizonMs(QStringLiteral("6000"));
     controller.setModifierPassSetting(
             0, QStringLiteral("maxTimeMs"), QStringLiteral("6000"));
-    okay &= Check(!controller.canStart() &&
-                          controller.validationMessage().contains(
-                                  QStringLiteral("setting 6000 ms")) &&
-                          controller.validationMessage().contains(
-                                  QStringLiteral("simulation time 6010 ms")) &&
-                          controller.validationMessage().contains(
-                                  QStringLiteral("Simulation horizon of 6000 ms")),
-                  "translated modifier horizon error was not contextual");
+    okay &= Check(controller.canStart() &&
+                          !controller.validationMessage().contains(
+                                  QStringLiteral("maps to simulation time")),
+                  "modifier time beyond the horizon was not silently clamped");
     controller.setModifierPassSetting(
             0, QStringLiteral("maxTimeMs"), QStringLiteral("4990"));
     controller.setSimulationHorizonMs(QStringLiteral("5000"));
@@ -1759,10 +1756,14 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
                                 controller.statusText() ==
                                         QStringLiteral("Searching...") &&
                                 controller.liveMetricsVisible() &&
-                                !controller.iterationCountText().isEmpty() &&
-                                !controller.throughputText().isEmpty() &&
-                                !controller.throughputText().contains(
-                                        QLatin1Char('.')) &&
+                                QRegularExpression(QStringLiteral(
+                                        "^[0-9]+\\.[0-9]{2}[kMBTQ]?$"))
+                                        .match(controller.iterationCountText())
+                                        .hasMatch() &&
+                                QRegularExpression(QStringLiteral(
+                                        "^[0-9]+\\.[0-9]{2}[kMBTQ]?$"))
+                                        .match(controller.throughputText())
+                                        .hasMatch() &&
                                 controller.elapsedText().startsWith(
                                         QStringLiteral("00:")) &&
                                 !controller.elapsedText().contains(

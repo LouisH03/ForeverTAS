@@ -1516,7 +1516,7 @@ int main(int argc, char **argv) {
                                             .toMap()
                                             .value(QStringLiteral("time"))
                                             .toString() ==
-                                    QStringLiteral("1.45") &&
+                                    QStringLiteral("1.450") &&
                             checkpointSplits.size() == 2 &&
                             checkpointSplits.back()
                                             .toMap()
@@ -1527,7 +1527,7 @@ int main(int argc, char **argv) {
                                             .toMap()
                                             .value(QStringLiteral("time"))
                                             .toString() ==
-                                    QStringLiteral("7.41") &&
+                                    QStringLiteral("7.410") &&
                             finishedSplits.size() == 3 &&
                             finishedSplits.back()
                                             .toMap()
@@ -1547,7 +1547,7 @@ int main(int argc, char **argv) {
                     viewer.setCurrentTick(100);
                     const bool timeLabelUnambiguous =
                             viewer.timeText().startsWith(
-                                    QStringLiteral("00:00:01 / "));
+                                    QStringLiteral("00:00:01.000 / "));
                     const QString copiedSearchScript =
                             viewer.currentInputScript();
                     const bool searchCopyStopsAtCurrentTime =

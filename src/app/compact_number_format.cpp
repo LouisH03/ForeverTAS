@@ -4,16 +4,6 @@
 #include <cmath>
 
 namespace forevertas::app {
-namespace {
-
-QString TrimFraction(QString value) {
-    while (value.endsWith(QLatin1Char('0'))) value.chop(1);
-    if (value.endsWith(QLatin1Char('.'))) value.chop(1);
-    return value;
-}
-
-}  // namespace
-
 QString FormatCompactNumber(double value) {
     if (!std::isfinite(value)) {
         return QString::number(value);
@@ -40,7 +30,7 @@ QString FormatCompactNumber(double value) {
         rounded = std::round(scaled * 100.0) / 100.0;
     }
 
-    return TrimFraction(QString::number(rounded, 'f', 2)) +
+    return QString::number(rounded, 'f', 2) +
             QString::fromLatin1(suffixes[suffixIndex]);
 }
 

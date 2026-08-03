@@ -3,6 +3,7 @@
 #include "app/compact_number_format.h"
 #include "app/packs_directory_finder.h"
 #include "app/search_worker.h"
+#include "app/system_file_dialog.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/replay_input_script.h"
 #include "searches/algorithm_registry.h"
@@ -12,7 +13,6 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QFileDialog>
 #include <QPalette>
 #include <QRandomGenerator>
 #include <QSettings>
@@ -894,11 +894,8 @@ void SearchController::browseForPacksDirectory() {
     const QString initialDirectory = current.isDir()
             ? current.absoluteFilePath()
             : QDir::homePath();
-    const QString selected = QFileDialog::getExistingDirectory(
-            nullptr,
-            QStringLiteral("Select Packs directory"),
-            initialDirectory,
-            QFileDialog::ShowDirsOnly);
+    const QString selected = OpenSystemDirectoryDialog(
+            QStringLiteral("Select Packs directory"), initialDirectory);
     if (!selected.isEmpty()) {
         setPacksDirectory(selected);
     }
@@ -917,14 +914,8 @@ void SearchController::browseForReplay() {
     const QString initialPath = current.isFile()
             ? current.absoluteFilePath()
             : QDir::homePath();
-    const QString selected = QFileDialog::getOpenFileName(
-            nullptr,
-            QStringLiteral("Select replay or challenge"),
-            initialPath,
-            QStringLiteral(
-                    "TrackMania scenarios (*.Replay.Gbx *.Challenge.Gbx "
-                    "*.Gbx);;"
-                    "All files (*)"));
+    const QString selected = OpenSystemFileDialog(
+            QStringLiteral("Select replay or challenge"), initialPath);
     if (!selected.isEmpty()) {
         setReplayPath(selected);
     }
