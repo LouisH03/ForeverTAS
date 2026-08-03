@@ -12,7 +12,7 @@ ForeverTAS -> PhysicsSandbox -> ForeverValidator physics
 ## Dependency
 
 CMake `FetchContent` pins ForeverValidator to the exact commit
-`a9defc539e3ea024b36fae4359785ac098e28aa6`. The embedded build disables the
+`688071fa82c3d93b3617ac1529a24915c0fe3364`. The embedded build disables the
 ForeverValidator CLI and tests and links its native asset adapter and core
 simulation library.
 
@@ -96,9 +96,10 @@ selected cuboid is the active brute-force target; the evaluation panel can add,
 duplicate, remove, rename, and directly edit every cuboid or focus the viewer
 camera on it. Camera and car placement buttons move the selected target to the
 current rendered camera or simulated car position. Every cuboid is visible in
-both viewer renderers, and the selected
-one exposes color-coded 3D axis bars for movement plus endpoint handles for
-resizing.
+both viewer renderers, and the selected one exposes color-coded 3D axis bars
+for movement plus endpoint handles for resizing. Targets are occluded by map
+geometry by default; the global draw-through toggle makes them visible through
+blocks when desired.
 Custom polygon volumes share the same shape-target menu. A target stores a
 drawing plane, editable 2D vertices, and an independent extrusion depth. Users
 can select an axis plane in the viewer, redraw the polygon directly against
@@ -137,7 +138,10 @@ a completed search adds the `Best` run.
 The Race Viewer stores named search-result runs. A header selector switches the
 active timeline and camera focus between `Best` and future run types, while
 every run remains visible as a separate car in the 3D preview. Car colors are
-baked into separate flat-shaded vertex-color meshes.
+baked into separate flat-shaded vertex-color meshes. Its telemetry overlay is
+an editable persisted template. The field picker inserts camera, car position,
+velocity, speed, input, race progress, timeline, tick, and run-name fields;
+numeric fields accept an optional zero-to-six digit precision suffix.
 
 After a map is loaded, **Drive** starts a live 100 Hz physics run in the viewer.
 Arrow keys and QWERTY `WASD` control full acceleration, braking, and steering;
@@ -187,8 +191,8 @@ ForeverTAS can be packaged natively as a Linux AppImage or Windows portable
 ZIP. Both artifacts use the same CMake installation definition and include the
 required Qt and QML runtime files. macOS is not supported.
 
-See [docs/PACKAGING.md](docs/PACKAGING.md) for local packaging commands, CI
-behavior, artifact layouts, signing notes, and clean-machine release checks.
+See [docs/PACKAGING.md](docs/PACKAGING.md) for local packaging commands,
+artifact layouts, signing notes, and clean-machine release checks.
 
 See `docs/SEARCH_COMPONENTS.md` for the registry, persistence, composition, and
 extension contracts.

@@ -153,10 +153,12 @@ def release_assets(manifest: dict, dist: Path) -> list[Path]:
 def release_notes(manifest: dict) -> str:
     return f"""ForeverTAS {manifest['release']['version']} is built and verified entirely on local Linux and Windows machines with the pinned CUDA 12.8.1 toolchain.
 
-### Search performance
+### Highlights
 
-- Precise finish-time candidates retain the state immediately before their finishing tick, so exact refinement replays one tick rather than a long fixed suffix.
-- CUDA winner reconstruction and auto-promotion verification run on a dedicated optimized-CPU worker instead of a one-thread, one-block CUDA replay.
+- Standalone `Challenge.Gbx` maps now load directly, while replays remain map and scenario sources rather than control or duration authorities.
+- Race camera initialization respects rotated spawns. The viewer now has editable scripted telemetry, target placement from the current camera or car, and an optional draw-through-blocks target mode.
+- Modifier seeds randomize automatically on each search start by default, large counters use compact readable notation, and packaged transport controls retain their intended silhouettes.
+- Disjoint cuboid sweeps are rejected before exact slab math on CPU and CUDA, restoring volume-entry throughput to point-target parity on the validated RTX 5060.
 
 ### Input timelines
 

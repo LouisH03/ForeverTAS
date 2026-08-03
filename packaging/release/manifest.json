@@ -2,8 +2,8 @@
   "schema": 1,
   "release": {
     "product": "ForeverTAS",
-    "version": "0.2.1",
-    "tag": "v0.2.1",
+    "version": "0.2.2",
+    "tag": "v0.2.2",
     "repository": "Skycrafter-dev/ForeverTAS"
   },
   "sources": {
@@ -12,9 +12,9 @@
     },
     "forevervalidator": {
       "repository": "https://github.com/Skycrafter-dev/ForeverValidator.git",
-      "commit": "7c633f3a148a94a08f1add275aef07b597d7bf9c",
-      "version": "0.2.1",
-      "tag": "v0.2.1"
+      "commit": "688071fa82c3d93b3617ac1529a24915c0fe3364",
+      "version": "0.2.2",
+      "tag": "v0.2.2"
     }
   },
   "cuda": {
@@ -48,7 +48,7 @@
     "windows": "C:\\release-cache\\forevertas"
   },
   "artifacts": {
-    "linux": "ForeverTAS-0.2.1-linux-x86_64.AppImage",
-    "windows": "ForeverTAS-0.2.1-windows-x86_64.zip"
+    "linux": "ForeverTAS-0.2.2-linux-x86_64.AppImage",
+    "windows": "ForeverTAS-0.2.2-windows-x86_64.zip"
   }
 }
