@@ -268,6 +268,158 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: telemetryEditorDialog
+        objectName: "telemetryEditorDialog"
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(620, window.width - 48)
+        title: qsTr("Scripted telemetry")
+        onOpened: {
+            telemetryScriptEditor.text = window.viewer.telemetryScript
+            telemetryScriptEditor.forceActiveFocus()
+        }
+        onAccepted:
+            window.viewer.telemetryScript = telemetryScriptEditor.text
+
+        footer: DialogButtonBox {
+            spacing: 8
+
+            ThemedButton {
+                objectName: "resetTelemetryScriptButton"
+                text: qsTr("Reset")
+                DialogButtonBox.buttonRole: DialogButtonBox.ResetRole
+                onClicked:
+                    telemetryScriptEditor.text =
+                        window.viewer.defaultTelemetryScript
+            }
+
+            ThemedButton {
+                objectName: "cancelTelemetryScriptButton"
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+
+            ThemedButton {
+                objectName: "applyTelemetryScriptButton"
+                text: qsTr("Apply")
+                highlighted: true
+                enabled: telemetryScriptErrorLabel.text.length === 0
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+
+            onAccepted: telemetryEditorDialog.accept()
+            onRejected: telemetryEditorDialog.reject()
+
+            background: Rectangle {
+                color: AppTheme.panel
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                StyledComboBox {
+                    id: telemetryFieldCombo
+                    objectName: "telemetryFieldCombo"
+                    Layout.fillWidth: true
+                    model: [
+                        "{camera.x:2}", "{camera.y:2}", "{camera.z:2}",
+                        "{car.x:2}", "{car.y:2}", "{car.z:2}",
+                        "{car.velocity.x:2}", "{car.velocity.y:2}",
+                        "{car.velocity.z:2}", "{car.speed:2}",
+                        "{car.speedKph:2}", "{input.accelerate:2}",
+                        "{input.brake:2}", "{input.steering:2}",
+                        "{race.checkpoints:0}",
+                        "{race.totalCheckpoints:0}", "{race.laps:0}",
+                        "{race.totalLaps:0}", "{race.finished}",
+                        "{time.ms:0}", "{time.s:2}", "{tick:0}",
+                        "{run.name}"
+                    ]
+                    Accessible.name: qsTr("Telemetry field")
+                }
+
+                ThemedButton {
+                    objectName: "insertTelemetryFieldButton"
+                    text: qsTr("Insert")
+                    onClicked: {
+                        const token = telemetryFieldCombo.currentText
+                        telemetryScriptEditor.insert(
+                                    telemetryScriptEditor.cursorPosition,
+                                    token)
+                        telemetryScriptEditor.forceActiveFocus()
+                    }
+                }
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 150
+                clip: true
+
+                TextArea {
+                    id: telemetryScriptEditor
+                    objectName: "telemetryScriptEditor"
+                    color: AppTheme.text
+                    selectionColor: AppTheme.accent
+                    selectedTextColor: AppTheme.textOnAccent
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    wrapMode: TextEdit.Wrap
+                    background: Rectangle {
+                        color: AppTheme.surface
+                        border.width: telemetryScriptEditor.activeFocus ? 2 : 1
+                        border.color: telemetryScriptEditor.activeFocus
+                                      ? AppTheme.focus : AppTheme.borderStrong
+                        radius: 5
+                    }
+                }
+            }
+
+            Label {
+                id: telemetryScriptErrorLabel
+                objectName: "telemetryScriptErrorLabel"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: window.viewer.telemetryScriptError(
+                          telemetryScriptEditor.text)
+                color: AppTheme.error
+                wrapMode: Text.WordWrap
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.minimumHeight: 42
+                Layout.preferredHeight: Math.min(
+                                            120,
+                                            telemetryScriptPreview
+                                                .implicitHeight + 18)
+                color: AppTheme.viewerOverlay
+                border.width: 1
+                border.color: AppTheme.viewerOverlayBorder
+                radius: 6
+                clip: true
+
+                Label {
+                    id: telemetryScriptPreview
+                    objectName: "telemetryScriptPreview"
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    text: viewport.renderTelemetry(
+                              telemetryScriptEditor.text)
+                    color: AppTheme.viewerOverlayText
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
+    }
+
     palette {
         window: AppTheme.window
         windowText: AppTheme.text
@@ -500,17 +652,14 @@ ApplicationWindow {
                         viewCamera.sceneRotation
                     property vector3d freeCameraPosition:
                         Qt.vector3d(0, 0, 0)
-                    function formatCameraCoordinate(value) {
-                        const normalized = Math.abs(value) < 0.005 ? 0 : value
-                        return Number(normalized).toFixed(2)
+                    function renderTelemetry(script) {
+                        // These explicit reads keep the binding live while the
+                        // C++ formatter samples the selected run internally.
+                        const timelineTime = window.viewer.timeMs
+                        const selectedCarPosition = window.viewer.carPosition
+                        return window.viewer.renderTelemetry(
+                                    script, viewCamera.scenePosition)
                     }
-                    readonly property string cameraPositionText:
-                        "Camera pos: X "
-                        + formatCameraCoordinate(viewCamera.scenePosition.x)
-                        + "   Y "
-                        + formatCameraCoordinate(viewCamera.scenePosition.y)
-                        + "   Z "
-                        + formatCameraCoordinate(viewCamera.scenePosition.z)
                     readonly property bool carCameraActive:
                         !freeCamera && !orbitalCamera && !cuboidFocused
                         && window.viewer.carCameraAvailable
@@ -2873,14 +3022,24 @@ ApplicationWindow {
                     }
 
                     Rectangle {
-                        id: cameraPositionTelemetry
-                        objectName: "cameraPositionTelemetry"
+                        id: scriptedTelemetry
+                        objectName: "scriptedTelemetry"
                         anchors.top: cameraFocusToolbar.bottom
                         anchors.topMargin: 6
                         anchors.right: cameraFocusToolbar.right
                         z: 3
-                        width: cameraPositionTelemetryText.implicitWidth + 20
-                        height: 30
+                        width: Math.min(
+                                   480,
+                                   Math.max(
+                                       220,
+                                       scriptedTelemetryContent
+                                           .implicitWidth + 16))
+                        height: Math.min(
+                                    150,
+                                    Math.max(
+                                        34,
+                                        scriptedTelemetryContent
+                                            .implicitHeight + 12))
                         radius: 6
                         color: AppTheme.viewerOverlay
                         border.width: 1
@@ -2888,16 +3047,40 @@ ApplicationWindow {
                         visible: window.viewer.loaded
                                  && !viewport.exportingWhiteboardImage
 
-                        Label {
-                            id: cameraPositionTelemetryText
-                            objectName: "cameraPositionTelemetryText"
-                            anchors.centerIn: parent
-                            text: viewport.cameraPositionText
-                            color: AppTheme.viewerOverlayText
-                            font.pixelSize: 12
-                            font.family: "monospace"
-                            Accessible.name: qsTr("Camera position")
-                            Accessible.description: text
+                        RowLayout {
+                            id: scriptedTelemetryContent
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            spacing: 4
+
+                            Label {
+                                id: scriptedTelemetryText
+                                objectName: "scriptedTelemetryText"
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 430
+                                text: viewport.renderTelemetry(
+                                          window.viewer.telemetryScript)
+                                color: AppTheme.viewerOverlayText
+                                font.pixelSize: 12
+                                font.family: "monospace"
+                                wrapMode: Text.Wrap
+                                Accessible.name: qsTr("Scripted telemetry")
+                                Accessible.description: text
+                            }
+
+                            ThemedToolButton {
+                                id: editTelemetryButton
+                                objectName: "editTelemetryButton"
+                                Layout.preferredWidth: 26
+                                Layout.preferredHeight: 26
+                                text: "\u270e"
+                                font.pixelSize: 15
+                                Accessible.name: qsTr("Edit scripted telemetry")
+                                onClicked: telemetryEditorDialog.open()
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 350
+                                ToolTip.text: qsTr("Edit scripted telemetry")
+                            }
                         }
                     }
 
@@ -3386,7 +3569,7 @@ ApplicationWindow {
                         objectName: "checkpointSplitOverlay"
                         anchors.right: parent.right
                         anchors.rightMargin: 14
-                        anchors.top: cameraPositionTelemetry.bottom
+                        anchors.top: scriptedTelemetry.bottom
                         anchors.topMargin: 8
                         z: 3
                         width: 198

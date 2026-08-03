@@ -167,6 +167,10 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(double carCameraFieldOfView READ carCameraFieldOfView NOTIFY
                        cameraChanged)
     Q_PROPERTY(bool hideSelectedCar READ hideSelectedCar NOTIFY cameraChanged)
+    Q_PROPERTY(QString telemetryScript READ telemetryScript WRITE
+                       setTelemetryScript NOTIFY telemetryScriptChanged)
+    Q_PROPERTY(QString defaultTelemetryScript READ defaultTelemetryScript
+                       CONSTANT)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY timelineChanged)
     Q_PROPERTY(qint64 timeMs READ timeMs WRITE setTimeMs NOTIFY timeChanged)
     Q_PROPERTY(qint64 currentTick READ currentTick WRITE setCurrentTick NOTIFY
@@ -248,6 +252,8 @@ public:
     QVector3D carCameraTarget() const;
     double carCameraFieldOfView() const;
     bool hideSelectedCar() const;
+    QString telemetryScript() const;
+    QString defaultTelemetryScript() const;
     qint64 durationMs() const;
     qint64 timelineSeekLimitMs() const;
     qint64 timeMs() const;
@@ -319,6 +325,7 @@ public slots:
     void setSimulationHorizonMs(qint64 value);
     void setTakeOverOnInput(bool value);
     void setCameraPreset(int value);
+    void setTelemetryScript(const QString &value);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void togglePlayback();
@@ -346,6 +353,10 @@ public slots:
                             const QString &backendId);
     Q_INVOKABLE QVector2D cameraClipPlanes(const QVector3D &cameraPosition,
                                            double cameraDistance) const;
+    Q_INVOKABLE QString renderTelemetry(
+            const QString &script,
+            const QVector3D &cameraPosition) const;
+    Q_INVOKABLE QString telemetryScriptError(const QString &script) const;
 
 signals:
     void sceneChanged();
@@ -364,6 +375,7 @@ signals:
     void simulationHorizonMsChanged();
     void cameraPresetChanged();
     void cameraChanged();
+    void telemetryScriptChanged();
 
 private:
     void applyLoadResult(std::uint64_t loadSerial,
@@ -468,6 +480,7 @@ private:
     double carCameraFieldOfView_ = 75.0;
     int cameraPreset_ = 1;
     bool carCameraAvailable_ = false;
+    QString telemetryScript_;
     QString statusText_ = QStringLiteral("No map loaded");
     QString selectedRunId_;
     QString loadedPacksDirectory_;

@@ -945,15 +945,27 @@ int main(int argc, char **argv) {
                     QObject *const focusObjectButton =
                             root->findChild<QObject *>(
                                     QStringLiteral("focusObjectButton"));
-                    auto *const cameraPositionTelemetry =
+                    auto *const scriptedTelemetry =
                             qobject_cast<QQuickItem *>(
                                     root->findChild<QObject *>(
                                             QStringLiteral(
-                                                    "cameraPositionTelemetry")));
-                    QObject *const cameraPositionTelemetryText =
+                                                    "scriptedTelemetry")));
+                    QObject *const scriptedTelemetryText =
                             root->findChild<QObject *>(
                                     QStringLiteral(
-                                            "cameraPositionTelemetryText"));
+                                            "scriptedTelemetryText"));
+                    QObject *const editTelemetryButton =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "editTelemetryButton"));
+                    QObject *const telemetryEditorDialog =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "telemetryEditorDialog"));
+                    QObject *const telemetryScriptEditor =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "telemetryScriptEditor"));
+                    QObject *const telemetryScriptPreview =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "telemetryScriptPreview"));
                     QObject *const stepBackward = root->findChild<QObject *>(
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
@@ -1374,9 +1386,13 @@ int main(int argc, char **argv) {
                             viewport != nullptr &&
                             cameraFocusToolbar != nullptr &&
                             cameraFocusToolbar->isVisible() &&
-                            cameraPositionTelemetry != nullptr &&
-                            cameraPositionTelemetry->isVisible() &&
-                            cameraPositionTelemetryText != nullptr &&
+                            scriptedTelemetry != nullptr &&
+                            scriptedTelemetry->isVisible() &&
+                            scriptedTelemetryText != nullptr &&
+                            editTelemetryButton != nullptr &&
+                            telemetryEditorDialog != nullptr &&
+                            telemetryScriptEditor != nullptr &&
+                            telemetryScriptPreview != nullptr &&
                             freeCameraButton != nullptr &&
                             orbitalCameraButton != nullptr &&
                             focusCarButton != nullptr &&
@@ -1425,8 +1441,53 @@ int main(int argc, char **argv) {
                     };
                     freeCameraUiValid &=
                             viewCamera != nullptr &&
-                            cameraPositionTelemetryText != nullptr &&
-                            cameraPositionTelemetryText->property("text")
+                            scriptedTelemetryText != nullptr &&
+                            scriptedTelemetryText->property("text")
+                                            .toString() ==
+                                    cameraTelemetryText(
+                                            viewCamera
+                                                    ->property("scenePosition")
+                                                    .value<QVector3D>());
+                    const QString customTelemetryScript =
+                            QStringLiteral("Camera X {camera.x:1}");
+                    bool telemetryEditorValid =
+                            QMetaObject::invokeMethod(
+                                    editTelemetryButton, "clicked");
+                    QCoreApplication::processEvents();
+                    telemetryEditorValid &=
+                            telemetryEditorDialog->property("visible")
+                                    .toBool() &&
+                            telemetryScriptEditor->property("text")
+                                            .toString() ==
+                                    viewer.defaultTelemetryScript() &&
+                            telemetryScriptEditor->setProperty(
+                                    "text", customTelemetryScript);
+                    QCoreApplication::processEvents();
+                    const QVector3D telemetryCameraPosition =
+                            viewCamera->property("scenePosition")
+                                    .value<QVector3D>();
+                    telemetryEditorValid &=
+                            telemetryScriptPreview->property("text")
+                                            .toString() ==
+                                    viewer.renderTelemetry(
+                                            customTelemetryScript,
+                                            telemetryCameraPosition) &&
+                            QMetaObject::invokeMethod(
+                                    telemetryEditorDialog, "accept");
+                    QCoreApplication::processEvents();
+                    telemetryEditorValid &=
+                            viewer.telemetryScript() ==
+                                    customTelemetryScript &&
+                            scriptedTelemetryText->property("text")
+                                            .toString() ==
+                                    viewer.renderTelemetry(
+                                            customTelemetryScript,
+                                            telemetryCameraPosition);
+                    viewer.setTelemetryScript(
+                            viewer.defaultTelemetryScript());
+                    QCoreApplication::processEvents();
+                    freeCameraUiValid &= telemetryEditorValid &&
+                            scriptedTelemetryText->property("text")
                                             .toString() ==
                                     cameraTelemetryText(
                                             viewCamera
@@ -1568,7 +1629,7 @@ int main(int argc, char **argv) {
                                  freePositionBeforeLook)
                                                 .lengthSquared() <
                                         0.0001f &&
-                                cameraPositionTelemetryText
+                                scriptedTelemetryText
                                                 ->property("text")
                                                 .toString() ==
                                         cameraTelemetryText(
@@ -4965,7 +5026,7 @@ int main(int argc, char **argv) {
                     const bool compactSplitLayout =
                             checkpointSplitOverlay != nullptr &&
                             cameraFocusToolbar != nullptr &&
-                            cameraPositionTelemetry != nullptr &&
+                            scriptedTelemetry != nullptr &&
                             playbackDock != nullptr &&
                             checkpointSplitOverlay->x() >= 13.9 &&
                             checkpointSplitOverlay->width() >= 197.9 &&
@@ -4975,8 +5036,8 @@ int main(int argc, char **argv) {
                                     cameraFocusToolbar->x() -
                                             cameraFocusToolbar->width()) <= 2.1 &&
                             checkpointSplitOverlay->y() >=
-                                    cameraPositionTelemetry->y() +
-                                            cameraPositionTelemetry->height() +
+                                    scriptedTelemetry->y() +
+                                            scriptedTelemetry->height() +
                                             7.9 &&
                             checkpointSplitOverlay->y() +
                                             checkpointSplitOverlay->height() <=

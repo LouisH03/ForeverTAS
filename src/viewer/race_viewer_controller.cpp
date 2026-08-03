@@ -13,6 +13,7 @@
 #include <QCryptographicHash>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QThread>
 #include <QVariantMap>
@@ -28,6 +29,221 @@
 #include <utility>
 
 namespace forevertas::viewer {
+
+namespace {
+
+constexpr auto kTelemetryScriptKey = "viewer/telemetryScript";
+
+const QString &DefaultTelemetryScript() {
+    static const QString script = QStringLiteral(
+            "Camera pos: X {camera.x:2}   Y {camera.y:2}   Z {camera.z:2}");
+    return script;
+}
+
+RaceViewerFrame SampleTelemetryFrame(
+        const std::vector<RaceViewerFrame> &frames,
+        qint64 timeMs) {
+    if (frames.empty()) {
+        return {};
+    }
+    const auto upper = std::lower_bound(
+            frames.begin(), frames.end(), timeMs,
+            [](const RaceViewerFrame &frame, qint64 time) {
+                return frame.timeMs < time;
+            });
+    if (upper == frames.begin()) {
+        return *upper;
+    }
+    if (upper == frames.end()) {
+        return frames.back();
+    }
+    if (upper->timeMs == timeMs) {
+        return *upper;
+    }
+    const RaceViewerFrame &after = *upper;
+    const RaceViewerFrame &before = *(upper - 1);
+    const qint64 interval = after.timeMs - before.timeMs;
+    const float blend = interval > 0
+            ? static_cast<float>(timeMs - before.timeMs) /
+                    static_cast<float>(interval)
+            : 0.0f;
+    RaceViewerFrame result = before;
+    result.timeMs = timeMs;
+    result.position = before.position * (1.0f - blend) +
+            after.position * blend;
+    result.linearSpeed = before.linearSpeed * (1.0f - blend) +
+            after.linearSpeed * blend;
+    result.signedSpeed = before.signedSpeed * (1.0f - blend) +
+            after.signedSpeed * blend;
+    result.accelerate = before.accelerate * (1.0f - blend) +
+            after.accelerate * blend;
+    result.brake = before.brake * (1.0f - blend) + after.brake * blend;
+    result.steering = before.steering * (1.0f - blend) +
+            after.steering * blend;
+    return result;
+}
+
+struct TelemetryValue {
+    QVariant value;
+    bool numeric = false;
+};
+
+std::optional<TelemetryValue> ResolveTelemetryValue(
+        const QString &name,
+        const QVector3D &cameraPosition,
+        const RaceViewerFrame &frame,
+        const QString &runName,
+        qint64 tick) {
+    const auto number = [](double value) {
+        return TelemetryValue{value, true};
+    };
+    if (name == QStringLiteral("camera.x"))
+        return number(cameraPosition.x());
+    if (name == QStringLiteral("camera.y"))
+        return number(cameraPosition.y());
+    if (name == QStringLiteral("camera.z"))
+        return number(cameraPosition.z());
+    if (name == QStringLiteral("car.x"))
+        return number(frame.position.x());
+    if (name == QStringLiteral("car.y"))
+        return number(frame.position.y());
+    if (name == QStringLiteral("car.z"))
+        return number(frame.position.z());
+    if (name == QStringLiteral("car.velocity.x"))
+        return number(frame.linearSpeed.x());
+    if (name == QStringLiteral("car.velocity.y"))
+        return number(frame.linearSpeed.y());
+    if (name == QStringLiteral("car.velocity.z"))
+        return number(frame.linearSpeed.z());
+    if (name == QStringLiteral("car.speed"))
+        return number(frame.signedSpeed);
+    if (name == QStringLiteral("car.speedKph"))
+        return number(frame.signedSpeed * 3.6);
+    if (name == QStringLiteral("input.accelerate"))
+        return number(frame.accelerate);
+    if (name == QStringLiteral("input.brake"))
+        return number(frame.brake);
+    if (name == QStringLiteral("input.steering"))
+        return number(frame.steering);
+    if (name == QStringLiteral("race.checkpoints"))
+        return number(frame.checkpointsCollected);
+    if (name == QStringLiteral("race.totalCheckpoints"))
+        return number(frame.checkpointsTotal);
+    if (name == QStringLiteral("race.laps"))
+        return number(frame.completedLaps);
+    if (name == QStringLiteral("race.totalLaps"))
+        return number(frame.totalLaps);
+    if (name == QStringLiteral("race.finished")) {
+        return TelemetryValue{
+                frame.raceCompleted ? QStringLiteral("true")
+                                    : QStringLiteral("false"),
+                false};
+    }
+    if (name == QStringLiteral("time.ms"))
+        return number(frame.timeMs);
+    if (name == QStringLiteral("time.s"))
+        return number(static_cast<double>(frame.timeMs) / 1000.0);
+    if (name == QStringLiteral("tick"))
+        return number(tick);
+    if (name == QStringLiteral("run.name"))
+        return TelemetryValue{runName, false};
+    return std::nullopt;
+}
+
+QString FormatTelemetryNumber(double value, int precision) {
+    if (!std::isfinite(value)) {
+        return QString::number(value);
+    }
+    const double threshold = 0.5 * std::pow(10.0, -precision);
+    if (std::abs(value) < threshold) {
+        value = 0.0;
+    }
+    return QString::number(value, 'f', precision);
+}
+
+struct TelemetryRenderResult {
+    QString text;
+    QString error;
+};
+
+TelemetryRenderResult RenderTelemetryTemplate(
+        const QString &script,
+        const QVector3D &cameraPosition,
+        const RaceViewerFrame &frame,
+        const QString &runName,
+        qint64 tick) {
+    TelemetryRenderResult result;
+    static const QRegularExpression tokenExpression(
+            QStringLiteral("^([A-Za-z][A-Za-z0-9.]*)"
+                           "(?::([0-6]))?$"));
+    for (qsizetype index = 0; index < script.size();) {
+        if (script.at(index) == QLatin1Char('{') &&
+            index + 1 < script.size() &&
+            script.at(index + 1) == QLatin1Char('{')) {
+            result.text += QLatin1Char('{');
+            index += 2;
+            continue;
+        }
+        if (script.at(index) == QLatin1Char('}') &&
+            index + 1 < script.size() &&
+            script.at(index + 1) == QLatin1Char('}')) {
+            result.text += QLatin1Char('}');
+            index += 2;
+            continue;
+        }
+        if (script.at(index) != QLatin1Char('{')) {
+            if (script.at(index) == QLatin1Char('}')) {
+                result.error = QStringLiteral(
+                        "Unexpected '}' at character %1").arg(index + 1);
+                return result;
+            }
+            result.text += script.at(index++);
+            continue;
+        }
+        const qsizetype close = script.indexOf(
+                QLatin1Char('}'), index + 1);
+        if (close < 0) {
+            result.error = QStringLiteral(
+                    "Unclosed '{' at character %1").arg(index + 1);
+            return result;
+        }
+        const QString token = script.mid(index + 1, close - index - 1);
+        const QRegularExpressionMatch match = tokenExpression.match(token);
+        if (!match.hasMatch()) {
+            result.error = QStringLiteral(
+                    "Invalid telemetry field {%1}").arg(token);
+            return result;
+        }
+        const QString name = match.captured(1);
+        const std::optional<TelemetryValue> value = ResolveTelemetryValue(
+                name, cameraPosition, frame, runName, tick);
+        if (!value) {
+            result.error = QStringLiteral(
+                    "Unknown telemetry field {%1}").arg(name);
+            return result;
+        }
+        const QString precisionText = match.captured(2);
+        if (!precisionText.isEmpty() && !value->numeric) {
+            result.error = QStringLiteral(
+                    "Telemetry field {%1} does not accept precision")
+                    .arg(name);
+            return result;
+        }
+        if (value->numeric) {
+            const int precision = precisionText.isEmpty()
+                    ? 2
+                    : precisionText.toInt();
+            result.text += FormatTelemetryNumber(
+                    value->value.toDouble(), precision);
+        } else {
+            result.text += value->value.toString();
+        }
+        index = close + 1;
+    }
+    return result;
+}
+
+}  // namespace
 
 class ManualDriveRuntime {
 public:
@@ -1463,6 +1679,10 @@ RaceViewerController::RaceViewerController(QObject *parent)
             QSettings().value(
                     QStringLiteral("viewer/cameraPreset"), 1).toInt(),
             1, 3);
+    telemetryScript_ = QSettings()
+            .value(QLatin1String(kTelemetryScriptKey),
+                   DefaultTelemetryScript())
+            .toString();
     playbackTimer_.setInterval(5);
     playbackTimer_.setTimerType(Qt::PreciseTimer);
     connect(&playbackTimer_,
@@ -1667,6 +1887,56 @@ double RaceViewerController::carCameraFieldOfView() const {
 
 bool RaceViewerController::hideSelectedCar() const {
     return carCameraAvailable_ && cameraPreset_ == 3;
+}
+
+QString RaceViewerController::telemetryScript() const {
+    return telemetryScript_;
+}
+
+QString RaceViewerController::defaultTelemetryScript() const {
+    return DefaultTelemetryScript();
+}
+
+void RaceViewerController::setTelemetryScript(const QString &value) {
+    if (telemetryScript_ == value) {
+        return;
+    }
+    telemetryScript_ = value;
+    QSettings().setValue(QLatin1String(kTelemetryScriptKey), value);
+    emit telemetryScriptChanged();
+}
+
+QString RaceViewerController::renderTelemetry(
+        const QString &script,
+        const QVector3D &cameraPosition) const {
+    const RaceViewerRun *const run = selectedRun();
+    const RaceViewerFrame frame = run == nullptr
+            ? RaceViewerFrame{}
+            : SampleTelemetryFrame(run->frames, timeMs_);
+    const TelemetryRenderResult result = RenderTelemetryTemplate(
+            script,
+            cameraPosition,
+            frame,
+            run == nullptr ? QString{} : run->name,
+            currentTick());
+    return result.error.isEmpty()
+            ? result.text
+            : QStringLiteral("Telemetry: %1").arg(result.error);
+}
+
+QString RaceViewerController::telemetryScriptError(
+        const QString &script) const {
+    const RaceViewerRun *const run = selectedRun();
+    const RaceViewerFrame frame = run == nullptr
+            ? RaceViewerFrame{}
+            : SampleTelemetryFrame(run->frames, timeMs_);
+    return RenderTelemetryTemplate(
+                   script,
+                   {},
+                   frame,
+                   run == nullptr ? QString{} : run->name,
+                   currentTick())
+            .error;
 }
 
 qint64 RaceViewerController::durationMs() const {

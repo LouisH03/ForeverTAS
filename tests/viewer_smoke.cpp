@@ -239,15 +239,35 @@ int main(int argc, char **argv) {
             std::cerr << "camera preset did not default to far\n";
             return 1;
         }
+        if (settingsProbe.telemetryScript() !=
+                    settingsProbe.defaultTelemetryScript() ||
+            settingsProbe.renderTelemetry(
+                    settingsProbe.telemetryScript(),
+                    QVector3D(1.25f, -0.001f, 3.5f)) !=
+                    QStringLiteral(
+                            "Camera pos: X 1.25   Y 0.00   Z 3.50") ||
+            settingsProbe.telemetryScriptError(
+                    QStringLiteral("{missing.field}")) !=
+                    QStringLiteral(
+                            "Unknown telemetry field {missing.field}")) {
+            std::cerr << "scripted telemetry defaults are invalid\n";
+            return 1;
+        }
         settingsProbe.setCameraPreset(2);
+        settingsProbe.setTelemetryScript(
+                QStringLiteral("Time {time.ms:0} ms"));
     }
     {
         RaceViewerController settingsProbe;
-        if (settingsProbe.cameraPreset() != 2) {
-            std::cerr << "camera preset was not persisted\n";
+        if (settingsProbe.cameraPreset() != 2 ||
+            settingsProbe.telemetryScript() !=
+                    QStringLiteral("Time {time.ms:0} ms")) {
+            std::cerr << "viewer settings were not persisted\n";
             return 1;
         }
         settingsProbe.setCameraPreset(1);
+        settingsProbe.setTelemetryScript(
+                settingsProbe.defaultTelemetryScript());
     }
     RaceViewerController viewer;
     viewer.startManualDrive();
