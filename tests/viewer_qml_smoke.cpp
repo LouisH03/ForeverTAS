@@ -21,6 +21,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlError>
 #include <QQuickItem>
+#include <QQuickItemGrabResult>
 #include <QQuickStyle>
 #include <QSettings>
 #include <QQuickWindow>
@@ -254,6 +255,43 @@ bool IsCenteredIcon(QQuickItem *item, qreal expectedSize) {
                      parent->width() * 0.5) < tolerance &&
             std::abs(item->y() + item->height() * 0.5 -
                      parent->height() * 0.5) < tolerance;
+}
+
+QImage GrabItemImage(QQuickItem *item) {
+    if (item == nullptr) return {};
+    const QSharedPointer<QQuickItemGrabResult> grab =
+            item->grabToImage(QSize(18, 18));
+    if (!grab || !WaitUntil([&]() { return !grab->image().isNull(); }, 5000)) {
+        return {};
+    }
+    return grab->image().convertToFormat(QImage::Format_ARGB32);
+}
+
+int OpaquePixelsInColumn(const QImage &image, int column) {
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        count += image.pixelColor(column, y).alpha() >= 64 ? 1 : 0;
+    }
+    return count;
+}
+
+bool HasRightFacingPlaySilhouette(QQuickItem *item) {
+    const QImage image = GrabItemImage(item);
+    return image.size() == QSize(18, 18) &&
+            OpaquePixelsInColumn(image, 4) >= 10 &&
+            OpaquePixelsInColumn(image, 15) <= 3 &&
+            OpaquePixelsInColumn(image, 2) == 0 &&
+            OpaquePixelsInColumn(image, 17) == 0;
+}
+
+bool HasJumpToEndSilhouette(QQuickItem *item) {
+    const QImage image = GrabItemImage(item);
+    return image.size() == QSize(18, 18) &&
+            OpaquePixelsInColumn(image, 3) >= 10 &&
+            OpaquePixelsInColumn(image, 11) <= 4 &&
+            OpaquePixelsInColumn(image, 13) >= 10 &&
+            OpaquePixelsInColumn(image, 15) >= 10 &&
+            OpaquePixelsInColumn(image, 17) == 0;
 }
 
 QColor FirstDescendantColor(QObject *root) {
@@ -4057,6 +4095,8 @@ int main(int argc, char **argv) {
                             IsCenteredIcon(pauseIcon, 18.0) &&
                             IsCenteredIcon(jumpStartIcon, 18.0) &&
                             IsCenteredIcon(jumpEndIcon, 18.0) &&
+                            HasRightFacingPlaySilhouette(playIcon) &&
+                            HasJumpToEndSilhouette(jumpEndIcon) &&
                             playIcon->isVisible() && !pauseIcon->isVisible() &&
                             ContainsStandardSlider(root) &&
                             !ContainsText(
