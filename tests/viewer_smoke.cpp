@@ -313,12 +313,24 @@ int main(int argc, char **argv) {
                                 viewer.carCameraTarget() - farPosition;
                         const QVector3D farToCar =
                                 viewer.carPosition() - farPosition;
+                        const QVector3D carForward =
+                                viewer.carRotation().rotatedVector(
+                                        QVector3D(0.0f, 0.0f, 1.0f));
+                        const QVector3D carToFarCamera =
+                                farPosition - viewer.carPosition();
                         const float farLookAlignment = QVector3D::dotProduct(
                                 farLook.normalized(), farToCar.normalized());
                         const bool farLooksTowardCar =
                                 farLook.lengthSquared() > 0.000001f &&
                                 farToCar.lengthSquared() > 0.000001f &&
                                 farLookAlignment > 0.0f;
+                        const float farBehindAlignment = QVector3D::dotProduct(
+                                carForward.normalized(),
+                                carToFarCamera.normalized());
+                        const bool farStartsBehindCar =
+                                carForward.lengthSquared() > 0.000001f &&
+                                carToFarCamera.lengthSquared() > 0.000001f &&
+                                farBehindAlignment < -0.25f;
                         const double farFov =
                                 viewer.carCameraFieldOfView();
                         viewer.setCameraPreset(2);
@@ -328,8 +340,14 @@ int main(int argc, char **argv) {
                                 viewer.carCameraTarget() - nearPosition;
                         const QVector3D nearToCar =
                                 viewer.carPosition() - nearPosition;
+                        const QVector3D carToNearCamera =
+                                nearPosition - viewer.carPosition();
                         const float nearLookAlignment = QVector3D::dotProduct(
                                 nearLook.normalized(), nearToCar.normalized());
+                        const float nearBehindAlignment =
+                                QVector3D::dotProduct(
+                                        carForward.normalized(),
+                                        carToNearCamera.normalized());
                         const bool nearValid =
                                 viewer.carCameraAvailable() &&
                                 !viewer.hideSelectedCar() &&
@@ -338,7 +356,8 @@ int main(int argc, char **argv) {
                                         0.000001f &&
                                 nearLook.lengthSquared() > 0.000001f &&
                                 nearToCar.lengthSquared() > 0.000001f &&
-                                nearLookAlignment > 0.0f;
+                                nearLookAlignment > 0.0f &&
+                                nearBehindAlignment < -0.25f;
                         viewer.setCameraPreset(3);
                         const QVector3D internalPosition =
                                 viewer.carCameraPosition();
@@ -355,6 +374,7 @@ int main(int argc, char **argv) {
                                 !viewer.hideSelectedCar() &&
                                 std::isfinite(farFov) && farFov >= 20.0 &&
                                 farFov <= 150.0 && farLooksTowardCar &&
+                                farStartsBehindCar &&
                                 nearValid && internalValid;
                         if (!cameraPresetsValid) {
                             completed = true;
@@ -365,8 +385,12 @@ int main(int argc, char **argv) {
                                     << ", farFov=" << farFov
                                     << ", farLookAlignment="
                                     << farLookAlignment
+                                    << ", farBehindAlignment="
+                                    << farBehindAlignment
                                     << ", nearLookAlignment="
                                     << nearLookAlignment
+                                    << ", nearBehindAlignment="
+                                    << nearBehindAlignment
                                     << ", nearDelta="
                                     << (nearPosition - farPosition)
                                                .lengthSquared()

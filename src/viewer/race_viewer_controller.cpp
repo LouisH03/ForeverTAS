@@ -263,7 +263,11 @@ private:
                                 std::numeric_limits<std::uint32_t>::max())));
         result.transform.position = {
                 frame.position.x(), frame.position.y(), frame.position.z()};
-        const QQuaternion rotation = frame.rotation.normalized();
+        // RaceViewerFrame stores Qt's column-basis local-to-world rotation.
+        // Validator's camera controller consumes the game basis-row
+        // convention, so transpose it just as WriteOutput transposes the
+        // result in the opposite direction.
+        const QQuaternion rotation = frame.rotation.conjugated().normalized();
         result.transform.rotation = {rotation.scalar(), rotation.x(),
                                      rotation.y(), rotation.z()};
         result.linearSpeed = {frame.linearSpeed.x(), frame.linearSpeed.y(),
