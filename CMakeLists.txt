@@ -135,6 +135,8 @@ target_link_libraries(forevertas_core PUBLIC
     ForeverValidator::native)
 
 add_library(forevertas_gui STATIC
+    src/app/compact_number_format.cpp
+    src/app/compact_number_format.h
     src/viewer/gpu_ray_tracing_view.cpp
     src/viewer/gpu_ray_tracing_view.h
     src/viewer/custom_volume_geometry.cpp

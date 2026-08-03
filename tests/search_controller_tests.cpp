@@ -1,4 +1,5 @@
 #include "app/cuboid_target_model.h"
+#include "app/compact_number_format.h"
 #include "app/custom_volume_target_model.h"
 #include "app/pose_target_model.h"
 #include "app/packs_directory_finder.h"
@@ -30,6 +31,7 @@ using forevertas::app::SearchController;
 using forevertas::app::CuboidTargetModel;
 using forevertas::app::CustomVolumeTargetModel;
 using forevertas::app::PoseTargetModel;
+using forevertas::app::FormatCompactNumber;
 
 bool Check(bool condition, const char *message) {
     if (!condition) std::cerr << message << '\n';
@@ -108,6 +110,32 @@ bool HasBackendOption(const QVariantList &options,
         }
     }
     return false;
+}
+
+bool TestCompactNumberFormatting() {
+    bool okay = true;
+    const auto expect = [&okay](double value, const char *expected) {
+        const QString actual = FormatCompactNumber(value);
+        const QString expectedText = QString::fromLatin1(expected);
+        if (actual != expectedText) {
+            std::cerr << "compact number mismatch for " << value << ": "
+                      << actual.toStdString() << " != " << expected << '\n';
+            okay = false;
+        }
+    };
+    expect(0.0, "0");
+    expect(999.0, "999");
+    expect(1000.0, "1k");
+    expect(1230.0, "1.23k");
+    expect(999999.0, "1M");
+    expect(1250000.0, "1.25M");
+    expect(1230000000.0, "1.23B");
+    expect(1230000000000.0, "1.23T");
+    expect(999999999999999.0, "1Q");
+    expect(1230000000000000.0, "1.23Q");
+    expect(1000000000000000000.0, "1000Q");
+    expect(-12500.0, "-12.5k");
+    return okay;
 }
 
 bool TestCuboidTargetModel() {
@@ -1731,7 +1759,8 @@ int main(int argc, char **argv) {
     replay.write("test");
     replay.close();
 
-    bool okay = TestCuboidTargetModel() &&
+    bool okay = TestCompactNumberFormatting() &&
+            TestCuboidTargetModel() &&
             TestCuboidControllerSynchronization() &&
             TestCustomVolumeTargets() &&
             TestPoseTargets() &&

@@ -1,5 +1,6 @@
 #include "app/search_controller.h"
 
+#include "app/compact_number_format.h"
 #include "app/packs_directory_finder.h"
 #include "app/search_worker.h"
 #include "mutations/input_event_formatter.h"
@@ -863,6 +864,10 @@ void SearchController::browseForReplay() {
     if (!selected.isEmpty()) {
         setReplayPath(selected);
     }
+}
+
+QString SearchController::formatCompactNumber(double value) const {
+    return FormatCompactNumber(value);
 }
 
 void SearchController::extractReplayInputs() {

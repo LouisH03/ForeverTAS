@@ -1,11 +1,11 @@
 #include "app/search_worker.h"
 
+#include "app/compact_number_format.h"
 #include "app/rolling_throughput.h"
 #include "mutations/input_event_formatter.h"
 #include "time_format.h"
 
 #include <chrono>
-#include <cmath>
 #include <exception>
 #include <utility>
 
@@ -20,12 +20,13 @@ QString IterationLabel(
     }
     return iterationIndex
             ? QStringLiteral("Iteration #%1")
-                      .arg(static_cast<qulonglong>(*iterationIndex + 1u))
+                      .arg(FormatCompactNumber(
+                              static_cast<double>(*iterationIndex + 1u)))
             : QStringLiteral("Mutation");
 }
 
 QString IterationsPerSecond(double rate) {
-    return QString::number(static_cast<qlonglong>(std::llround(rate)));
+    return FormatCompactNumber(rate);
 }
 
 QString RoundedDuration(
@@ -54,8 +55,8 @@ QString FormatLive(const SearchLiveUpdate &live, const QString &heading) {
             .arg(IterationLabel(live.winnerSource,
                                 live.winningIterationIndex))
             .arg(QString::fromStdString(live.bestEvaluationDescription))
-            .arg(static_cast<qulonglong>(
-                    live.mutationImprovementCount))
+            .arg(FormatCompactNumber(static_cast<double>(
+                    live.mutationImprovementCount)))
             .arg(LastImprovementText(live));
 }
 
@@ -287,7 +288,7 @@ void SearchWorker::run() {
             latestIteration = live.winningIterationIndex;
         }
         emit metricsChanged(
-                QString::number(static_cast<qulonglong>(live.iterations)),
+                FormatCompactNumber(static_cast<double>(live.iterations)),
                 IterationsPerSecond(
                         throughput.Observe(live.iterations, live.elapsed)),
                 RoundedDuration(live.elapsed));

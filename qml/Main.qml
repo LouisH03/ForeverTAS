@@ -2917,13 +2917,14 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     text: window.viewer.loaded
                                           ? qsTr("%1 triangles · %2 batches · %3 FPS")
-                                                .arg(Number(
-                                                         window.viewer.visualTriangleCount)
-                                                         .toLocaleString(
-                                                             Qt.locale(),
-                                                             "f",
-                                                             0))
-                                                .arg(window.viewer.visualBatchCount)
+                                                .arg(window.controller
+                                                         .formatCompactNumber(
+                                                             window.viewer
+                                                               .visualTriangleCount))
+                                                .arg(window.controller
+                                                         .formatCompactNumber(
+                                                             window.viewer
+                                                               .visualBatchCount))
                                                 .arg(Math.round(
                                                          window.measuredFps))
                                           : window.viewer.statusText
