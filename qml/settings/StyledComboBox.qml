@@ -104,20 +104,35 @@ ComboBox {
     }
 
     popup: Popup {
+        objectName: control.objectName.length > 0
+                    ? control.objectName + "Popup"
+                    : "styledComboPopup"
         y: control.height - 1
-        width: control.width
-        implicitHeight: Math.min(contentItem.implicitHeight + 2,
-                                 control.Window.height
-                                 - topMargin - bottomMargin)
+        width: Math.min(control.width,
+                        control.Window.width - leftMargin - rightMargin)
+        implicitHeight: Math.min(
+                            contentItem.implicitHeight + topPadding
+                            + bottomPadding,
+                            control.Window.height - topMargin - bottomMargin)
+        topMargin: 8
+        bottomMargin: 8
+        leftMargin: 8
+        rightMargin: 8
         padding: 1
 
         contentItem: ListView {
+            objectName: control.objectName.length > 0
+                        ? control.objectName + "PopupList"
+                        : "styledComboPopupList"
             clip: true
             implicitHeight: contentHeight
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             boundsBehavior: Flickable.StopAtBounds
-            ScrollIndicator.vertical: ScrollIndicator {}
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+            }
         }
 
         background: Rectangle {

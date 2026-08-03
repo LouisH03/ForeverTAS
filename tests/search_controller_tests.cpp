@@ -124,8 +124,10 @@ bool TestCompactNumberFormatting() {
             okay = false;
         }
     };
-    expect(0.0, "0.00");
-    expect(999.0, "999.00");
+    expect(0.0, "0");
+    expect(4.0, "4");
+    expect(4.5, "4.50");
+    expect(999.0, "999");
     expect(1000.0, "1.00k");
     expect(1230.0, "1.23k");
     expect(999999.0, "1.00M");
@@ -135,6 +137,7 @@ bool TestCompactNumberFormatting() {
     expect(999999999999999.0, "1.00Q");
     expect(1230000000000000.0, "1.23Q");
     expect(1000000000000000000.0, "1000.00Q");
+    expect(-12.0, "-12");
     expect(-12500.0, "-12.50k");
     return okay;
 }

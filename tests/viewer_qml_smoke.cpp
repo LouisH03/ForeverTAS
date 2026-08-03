@@ -943,6 +943,16 @@ int main(int argc, char **argv) {
                     QObject *const telemetryScriptPreview =
                             root->findChild<QObject *>(QStringLiteral(
                                     "telemetryScriptPreview"));
+                    QObject *const telemetryFieldCombo =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "telemetryFieldCombo"));
+                    QObject *const telemetryFieldComboPopup =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "telemetryFieldComboPopup"));
+                    auto *const telemetryFieldComboPopupList =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "telemetryFieldComboPopupList")));
                     QObject *const stepBackward = root->findChild<QObject *>(
                             QStringLiteral("stepBackwardShortcut"));
                     QObject *const stepForward = root->findChild<QObject *>(
@@ -1376,6 +1386,9 @@ int main(int argc, char **argv) {
                             telemetryEditorDialog != nullptr &&
                             telemetryScriptEditor != nullptr &&
                             telemetryScriptPreview != nullptr &&
+                            telemetryFieldCombo != nullptr &&
+                            telemetryFieldComboPopup != nullptr &&
+                            telemetryFieldComboPopupList != nullptr &&
                             freeCameraButton != nullptr &&
                             orbitalCameraButton != nullptr &&
                             focusCarButton != nullptr &&
@@ -1433,11 +1446,85 @@ int main(int argc, char **argv) {
                                                     .value<QVector3D>());
                     const QString customTelemetryScript =
                             QStringLiteral("Camera X {camera.x:1}");
+                    const qreal telemetryOriginalWidth =
+                            root->property("width").toReal();
+                    const qreal telemetryOriginalHeight =
+                            root->property("height").toReal();
+                    root->setProperty("width", 1240);
+                    root->setProperty("height", 580);
+                    QCoreApplication::processEvents();
                     bool telemetryEditorValid =
                             QMetaObject::invokeMethod(
                                     editTelemetryButton, "clicked");
                     QCoreApplication::processEvents();
+                    bool telemetryComboCompactValid =
+                            telemetryEditorValid &&
+                            QMetaObject::invokeMethod(
+                                    telemetryFieldComboPopup, "open") &&
+                            WaitUntil([telemetryFieldComboPopup]() {
+                                return telemetryFieldComboPopup
+                                        ->property("visible").toBool();
+                            });
+                    QCoreApplication::processEvents();
+                    const qreal telemetryPopupListHeight =
+                            telemetryFieldComboPopupList != nullptr
+                            ? telemetryFieldComboPopupList->height()
+                            : -1.0;
+                    const qreal telemetryPopupContentHeight =
+                            telemetryFieldComboPopupList != nullptr
+                            ? telemetryFieldComboPopupList
+                                      ->property("contentHeight").toReal()
+                            : -1.0;
+                    const QPointF telemetryPopupTopLeft =
+                            telemetryFieldComboPopupList != nullptr
+                            ? telemetryFieldComboPopupList->mapToScene(
+                                      QPointF(0.0, 0.0))
+                            : QPointF(-1.0, -1.0);
+                    if (telemetryFieldComboPopupList != nullptr) {
+                        telemetryFieldComboPopupList->setProperty(
+                                "contentY",
+                                telemetryPopupContentHeight -
+                                        telemetryPopupListHeight);
+                        QCoreApplication::processEvents();
+                    }
+                    telemetryComboCompactValid &=
+                            telemetryFieldComboPopupList != nullptr &&
+                            telemetryPopupContentHeight >
+                                    telemetryPopupListHeight &&
+                            telemetryPopupListHeight > 0.0 &&
+                            telemetryPopupTopLeft.y() >= 7.0 &&
+                            telemetryPopupTopLeft.y() +
+                                            telemetryPopupListHeight <=
+                                    root->property("height").toReal() - 7.0 &&
+                            telemetryFieldComboPopupList
+                                            ->property("contentY").toReal() >
+                                    0.5;
+                    if (!telemetryComboCompactValid) {
+                        std::cerr
+                                << "compact telemetry combo popup invalid: "
+                                << "visible="
+                                << telemetryFieldComboPopup
+                                           ->property("visible").toBool()
+                                << ", list="
+                                << telemetryPopupListHeight << "/"
+                                << telemetryPopupContentHeight
+                                << ", sceneY="
+                                << telemetryPopupTopLeft.y()
+                                << ", contentY="
+                                << (telemetryFieldComboPopupList != nullptr
+                                            ? telemetryFieldComboPopupList
+                                                      ->property("contentY")
+                                                      .toReal()
+                                            : -1.0)
+                                << "\n";
+                    }
+                    QMetaObject::invokeMethod(
+                            telemetryFieldComboPopup, "close");
+                    root->setProperty("width", telemetryOriginalWidth);
+                    root->setProperty("height", telemetryOriginalHeight);
+                    QCoreApplication::processEvents();
                     telemetryEditorValid &=
+                            telemetryComboCompactValid &&
                             telemetryEditorDialog->property("visible")
                                     .toBool() &&
                             telemetryScriptEditor->property("text")

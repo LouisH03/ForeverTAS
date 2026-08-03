@@ -30,6 +30,10 @@ QString FormatCompactNumber(double value) {
         rounded = std::round(scaled * 100.0) / 100.0;
     }
 
+    if (suffixIndex == 0u && std::trunc(value) == value) {
+        return QString::number(value, 'f', 0);
+    }
+
     return QString::number(rounded, 'f', 2) +
             QString::fromLatin1(suffixes[suffixIndex]);
 }
