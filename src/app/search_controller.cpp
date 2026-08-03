@@ -39,6 +39,8 @@ constexpr char kCudaSessionSpecializationEnabledKey[] =
         "backends/cuda/sessionSpecializationEnabled";
 constexpr char kRandomizeSeedsOnStartKey[] =
         "search/randomizeSeedsOnStart";
+constexpr char kDrawTargetsThroughBlocksKey[] =
+        "viewer/drawTargetsThroughBlocks";
 constexpr char kDarkModeKey[] = "appearance/darkMode";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
@@ -227,6 +229,9 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
         settings.setValue(
                 QLatin1String(kRandomizeSeedsOnStartKey), true);
     }
+    drawTargetsThroughBlocks_ = settings
+            .value(QLatin1String(kDrawTargetsThroughBlocksKey), false)
+            .toBool();
     darkMode_ =
             QSettings().value(QLatin1String(kDarkModeKey), false).toBool();
     ApplyApplicationPalette(darkMode_);
@@ -367,6 +372,10 @@ bool SearchController::cudaSessionSpecializationEnabled() const {
 
 bool SearchController::randomizeSeedsOnStart() const {
     return randomizeSeedsOnStart_;
+}
+
+bool SearchController::drawTargetsThroughBlocks() const {
+    return drawTargetsThroughBlocks_;
 }
 
 bool SearchController::darkMode() const {
@@ -602,6 +611,16 @@ void SearchController::setRandomizeSeedsOnStart(bool value) {
     QSettings().setValue(
             QLatin1String(kRandomizeSeedsOnStartKey), value);
     emit randomizeSeedsOnStartChanged();
+}
+
+void SearchController::setDrawTargetsThroughBlocks(bool value) {
+    if (drawTargetsThroughBlocks_ == value) {
+        return;
+    }
+    drawTargetsThroughBlocks_ = value;
+    QSettings().setValue(
+            QLatin1String(kDrawTargetsThroughBlocksKey), value);
+    emit drawTargetsThroughBlocksChanged();
 }
 
 void SearchController::setDarkMode(bool value) {

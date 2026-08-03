@@ -192,6 +192,21 @@ bool TestAutomaticSeedRandomization() {
     return okay;
 }
 
+bool TestTargetVisibilityPersistence() {
+    QSettings().clear();
+    {
+        SearchController controller;
+        if (!Check(!controller.drawTargetsThroughBlocks(),
+                   "targets did not default to block-occluded rendering")) {
+            return false;
+        }
+        controller.setDrawTargetsThroughBlocks(true);
+    }
+    SearchController restored;
+    return Check(restored.drawTargetsThroughBlocks(),
+                 "draw-through target rendering was not persisted");
+}
+
 bool TestAbsoluteTargetPlacement() {
     QSettings().clear();
     CuboidTargetModel cuboid;
@@ -1918,6 +1933,7 @@ int main(int argc, char **argv) {
 
     bool okay = TestCompactNumberFormatting() &&
             TestAutomaticSeedRandomization() &&
+            TestTargetVisibilityPersistence() &&
             TestAbsoluteTargetPlacement() &&
             TestCuboidTargetModel() &&
             TestCuboidControllerSynchronization() &&

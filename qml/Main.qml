@@ -2209,16 +2209,19 @@ ApplicationWindow {
 
                         CuboidEditorScene {
                             objectName: "rasterCuboidEditorScene"
+                            visible: !window.controller.drawTargetsThroughBlocks
                             interactive: true
                         }
 
                         CustomVolumeEditorScene {
                             objectName: "rasterCustomVolumeEditorScene"
+                            visible: !window.controller.drawTargetsThroughBlocks
                             interactive: true
                         }
 
                         PoseTargetEditorScene {
                             objectName: "rasterPoseTargetEditorScene"
+                            visible: !window.controller.drawTargetsThroughBlocks
                             interactive: true
                         }
 
@@ -2370,14 +2373,18 @@ ApplicationWindow {
                         anchors.fill: parent
                         z: 1.5
                         camera: rayTracingOverlayCamera
-                        visible: window.rayTracingEnabled
-                                 && (window.viewer.trajectoryCount > 0
-                                     || window.controller.cuboidTargets.count
-                                        > 0
-                                     || window.controller
-                                              .customVolumeTargets.count > 0
-                                     || window.controller.poseTargets.count
-                                        > 0)
+                        visible: (window.rayTracingEnabled
+                                  && window.viewer.trajectoryCount > 0)
+                                 || ((window.rayTracingEnabled
+                                      || window.controller
+                                               .drawTargetsThroughBlocks)
+                                     && (window.controller
+                                                  .cuboidTargets.count > 0
+                                         || window.controller
+                                                  .customVolumeTargets.count
+                                            > 0
+                                         || window.controller
+                                                  .poseTargets.count > 0))
 
                         environment: SceneEnvironment {
                             backgroundMode: SceneEnvironment.Transparent
@@ -2428,7 +2435,8 @@ ApplicationWindow {
 
                                 objectName:
                                     "rayTracingTrajectoryPathModel"
-                                visible: modelData.visible ?? true
+                                visible: window.rayTracingEnabled
+                                         && (modelData.visible ?? true)
                                 geometry: modelData.geometry
                                 castsShadows: false
                                 receivesShadows: false
@@ -2443,16 +2451,25 @@ ApplicationWindow {
 
                         CuboidEditorScene {
                             objectName: "rayTracingCuboidEditorScene"
+                            visible: window.rayTracingEnabled
+                                     || window.controller
+                                              .drawTargetsThroughBlocks
                             interactive: true
                         }
 
                         CustomVolumeEditorScene {
                             objectName: "rayTracingCustomVolumeEditorScene"
+                            visible: window.rayTracingEnabled
+                                     || window.controller
+                                              .drawTargetsThroughBlocks
                             interactive: true
                         }
 
                         PoseTargetEditorScene {
                             objectName: "rayTracingPoseTargetEditorScene"
+                            visible: window.rayTracingEnabled
+                                     || window.controller
+                                              .drawTargetsThroughBlocks
                             interactive: true
                         }
                     }
@@ -2567,6 +2584,8 @@ ApplicationWindow {
                                 }
                             }
                             const view = window.rayTracingEnabled
+                                         || window.controller
+                                                  .drawTargetsThroughBlocks
                                          ? rayTracingTrajectoryOverlay
                                          : rasterMapView
                             const hit = view.pick(mouse.x, mouse.y).objectHit
@@ -4072,6 +4091,16 @@ ApplicationWindow {
                             enabled: !window.controller.running
                             onToggled:
                                 window.controller.randomizeSeedsOnStart =
+                                    checked
+                        }
+
+                        ThemedCheckBox {
+                            objectName: "drawTargetsThroughBlocksCheckBox"
+                            text: qsTr("Draw targets through blocks")
+                            checked:
+                                window.controller.drawTargetsThroughBlocks
+                            onToggled:
+                                window.controller.drawTargetsThroughBlocks =
                                     checked
                         }
 

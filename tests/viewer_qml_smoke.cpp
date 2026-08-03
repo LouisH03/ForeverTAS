@@ -4509,6 +4509,43 @@ int main(int argc, char **argv) {
                             root->findChild<QObject *>(
                                     QStringLiteral(
                                             "rayTracingTrajectoryOverlay"));
+                    QObject *const rasterCuboidEditorScene =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "rasterCuboidEditorScene"));
+                    QObject *const overlayCuboidEditorScene =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "rayTracingCuboidEditorScene"));
+                    QObject *const drawTargetsThroughBlocksCheckBox =
+                            root->findChild<QObject *>(QStringLiteral(
+                                    "drawTargetsThroughBlocksCheckBox"));
+                    bool targetDrawThroughToggleValid =
+                            rasterCuboidEditorScene != nullptr &&
+                            overlayCuboidEditorScene != nullptr &&
+                            drawTargetsThroughBlocksCheckBox != nullptr &&
+                            rasterCuboidEditorScene
+                                    ->property("visible").toBool() &&
+                            !overlayCuboidEditorScene
+                                     ->property("visible").toBool() &&
+                            !drawTargetsThroughBlocksCheckBox
+                                     ->property("checked").toBool();
+                    controller.setDrawTargetsThroughBlocks(true);
+                    QCoreApplication::processEvents();
+                    targetDrawThroughToggleValid &=
+                            !rasterCuboidEditorScene
+                                     ->property("visible").toBool() &&
+                            overlayCuboidEditorScene
+                                    ->property("visible").toBool() &&
+                            rayTracingTrajectoryOverlay
+                                    ->property("visible").toBool() &&
+                            drawTargetsThroughBlocksCheckBox
+                                    ->property("checked").toBool();
+                    controller.setDrawTargetsThroughBlocks(false);
+                    QCoreApplication::processEvents();
+                    targetDrawThroughToggleValid &=
+                            rasterCuboidEditorScene
+                                    ->property("visible").toBool() &&
+                            !overlayCuboidEditorScene
+                                     ->property("visible").toBool();
                     const QVariantList finalPreviewPaths =
                             viewer.trajectoryPaths();
                     const bool trajectoryPreviewUiValid =
@@ -4550,6 +4587,7 @@ int main(int argc, char **argv) {
                             trajectoryModels.size() == 1 &&
                             rayTracingTrajectoryModels.size() == 1 &&
                             rayTracingTrajectoryOverlay != nullptr &&
+                            targetDrawThroughToggleValid &&
                             !rayTracingTrajectoryOverlay
                                      ->property("visible").toBool() &&
                             trajectoryModels.front()
