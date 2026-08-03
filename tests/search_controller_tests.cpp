@@ -992,6 +992,21 @@ bool TestRegistryAndValidation(const QString &packsDirectory,
     controller.setModifierPassSetting(
             0, QStringLiteral("maxTimeMs"), QStringLiteral("5990"));
     controller.setSimulationHorizonMs(QStringLiteral("6000"));
+    controller.setConditionScript(QStringLiteral("iterations > 0"));
+    okay &= Check(controller.canStart() &&
+                          QSettings().value(QStringLiteral(
+                                  "search/conditionScript")) ==
+                                  QStringLiteral("iterations > 0"),
+                  "valid condition script was not accepted and persisted");
+    controller.setConditionScript(QStringLiteral(
+            "not_a_condition_variable = 1"));
+    okay &= Check(!controller.canStart() &&
+                          controller.validationMessage().contains(
+                                  QStringLiteral("Condition line 1")),
+                  "invalid condition script did not disable Start");
+    controller.setConditionScript({});
+    okay &= Check(controller.canStart(),
+                  "clearing the condition script did not restore Start");
     okay &= Check(HasBackendOption(
                           controller.simulationBackendOptions(),
                           QStringLiteral("reference"),

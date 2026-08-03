@@ -50,6 +50,8 @@ class SearchController final : public QObject {
                        setSimulationBackendId NOTIFY simulationBackendIdChanged)
     Q_PROPERTY(QString simulationHorizonMs READ simulationHorizonMs WRITE
                        setSimulationHorizonMs NOTIFY simulationHorizonMsChanged)
+    Q_PROPERTY(QString conditionScript READ conditionScript WRITE
+                       setConditionScript NOTIFY conditionScriptChanged)
     Q_PROPERTY(QString cpuWorkerCount READ cpuWorkerCount WRITE
                        setCpuWorkerCount NOTIFY cpuWorkerCountChanged)
     Q_PROPERTY(QString cudaParallelSampleCount READ cudaParallelSampleCount WRITE
@@ -131,6 +133,7 @@ public:
     QVariantList simulationBackendOptions() const;
     QString simulationBackendId() const;
     QString simulationHorizonMs() const;
+    QString conditionScript() const;
     QString cpuWorkerCount() const;
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
@@ -171,6 +174,7 @@ public slots:
     void setBaseInputScript(const QString &value);
     void setSimulationBackendId(const QString &value);
     void setSimulationHorizonMs(const QString &value);
+    void setConditionScript(const QString &value);
     void setCpuWorkerCount(const QString &value);
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
@@ -215,6 +219,7 @@ signals:
     void replayInputStateChanged();
     void simulationBackendIdChanged();
     void simulationHorizonMsChanged();
+    void conditionScriptChanged();
     void cpuWorkerCountChanged();
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
@@ -295,6 +300,7 @@ private:
     PhysicsBackend simulationBackend_ = PhysicsBackend::Reference;
     QString simulationHorizonMs_ = QString::number(
             kDefaultSimulationHorizonMs);
+    QString conditionScript_;
     QString cpuWorkerCount_ = QString::number(DefaultCpuWorkerCount());
     QString cudaParallelSampleCount_ = QString::number(
             kDefaultCudaParallelSampleCount);

@@ -2,6 +2,7 @@
 #define FOREVERTAS_SEARCHES_SEARCH_ALGORITHM_H
 
 #include "evaluators/iteration_evaluator.h"
+#include "conditions/condition_program.h"
 #include "mutations/input_mutator.h"
 
 #include <array>
@@ -154,6 +155,8 @@ struct SearchExecutionContext {
             std::uint32_t)>
             resolveCudaWinner = {};
     std::uint32_t simulationHorizonMs = 6000u;
+    const ConditionProgram *condition = nullptr;
+    double searchStartedTimeSeconds = 0.0;
 };
 
 struct SearchResult {

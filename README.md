@@ -81,6 +81,14 @@ finishes the current
 iteration, restores the global best, then performs one fresh canonical
 simulation and records one viewer sample per physics tick. The completed Best
 run is added to the Race Viewer only after that Stop-triggered sampling pass.
+The optional Conditions script filters which simulated ticks are eligible for
+the selected evaluation target. Each non-empty line is an ANDed comparison;
+it supports the BfV2 car, previous-car, wheel, and search-state variables,
+arithmetic, `kmh`, `deg`, `distance`, `time_since`, and external target values.
+If the baseline never satisfies the script, its evaluation is intentionally
+empty and the first satisfying mutation outranks it regardless of target
+score. Conditions never change simulation, inputs, or the target's ranking
+rule.
 Analog script and iteration inputs use the exact signed integer state range
 `[-65536, 65536]`; normalized decimal UI settings are quantized once when
 parsed. User-facing input timeline settings are zero-based: `0 ms` selects the

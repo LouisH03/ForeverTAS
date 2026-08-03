@@ -626,6 +626,10 @@ SearchResult RunLoadedSearch(
 
     SearchResult result = [&]() {
         try {
+            const double searchStartedTimeSeconds =
+                    std::chrono::duration<double>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
             SearchResult completed = search->Run({
                     sandbox,
                     kSearchTickDurationMs,
@@ -655,7 +659,9 @@ SearchResult RunLoadedSearch(
 #else
                     {},
 #endif
-                    request.simulationHorizonMs
+                    request.simulationHorizonMs,
+                    request.condition ? &*request.condition : nullptr,
+                    searchStartedTimeSeconds
             });
             if (asyncImprovementSampler) {
                 const std::exception_ptr failure =

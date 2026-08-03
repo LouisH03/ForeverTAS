@@ -306,6 +306,23 @@ while allowing repeated instances of the same modifier to remain independent.
 
 ## Evaluation Target Contract
 
+### Conditions
+
+`search/conditionScript` is an optional persisted tick-eligibility program.
+Every non-empty line is a comparison and all lines are ANDed. The language
+matches BfV2 condition scripts: scalar and vector current/previous car state,
+wheel contact/sliding/surface values, search timestamps and iteration count,
+`+ - * /`, `> < >= <= =`, grouping, `kmh`, `deg`, `distance`, `time_since`,
+and `variable`/`var`. The active point target is available as the vector
+`bf_target_point`.
+
+The parser emits one bounded postfix program used by both host and CUDA
+interpreters. The search checks that program immediately before calling the
+target session. A false condition therefore removes only that tick from
+evaluation; it does not stop simulation or reset target state. A run with at
+least one eligible target sample always outranks a baseline with none, while
+two eligible runs remain ordered exclusively by `IterationEvaluator::IsBetter`.
+
 Evaluation is timeline-based rather than a single stateless score function.
 
 `IterationEvaluator` owns:

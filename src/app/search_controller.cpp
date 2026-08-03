@@ -30,6 +30,7 @@ constexpr char kReplayPathKey[] = "paths/replayPath";
 constexpr char kBaseInputScriptKey[] = "inputs/baseScript";
 constexpr char kSimulationBackendKey[] = "selection/simulationBackend";
 constexpr char kSimulationHorizonKey[] = "search/simulationHorizonMs";
+constexpr char kConditionScriptKey[] = "search/conditionScript";
 constexpr char kCpuWorkerCountKey[] = "backends/cpu/workerCount";
 constexpr char kCudaParallelSampleCountKey[] =
         "backends/cuda/parallelSampleCount";
@@ -205,6 +206,7 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
     simulationHorizonMs_ = StoredValue(
             kSimulationHorizonKey,
             QString::number(kDefaultSimulationHorizonMs));
+    conditionScript_ = StoredValue(kConditionScriptKey, {});
     if (!QSettings().contains(QLatin1String(kSimulationHorizonKey))) {
         QSettings().setValue(
                 QLatin1String(kSimulationHorizonKey),
@@ -352,6 +354,10 @@ QString SearchController::simulationBackendId() const {
 
 QString SearchController::simulationHorizonMs() const {
     return simulationHorizonMs_;
+}
+
+QString SearchController::conditionScript() const {
+    return conditionScript_;
 }
 
 QString SearchController::cpuWorkerCount() const {
@@ -559,6 +565,16 @@ void SearchController::setSimulationHorizonMs(const QString &value) {
     simulationHorizonMs_ = value;
     persist(kSimulationHorizonKey, value);
     emit simulationHorizonMsChanged();
+    refreshValidation();
+}
+
+void SearchController::setConditionScript(const QString &value) {
+    if (conditionScript_ == value) {
+        return;
+    }
+    conditionScript_ = value;
+    persist(kConditionScriptKey, value);
+    emit conditionScriptChanged();
     refreshValidation();
 }
 
@@ -1165,6 +1181,28 @@ SearchController::ValidationResult SearchController::validate() const {
     }
     const SearchComponentConfiguration &configuration =
             *configurationValidation.configuration;
+    ConditionVariables conditionVariables;
+    if (configuration.evaluationTarget.id == kPointTargetEvaluationId) {
+        const OptionSettings &settings =
+                configuration.evaluationTarget.settings;
+        try {
+            conditionVariables.emplace(
+                    "bf_target_point",
+                    ConditionVariable{
+                            std::stod(settings.at("x")),
+                            std::stod(settings.at("y")),
+                            std::stod(settings.at("z")),
+                            true});
+        } catch (...) {
+            return {{}, QStringLiteral(
+                                "Point target cannot be exposed to the condition script.")};
+        }
+    }
+    ConditionCompileResult condition = CompileConditionScript(
+            conditionScript_.toStdString(), conditionVariables);
+    if (condition.error) {
+        return {{}, QString::fromStdString(*condition.error)};
+    }
     if (!baseInputScriptError_.isEmpty()) {
         return {{}, baseInputScriptError_};
     }
@@ -1217,20 +1255,22 @@ SearchController::ValidationResult SearchController::validate() const {
     }
 #endif
 
-    return {
-            SearchRequest{
-                    packsInfo.absoluteFilePath().toUtf8().toStdString(),
-                    replayInfo.absoluteFilePath().toUtf8().toStdString(),
-                    simulationBackend_,
-                    parallelSampleCount,
-                    calibrateCudaParallelSampleCount,
-                    configuration.searchAlgorithm,
-                    configuration.modifiers,
-                    configuration.evaluationTarget,
-                    parsedBaseInputCommands_,
-                    cudaSessionSpecializationEnabled_,
-                    simulationHorizonMs},
-            {}};
+    SearchRequest request{
+            packsInfo.absoluteFilePath().toUtf8().toStdString(),
+            replayInfo.absoluteFilePath().toUtf8().toStdString()};
+    request.backend = simulationBackend_;
+    request.parallelSampleCount = parallelSampleCount;
+    request.calibrateCudaParallelSampleCount =
+            calibrateCudaParallelSampleCount;
+    request.searchAlgorithm = configuration.searchAlgorithm;
+    request.modifiers = configuration.modifiers;
+    request.evaluationTarget = configuration.evaluationTarget;
+    request.baseInputCommands = parsedBaseInputCommands_;
+    request.useCudaSessionSpecialization =
+            cudaSessionSpecializationEnabled_;
+    request.simulationHorizonMs = simulationHorizonMs;
+    request.condition = std::move(condition.program);
+    return {std::move(request), {}};
 }
 
 void SearchController::refreshValidation() {

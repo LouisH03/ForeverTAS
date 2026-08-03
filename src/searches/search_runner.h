@@ -2,6 +2,7 @@
 #define FOREVERTAS_SEARCHES_SEARCH_RUNNER_H
 
 #include "input_timeline_time.h"
+#include "conditions/condition_program.h"
 #include "mutations/input_event_formatter.h"
 #include "physics_backend.h"
 #include "searches/algorithm_registry.h"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace forevertas {
@@ -29,6 +31,11 @@ inline std::uint32_t DefaultCpuWorkerCount() noexcept {
 }
 
 struct SearchRequest {
+    SearchRequest(std::string packDirectoryValue,
+                  std::string replayPathValue)
+        : packDirectory(std::move(packDirectoryValue)),
+          replayPath(std::move(replayPathValue)) {}
+
     std::string packDirectory;
     std::string replayPath;
     PhysicsBackend backend = PhysicsBackend::Reference;
@@ -43,6 +50,7 @@ struct SearchRequest {
     std::vector<ParsedInputCommand> baseInputCommands = {};
     bool useCudaSessionSpecialization = true;
     std::uint32_t simulationHorizonMs = kDefaultSimulationHorizonMs;
+    std::optional<ConditionProgram> condition;
 };
 
 SearchResult RunSearch(

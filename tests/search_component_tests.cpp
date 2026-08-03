@@ -2041,6 +2041,74 @@ bool TestReplayPathRobustness() {
     return okay;
 }
 
+bool TestConditionLanguageParity() {
+    const std::string script =
+            "kmh(car.speed) >= 36\n"
+            "deg(car.yaw) = 0\n"
+            "distance(car.pos, variable(bf_target_point)) < 0.01\n"
+            "car.prev.x = 1\n"
+            "car.localvel.z = 10\n"
+            "car.freewheel = 1\n"
+            "car.lateralcontact = 1\n"
+            "car.is_sliding = 1\n"
+            "car.gear = 3\n"
+            "car.rpm = 9000\n"
+            "car.tr = 0.25\n"
+            "car.tt = 2\n"
+            "car.tbf = 1.5\n"
+            "car.wheels.frontleft.groundcontact = 1\n"
+            "car.wheels.frontleft.is = 1\n"
+            "car.wheels.frontleft.surface = 2\n"
+            "iterations = 17\n"
+            "time_since(last_improvement.time) = 4";
+    forevertas::ConditionVariables variables{{
+            "bf_target_point", {4.0, 5.0, 6.0, true}}};
+    const forevertas::ConditionCompileResult compiled =
+            forevertas::CompileConditionScript(script, variables);
+    if (compiled.error) {
+        std::cerr << *compiled.error << '\n';
+    }
+    bool okay = Check(
+            compiled.program.has_value() && !compiled.error,
+            "BfV2-compatible condition script did not compile");
+    if (!compiled.program) return false;
+    PhysicsSandboxStateView previous;
+    previous.car.position = {1.0f, 2.0f, 3.0f};
+    PhysicsSandboxStateView current;
+    current.car.position = {4.0f, 5.0f, 6.0f};
+    current.car.linearSpeed = {0.0f, 0.0f, 10.0f};
+    current.car.localSpeed = {0.0f, 0.0f, 10.0f};
+    current.car.freeWheeling = true;
+    current.car.lateralContact = true;
+    current.car.sliding = true;
+    current.car.gear = 3;
+    current.car.rpm = 9000.0f;
+    current.car.turningRate = 0.25f;
+    current.car.turboType = 2u;
+    current.car.turboBoostFactor = 1.5f;
+    current.car.wheelContact[0] = true;
+    current.car.wheelSliding[0] = true;
+    current.car.wheelSurface[0] = 2u;
+    okay &= Check(
+            compiled.program->Evaluate(
+                    previous, current,
+                    {17u, 100.0, 90.0, 104.0}),
+            "compiled condition rejected an eligible tick");
+    current.car.linearSpeed.z = 9.0f;
+    okay &= Check(
+            !compiled.program->Evaluate(
+                    previous, current,
+                    {17u, 100.0, 90.0, 104.0}),
+            "compiled condition accepted a tick below the speed threshold");
+    const auto invalid = forevertas::CompileConditionScript(
+            "kmh(car.speed) > 200\nnot_a_variable = 1");
+    okay &= Check(
+            !invalid.program && invalid.error &&
+                    invalid.error->find("line 2") != std::string::npos,
+            "condition compile error did not identify its source line");
+    return okay;
+}
+
 }  // namespace
 
 int main() {
@@ -2068,6 +2136,7 @@ int main() {
             TestCudaBatchCalibrationStrategy() &&
             TestCudaCalibrationSafety() &&
             TestCudaConfigurationCoverage() &&
+            TestConditionLanguageParity() &&
             TestReplayPathRobustness();
     return okay ? 0 : 1;
 }

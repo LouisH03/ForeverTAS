@@ -1,3 +1,4 @@
+#include "conditions/condition_program.h"
 #include "mutations/input_event_utils.h"
 #include "mutations/input_event_formatter.h"
 #include "mutations/replay_input_script.h"
@@ -77,7 +78,8 @@ SearchResult Run(const char *packs,
                  bool useSessionSpecialization = true,
                  bool autoPromoteBest = false,
                  std::uint32_t simulationHorizonMs =
-                         forevertas::kDefaultSimulationHorizonMs) {
+                         forevertas::kDefaultSimulationHorizonMs,
+                 const std::string &conditionScript = {}) {
     SearchRequest request{packs, replay};
     request.baseInputCommands = ReplayInputCommands(packs, replay);
     request.backend = backend;
@@ -89,6 +91,12 @@ SearchResult Run(const char *packs,
             autoPromoteBest ? "true" : "false";
     request.modifiers = std::move(modifiers);
     request.evaluationTarget = std::move(evaluator);
+    const forevertas::ConditionCompileResult condition =
+            forevertas::CompileConditionScript(conditionScript);
+    if (condition.error) {
+        throw std::runtime_error(*condition.error);
+    }
+    request.condition = condition.program;
     forevertas::SearchRunControl control;
     control.iterationLimit = iterations;
     control.sampleBestTimeline = sampleBestTimeline;
@@ -210,7 +218,8 @@ bool CheckParity(const char *packs,
                  bool requireMutationWinner = false,
                  double *cudaSeconds = nullptr,
                  std::optional<std::int64_t>
-                         evaluationEndTimeLimitMs = std::nullopt) {
+                         evaluationEndTimeLimitMs = std::nullopt,
+                 const std::string &conditionScript = {}) {
     const auto started = std::chrono::steady_clock::now();
     std::cout << "checking " << label << std::endl;
     std::future<SearchResult> reference = std::async(
@@ -227,13 +236,22 @@ bool CheckParity(const char *packs,
                         false,
                         nullptr,
                         false,
-                        evaluationEndTimeLimitMs);
+                        evaluationEndTimeLimitMs,
+                        nullptr,
+                        false,
+                        true,
+                        false,
+                        forevertas::kDefaultSimulationHorizonMs,
+                        conditionScript);
             });
     const auto cudaStarted = std::chrono::steady_clock::now();
     const SearchResult cuda = Run(
             packs, replay, forevertas::PhysicsBackend::Cuda,
             batchSize, iterations, modifiers, evaluator,
-            false, nullptr, false, evaluationEndTimeLimitMs);
+            false, nullptr, false, evaluationEndTimeLimitMs,
+            nullptr, false, true, false,
+            forevertas::kDefaultSimulationHorizonMs,
+            conditionScript);
     const SearchResult authoritative = reference.get();
     if (cudaSeconds != nullptr) {
         *cudaSeconds = std::chrono::duration<double>(
@@ -548,6 +566,38 @@ int main(int argc, char **argv) {
 
         const OptionConfiguration random = DefaultModifier(
                 forevertas::kRandomSteeringModifierId);
+        okay &= CheckParity(
+                argv[1],
+                argv[2],
+                "condition excludes baseline by iteration count",
+                4u,
+                4u,
+                {random},
+                coverageVelocity,
+                true,
+                nullptr,
+                shortEvaluationEndTimeMs,
+                "iterations > 0");
+        const SearchResult conditionReference = Run(
+                argv[1], argv[2],
+                forevertas::PhysicsBackend::Reference,
+                1u, 4u, {random}, coverageVelocity,
+                false, nullptr, false, shortEvaluationEndTimeMs,
+                nullptr, false, true, false,
+                forevertas::kDefaultSimulationHorizonMs,
+                "iterations > 0");
+        const SearchResult conditionOptimized = Run(
+                argv[1], argv[2],
+                forevertas::PhysicsBackend::OptimizedCpu,
+                1u, 4u, {random}, coverageVelocity,
+                false, nullptr, false, shortEvaluationEndTimeMs,
+                nullptr, false, true, false,
+                forevertas::kDefaultSimulationHorizonMs,
+                "iterations > 0");
+        okay &= SameAuthoritativeResult(
+                conditionReference,
+                conditionOptimized,
+                "condition optimized CPU");
         const SearchResult baselineProbe = Run(
                 packs,
                 replay,
@@ -626,7 +676,7 @@ int main(int argc, char **argv) {
                 64u,
                 {random},
                 offLinePoint,
-                true);
+                false);
         okay &= CheckParity(
                 argv[1],
                 argv[2],

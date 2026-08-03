@@ -113,6 +113,8 @@ add_library(forevertas_core STATIC
     src/mutations/random_steering_mutator.h
     src/mutations/smooth_steering_mutator.cpp
     src/mutations/smooth_steering_mutator.h
+    src/conditions/condition_program.cpp
+    src/conditions/condition_program.h
     src/searches/algorithm_registry.cpp
     src/searches/algorithm_registry.h
     src/searches/option_configuration.h

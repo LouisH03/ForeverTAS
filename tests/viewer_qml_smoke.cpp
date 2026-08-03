@@ -1108,6 +1108,12 @@ int main(int argc, char **argv) {
                     auto *const evaluationSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("evaluationSection")));
+                    auto *const conditionsSection = qobject_cast<QQuickItem *>(
+                            root->findChild<QObject *>(
+                                    QStringLiteral("conditionsSection")));
+                    QObject *const conditionScriptTextArea =
+                            root->findChild<QObject *>(
+                                    QStringLiteral("conditionScriptTextArea"));
                     auto *const modifierSection = qobject_cast<QQuickItem *>(
                             root->findChild<QObject *>(
                                     QStringLiteral("modifierSection")));
@@ -2440,6 +2446,8 @@ int main(int argc, char **argv) {
                                      .toBool() &&
                             velocityModeCombo->width() >= 160.0;
                     const bool configurationSectionsValid =
+                            conditionsSection != nullptr &&
+                            conditionScriptTextArea != nullptr &&
                             evaluationSection != nullptr &&
                             modifierSection != nullptr &&
                             searchSection != nullptr &&
@@ -2447,6 +2455,7 @@ int main(int argc, char **argv) {
                                     modifierSection->parentItem() &&
                             modifierSection->parentItem() ==
                                     searchSection->parentItem() &&
+                            conditionsSection->y() < evaluationSection->y() &&
                             evaluationSection->y() < modifierSection->y() &&
                             modifierSection->y() < searchSection->y() &&
                             evaluationSection->property("radius").toReal() >

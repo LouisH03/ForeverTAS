@@ -504,6 +504,13 @@ SearchResult RunCudaBasicBruteForce(
     configuration.evaluationEndTimeMs = evaluationPlan.endTimeMs;
     configuration.modifiers = *context.cudaModifiers;
     configuration.evaluator = *context.cudaEvaluator;
+    if (context.condition != nullptr) {
+        configuration.condition = context.condition->cuda;
+        configuration.condition->lastImprovementTimeSeconds =
+                context.searchStartedTimeSeconds;
+        configuration.condition->lastRestartTimeSeconds =
+                context.searchStartedTimeSeconds;
+    }
     configuration.useSessionSpecialization =
             context.useCudaSessionSpecialization;
     configuration.captureBestState = !context.resolveCudaWinner;
@@ -786,6 +793,22 @@ SearchResult RunCudaBasicBruteForce(
                         originalBaselineInputs, best.inputs);
             }
         }
+        if (configuration.condition &&
+            batch.mutationImprovementCount != 0u) {
+            configuration.condition->lastImprovementTimeSeconds =
+                    std::chrono::duration<double>(
+                            std::chrono::system_clock::now()
+                                    .time_since_epoch())
+                            .count();
+            if (!promote) {
+                Require(session->UpdateConditionTimes(
+                                configuration.condition
+                                        ->lastImprovementTimeSeconds,
+                                configuration.condition
+                                        ->lastRestartTimeSeconds),
+                        "updating CUDA condition times");
+            }
+        }
         if (calibrator && !calibrator->Complete()) {
             if (executedCalibrationSafety &&
                 !executedCalibrationSafety->safe) {
@@ -1060,6 +1083,7 @@ SearchResult BasicBruteForceSearch::Run(
     std::uint64_t totalMutationCount = 0u;
     std::optional<std::chrono::steady_clock::duration>
             lastImprovementElapsed;
+    double lastImprovementTimeSeconds = context.searchStartedTimeSeconds;
     auto lastLiveReport = started - std::chrono::milliseconds(100);
     const auto reportLive = [&](bool force) {
         const auto now = std::chrono::steady_clock::now();
@@ -1094,10 +1118,26 @@ SearchResult BasicBruteForceSearch::Run(
             CheckCancellation(context.control);
             state = Require(context.sandbox.AdvanceTicks(1u),
                             "advancing evaluation tick");
-            const std::optional<EvaluationSample> sample =
-                    session->Observe(previous, state);
+            const double currentTimeSeconds =
+                    std::chrono::duration<double>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+            const std::uint64_t conditionIterations =
+                    source == SearchWinnerSource::Baseline
+                    ? 0u
+                    : iterationIndex.value_or(0u) + 1u;
+            const bool eligible = context.condition == nullptr ||
+                    context.condition->Evaluate(
+                            *previous, state,
+                            {conditionIterations,
+                             lastImprovementTimeSeconds,
+                             context.searchStartedTimeSeconds,
+                             currentTimeSeconds});
+            const std::optional<EvaluationSample> sample = eligible
+                    ? session->Observe(previous, state)
+                    : std::nullopt;
             previous = state;
-            ++evaluatorCalls;
+            if (eligible) ++evaluatorCalls;
             if (!sample) {
                 if (state.raceCompleted) break;
                 continue;
@@ -1127,6 +1167,7 @@ SearchResult BasicBruteForceSearch::Run(
                 ++mutationImprovementCount;
                 lastImprovementElapsed =
                         std::chrono::steady_clock::now() - started;
+                lastImprovementTimeSeconds = currentTimeSeconds;
                 reportLive(true);
             } else {
                 reportLive(false);

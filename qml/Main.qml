@@ -4336,6 +4336,55 @@ ApplicationWindow {
                     }
 
                     ConfigurationSection {
+                        objectName: "conditionsSection"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        title: qsTr("Conditions")
+
+                        ScrollView {
+                            id: conditionScriptScroll
+                            objectName: "conditionScriptScrollView"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 110
+                            clip: true
+                            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                            TextArea {
+                                id: conditionScriptArea
+                                objectName: "conditionScriptTextArea"
+                                width: Math.max(
+                                    conditionScriptScroll.availableWidth,
+                                    contentWidth + leftPadding + rightPadding)
+                                text: window.controller.conditionScript
+                                enabled: !window.controller.running
+                                selectByMouse: true
+                                wrapMode: TextEdit.NoWrap
+                                textFormat: TextEdit.PlainText
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                color: enabled ? AppTheme.text
+                                               : AppTheme.disabledText
+                                placeholderText: qsTr("kmh(car.speed) >= 200")
+                                onTextChanged: {
+                                    if (window.controller.conditionScript !== text)
+                                        window.controller.conditionScript = text
+                                }
+                                background: Rectangle {
+                                    color: enabled ? AppTheme.surface
+                                                   : AppTheme.disabledSurface
+                                    border.width: 1
+                                    border.color: conditionScriptArea.activeFocus
+                                                  ? AppTheme.focus
+                                                  : AppTheme.border
+                                    radius: 6
+                                }
+                            }
+                        }
+                    }
+
+                    ConfigurationSection {
                         objectName: "evaluationSection"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
