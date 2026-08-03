@@ -156,7 +156,7 @@ def release_notes(manifest: dict) -> str:
 ### Highlights
 
 - Standalone `Challenge.Gbx` maps now load directly, while replays remain map and scenario sources rather than control or duration authorities.
-- Race camera initialization respects rotated spawns. The viewer now has editable scripted telemetry with a window-bounded, scrollable field picker, target placement from the current camera or car, and an optional draw-through-blocks target mode.
+- Race camera initialization respects rotated spawns. The viewer now has editable scripted telemetry with a downward-opening, window-bounded, scrollable field picker, target placement from the current camera or car, and an optional draw-through-blocks target mode.
 - Browse actions use the Linux and Windows system file pickers, unsuffixed integer counters omit decimal zeroes while compact-unit values retain two digits, and packaged transport controls retain their intended silhouettes.
 - Modifier seeds randomize automatically on each search start by default. Modifier windows that extend beyond the Simulation horizon are silently limited at execution time while the saved user configuration remains unchanged.
 - Persisted BfV2-compatible condition scripts select eligible evaluation ticks on both CPU and CUDA. A satisfying mutation always outranks a baseline with no eligible tick; the chosen target remains the sole score comparator once conditions pass.

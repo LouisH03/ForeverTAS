@@ -113,7 +113,12 @@ ComboBox {
         implicitHeight: Math.min(
                             contentItem.implicitHeight + topPadding
                             + bottomPadding,
-                            control.Window.height - topMargin - bottomMargin)
+                            Math.max(
+                                0,
+                                control.Window.height
+                                - control.mapToItem(
+                                    null, 0, control.height - 1).y
+                                - bottomMargin))
         topMargin: 8
         bottomMargin: 8
         leftMargin: 8

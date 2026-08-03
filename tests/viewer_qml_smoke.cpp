@@ -943,9 +943,10 @@ int main(int argc, char **argv) {
                     QObject *const telemetryScriptPreview =
                             root->findChild<QObject *>(QStringLiteral(
                                     "telemetryScriptPreview"));
-                    QObject *const telemetryFieldCombo =
-                            root->findChild<QObject *>(QStringLiteral(
-                                    "telemetryFieldCombo"));
+                    auto *const telemetryFieldCombo =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "telemetryFieldCombo")));
                     QObject *const telemetryFieldComboPopup =
                             root->findChild<QObject *>(QStringLiteral(
                                     "telemetryFieldComboPopup"));
@@ -1480,6 +1481,12 @@ int main(int argc, char **argv) {
                             ? telemetryFieldComboPopupList->mapToScene(
                                       QPointF(0.0, 0.0))
                             : QPointF(-1.0, -1.0);
+                    const QPointF telemetryComboBottomLeft =
+                            telemetryFieldCombo != nullptr
+                            ? telemetryFieldCombo->mapToScene(
+                                      QPointF(0.0,
+                                              telemetryFieldCombo->height()))
+                            : QPointF(-1.0, -1.0);
                     if (telemetryFieldComboPopupList != nullptr) {
                         telemetryFieldComboPopupList->setProperty(
                                 "contentY",
@@ -1492,7 +1499,8 @@ int main(int argc, char **argv) {
                             telemetryPopupContentHeight >
                                     telemetryPopupListHeight &&
                             telemetryPopupListHeight > 0.0 &&
-                            telemetryPopupTopLeft.y() >= 7.0 &&
+                            telemetryPopupTopLeft.y() >=
+                                    telemetryComboBottomLeft.y() - 1.0 &&
                             telemetryPopupTopLeft.y() +
                                             telemetryPopupListHeight <=
                                     root->property("height").toReal() - 7.0 &&
@@ -1509,7 +1517,8 @@ int main(int argc, char **argv) {
                                 << telemetryPopupListHeight << "/"
                                 << telemetryPopupContentHeight
                                 << ", sceneY="
-                                << telemetryPopupTopLeft.y()
+                                << telemetryPopupTopLeft.y() << "/"
+                                << telemetryComboBottomLeft.y()
                                 << ", contentY="
                                 << (telemetryFieldComboPopupList != nullptr
                                             ? telemetryFieldComboPopupList
