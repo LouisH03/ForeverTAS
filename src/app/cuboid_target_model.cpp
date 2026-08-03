@@ -50,7 +50,15 @@ QString Number(double value) {
 CuboidTargetModel::CuboidTargetModel(const QVariantMap &legacySettings,
                                      QObject *parent)
     : QObject(parent) {
+    persistenceTimer_.setSingleShot(true);
+    persistenceTimer_.setInterval(150);
+    connect(&persistenceTimer_, &QTimer::timeout,
+            this, &CuboidTargetModel::persist);
     load(legacySettings);
+}
+
+CuboidTargetModel::~CuboidTargetModel() {
+    if (persistenceTimer_.isActive()) persist();
 }
 
 QVariantList CuboidTargetModel::targets() const {
@@ -186,7 +194,7 @@ bool CuboidTargetModel::setCenterComponent(int index,
         return false;
     }
     target.center[component] = static_cast<float>(parsed);
-    persist();
+    schedulePersist();
     notifyTargetChanged(index);
     return true;
 }
@@ -208,7 +216,7 @@ bool CuboidTargetModel::setSizeComponent(int index,
         return false;
     }
     target.size[component] = static_cast<float>(parsed);
-    persist();
+    schedulePersist();
     notifyTargetChanged(index);
     return true;
 }
@@ -228,7 +236,7 @@ bool CuboidTargetModel::translateSelected(double x, double y, double z) {
     const QVector3D proposed = target.center + delta;
     if (!IsFinite(proposed)) return false;
     target.center = proposed;
-    persist();
+    schedulePersist();
     notifyTargetChanged(selectedIndex_);
     return true;
 }
@@ -245,7 +253,7 @@ bool CuboidTargetModel::moveSelectedTo(double x, double y, double z) {
     Target &target = targets_[static_cast<std::size_t>(selectedIndex_)];
     if (!IsFinite(center) || target.center == center) return false;
     target.center = center;
-    persist();
+    schedulePersist();
     notifyTargetChanged(selectedIndex_);
     return true;
 }
@@ -267,7 +275,7 @@ bool CuboidTargetModel::resizeSelected(const QString &axis, double delta) {
         return false;
     }
     target.size[component] = static_cast<float>(proposed);
-    persist();
+    schedulePersist();
     notifyTargetChanged(selectedIndex_);
     return true;
 }
@@ -433,7 +441,8 @@ void CuboidTargetModel::load(const QVariantMap &legacySettings) {
     persist();
 }
 
-void CuboidTargetModel::persist() const {
+void CuboidTargetModel::persist() {
+    persistenceTimer_.stop();
     QJsonArray values;
     for (const Target &target : targets_) {
         values.push_back(QJsonObject{
@@ -461,6 +470,10 @@ void CuboidTargetModel::persist() const {
                     {QStringLiteral("selectedId"), selectedId},
                     {QStringLiteral("targets"), values}})
                     .toJson(QJsonDocument::Compact));
+}
+
+void CuboidTargetModel::schedulePersist() {
+    persistenceTimer_.start();
 }
 
 void CuboidTargetModel::notifyTargetChanged(int index) {

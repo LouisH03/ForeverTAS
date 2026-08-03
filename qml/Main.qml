@@ -63,8 +63,7 @@ ApplicationWindow {
                                     "runIndex": 0,
                                     "runPosition": Qt.vector3d(0, 0, 0),
                                     "runRotation": Qt.quaternion(1, 0, 0, 0),
-                                    "runSelected": false,
-                                    "runGeometry": null
+                                    "runSelected": false
                                 })
         }
         while (runPoseModel.count > poses.length)
@@ -77,7 +76,6 @@ ApplicationWindow {
             runPoseModel.setProperty(index, "runPosition", pose.position)
             runPoseModel.setProperty(index, "runRotation", pose.rotation)
             runPoseModel.setProperty(index, "runSelected", pose.selected)
-            runPoseModel.setProperty(index, "runGeometry", pose.geometry)
         }
     }
 
@@ -117,7 +115,8 @@ ApplicationWindow {
     function runColor(index) {
         const colors = ["#ff8a3d", "#3d8dff", "#63c77b", "#c57aeb",
                         "#e7c24f", "#54c7c1"]
-        return colors[index % colors.length]
+        const normalized = Math.max(0, index) % colors.length
+        return colors[normalized]
     }
 
     function stepViewerTick(delta) {
@@ -2439,12 +2438,9 @@ ApplicationWindow {
                                 required property var runPosition
                                 required property var runRotation
                                 required property bool runSelected
-                                required property var runGeometry
 
                                 objectName: "runCarRoot"
-                                visible: !(runSelected
-                                    && viewport.carCameraActive
-                                    && window.viewer.hideSelectedCar)
+                                visible: !runSelected
                                 position: runPosition
                                 rotation: runRotation
 
@@ -2468,7 +2464,12 @@ ApplicationWindow {
                                             objectName: "runCarFilledModel"
                                             visible: window.renderMode !==
                                                      "wireframe"
-                                            geometry: runCarRoot.runGeometry
+                                            geometry: window.viewer
+                                                .ellipsoidFilledGeometries[
+                                                    runCarRoot.runIndex %
+                                                    window.viewer
+                                                        .ellipsoidFilledGeometries
+                                                        .length]
                                             materials: DefaultMaterial {
                                                 objectName: "runCarFilledMaterial"
                                                 lighting:
@@ -2493,6 +2494,68 @@ ApplicationWindow {
                                                     runCarRoot.runIndex)
                                                 cullMode: Material.NoCulling
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Node {
+                            id: selectedRunCarRoot
+
+                            objectName: "selectedRunCarRoot"
+                            visible: window.viewer.loaded
+                                     && window.viewer.runCount > 0
+                                     && !(viewport.carCameraActive
+                                          && window.viewer.hideSelectedCar)
+                            position: window.viewer.carPosition
+                            rotation: window.viewer.carRotation
+
+                            Repeater3D {
+                                model: carEllipsoidModel
+
+                                delegate: Node {
+                                    required property bool ellipsoidActive
+                                    required property var ellipsoidPosition
+                                    required property var ellipsoidRotation
+                                    required property var ellipsoidRadii
+
+                                    objectName: "selectedRunCarEllipsoidNode"
+                                    visible: ellipsoidActive
+                                    position: ellipsoidPosition
+                                    rotation: ellipsoidRotation
+                                    scale: ellipsoidRadii
+
+                                    Model {
+                                        objectName: "selectedRunCarFilledModel"
+                                        visible: window.renderMode !==
+                                                 "wireframe"
+                                        geometry: window.viewer
+                                            .selectedEllipsoidFilledGeometry
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            vertexColorsEnabled: true
+                                            diffuseColor: "white"
+                                            cullMode:
+                                                Material.BackFaceCulling
+                                        }
+                                    }
+
+                                    Model {
+                                        objectName: "selectedRunCarWireModel"
+                                        visible: window.renderMode ===
+                                                 "wireframe"
+                                        geometry:
+                                            window.viewer
+                                                .ellipsoidWireGeometry
+                                        materials: DefaultMaterial {
+                                            lighting:
+                                                DefaultMaterial.NoLighting
+                                            diffuseColor: window.runColor(
+                                                window.viewer
+                                                    .selectedRunIndex)
+                                            cullMode: Material.NoCulling
                                         }
                                     }
                                 }

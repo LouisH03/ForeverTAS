@@ -378,6 +378,7 @@ int main(int argc, char **argv) {
     bool manualActionKeysValid = false;
     bool cameraShortcutKeysValid = false;
     bool freeCameraManualRoutingValid = false;
+    bool selectedCarRenderingValid = false;
     QObject::connect(
             &engine,
             &QQmlApplicationEngine::objectCreationFailed,
@@ -5226,6 +5227,20 @@ int main(int argc, char **argv) {
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
                                                         "runCarWireModel"));
+                                QObject *const selectedCarRoot =
+                                        root->findChild<QObject *>(
+                                                QStringLiteral(
+                                                        "selectedRunCarRoot"));
+                                const QList<QObject *>
+                                        selectedCarFilledModels =
+                                                root->findChildren<QObject *>(
+                                                        QStringLiteral(
+                                                                "selectedRunCarFilledModel"));
+                                const QList<QObject *>
+                                        selectedCarWireModels =
+                                                root->findChildren<QObject *>(
+                                                        QStringLiteral(
+                                                                "selectedRunCarWireModel"));
                                 const QList<QObject *> allTrajectoryModels =
                                         root->findChildren<QObject *>(
                                                 QStringLiteral(
@@ -5346,16 +5361,27 @@ int main(int argc, char **argv) {
                                                 viewer.runCount());
                                 bool rootsVisible =
                                         carRoots.size() ==
-                                        viewer.runCount();
+                                                viewer.runCount() &&
+                                        selectedCarRoot != nullptr &&
+                                        selectedCarRoot
+                                                ->property("visible")
+                                                .toBool();
+                                int visibleComparisonRoots = 0;
                                 for (const QObject *rootNode : carRoots) {
-                                    rootsVisible &= rootNode
-                                                            ->property("visible")
-                                                            .toBool() &&
-                                            std::abs(rootNode
+                                    visibleComparisonRoots += rootNode
+                                                                      ->property(
+                                                                              "visible")
+                                                                      .toBool()
+                                            ? 1
+                                            : 0;
+                                    rootsVisible &= std::abs(rootNode
                                                              ->property("opacity")
                                                              .toReal() -
                                                      1.0) < 0.001;
                                 }
+                                rootsVisible &= visibleComparisonRoots ==
+                                        std::max<qint64>(
+                                                0, viewer.runCount() - 1);
 
                                 const QVariant filledGeometry =
                                         filled->property("geometry");
@@ -5465,7 +5491,17 @@ int main(int argc, char **argv) {
                                                 expectedCarModels) &&
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
-                                                        false);
+                                                        false) &&
+                                        ModelsHaveState(
+                                                selectedCarFilledModels,
+                                                static_cast<int>(
+                                                        viewer.ellipsoidCount()),
+                                                true) &&
+                                        ModelsHaveState(
+                                                selectedCarWireModels,
+                                                static_cast<int>(
+                                                        viewer.ellipsoidCount()),
+                                                false);
                                 bool rayTracingModeValid =
                                         gpuRayTracingView != nullptr &&
                                         rasterMapView != nullptr &&
@@ -5719,7 +5755,17 @@ int main(int argc, char **argv) {
                                                         false) &&
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
-                                                        true);
+                                                        true) &&
+                                        ModelsHaveState(
+                                                selectedCarFilledModels,
+                                                static_cast<int>(
+                                                        viewer.ellipsoidCount()),
+                                                false) &&
+                                        ModelsHaveState(
+                                                selectedCarWireModels,
+                                                static_cast<int>(
+                                                        viewer.ellipsoidCount()),
+                                                true);
                                 root->setProperty(
                                         "renderMode",
                                         QStringLiteral("textured"));
@@ -5734,7 +5780,17 @@ int main(int argc, char **argv) {
                                                         true) &&
                                         ModelsHaveState(carWireModels,
                                                         expectedCarModels,
-                                                        false);
+                                                        false) &&
+                                        ModelsHaveState(
+                                                selectedCarFilledModels,
+                                                static_cast<int>(
+                                                        viewer.ellipsoidCount()),
+                                                true) &&
+                                        ModelsHaveState(
+                                                selectedCarWireModels,
+                                                static_cast<int>(
+                                                        viewer.ellipsoidCount()),
+                                                false);
 
                                 auto *const whiteboardOverlay =
                                         qobject_cast<QQuickItem *>(
@@ -6841,6 +6897,36 @@ int main(int argc, char **argv) {
                                                     ->property(
                                                             "carCameraActive")
                                                     .toBool();
+                                    QCoreApplication::processEvents();
+                                    QObject *const currentSelectedCarRoot =
+                                            currentRoot->findChild<QObject *>(
+                                                    QStringLiteral(
+                                                            "selectedRunCarRoot"));
+                                    const QList<QObject *>
+                                            currentSelectedFilledModels =
+                                                    currentRoot
+                                                            ->findChildren<
+                                                                    QObject *>(
+                                                                    QStringLiteral(
+                                                                            "selectedRunCarFilledModel"));
+                                    selectedCarRenderingValid =
+                                            driveFocusedRealCar &&
+                                            currentSelectedCarRoot != nullptr &&
+                                            currentSelectedCarRoot
+                                                    ->property("visible")
+                                                    .toBool() &&
+                                            (currentSelectedCarRoot
+                                                             ->property(
+                                                                     "position")
+                                                             .value<QVector3D>() -
+                                             viewer.carPosition())
+                                                            .lengthSquared() <
+                                                    0.0000001f &&
+                                            ModelsHaveState(
+                                                    currentSelectedFilledModels,
+                                                    static_cast<int>(
+                                                            viewer.ellipsoidCount()),
+                                                    true);
                                     if (driveFocusedRealCar &&
                                         currentViewport != nullptr &&
                                         currentManualInputFocus != nullptr) {
@@ -7000,6 +7086,7 @@ int main(int argc, char **argv) {
                                     manualActionKeysValid =
                                             cameraShortcutKeysValid &&
                                             freeCameraManualRoutingValid &&
+                                            selectedCarRenderingValid &&
                                             driveFocusedRealCar &&
                                             enterRespawn &&
                                             enterRespawnExecuted &&
@@ -7255,7 +7342,9 @@ int main(int argc, char **argv) {
                                             << ", freeCameraManualRouting="
                                             << freeCameraManualRoutingValid
                                             << ", manualActionKeys="
-                                            << manualActionKeysValid << '\n';
+                                            << manualActionKeysValid
+                                            << ", selectedCar="
+                                            << selectedCarRenderingValid << '\n';
                                 }
                                 static_cast<void>(quickWindow);
                                 application.quit();

@@ -1765,6 +1765,21 @@ QQuick3DGeometry *RaceViewerController::ellipsoidFilledGeometry() {
     return ellipsoidFilledGeometries_.front().get();
 }
 
+QQuick3DGeometry *RaceViewerController::selectedEllipsoidFilledGeometry() {
+    return ellipsoidFilledGeometryForRun(selectedRunIndex());
+}
+
+QVariantList RaceViewerController::ellipsoidFilledGeometries() const {
+    QVariantList geometries;
+    geometries.reserve(
+            static_cast<qsizetype>(ellipsoidFilledGeometries_.size()));
+    for (const auto &geometry : ellipsoidFilledGeometries_) {
+        geometries.push_back(QVariant::fromValue(
+                static_cast<QObject *>(geometry.get())));
+    }
+    return geometries;
+}
+
 QQuick3DGeometry *RaceViewerController::ellipsoidWireGeometry() {
     return &ellipsoidWireGeometry_;
 }
@@ -1835,12 +1850,6 @@ QVariantList RaceViewerController::runPoses() const {
         pose.insert(QStringLiteral("rotation"), run.rotation);
         pose.insert(QStringLiteral("selected"),
                     run.id == selectedRunId_);
-        const std::size_t paletteIndex = index %
-                ellipsoidFilledGeometries_.size();
-        pose.insert(
-                QStringLiteral("geometry"),
-                QVariant::fromValue(static_cast<QObject *>(
-                        ellipsoidFilledGeometries_[paletteIndex].get())));
         poses.push_back(std::move(pose));
     }
     return poses;
@@ -1852,6 +1861,16 @@ qint64 RaceViewerController::runCount() const {
 
 QString RaceViewerController::selectedRunId() const {
     return selectedRunId_;
+}
+
+int RaceViewerController::selectedRunIndex() const {
+    const auto selected = std::find_if(
+            runs_.begin(), runs_.end(), [this](const RaceViewerRun &run) {
+                return run.id == selectedRunId_;
+            });
+    return selected == runs_.end()
+            ? -1
+            : static_cast<int>(selected - runs_.begin());
 }
 
 QVector3D RaceViewerController::carPosition() const {
@@ -2681,6 +2700,31 @@ bool RaceViewerController::giveUpManualDrive() {
     if (!manualDriving_ || manualRuntime_ == nullptr) {
         return false;
     }
+    if (manualTakeover_) {
+        const QString sourceRunId = takeoverSourceRunId_;
+        const auto source = std::find_if(
+                runs_.begin(), runs_.end(), [&sourceRunId](
+                        const RaceViewerRun &run) {
+                    return run.id == sourceRunId;
+                });
+        if (source == runs_.end()) {
+            setStatusText(QStringLiteral(
+                    "Restarting the source race failed because it is no "
+                    "longer available."));
+            return false;
+        }
+        const QString sourceName = source->name;
+        manualDriveTimer_.stop();
+        manualDriving_ = false;
+        resetManualInputState();
+        resetManualTakeoverState();
+        emit manualDrivingChanged();
+        setSelectedRunId(sourceRunId);
+        setCurrentTick(0);
+        play();
+        setStatusText(QStringLiteral("%1 restarted").arg(sourceName));
+        return true;
+    }
     manualDriveTimer_.stop();
     if (!resetManualDriveSession(
                 QStringLiteral("Manual drive restarted"), true)) {
@@ -2915,12 +2959,14 @@ bool RaceViewerController::beginManualTakeover(const QString &input,
     const std::optional<std::int32_t> previousLongitudinalTakeover =
             longitudinalTakeoverTimeMs_;
     const bool previousManualTakeover = manualTakeover_;
+    const QString previousTakeoverSourceRunId = takeoverSourceRunId_;
     const bool previousLeft = manualLeft_;
     const bool previousRight = manualRight_;
     const bool previousAccelerate = manualAccelerate_;
     const bool previousBrake = manualBrake_;
 
     takeoverSourceInputs_ = std::move(sourceInputs);
+    takeoverSourceRunId_ = sourceRun->id;
     manualRuntime_->driverInputs.clear();
     steeringTakeoverTimeMs_.reset();
     longitudinalTakeoverTimeMs_.reset();
@@ -2937,6 +2983,7 @@ bool RaceViewerController::beginManualTakeover(const QString &input,
         longitudinalTakeoverTimeMs_ =
                 previousLongitudinalTakeover;
         manualTakeover_ = previousManualTakeover;
+        takeoverSourceRunId_ = previousTakeoverSourceRunId;
         manualLeft_ = previousLeft;
         manualRight_ = previousRight;
         manualAccelerate_ = previousAccelerate;
@@ -3009,11 +3056,19 @@ bool RaceViewerController::applyManualInput(const QString &input,
     }
 
     const std::uint64_t time = manualRuntime_->state.timeMs;
+    const std::uint64_t maximumEventTime =
+            static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int32_t>::max());
+    if (time > maximumEventTime - kViewerTickDurationMs) {
+        setStatusText(QStringLiteral(
+                "Manual drive failed: input time is outside the supported "
+                "race range."));
+        return false;
+    }
+    // The current state already includes the tick ending at `time`. The
+    // first control tick that can still be changed is the following one.
     const std::int32_t eventTime = static_cast<std::int32_t>(
-            std::min<std::uint64_t>(
-                    time,
-                    static_cast<std::uint64_t>(
-                            std::numeric_limits<std::int32_t>::max())));
+            time + kViewerTickDurationMs);
     const std::size_t previousEventCount =
             manualRuntime_->driverInputs.size();
     const bool previousLeft = manualLeft_;
@@ -3270,8 +3325,12 @@ QString RaceViewerController::currentInputScript() const {
             foundRaceStart = true;
         }
     }
+    const std::int64_t pendingManualTick =
+            run->id == QStringLiteral("manual")
+            ? kViewerTickDurationMs
+            : 0;
     const std::int64_t cutoffTimeMs = std::clamp<std::int64_t>(
-            raceStartTimeMs + timeMs_,
+            raceStartTimeMs + timeMs_ + pendingManualTick,
             std::numeric_limits<std::int32_t>::min(),
             std::numeric_limits<std::int32_t>::max());
     inputs.erase(
@@ -3283,6 +3342,15 @@ QString RaceViewerController::currentInputScript() const {
                     }),
             inputs.end());
     return QString::fromStdString(FormatInputScript(inputs));
+}
+
+QQuick3DGeometry *RaceViewerController::ellipsoidFilledGeometryForRun(
+        int runIndex) {
+    if (ellipsoidFilledGeometries_.empty()) return nullptr;
+    const int count = static_cast<int>(ellipsoidFilledGeometries_.size());
+    const int normalized = runIndex < 0 ? 0 : runIndex % count;
+    return ellipsoidFilledGeometries_[static_cast<std::size_t>(normalized)]
+            .get();
 }
 
 bool RaceViewerController::hasTrajectoryForRun(const QString &runId) const {
@@ -4311,6 +4379,7 @@ void RaceViewerController::resetManualTakeoverState() {
             longitudinalTakeoverTimeMs_.has_value();
     manualTakeover_ = false;
     takeoverSourceInputs_.clear();
+    takeoverSourceRunId_.clear();
     steeringTakeoverTimeMs_.reset();
     longitudinalTakeoverTimeMs_.reset();
     manualDriveStartTick_ = 0;

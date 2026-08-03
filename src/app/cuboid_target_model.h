@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVector3D>
@@ -28,6 +29,7 @@ public:
     explicit CuboidTargetModel(
             const QVariantMap &legacySettings = {},
             QObject *parent = nullptr);
+    ~CuboidTargetModel() override;
 
     QVariantList targets() const;
     int count() const;
@@ -72,10 +74,12 @@ private:
     static int AxisIndex(const QString &axis);
     QString nextDefaultName() const;
     void load(const QVariantMap &legacySettings);
-    void persist() const;
+    void persist();
+    void schedulePersist();
     void notifyTargetChanged(int index);
 
     std::vector<Target> targets_;
+    QTimer persistenceTimer_;
     int selectedIndex_ = 0;
     bool editingEnabled_ = true;
 };

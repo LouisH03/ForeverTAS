@@ -1140,8 +1140,8 @@ int main(int argc, char **argv) {
                                                                                     " gas 32768")) &&
                                                                     takeoverScript.contains(
                                                                             QStringLiteral(
-                                                                                    "0.00 steer 65536\n"
-                                                                                    "0.00 steer 0")) &&
+                                                                                    "0.01 steer 32768\n"
+                                                                                    "0.01 steer 0")) &&
                                                                     takeoverScript.contains(
                                                                             QStringLiteral(
                                                                                     " gas 0")) &&
@@ -1163,6 +1163,85 @@ int main(int argc, char **argv) {
                                                                     !takeoverScript.contains(
                                                                             QStringLiteral(
                                                                                     "2.00 rel up"));
+                                                            const qint64 takeoverEndTick =
+                                                                    viewer.currentTick();
+                                                            const QVector3D takeoverEndPosition =
+                                                                    viewer.carPosition();
+                                                            const QQuaternion takeoverEndRotation =
+                                                                    viewer.carRotation();
+                                                            bool copiedPreviewPublished = false;
+                                                            const QMetaObject::Connection copiedPreviewConnection =
+                                                                    QObject::connect(
+                                                                            &viewer,
+                                                                            &forevertas::viewer::
+                                                                                    RaceViewerController::
+                                                                                            stateChanged,
+                                                                            &application,
+                                                                            [&]() {
+                                                                                copiedPreviewPublished = true;
+                                                                            });
+                                                            viewer.setPreviewInputScript(
+                                                                    takeoverScript);
+                                                            const bool copiedPreviewReady =
+                                                                    WaitUntil([&]() {
+                                                                        return copiedPreviewPublished;
+                                                                    });
+                                                            QObject::disconnect(
+                                                                    copiedPreviewConnection);
+                                                            viewer.setSelectedRunId(
+                                                                    QStringLiteral("preview"));
+                                                            viewer.setCurrentTick(
+                                                                    takeoverEndTick);
+                                                            const bool copiedRaceMatches =
+                                                                    copiedPreviewReady &&
+                                                                    (viewer.carPosition() -
+                                                                     takeoverEndPosition)
+                                                                                    .lengthSquared() <
+                                                                            0.0000000001f &&
+                                                                    std::abs(QQuaternion::dotProduct(
+                                                                            viewer.carRotation(),
+                                                                            takeoverEndRotation)) >
+                                                                            0.999999f;
+
+                                                            viewer.setCurrentTick(
+                                                                    std::min<qint64>(
+                                                                            3,
+                                                                            viewer.tickCount() - 1));
+                                                            viewer.play();
+                                                            viewer.setManualInput(
+                                                                    QStringLiteral("right"),
+                                                                    true);
+                                                            const bool restartTakeoverStarted =
+                                                                    viewer.manualDriving() &&
+                                                                    viewer.selectedRunId() ==
+                                                                            QStringLiteral("manual");
+                                                            const bool takeoverRestoredSource =
+                                                                    viewer.giveUpManualDrive() &&
+                                                                    !viewer.manualDriving() &&
+                                                                    viewer.selectedRunId() ==
+                                                                            QStringLiteral("preview") &&
+                                                                    viewer.currentTick() == 0 &&
+                                                                    viewer.playing();
+                                                            viewer.pause();
+                                                            viewer.setSelectedRunId(
+                                                                    QStringLiteral("best"));
+                                                            viewer.setCurrentTick(1);
+                                                            viewer.play();
+                                                            viewer.setManualInput(
+                                                                    QStringLiteral("left"),
+                                                                    false);
+                                                            const bool bestRestartTakeoverStarted =
+                                                                    viewer.manualDriving() &&
+                                                                    viewer.selectedRunId() ==
+                                                                            QStringLiteral("manual");
+                                                            const bool bestTakeoverRestoredSource =
+                                                                    viewer.giveUpManualDrive() &&
+                                                                    !viewer.manualDriving() &&
+                                                                    viewer.selectedRunId() ==
+                                                                            QStringLiteral("best") &&
+                                                                    viewer.currentTick() == 0 &&
+                                                                    viewer.playing();
+                                                            viewer.pause();
                                                             viewer.addSearchRun(
                                                                     packsDirectory,
                                                                     replayPath,
@@ -1202,6 +1281,11 @@ int main(int argc, char **argv) {
                                                                     takeoverRespawnQueued &&
                                                                     takeoverRespawnExecuted &&
                                                                     mixedHistoryCopied &&
+                                                                    copiedRaceMatches &&
+                                                                    restartTakeoverStarted &&
+                                                                    takeoverRestoredSource &&
+                                                                    bestRestartTakeoverStarted &&
+                                                                    bestTakeoverRestoredSource &&
                                                                     failedTakeoverRecovered;
                                                             if (!manualTakeoverValid) {
                                                                 std::cerr
@@ -1225,6 +1309,16 @@ int main(int argc, char **argv) {
                                                                         << takeoverRespawnExecuted
                                                                         << ", mixedHistory="
                                                                         << mixedHistoryCopied
+                                                                        << ", copiedRaceMatches="
+                                                                        << copiedRaceMatches
+                                                                        << ", restoredSource="
+                                                                        << restartTakeoverStarted
+                                                                        << "/"
+                                                                        << takeoverRestoredSource
+                                                                        << ", restoredBest="
+                                                                        << bestRestartTakeoverStarted
+                                                                        << "/"
+                                                                        << bestTakeoverRestoredSource
                                                                         << ", failureRecovered="
                                                                         << failedTakeoverRecovered
                                                                         << " (playing="

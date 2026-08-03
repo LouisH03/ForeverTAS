@@ -129,6 +129,10 @@ class RaceViewerController final : public QObject {
                        trackWireGeometry CONSTANT)
     Q_PROPERTY(QQuick3DGeometry *ellipsoidFilledGeometry READ
                        ellipsoidFilledGeometry CONSTANT)
+    Q_PROPERTY(QQuick3DGeometry *selectedEllipsoidFilledGeometry READ
+                       selectedEllipsoidFilledGeometry NOTIFY selectedRunChanged)
+    Q_PROPERTY(QVariantList ellipsoidFilledGeometries READ
+                       ellipsoidFilledGeometries CONSTANT)
     Q_PROPERTY(QQuick3DGeometry *ellipsoidWireGeometry READ
                        ellipsoidWireGeometry CONSTANT)
     Q_PROPERTY(QVariantList carEllipsoids READ carEllipsoids NOTIFY
@@ -152,6 +156,8 @@ class RaceViewerController final : public QObject {
     Q_PROPERTY(qint64 runCount READ runCount NOTIFY runsChanged)
     Q_PROPERTY(QString selectedRunId READ selectedRunId WRITE setSelectedRunId
                        NOTIFY selectedRunChanged)
+    Q_PROPERTY(int selectedRunIndex READ selectedRunIndex NOTIFY
+                       selectedRunChanged)
     Q_PROPERTY(QVector3D carPosition READ carPosition NOTIFY poseChanged)
     Q_PROPERTY(QQuaternion carRotation READ carRotation NOTIFY poseChanged)
     Q_PROPERTY(int cameraPreset READ cameraPreset WRITE setCameraPreset NOTIFY
@@ -228,6 +234,8 @@ public:
     QQuick3DGeometry *trackFilledGeometry();
     QQuick3DGeometry *trackWireGeometry();
     QQuick3DGeometry *ellipsoidFilledGeometry();
+    QQuick3DGeometry *selectedEllipsoidFilledGeometry();
+    QVariantList ellipsoidFilledGeometries() const;
     QQuick3DGeometry *ellipsoidWireGeometry();
     WhiteboardModel *whiteboard();
     SimulationDebuggerModel *simulationDebugger();
@@ -243,6 +251,7 @@ public:
     QVariantList runPoses() const;
     qint64 runCount() const;
     QString selectedRunId() const;
+    int selectedRunIndex() const;
     QVector3D carPosition() const;
     QQuaternion carRotation() const;
     int cameraPreset() const;
@@ -414,6 +423,7 @@ private:
                    bool select);
     const RaceViewerRun *selectedRun() const noexcept;
     RaceViewerRun *selectedRun() noexcept;
+    QQuick3DGeometry *ellipsoidFilledGeometryForRun(int runIndex);
     void refreshSelectedRun();
     void setLoading(bool value);
     void setStatusText(const QString &value);
@@ -488,6 +498,7 @@ private:
     QString previewInputScript_;
     qint64 simulationHorizonMs_ = 6000;
     std::vector<SandboxInputEvent> takeoverSourceInputs_;
+    QString takeoverSourceRunId_;
     std::optional<std::int32_t> steeringTakeoverTimeMs_;
     std::optional<std::int32_t> longitudinalTakeoverTimeMs_;
     qint64 durationMs_ = 0;

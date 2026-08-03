@@ -11,6 +11,9 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSignalSpy>
@@ -347,6 +350,47 @@ bool TestCuboidTargetModel() {
                           selected.value(QStringLiteral("sizeX")).toString() ==
                                   QStringLiteral("0.5"),
                   "cuboid edits produced incorrect properties");
+
+    QSettings settings;
+    settings.setValue(QStringLiteral("unrelated/largePayload"),
+                      QByteArray(512 * 1024, 'x'));
+    settings.sync();
+    QElapsedTimer resizeTimer;
+    resizeTimer.start();
+    constexpr int kResizeCount = 2000;
+    for (int edit = 0; edit < kResizeCount; ++edit) {
+        okay &= model.resizeSelected(QStringLiteral("x"), 0.001);
+    }
+    const qint64 resizeElapsedMs = resizeTimer.elapsed();
+    okay &= Check(resizeElapsedMs < 250,
+                  "continuous cuboid resize synchronously rewrote settings");
+    const QString finalSizeX =
+            model.selectedTarget().value(QStringLiteral("sizeX")).toString();
+    okay &= Check(WaitUntil(
+                              [&]() {
+                                  const QJsonDocument persisted =
+                                          QJsonDocument::fromJson(
+                                                  QSettings()
+                                                          .value(QStringLiteral(
+                                                                  "targets/cuboids"))
+                                                          .toByteArray());
+                                  const QJsonArray targets =
+                                          persisted.object()
+                                                  .value(QStringLiteral("targets"))
+                                                  .toArray();
+                                  return targets.size() > added &&
+                                          QString::number(
+                                                  targets.at(added)
+                                                          .toObject()
+                                                          .value(QStringLiteral("size"))
+                                                          .toArray()
+                                                          .at(0)
+                                                          .toDouble(),
+                                                  'g',
+                                                  15) == finalSizeX;
+                              },
+                              1000),
+                  "deferred cuboid resize did not persist its final value");
     const int duplicate = model.duplicateSelected();
     okay &= Check(duplicate == 2 && model.count() == 3 &&
                           model.selectedTarget()
