@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QFileDialog>
 #include <QPalette>
+#include <QRandomGenerator>
 #include <QSettings>
 #include <QThread>
 #include <QTimer>
@@ -36,6 +37,8 @@ constexpr char kCudaCalibrationEnabledKey[] =
         "backends/cuda/calibrationEnabled";
 constexpr char kCudaSessionSpecializationEnabledKey[] =
         "backends/cuda/sessionSpecializationEnabled";
+constexpr char kRandomizeSeedsOnStartKey[] =
+        "search/randomizeSeedsOnStart";
 constexpr char kDarkModeKey[] = "appearance/darkMode";
 std::atomic_bool gAutomaticPacksSearchScheduled{false};
 
@@ -216,6 +219,14 @@ void SearchController::initialize(const QStringList *packsSearchPatterns) {
                            kCudaSessionSpecializationEnabledKey),
                    true)
             .toBool();
+    QSettings settings;
+    randomizeSeedsOnStart_ = settings
+            .value(QLatin1String(kRandomizeSeedsOnStartKey), true)
+            .toBool();
+    if (!settings.contains(QLatin1String(kRandomizeSeedsOnStartKey))) {
+        settings.setValue(
+                QLatin1String(kRandomizeSeedsOnStartKey), true);
+    }
     darkMode_ =
             QSettings().value(QLatin1String(kDarkModeKey), false).toBool();
     ApplyApplicationPalette(darkMode_);
@@ -352,6 +363,10 @@ bool SearchController::cudaCalibrationEnabled() const {
 
 bool SearchController::cudaSessionSpecializationEnabled() const {
     return cudaSessionSpecializationEnabled_;
+}
+
+bool SearchController::randomizeSeedsOnStart() const {
+    return randomizeSeedsOnStart_;
 }
 
 bool SearchController::darkMode() const {
@@ -577,6 +592,16 @@ void SearchController::setCudaSessionSpecializationEnabled(bool value) {
     QSettings().setValue(
             QLatin1String(kCudaSessionSpecializationEnabledKey), value);
     emit cudaSessionSpecializationEnabledChanged();
+}
+
+void SearchController::setRandomizeSeedsOnStart(bool value) {
+    if (randomizeSeedsOnStart_ == value) {
+        return;
+    }
+    randomizeSeedsOnStart_ = value;
+    QSettings().setValue(
+            QLatin1String(kRandomizeSeedsOnStartKey), value);
+    emit randomizeSeedsOnStartChanged();
 }
 
 void SearchController::setDarkMode(bool value) {
@@ -933,10 +958,20 @@ void SearchController::startSearch() {
         return;
     }
 
-    const ValidationResult validation = validate();
+    ValidationResult validation = validate();
     if (!validation.request) {
         refreshValidation();
         return;
+    }
+    if (randomizeSeedsOnStart_ &&
+        configuration_.randomizeModifierSeeds(
+                QRandomGenerator::system()->generate())) {
+        emit modifierPassesChanged();
+        validation = validate();
+        if (!validation.request) {
+            refreshValidation();
+            return;
+        }
     }
 
     setResultText({});

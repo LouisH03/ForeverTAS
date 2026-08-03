@@ -979,6 +979,10 @@ int main(int argc, char **argv) {
                     QObject *const cpuWorkerCountField =
                             root->findChild<QObject *>(QStringLiteral(
                                     "cpuWorkerCountField"));
+                    auto *const randomizeSeedsOnStartCheckBox =
+                            qobject_cast<QQuickItem *>(
+                                    root->findChild<QObject *>(QStringLiteral(
+                                            "randomizeSeedsOnStartCheckBox")));
 #if FOREVERVALIDATOR_HAS_CUDA
                     auto *const cudaParallelSampleSettings =
                             qobject_cast<QQuickItem *>(
@@ -2133,7 +2137,11 @@ int main(int argc, char **argv) {
                                     QStringLiteral("reference") &&
                             simulationBackendCombo->property("displayText")
                                             .toString() ==
-                                    QStringLiteral("Reference");
+                                    QStringLiteral("Reference") &&
+                            randomizeSeedsOnStartCheckBox != nullptr &&
+                            randomizeSeedsOnStartCheckBox
+                                    ->property("checked")
+                                    .toBool();
                     if (backendSelectorValid) {
                         controller.setSimulationBackendId(
                                 QStringLiteral("optimized-cpu"));

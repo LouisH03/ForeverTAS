@@ -4061,6 +4061,16 @@ ApplicationWindow {
                                 window.controller.simulationHorizonMs = value
                         }
 
+                        ThemedCheckBox {
+                            objectName: "randomizeSeedsOnStartCheckBox"
+                            text: qsTr("Randomize modifier seeds on Start")
+                            checked: window.controller.randomizeSeedsOnStart
+                            enabled: !window.controller.running
+                            onToggled:
+                                window.controller.randomizeSeedsOnStart =
+                                    checked
+                        }
+
                         SettingTextField {
                             objectName: "cpuWorkerSettings"
                             visible: window.controller.simulationBackendId

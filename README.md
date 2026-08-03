@@ -62,7 +62,9 @@ The application persists paths, the script draft, selections, pass
 order, the user-owned **Simulation horizon**, and every option-owned
 configuration with the platform-native Qt settings store. That horizon alone
 bounds search, preview, validation, and CPU/CUDA simulation; commands after it
-remain editable but unexecuted. Search, map loading, validation, and physics
+remain editable but unexecuted. Modifier seeds are randomized and persisted on
+each Start by default; disabling that option preserves the entered seeds for
+reproducible reruns. Search, map loading, validation, and physics
 stay in C++; QML presents the controls and Race Viewer.
 
 The search runs indefinitely on a worker thread after Start is pressed. Each

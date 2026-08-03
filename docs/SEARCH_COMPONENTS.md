@@ -298,8 +298,11 @@ Deterministic random streams are derived from:
 configured seed + iteration index + pass index
 ```
 
-This keeps repeated runs reproducible while allowing repeated instances of the
-same modifier to produce independent changes.
+By default, Start first replaces and persists every displayed modifier seed so
+successive searches explore new streams. Disabling **Randomize modifier seeds
+on Start** leaves those values untouched for reproducible reruns. Within a run,
+the configured seed, iteration index, and pass index keep streams deterministic
+while allowing repeated instances of the same modifier to remain independent.
 
 ## Evaluation Target Contract
 

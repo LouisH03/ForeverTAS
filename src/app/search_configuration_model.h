@@ -51,6 +51,7 @@ public:
     bool setModifierPassSetting(int index,
                                 const QString &key,
                                 const QString &value);
+    bool randomizeModifierSeeds(std::uint32_t entropy);
 
     SearchConfigurationValidation validate(
             std::uint32_t tickDurationMs,

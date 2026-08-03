@@ -62,6 +62,9 @@ class SearchController final : public QObject {
                        cudaSessionSpecializationEnabled WRITE
                        setCudaSessionSpecializationEnabled NOTIFY
                        cudaSessionSpecializationEnabledChanged)
+    Q_PROPERTY(bool randomizeSeedsOnStart READ randomizeSeedsOnStart WRITE
+                       setRandomizeSeedsOnStart NOTIFY
+                       randomizeSeedsOnStartChanged)
     Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY
                        darkModeChanged)
     Q_PROPERTY(QVariantList searchAlgorithmOptions READ searchAlgorithmOptions
@@ -129,6 +132,7 @@ public:
     QString cudaParallelSampleCount() const;
     bool cudaCalibrationEnabled() const;
     bool cudaSessionSpecializationEnabled() const;
+    bool randomizeSeedsOnStart() const;
     bool darkMode() const;
     QVariantList searchAlgorithmOptions() const;
     QVariantList modifierOptions() const;
@@ -167,6 +171,7 @@ public slots:
     void setCudaParallelSampleCount(const QString &value);
     void setCudaCalibrationEnabled(bool value);
     void setCudaSessionSpecializationEnabled(bool value);
+    void setRandomizeSeedsOnStart(bool value);
     void setDarkMode(bool value);
     void setSearchAlgorithmId(const QString &value);
     void setEvaluationTargetId(const QString &value);
@@ -209,6 +214,7 @@ signals:
     void cudaParallelSampleCountChanged();
     void cudaCalibrationEnabledChanged();
     void cudaSessionSpecializationEnabledChanged();
+    void randomizeSeedsOnStartChanged();
     void darkModeChanged();
     void searchAlgorithmIdChanged();
     void evaluationTargetIdChanged();
@@ -288,6 +294,7 @@ private:
             kDefaultCudaParallelSampleCount);
     bool cudaCalibrationEnabled_ = false;
     bool cudaSessionSpecializationEnabled_ = true;
+    bool randomizeSeedsOnStart_ = true;
     bool darkMode_ = false;
     SearchConfigurationModel configuration_;
     CuboidTargetModel cuboidTargets_;

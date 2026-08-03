@@ -138,6 +138,60 @@ bool TestCompactNumberFormatting() {
     return okay;
 }
 
+bool TestAutomaticSeedRandomization() {
+    QSettings().clear();
+    {
+        SearchController controller;
+        if (!Check(controller.randomizeSeedsOnStart() &&
+                           QSettings()
+                                   .value(QStringLiteral(
+                                           "search/randomizeSeedsOnStart"))
+                                   .toBool(),
+                   "automatic seed randomization was not default-on")) {
+            return false;
+        }
+        controller.setRandomizeSeedsOnStart(false);
+    }
+    {
+        SearchController restored;
+        if (!Check(!restored.randomizeSeedsOnStart(),
+                   "automatic seed randomization was not persisted")) {
+            return false;
+        }
+    }
+
+    QSettings().clear();
+    forevertas::app::SearchConfigurationModel configuration;
+    configuration.addModifierPass(
+            QStringLiteral("existing-event-perturbation"));
+    const QVariantList before = configuration.modifierPasses();
+    if (!Check(configuration.randomizeModifierSeeds(123456789u),
+               "seeded modifier passes were not randomized")) {
+        return false;
+    }
+    const QVariantList after = configuration.modifierPasses();
+    bool okay = Check(after.size() == before.size(),
+                      "seed randomization changed modifier composition");
+    for (qsizetype index = 0; index < after.size(); ++index) {
+        const QVariantMap beforeSettings = before.at(index)
+                .toMap()
+                .value(QStringLiteral("settings"))
+                .toMap();
+        const QVariantMap afterSettings = after.at(index)
+                .toMap()
+                .value(QStringLiteral("settings"))
+                .toMap();
+        okay &= Check(afterSettings.value(QStringLiteral("seed")) !=
+                                      beforeSettings.value(
+                                              QStringLiteral("seed")),
+                      "a modifier seed did not change");
+    }
+    forevertas::app::SearchConfigurationModel restored;
+    okay &= Check(restored.modifierPasses() == after,
+                  "randomized modifier seeds were not persisted");
+    return okay;
+}
+
 bool TestCuboidTargetModel() {
     QSettings().clear();
     const QVariantMap legacy{
@@ -1585,9 +1639,16 @@ bool TestIndefiniteSearchLifecycle(const QString &packsDirectory,
             &controller, &SearchController::searchCompleted);
     QSignalSpy improvementSpy(
             &controller, &SearchController::searchImprovement);
+    const QString seedBeforeStart = PassSettings(controller, 0)
+            .value(QStringLiteral("seed"))
+            .toString();
     controller.startSearch();
     bool okay = Check(controller.running() && !controller.canStart(),
                       "Start did not enter the running state");
+    okay &= Check(PassSettings(controller, 0)
+                                  .value(QStringLiteral("seed"))
+                                  .toString() != seedBeforeStart,
+                  "Start did not randomize modifier seeds");
     okay &= Check(
             WaitUntil(
                     [&controller]() {
@@ -1783,6 +1844,7 @@ int main(int argc, char **argv) {
     replay.close();
 
     bool okay = TestCompactNumberFormatting() &&
+            TestAutomaticSeedRandomization() &&
             TestCuboidTargetModel() &&
             TestCuboidControllerSynchronization() &&
             TestCustomVolumeTargets() &&

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <random>
 #include <utility>
 
 namespace forevertas::app {
@@ -344,6 +345,32 @@ bool SearchConfigurationModel::setModifierPassSetting(
     modifierPasses_[index] = pass;
     persistModifierPasses();
     return true;
+}
+
+bool SearchConfigurationModel::randomizeModifierSeeds(
+        std::uint32_t entropy) {
+    std::mt19937 random(entropy);
+    bool changed = false;
+    for (QVariant &passValue : modifierPasses_) {
+        QVariantMap pass = passValue.toMap();
+        QVariantMap settings =
+                pass.value(QStringLiteral("settings")).toMap();
+        const auto seed = settings.find(QStringLiteral("seed"));
+        if (seed == settings.end()) continue;
+
+        std::uint32_t generated = random();
+        if (QString::number(generated) == seed->toString()) {
+            ++generated;
+        }
+        *seed = QString::number(generated);
+        pass.insert(QStringLiteral("settings"), settings);
+        passValue = pass;
+        changed = true;
+    }
+    if (changed) {
+        persistModifierPasses();
+    }
+    return changed;
 }
 
 SearchConfigurationValidation SearchConfigurationModel::validate(
