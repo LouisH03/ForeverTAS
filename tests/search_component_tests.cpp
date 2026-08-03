@@ -465,6 +465,12 @@ bool TestEvaluationTargets() {
         const auto sample = session->Observe(previous, current);
         okay &= Check(sample && std::abs(sample->timeMs - 109.0) < 1e-9,
                       "volume entry interpolation was incorrect");
+
+        session = evaluator->CreateSession();
+        previous.car.position = {-10.0f, 5.0f, 0.0f};
+        current.car.position = {10.0f, 6.0f, 0.0f};
+        okay &= Check(!session->Observe(previous, current),
+                      "disjoint swept segment entered the volume");
     }
 
     {

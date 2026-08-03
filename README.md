@@ -12,7 +12,7 @@ ForeverTAS -> PhysicsSandbox -> ForeverValidator physics
 ## Dependency
 
 CMake `FetchContent` pins ForeverValidator to the exact commit
-`7c633f3a148a94a08f1add275aef07b597d7bf9c`. The embedded build disables the
+`a9defc539e3ea024b36fae4359785ac098e28aa6`. The embedded build disables the
 ForeverValidator CLI and tests and links its native asset adapter and core
 simulation library.
 

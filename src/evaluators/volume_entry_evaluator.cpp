@@ -25,14 +25,21 @@ bool Contains(const Box &box, const EvaluationVector3 &point) {
 std::optional<double> SegmentEntryFraction(const Box &box,
                                            const EvaluationVector3 &from,
                                            const EvaluationVector3 &to) {
-    double enter = 0.0;
-    double leave = 1.0;
     const std::array<double, 3> a{from.x, from.y, from.z};
     const std::array<double, 3> b{to.x, to.y, to.z};
     const std::array<double, 3> minimum{
             box.minimum.x, box.minimum.y, box.minimum.z};
     const std::array<double, 3> maximum{
             box.maximum.x, box.maximum.y, box.maximum.z};
+    for (std::size_t axis = 0u; axis < 3u; ++axis) {
+        if (std::max(a[axis], b[axis]) < minimum[axis] ||
+            std::min(a[axis], b[axis]) > maximum[axis]) {
+            return std::nullopt;
+        }
+    }
+
+    double enter = 0.0;
+    double leave = 1.0;
     for (std::size_t axis = 0u; axis < 3u; ++axis) {
         const double delta = b[axis] - a[axis];
         if (std::abs(delta) <= 1e-12) {
