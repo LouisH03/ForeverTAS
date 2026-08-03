@@ -233,6 +233,23 @@ bool CuboidTargetModel::translateSelected(double x, double y, double z) {
     return true;
 }
 
+bool CuboidTargetModel::moveSelectedTo(double x, double y, double z) {
+    if (!editingEnabled_ || selectedIndex_ < 0 ||
+        selectedIndex_ >= count()) {
+        return false;
+    }
+    const QVector3D center(
+            static_cast<float>(x),
+            static_cast<float>(y),
+            static_cast<float>(z));
+    Target &target = targets_[static_cast<std::size_t>(selectedIndex_)];
+    if (!IsFinite(center) || target.center == center) return false;
+    target.center = center;
+    persist();
+    notifyTargetChanged(selectedIndex_);
+    return true;
+}
+
 bool CuboidTargetModel::resizeSelected(const QString &axis, double delta) {
     if (!editingEnabled_ || selectedIndex_ < 0 ||
         selectedIndex_ >= count() ||

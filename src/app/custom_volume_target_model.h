@@ -70,6 +70,7 @@ public:
     Q_INVOKABLE bool addVertexWorld(double x, double y, double z);
     Q_INVOKABLE bool removeVertex(int index, int vertexIndex);
     Q_INVOKABLE bool translateSelected(double x, double y, double z);
+    Q_INVOKABLE bool moveSelectedTo(double x, double y, double z);
     Q_INVOKABLE bool resizeDepthSelected(double delta);
 
     bool beginDrawing();

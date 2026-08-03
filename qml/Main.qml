@@ -494,6 +494,10 @@ ApplicationWindow {
                     property real cameraFieldOfView: 55
                     property bool freeCamera: false
                     property bool orbitalCamera: false
+                    readonly property vector3d sceneCameraPosition:
+                        viewCamera.scenePosition
+                    readonly property var sceneCameraRotation:
+                        viewCamera.sceneRotation
                     property vector3d freeCameraPosition:
                         Qt.vector3d(0, 0, 0)
                     function formatCameraCoordinate(value) {
@@ -4135,6 +4139,7 @@ ApplicationWindow {
                             selectedId: window.controller.evaluationTargetId
                             controller: window.controller
                             viewer: window.viewer
+                            viewport: viewport
                             onSelectionRequested: id =>
                                 window.controller.evaluationTargetId = id
                         }

@@ -254,6 +254,40 @@ bool PoseTargetModel::translateSelected(double x, double y, double z) {
     return true;
 }
 
+bool PoseTargetModel::moveSelectedTo(
+        double x,
+        double y,
+        double z,
+        const QQuaternion &rotation) {
+    const QVector3D position(
+            static_cast<float>(x),
+            static_cast<float>(y),
+            static_cast<float>(z));
+    if (!editingEnabled_ || selectedIndex_ < 0 ||
+        selectedIndex_ >= count() || !FinitePosition(position) ||
+        !FiniteRotation(rotation)) {
+        return false;
+    }
+    const QVector3D euler = rotation.normalized().toEulerAngles();
+    Target &target = targets_[static_cast<std::size_t>(selectedIndex_)];
+    const float yaw = NormalizeDegrees(euler.z());
+    const float pitch = NormalizeDegrees(euler.y());
+    const float roll = NormalizeDegrees(euler.x());
+    if (target.position == position &&
+        qFuzzyCompare(target.yawDegrees + 1.0F, yaw + 1.0F) &&
+        qFuzzyCompare(target.pitchDegrees + 1.0F, pitch + 1.0F) &&
+        qFuzzyCompare(target.rollDegrees + 1.0F, roll + 1.0F)) {
+        return false;
+    }
+    target.position = position;
+    target.yawDegrees = yaw;
+    target.pitchDegrees = pitch;
+    target.rollDegrees = roll;
+    persist();
+    notifyTargetChanged(selectedIndex_);
+    return true;
+}
+
 bool PoseTargetModel::rotateSelected(const QString &axis,
                                      double degrees) {
     if (!editingEnabled_ || selectedIndex_ < 0 ||

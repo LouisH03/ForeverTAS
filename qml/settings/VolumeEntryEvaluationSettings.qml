@@ -9,6 +9,7 @@ ColumnLayout {
     objectName: "volumeEntryEvaluationSettings"
     property var controller
     property var viewer
+    property var viewport
     readonly property bool customActive:
         controller.evaluationTargetId === "custom-volume-entry-time"
     readonly property var activeModel:
@@ -176,6 +177,44 @@ ColumnLayout {
                      && root.activeModel.count > 1
             onClicked:
                 root.activeModel.removeTarget(root.activeModel.selectedIndex)
+        }
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 6
+
+        Label {
+            text: qsTr("Move to")
+            color: ThemeControls.AppTheme.textMuted
+        }
+
+        ThemeControls.ThemedButton {
+            objectName: "moveShapeTargetToCameraButton"
+            Layout.fillWidth: true
+            text: qsTr("Camera")
+            enabled: !root.controller.running
+                     && !root.controller.customVolumeDrawing
+                     && root.viewport
+            onClicked: {
+                const position = root.viewport.sceneCameraPosition
+                root.activeModel.moveSelectedTo(
+                    position.x, position.y, position.z)
+            }
+        }
+
+        ThemeControls.ThemedButton {
+            objectName: "moveShapeTargetToCarButton"
+            Layout.fillWidth: true
+            text: qsTr("Car")
+            enabled: !root.controller.running
+                     && !root.controller.customVolumeDrawing
+                     && root.viewer && root.viewer.loaded
+            onClicked: {
+                const position = root.viewer.carPosition
+                root.activeModel.moveSelectedTo(
+                    position.x, position.y, position.z)
+            }
         }
     }
 

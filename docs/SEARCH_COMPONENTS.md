@@ -537,6 +537,11 @@ No search-loop or controller branch should be added for the target.
 - `point-target`: minimizes distance to a target point over a window.
 - `pose-target`: minimizes weighted position and orientation error.
 
+Spatial target models expose atomic absolute-placement operations. Their QML
+editors receive the viewport's rendered camera pose and the viewer's simulated
+car pose, allowing the selected cuboid, polygon volume, or full pose target to
+be moved directly to either source without incremental coordinate edits.
+
 ## Testing Checklist
 
 Before submitting a new component:

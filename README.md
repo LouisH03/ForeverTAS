@@ -94,7 +94,9 @@ target observes only the chosen deadline because the score is monotonic.
 Volume-entry targets are managed as a persistent named cuboid collection. The
 selected cuboid is the active brute-force target; the evaluation panel can add,
 duplicate, remove, rename, and directly edit every cuboid or focus the viewer
-camera on it. Every cuboid is visible in both viewer renderers, and the selected
+camera on it. Camera and car placement buttons move the selected target to the
+current rendered camera or simulated car position. Every cuboid is visible in
+both viewer renderers, and the selected
 one exposes color-coded 3D axis bars for movement plus endpoint handles for
 resizing.
 Custom polygon volumes share the same shape-target menu. A target stores a
@@ -102,14 +104,16 @@ drawing plane, editable 2D vertices, and an independent extrusion depth. Users
 can select an axis plane in the viewer, redraw the polygon directly against
 that plane, drag its vertex and depth handles, edit the same values in the
 settings list, and focus the camera on the finished prism. The selected custom
-volume is evaluated exactly by the Reference and optimized CPU backends; the UI
+volume has the same camera and car placement actions and is evaluated exactly
+by the Reference and optimized CPU backends; the UI
 reports that CUDA is unavailable rather than substituting an inexact cuboid.
 Pose targets are managed as a persistent named collection of complete car
 positions and orientations. The selected pose is the weighted pose-error goal
 for every brute-force backend. Users can add a pose from the viewer car,
 duplicate, remove, rename, and edit it in the evaluation panel, or translate
 and rotate it with color-coded handles on its visible car model in either
-viewer renderer. The Focus action frames the selected pose in the camera.
+viewer renderer. Camera and car placement copy both position and orientation;
+the Focus action frames the selected pose in the camera.
 Precise finish search ranks the inclusive upper bound of ForeverValidator's
 one-nanosecond transition bracket and displays all nine fractional digits.
 Built-in modifiers cover existing-event perturbation, smooth steering

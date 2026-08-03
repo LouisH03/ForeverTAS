@@ -3406,6 +3406,16 @@ int main(int argc, char **argv) {
                             : poseEditor->findChild<QObject *>(
                                       QStringLiteral(
                                               "poseTargetRotationSettings"));
+                    QObject *const movePoseToCameraButton =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "movePoseTargetToCameraButton"));
+                    QObject *const movePoseToCarButton =
+                            poseEditor == nullptr ? nullptr
+                            : poseEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "movePoseTargetToCarButton"));
                     const int placedPoseIndex =
                             controller.poseTargets()->addTarget(
                                     7.0,
@@ -3445,6 +3455,12 @@ int main(int argc, char **argv) {
                             poseNameField != nullptr &&
                             posePositionSettings != nullptr &&
                             poseRotationSettings != nullptr &&
+                            movePoseToCameraButton != nullptr &&
+                            movePoseToCameraButton
+                                    ->property("enabled").toBool() &&
+                            movePoseToCarButton != nullptr &&
+                            movePoseToCarButton
+                                    ->property("enabled").toBool() &&
                             placedPoseIndex == 1 &&
                             poseSelector->property("count").toInt() == 2 &&
                             poseSelector->property("currentIndex").toInt() ==
@@ -3552,6 +3568,41 @@ int main(int argc, char **argv) {
                                     rotationWeightField,
                                     QStringLiteral("50"),
                                     true);
+                    const QVector3D cameraPlacement = viewport
+                            ->property("sceneCameraPosition")
+                            .value<QVector3D>();
+                    const QQuaternion cameraPlacementRotation = viewport
+                            ->property("sceneCameraRotation")
+                            .value<QQuaternion>();
+                    poseSliderValid &= QMetaObject::invokeMethod(
+                            movePoseToCameraButton, "clicked");
+                    QCoreApplication::processEvents();
+                    poseSliderValid &=
+                            controller.poseTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("position"))
+                                    .value<QVector3D>() == cameraPlacement &&
+                            std::abs(QQuaternion::dotProduct(
+                                    controller.poseTargets()
+                                            ->selectedTarget()
+                                            .value(QStringLiteral("rotation"))
+                                            .value<QQuaternion>(),
+                                    cameraPlacementRotation)) > 0.99999F &&
+                            QMetaObject::invokeMethod(
+                                    movePoseToCarButton, "clicked");
+                    QCoreApplication::processEvents();
+                    poseSliderValid &=
+                            controller.poseTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("position"))
+                                    .value<QVector3D>() ==
+                                    viewer.carPosition() &&
+                            std::abs(QQuaternion::dotProduct(
+                                    controller.poseTargets()
+                                            ->selectedTarget()
+                                            .value(QStringLiteral("rotation"))
+                                            .value<QQuaternion>(),
+                                    viewer.carRotation())) > 0.99999F;
                     if (!poseSliderValid) {
                         std::cerr
                                 << "pose slider editor: field="
@@ -3616,6 +3667,16 @@ int main(int argc, char **argv) {
                             cuboidEditor == nullptr ? nullptr
                             : cuboidEditor->findChild<QObject *>(
                                     QStringLiteral("shapeTargetNameField"));
+                    QObject *const moveCuboidToCameraButton =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "moveShapeTargetToCameraButton"));
+                    QObject *const moveCuboidToCarButton =
+                            cuboidEditor == nullptr ? nullptr
+                            : cuboidEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "moveShapeTargetToCarButton"));
                     const int placedIndex =
                             controller.cuboidTargets()->addTarget(
                                     14.0, 3.0, -2.0);
@@ -3665,6 +3726,12 @@ int main(int argc, char **argv) {
                             focusCuboidButton != nullptr &&
                             removeCuboidButton != nullptr &&
                             cuboidNameField != nullptr &&
+                            moveCuboidToCameraButton != nullptr &&
+                            moveCuboidToCameraButton
+                                    ->property("enabled").toBool() &&
+                            moveCuboidToCarButton != nullptr &&
+                            moveCuboidToCarButton
+                                    ->property("enabled").toBool() &&
                             placedIndex == 1 &&
                             cuboidSelector->property("count").toInt() == 3 &&
                             cuboidSelector->property("currentIndex").toInt() ==
@@ -3708,6 +3775,26 @@ int main(int argc, char **argv) {
                                             .value(QStringLiteral("sizeX"))
                                             .toDouble() >
                                     initialCuboidSize;
+                    const QVector3D cuboidCameraPlacement = viewport
+                            ->property("sceneCameraPosition")
+                            .value<QVector3D>();
+                    cuboidEditorValid &= QMetaObject::invokeMethod(
+                            moveCuboidToCameraButton, "clicked");
+                    QCoreApplication::processEvents();
+                    cuboidEditorValid &=
+                            controller.cuboidTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("center"))
+                                    .value<QVector3D>() ==
+                                    cuboidCameraPlacement &&
+                            QMetaObject::invokeMethod(
+                                    moveCuboidToCarButton, "clicked");
+                    QCoreApplication::processEvents();
+                    cuboidEditorValid &=
+                            controller.cuboidTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("center"))
+                                    .value<QVector3D>() == viewer.carPosition();
                     if (!cuboidEditorValid) {
                         std::cerr
                                 << "cuboid editor checks: objects="
@@ -3773,6 +3860,16 @@ int main(int argc, char **argv) {
                             : customEditor->findChild<QObject *>(
                                       QStringLiteral(
                                               "cancelCustomVolumeDrawingButton"));
+                    QObject *const moveCustomToCameraButton =
+                            customEditor == nullptr ? nullptr
+                            : customEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "moveShapeTargetToCameraButton"));
+                    QObject *const moveCustomToCarButton =
+                            customEditor == nullptr ? nullptr
+                            : customEditor->findChild<QObject *>(
+                                      QStringLiteral(
+                                              "moveShapeTargetToCarButton"));
                     const int initialCustomModels =
                             root->findChildren<QObject *>(
                                         QStringLiteral(
@@ -3789,6 +3886,8 @@ int main(int argc, char **argv) {
                             customDepthField != nullptr &&
                             drawCustomVolumeButton != nullptr &&
                             cancelCustomDrawingButton != nullptr &&
+                            moveCustomToCameraButton != nullptr &&
+                            moveCustomToCarButton != nullptr &&
                             controller.customVolumeDrawing() &&
                             initialCustomModels >= 2 &&
                             QMetaObject::invokeMethod(
@@ -3859,6 +3958,26 @@ int main(int argc, char **argv) {
                                         QStringLiteral(
                                                 "customVolumeDepthHandle"))
                                             .size() >= 2;
+                    const QVector3D customCameraPlacement = viewport
+                            ->property("sceneCameraPosition")
+                            .value<QVector3D>();
+                    customVolumeEditorValid &= QMetaObject::invokeMethod(
+                            moveCustomToCameraButton, "clicked");
+                    QCoreApplication::processEvents();
+                    customVolumeEditorValid &=
+                            controller.customVolumeTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("origin"))
+                                    .value<QVector3D>() ==
+                                    customCameraPlacement &&
+                            QMetaObject::invokeMethod(
+                                    moveCustomToCarButton, "clicked");
+                    QCoreApplication::processEvents();
+                    customVolumeEditorValid &=
+                            controller.customVolumeTargets()
+                                    ->selectedTarget()
+                                    .value(QStringLiteral("origin"))
+                                    .value<QVector3D>() == viewer.carPosition();
                     dropdownStateUpdates &= customVolumeEditorValid;
 
                     dropdownStateUpdates &=

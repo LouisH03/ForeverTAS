@@ -11,6 +11,7 @@ ColumnLayout {
     property string selectedId
     property var controller
     property var viewer
+    property var viewport
     readonly property var selectedOption:
         optionCombo.currentIndex >= 0
         && optionCombo.currentIndex < options.length
@@ -70,6 +71,8 @@ ColumnLayout {
                 item.controller = root.controller
                 if ("viewer" in item)
                     item.viewer = root.viewer
+                if ("viewport" in item)
+                    item.viewport = root.viewport
             }
         }
     }

@@ -192,6 +192,79 @@ bool TestAutomaticSeedRandomization() {
     return okay;
 }
 
+bool TestAbsoluteTargetPlacement() {
+    QSettings().clear();
+    CuboidTargetModel cuboid;
+    CustomVolumeTargetModel customVolume;
+    PoseTargetModel pose;
+    QSignalSpy cuboidChanged(&cuboid,
+                             &CuboidTargetModel::selectedTargetChanged);
+    QSignalSpy customChanged(
+            &customVolume,
+            &CustomVolumeTargetModel::selectedTargetChanged);
+    QSignalSpy poseChanged(&pose,
+                           &PoseTargetModel::selectedTargetChanged);
+
+    const QString polygon = customVolume.selectedTarget()
+            .value(QStringLiteral("polygon"))
+            .toString();
+    const QQuaternion rotation =
+            QQuaternion::fromEulerAngles(15.0F, -25.0F, 35.0F);
+    bool okay = Check(cuboid.moveSelectedTo(11.0, 12.0, 13.0) &&
+                              customVolume.moveSelectedTo(
+                                      -21.0, -22.0, -23.0) &&
+                              pose.moveSelectedTo(
+                                      31.0, 32.0, 33.0, rotation),
+                      "absolute target placement failed");
+    const QVariantMap cuboidTarget = cuboid.selectedTarget();
+    const QVariantMap customTarget = customVolume.selectedTarget();
+    const QVariantMap poseTarget = pose.selectedTarget();
+    okay &= Check(
+            cuboidTarget.value(QStringLiteral("centerX")).toString() ==
+                            QStringLiteral("11") &&
+                    cuboidTarget.value(QStringLiteral("centerY")).toString() ==
+                            QStringLiteral("12") &&
+                    cuboidTarget.value(QStringLiteral("centerZ")).toString() ==
+                            QStringLiteral("13") &&
+                    customTarget.value(QStringLiteral("originX")).toString() ==
+                            QStringLiteral("-21") &&
+                    customTarget.value(QStringLiteral("originY")).toString() ==
+                            QStringLiteral("-22") &&
+                    customTarget.value(QStringLiteral("originZ")).toString() ==
+                            QStringLiteral("-23") &&
+                    customTarget.value(QStringLiteral("polygon")).toString() ==
+                            polygon &&
+                    poseTarget.value(QStringLiteral("x")).toString() ==
+                            QStringLiteral("31") &&
+                    poseTarget.value(QStringLiteral("y")).toString() ==
+                            QStringLiteral("32") &&
+                    poseTarget.value(QStringLiteral("z")).toString() ==
+                            QStringLiteral("33") &&
+                    std::abs(QQuaternion::dotProduct(
+                            poseTarget.value(QStringLiteral("rotation"))
+                                    .value<QQuaternion>(),
+                            rotation.normalized())) > 0.99999F,
+            "absolute placement stored an incorrect target pose");
+    okay &= Check(cuboidChanged.count() == 1 &&
+                          customChanged.count() == 1 &&
+                          poseChanged.count() == 1,
+                  "absolute placement was not an atomic model edit");
+    okay &= Check(!cuboid.moveSelectedTo(
+                            std::numeric_limits<double>::infinity(), 0, 0) &&
+                          !customVolume.moveSelectedTo(10000001.0, 0, 0) &&
+                          !pose.moveSelectedTo(
+                                  0,
+                                  0,
+                                  0,
+                                  QQuaternion(
+                                          std::numeric_limits<float>::quiet_NaN(),
+                                          0,
+                                          0,
+                                          0)),
+                  "absolute placement accepted an invalid pose");
+    return okay;
+}
+
 bool TestCuboidTargetModel() {
     QSettings().clear();
     const QVariantMap legacy{
@@ -1845,6 +1918,7 @@ int main(int argc, char **argv) {
 
     bool okay = TestCompactNumberFormatting() &&
             TestAutomaticSeedRandomization() &&
+            TestAbsoluteTargetPlacement() &&
             TestCuboidTargetModel() &&
             TestCuboidControllerSynchronization() &&
             TestCustomVolumeTargets() &&

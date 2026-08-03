@@ -465,6 +465,34 @@ bool CustomVolumeTargetModel::translateSelected(
     return true;
 }
 
+bool CustomVolumeTargetModel::moveSelectedTo(
+        double x,
+        double y,
+        double z) {
+    if (!editingEnabled_ || drawing_ || selectedIndex_ < 0 ||
+        selectedIndex_ >= count()) {
+        return false;
+    }
+    const QVector3D origin(
+            static_cast<float>(x),
+            static_cast<float>(y),
+            static_cast<float>(z));
+    if (!std::isfinite(origin.x()) || !std::isfinite(origin.y()) ||
+        !std::isfinite(origin.z()) ||
+        std::abs(origin.x()) > kMaximumCoordinate ||
+        std::abs(origin.y()) > kMaximumCoordinate ||
+        std::abs(origin.z()) > kMaximumCoordinate) {
+        return false;
+    }
+    Target &target = targets_[static_cast<std::size_t>(selectedIndex_)];
+    if (target.origin == origin) return false;
+    target.origin = origin;
+    rebuildGeometry(&target);
+    persist();
+    notifyTargetChanged(selectedIndex_);
+    return true;
+}
+
 bool CustomVolumeTargetModel::resizeDepthSelected(double delta) {
     if (!editingEnabled_ || drawing_ || !std::isfinite(delta) ||
         selectedIndex_ < 0 || selectedIndex_ >= count()) {

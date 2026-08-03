@@ -50,6 +50,7 @@ public:
                                       const QString &axis,
                                       const QString &value);
     Q_INVOKABLE bool translateSelected(double x, double y, double z);
+    Q_INVOKABLE bool moveSelectedTo(double x, double y, double z);
     Q_INVOKABLE bool resizeSelected(const QString &axis, double delta);
     void setEditingEnabled(bool enabled);
 

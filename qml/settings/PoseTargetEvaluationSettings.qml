@@ -9,6 +9,7 @@ ColumnLayout {
     objectName: "poseTargetEvaluationSettings"
     property var controller
     property var viewer
+    property var viewport
     readonly property var targets: controller.poseTargets
     readonly property var selected: targets.selectedTarget
     readonly property var settings: controller.evaluationTargetSettings
@@ -81,6 +82,47 @@ ColumnLayout {
             text: qsTr("Remove")
             enabled: !root.controller.running && root.targets.count > 1
             onClicked: root.targets.removeTarget(root.targets.selectedIndex)
+        }
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 6
+
+        Label {
+            text: qsTr("Move to")
+            color: ThemeControls.AppTheme.textMuted
+        }
+
+        ThemeControls.ThemedButton {
+            objectName: "movePoseTargetToCameraButton"
+            Layout.fillWidth: true
+            text: qsTr("Camera")
+            enabled: !root.controller.running && root.viewport
+            onClicked: {
+                const position = root.viewport.sceneCameraPosition
+                root.targets.moveSelectedTo(
+                    position.x,
+                    position.y,
+                    position.z,
+                    root.viewport.sceneCameraRotation)
+            }
+        }
+
+        ThemeControls.ThemedButton {
+            objectName: "movePoseTargetToCarButton"
+            Layout.fillWidth: true
+            text: qsTr("Car")
+            enabled: !root.controller.running
+                     && root.viewer && root.viewer.loaded
+            onClicked: {
+                const position = root.viewer.carPosition
+                root.targets.moveSelectedTo(
+                    position.x,
+                    position.y,
+                    position.z,
+                    root.viewer.carRotation)
+            }
         }
     }
 

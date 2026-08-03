@@ -52,6 +52,10 @@ public:
                                           const QString &axis,
                                           const QString &value);
     Q_INVOKABLE bool translateSelected(double x, double y, double z);
+    Q_INVOKABLE bool moveSelectedTo(double x,
+                                    double y,
+                                    double z,
+                                    const QQuaternion &rotation);
     Q_INVOKABLE bool rotateSelected(const QString &axis,
                                     double degrees);
     void setEditingEnabled(bool enabled);
