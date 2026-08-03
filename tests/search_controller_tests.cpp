@@ -661,6 +661,29 @@ void SetValidPaths(SearchController &controller,
     controller.setReplayPath(replayPath);
 }
 
+bool TestScenarioInputExtractionAvailability(
+        const QString &packsDirectory,
+        const QString &replayPath) {
+    const QString challengePath = QDir(packsDirectory).filePath(
+            QStringLiteral("map.Challenge.Gbx"));
+    QFile challenge(challengePath);
+    if (!challenge.open(QIODevice::WriteOnly)) {
+        return Check(false, "failed to create challenge path fixture");
+    }
+    challenge.write("test");
+    challenge.close();
+
+    QSettings().clear();
+    SearchController controller;
+    SetValidPaths(controller, packsDirectory, replayPath);
+    bool okay = Check(controller.canExtractReplayInputs(),
+                      "replay did not offer explicit input extraction");
+    controller.setReplayPath(challengePath);
+    okay &= Check(!controller.canExtractReplayInputs(),
+                  "standalone challenge offered replay input extraction");
+    return okay;
+}
+
 bool TestUserTimelineConfigurationBoundary() {
     QSettings().clear();
     forevertas::app::SearchConfigurationModel configuration;
@@ -1259,9 +1282,9 @@ bool TestDescriptiveSearchStageStatuses() {
             "Packs loading stage was not descriptive");
     okay &= Check(
             SearchStageStatus(
-                    SearchProgressStage::ReadingReplay,
+                    SearchProgressStage::ReadingScenario,
                     "reference") ==
-                    QStringLiteral("Reading replay file..."),
+                    QStringLiteral("Reading scenario file..."),
             "replay reading stage was not descriptive");
     okay &= Check(
             SearchStageStatus(
@@ -1285,11 +1308,11 @@ bool TestDescriptiveSearchStageStatuses() {
             SearchProgressStage::CreatingSimulation,
             "cuda");
     const QString cudaReplayLoadRegular = SearchStageStatus(
-            SearchProgressStage::LoadingReplay,
+            SearchProgressStage::LoadingScenario,
             "cuda",
             false);
     const QString cudaReplayLoadFast = SearchStageStatus(
-            SearchProgressStage::LoadingReplay,
+            SearchProgressStage::LoadingScenario,
             "cuda",
             true);
     const QString cudaBaseline = SearchStageStatus(
@@ -1769,6 +1792,8 @@ int main(int argc, char **argv) {
             TestIterationBoundaryArbitration() &&
             TestUserTimelineConfigurationBoundary() &&
             TestRegistryAndValidation(packsDirectory.path(), replayPath) &&
+            TestScenarioInputExtractionAvailability(
+                    packsDirectory.path(), replayPath) &&
             TestCompositionEditing(packsDirectory.path(), replayPath) &&
             TestPersistence(packsDirectory.path(), replayPath) &&
             TestStopAbortsBeforeFirstIteration(

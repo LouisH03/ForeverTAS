@@ -127,8 +127,8 @@ TimelineSamplingRuntime CreateTimelineSamplingRuntime(
     PhysicsSandbox sandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating timeline-sampling sandbox");
-    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
-            "loading replay for timeline sampling");
+    Require(sandbox.LoadScenario({replay.data(), replay.size()}, identity),
+            "loading scenario for timeline sampling");
     PhysicsSandboxState initialState = Require(
             sandbox.CaptureState(),
             "capturing timeline-sampling initial state");
@@ -777,7 +777,7 @@ SearchResult RunMultiThreadedCpuSearch(
     AssetSource source = Require(
             OpenInstalledPackDirectory(request.packDirectory),
             "opening shared CPU pack directory");
-    ReportProgress(control, SearchProgressStage::ReadingReplay, 0u, 0u);
+    ReportProgress(control, SearchProgressStage::ReadingScenario, 0u, 0u);
     AssetBytes replay = Require(
             ReadReplayFileUtf8(request.replayPath, identity),
             "reading shared CPU replay");
@@ -787,10 +787,10 @@ SearchResult RunMultiThreadedCpuSearch(
     PhysicsSandbox sourceSandbox = Require(
             CreatePhysicsSandbox(std::move(source), options),
             "creating shared CPU sandbox");
-    ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
-    Require(sourceSandbox.LoadReplay(
+    ReportProgress(control, SearchProgressStage::LoadingScenario, 0u, 0u);
+    Require(sourceSandbox.LoadScenario(
                     {replay.data(), replay.size()}, identity),
-            "loading shared CPU replay");
+            "loading shared CPU scenario");
     const std::vector<SandboxInputEvent> canonicalInputs = Require(
             sourceSandbox.ReadInputs(),
             "reading shared CPU canonical inputs");
@@ -1369,7 +1369,7 @@ SearchResult RunSearch(const SearchRequest &request,
                     OpenInstalledPackDirectory(request.packDirectory),
                     "opening cached pack directory");
             ReportProgress(
-                    control, SearchProgressStage::ReadingReplay, 0u, 0u);
+                    control, SearchProgressStage::ReadingScenario, 0u, 0u);
             cached->replay = Require(
                     ReadReplayFileUtf8(request.replayPath, identity),
                     "reading cached replay");
@@ -1382,13 +1382,13 @@ SearchResult RunSearch(const SearchRequest &request,
                     CreatePhysicsSandbox(std::move(source), options),
                     "creating cached sandbox"));
             ReportProgress(
-                    control, SearchProgressStage::LoadingReplay, 0u, 0u);
+                    control, SearchProgressStage::LoadingScenario, 0u, 0u);
             Require(
-                    cached->sandbox->LoadReplay(
+                    cached->sandbox->LoadScenario(
                             {cached->replay.data(),
                              cached->replay.size()},
                             identity),
-                    "loading replay into cached sandbox");
+                    "loading scenario into cached sandbox");
             cached->initialState = Require(
                     cached->sandbox->CaptureState(),
                     "capturing cached initial state");
@@ -1437,7 +1437,7 @@ SearchResult RunSearch(const SearchRequest &request,
             OpenInstalledPackDirectory(request.packDirectory),
             "opening pack directory");
     CheckCancellation(control);
-    ReportProgress(control, SearchProgressStage::ReadingReplay, 0u, 0u);
+    ReportProgress(control, SearchProgressStage::ReadingScenario, 0u, 0u);
     AssetBytes replay = Require(
             ReadReplayFileUtf8(request.replayPath, identity),
             "reading replay");
@@ -1448,9 +1448,9 @@ SearchResult RunSearch(const SearchRequest &request,
             CreatePhysicsSandbox(std::move(source), options),
             "creating sandbox");
     CheckCancellation(control);
-    ReportProgress(control, SearchProgressStage::LoadingReplay, 0u, 0u);
-    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
-            "loading replay");
+    ReportProgress(control, SearchProgressStage::LoadingScenario, 0u, 0u);
+    Require(sandbox.LoadScenario({replay.data(), replay.size()}, identity),
+            "loading scenario");
     const std::vector<PhysicsSandboxInputEvent> canonicalInputs = Require(
             sandbox.ReadInputs(), "reading canonical inputs");
     ReportProgress(

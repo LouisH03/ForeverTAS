@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
                     loadingReplaySeen =
                             model->statusText() ==
                             QStringLiteral(
-                                    "Loading replay in the Reference engine...");
+                                    "Loading scenario in the Reference engine...");
                 }
                 if (countingTimelineSeekSignals) {
                     ++timelineSeekStateChanges;

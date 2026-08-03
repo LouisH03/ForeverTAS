@@ -52,17 +52,18 @@ Build and launch the Qt 6 Quick application:
 ./build/local/bin/ForeverTAS
 ```
 
-Select an installed TMUF `Packs` directory and a replay, enter a base input
-script, choose an evaluation target, assemble an ordered list of input modifier
-passes, then start the basic search. The replay supplies the map and scenario;
-only the editable script supplies the player-control baseline. **Extract inputs
-to script** imports the replay controls when that is the desired starting
-point. The application persists paths, the script draft, selections, pass
+Select an installed TMUF `Packs` directory and either a replay or standalone
+`Challenge.Gbx`, enter a base input script, choose an evaluation target,
+assemble an ordered list of input modifier passes, then start the basic search.
+The selected file supplies the map and scenario; only the editable script
+supplies the player-control baseline. **Extract inputs to script** is available
+for replays and imports their controls when that is the desired starting point.
+The application persists paths, the script draft, selections, pass
 order, the user-owned **Simulation horizon**, and every option-owned
 configuration with the platform-native Qt settings store. That horizon alone
 bounds search, preview, validation, and CPU/CUDA simulation; commands after it
-remain editable but unexecuted. Search, map loading, validation, and physics stay in C++;
-QML presents the controls and Race Viewer.
+remain editable but unexecuted. Search, map loading, validation, and physics
+stay in C++; QML presents the controls and Race Viewer.
 
 The search runs indefinitely on a worker thread after Start is pressed. Each
 iteration applies the configured modifier passes in order, preserves the

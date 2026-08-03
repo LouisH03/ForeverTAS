@@ -199,7 +199,7 @@ bool SimulationDebuggerModel::preparing() const {
 bool SimulationDebuggerModel::loadingReplay() const {
     return active_ &&
            statusText_ == QStringLiteral(
-                                  "Loading replay in the Reference engine...");
+                                  "Loading scenario in the Reference engine...");
 }
 bool SimulationDebuggerModel::active() const {
     return active_;
@@ -653,7 +653,7 @@ bool SimulationDebuggerModel::startSession(const QString &packsDirectory,
                                            qint64 simulationHorizonMs,
                                            const QString &inputScript) {
     if (packsDirectory.trimmed().isEmpty() || replayPath.trimmed().isEmpty()) {
-        setStatus(QStringLiteral("Load a replay and Packs directory before "
+        setStatus(QStringLiteral("Load a map and Packs directory before "
                                  "starting native source debugging."));
         return false;
     }
@@ -1836,7 +1836,7 @@ void SimulationDebuggerModel::consumeDebuggerPrompts() {
                         QStringLiteral("breakpoint set --method AdvanceTicks"));
                 queueCommand(CommandKind::Run, QStringLiteral("run"));
                 setStatus(QStringLiteral(
-                        "Loading replay in the Reference engine..."));
+                        "Loading scenario in the Reference engine..."));
             }
         } else if (hasCurrentCommand_) {
             const DebuggerCommand completed = currentCommand_;

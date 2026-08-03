@@ -3577,7 +3577,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             text: window.viewer.loading
                                   ? window.viewer.statusText
-                                  : qsTr("Select a replay and load its map from the settings panel.")
+                                  : qsTr("Select a replay or challenge and load its map from the settings panel.")
                             color: AppTheme.viewerOverlayText
                             wrapMode: Text.WordWrap
                             font.pixelSize: 16
@@ -3741,7 +3741,7 @@ ApplicationWindow {
                         spacing: 6
 
                         Label {
-                            text: qsTr("Replay")
+                            text: qsTr("Map source")
                             font.weight: Font.Medium
                         }
 
@@ -3755,7 +3755,7 @@ ApplicationWindow {
                                 text: window.controller.replayPath
                                 enabled: !window.controller.running
                                          && !window.controller.extractingReplayInputs
-                                placeholderText: qsTr("Select replay file")
+                                placeholderText: qsTr("Select replay or challenge file")
                                 selectByMouse: true
                                 onTextEdited: window.controller.replayPath = text
                             }

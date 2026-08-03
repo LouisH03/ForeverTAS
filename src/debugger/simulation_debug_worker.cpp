@@ -197,8 +197,8 @@ int main(int argc, char **argv) {
                 Require(CreatePhysicsSandbox(std::move(source), options),
                         "creating reference sandbox failed");
         PhysicsSandboxStateView state = Require(
-                sandbox.LoadReplay({replay.data(), replay.size()}, identity),
-                "loading replay failed");
+                sandbox.LoadScenario({replay.data(), replay.size()}, identity),
+                "loading scenario failed");
         const forevertas::InputScriptBaselineResult baseline =
                 forevertas::BuildInputScriptBaseline(
                         Require(sandbox.ReadInputs(),

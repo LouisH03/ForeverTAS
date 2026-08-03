@@ -279,7 +279,10 @@ bool SearchController::canExtractReplayInputs() const {
     const QFileInfo replayInfo(replayPath_);
     return !running_ && !extractingReplayInputs_ &&
             packsInfo.isDir() && packsInfo.isReadable() &&
-            replayInfo.isFile() && replayInfo.isReadable();
+            replayInfo.isFile() && replayInfo.isReadable() &&
+            replayInfo.fileName().endsWith(
+                    QStringLiteral(".Replay.Gbx"),
+                    Qt::CaseInsensitive);
 }
 
 QString SearchController::replayInputStatusText() const {
@@ -856,10 +859,11 @@ void SearchController::browseForReplay() {
             : QDir::homePath();
     const QString selected = QFileDialog::getOpenFileName(
             nullptr,
-            QStringLiteral("Select replay"),
+            QStringLiteral("Select replay or challenge"),
             initialPath,
             QStringLiteral(
-                    "TrackMania replays (*.Replay.Gbx *.Gbx);;"
+                    "TrackMania scenarios (*.Replay.Gbx *.Challenge.Gbx "
+                    "*.Gbx);;"
                     "All files (*)"));
     if (!selected.isEmpty()) {
         setReplayPath(selected);
@@ -1073,12 +1077,12 @@ SearchController::ValidationResult SearchController::validate() const {
 
     const QFileInfo replayInfo(replayPath_);
     if (replayPath_.isEmpty()) {
-        return {{}, QStringLiteral("Select a replay file.")};
+        return {{}, QStringLiteral("Select a replay or challenge file.")};
     }
     if (!replayInfo.exists() || !replayInfo.isFile() ||
         !replayInfo.isReadable()) {
         return {{}, QStringLiteral(
-                            "The replay path must be a readable file.")};
+                            "The scenario path must be a readable file.")};
     }
 
     bool horizonParsed = false;

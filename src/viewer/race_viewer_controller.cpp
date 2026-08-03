@@ -983,7 +983,7 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
                 "opening Packs directory failed");
         AssetBytes bytes = Require(
                 ReadReplayFileUtf8(replayPathUtf8, identity),
-                "reading replay failed");
+                "reading scenario failed");
         PhysicsSandboxOptions options;
         options.backend = ToForeverValidatorBackend(backend);
         options.tickDurationMs = kViewerTickDurationMs;
@@ -991,18 +991,18 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
         options.simulationHorizonMs = simulationHorizonMs;
         PhysicsSandbox sandbox = Require(
                 CreatePhysicsSandbox(std::move(source), options),
-                "creating replay sandbox failed");
+                "creating scenario sandbox failed");
         const PhysicsSandboxStateView initialState = Require(
-                sandbox.LoadReplay({bytes.data(), bytes.size()}, identity),
-                "loading replay failed");
+                sandbox.LoadScenario({bytes.data(), bytes.size()}, identity),
+                "loading scenario failed");
         PhysicsSandboxSceneView scene = Require(
-                sandbox.ReadScene(), "reading replay scene failed");
+                sandbox.ReadScene(), "reading scenario scene failed");
         result.cameraResources = LoadCameraResources(
                 packsDirectory, initialState.vehicleModel, scene);
         result.mapKey = CollisionSceneKey(scene);
         result.mapName = QString::fromUtf8(Require(
                 sandbox.ReadMapName(),
-                "reading replay map name failed"));
+                "reading scenario map name failed"));
         PhysicsSandboxRenderSceneHandle renderScene = Require(
                 sandbox.ReadRenderScene(),
                 "reading visual render scene failed");
@@ -1121,7 +1121,7 @@ RaceViewerLoadResult LoadMapData(const QString &packsDirectory,
     } catch (const std::exception &exception) {
         result.error = QString::fromUtf8(exception.what());
     } catch (...) {
-        result.error = QStringLiteral("Unexpected replay viewer failure");
+        result.error = QStringLiteral("Unexpected scenario viewer failure");
     }
     return result;
 }
@@ -1142,7 +1142,7 @@ std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
             "opening Packs directory for input preview failed");
     AssetBytes bytes = Require(
             ReadReplayFileUtf8(replayPathUtf8, identity),
-            "reading replay for input preview failed");
+            "reading scenario for input preview failed");
     PhysicsSandboxOptions options;
     options.backend = ToForeverValidatorBackend(backend);
     options.tickDurationMs = kViewerTickDurationMs;
@@ -1152,8 +1152,8 @@ std::shared_ptr<ManualDriveRuntime> LoadInputPreviewRuntime(
             CreatePhysicsSandbox(std::move(source), options),
             "creating input preview sandbox failed");
     const PhysicsSandboxStateView initialState = Require(
-            sandbox.LoadReplay({bytes.data(), bytes.size()}, identity),
-            "loading replay for input preview failed");
+            sandbox.LoadScenario({bytes.data(), bytes.size()}, identity),
+            "loading scenario for input preview failed");
     std::vector<PhysicsSandboxInputEvent> fixedInputs = ViewerFixedInputs(
             Require(sandbox.ReadInputs(),
                     "reading canonical inputs for input preview failed"));
@@ -2342,7 +2342,7 @@ void RaceViewerController::startManualDrive() {
     }
     if (!loaded_ || loading_ || manualRuntime_ == nullptr) {
         setStatusText(QStringLiteral(
-                "Load a replay map before starting manual drive."));
+                "Load a map before starting manual drive."));
         return;
     }
 
@@ -2455,7 +2455,7 @@ bool RaceViewerController::startSimulationDebugger() {
     if (!loaded_ || loading_ || manualRuntime_ == nullptr ||
         !simulationDebugger_.available()) {
         setStatusText(QStringLiteral(
-                "Load a replay map before starting native source debugging."));
+                "Load a map before starting native source debugging."));
         return false;
     }
 
@@ -3371,7 +3371,8 @@ void RaceViewerController::beginMapLoad(const QString &packsDirectory,
     if (!replayInfo.isFile() || !replayInfo.isReadable()) {
         pendingRun_.reset();
         pendingImprovements_.clear();
-        setStatusText(QStringLiteral("Select a readable replay file."));
+        setStatusText(QStringLiteral(
+                "Select a readable replay or challenge file."));
         setLoading(false);
         return;
     }

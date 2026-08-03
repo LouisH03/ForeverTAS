@@ -31,9 +31,9 @@ enum class SearchIterationPhase : std::uint8_t {
 
 enum class SearchProgressStage : std::uint8_t {
     OpeningPacksDirectory,
-    ReadingReplay,
+    ReadingScenario,
     CreatingSimulation,
-    LoadingReplay,
+    LoadingScenario,
     RestoringSimulation,
     ApplyingBaselineInputs,
     PreparingSearch,

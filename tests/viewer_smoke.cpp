@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
     viewer.startManualDrive();
     if (viewer.manualDriving() ||
         viewer.statusText() != QStringLiteral(
-                "Load a replay map before starting manual drive.")) {
+                "Load a map before starting manual drive.")) {
         std::cerr << "manual drive started without a loaded map\n";
         return 1;
     }

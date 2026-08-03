@@ -9,7 +9,7 @@ QML file to individual implementations.
 
 A search request contains five parts:
 
-1. The Packs directory and replay path.
+1. The Packs directory and replay-or-challenge scenario path.
 2. Parsed base-input commands.
 3. One selected search algorithm.
 4. An ordered list of configured modifier passes.
@@ -367,13 +367,14 @@ setModifierPassSetting(index, key, value)
 than one global frame vector. Each run owns its sampled frames and current
 interpolated pose.
 
-`loadMap` reads the replay scene, render geometry, and vehicle shape without
-advancing the replay or creating a run. A loaded map therefore has zero runs
-and disabled timeline controls. A completed search upserts `Best`; the same run
+`loadMap` reads the selected scenario's scene, render geometry, and vehicle
+shape without advancing the simulation or creating a run. A loaded map
+therefore has zero runs and disabled timeline controls. A completed search
+upserts `Best`; the same run
 container supports additional result types later without adding more controller
 fields.
 
-Replay loading is serialized and transactional. If another replay is requested
+Scenario loading is serialized and transactional. If another file is requested
 while the active worker is still finishing, the latest request is queued and
 starts as soon as the worker exits. A monotonically increasing load serial
 prevents a late result from an older worker from replacing the newer scene.

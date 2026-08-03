@@ -1271,8 +1271,8 @@ PhysicsSandboxStateView RunCanonicalFixture(
                             "opening paired fixture Packs"),
                     options),
             "creating paired canonical sandbox");
-    Require(sandbox.LoadReplay({replay.data(), replay.size()}, identity),
-            "loading paired canonical fixture");
+    Require(sandbox.LoadScenario({replay.data(), replay.size()}, identity),
+            "loading paired canonical scenario fixture");
     std::vector<PhysicsSandboxInputEvent> inputs = Require(
             sandbox.ReadInputs(), "reading paired canonical inputs");
     inputs.push_back({10,
@@ -1349,15 +1349,65 @@ bool CheckPairedCanonicalFixtures(const char *packsDirectory,
     return true;
 }
 
+bool CheckStandaloneChallengeFixture(
+        const char *packsDirectory,
+        const char *pairedReplayPath,
+        const char *challengePath) {
+    using namespace forevervalidator;
+    using namespace forevervalidator::experimental;
+    const auto loadRecorded = [&](const char *path) {
+        const ReplayIdentity identity{path};
+        const AssetBytes bytes = Require(
+                forevertas::ReadReplayFileUtf8(path, identity),
+                "reading recorded scenario fixture");
+        PhysicsSandboxOptions options;
+        options.backend = SimulationBackend::Reference;
+        options.tickDurationMs = forevertas::kSearchTickDurationMs;
+        options.timelineMode = PhysicsSandboxTimelineMode::RecordedReplay;
+        PhysicsSandbox sandbox = Require(
+                CreatePhysicsSandbox(
+                        Require(OpenInstalledPackDirectory(packsDirectory),
+                                "opening recorded scenario Packs"),
+                        options),
+                "creating recorded scenario sandbox");
+        return sandbox.LoadScenario(
+                {bytes.data(), bytes.size()}, identity);
+    };
+    if (!loadRecorded(pairedReplayPath) || loadRecorded(challengePath)) {
+        std::cerr << "standalone challenge entered recorded replay mode\n";
+        return false;
+    }
+    const std::vector<forevervalidator::SimulationBackend> backends{
+            forevervalidator::SimulationBackend::Reference,
+            forevervalidator::SimulationBackend::OptimizedCpu,
+#if FOREVERVALIDATOR_HAS_CUDA
+            forevervalidator::SimulationBackend::Cuda,
+#endif
+    };
+    for (const forevervalidator::SimulationBackend backend : backends) {
+        if (!SameCanonicalResult(
+                    RunCanonicalFixture(
+                            packsDirectory, pairedReplayPath, backend),
+                    RunCanonicalFixture(
+                            packsDirectory, challengePath, backend))) {
+            std::cerr << "standalone challenge did not match its paired "
+                         "replay in canonical mode\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
     const bool inputAfterHorizonOnly =
             argc == 4 &&
             std::string_view(argv[1]) == "--input-after-horizon-only";
-    if ((!inputAfterHorizonOnly && argc != 3) ||
+    if ((!inputAfterHorizonOnly && argc != 3 && argc != 5) ||
         (inputAfterHorizonOnly && argc != 4)) {
-        std::cerr << "expected Packs directory and replay path\n";
+        std::cerr << "expected Packs directory, replay path, and optional "
+                     "paired replay/challenge paths\n";
         return 2;
     }
 
@@ -1371,6 +1421,8 @@ int main(int argc, char **argv) {
             !CheckModifierWindowRejectedByHorizon(argv[1], argv[2]) ||
             !CheckCanonicalHorizonAndLateInputs(argv[1], argv[2]) ||
             !CheckPairedCanonicalFixtures(argv[1], argv[2]) ||
+            (argc == 5 && !CheckStandaloneChallengeFixture(
+                    argv[1], argv[3], argv[4])) ||
 #if FOREVERVALIDATOR_HAS_CUDA
             !CheckCudaKernelModeLifecycle(argv[1], argv[2]) ||
             !CheckCudaAutoPromoteAcrossBatches(argv[1], argv[2]) ||

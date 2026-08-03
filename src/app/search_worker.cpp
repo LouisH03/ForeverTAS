@@ -99,8 +99,8 @@ QString SearchStageStatus(SearchProgressStage stage,
     switch (stage) {
     case SearchProgressStage::OpeningPacksDirectory:
         return QStringLiteral("Opening Packs directory...");
-    case SearchProgressStage::ReadingReplay:
-        return QStringLiteral("Reading replay file...");
+    case SearchProgressStage::ReadingScenario:
+        return QStringLiteral("Reading scenario file...");
     case SearchProgressStage::CreatingSimulation:
         if (cuda) {
             return QStringLiteral(
@@ -110,7 +110,7 @@ QString SearchStageStatus(SearchProgressStage stage,
             return QStringLiteral("Initializing optimized CPU simulation...");
         }
         return QStringLiteral("Initializing reference simulation...");
-    case SearchProgressStage::LoadingReplay:
+    case SearchProgressStage::LoadingScenario:
         if (cuda) {
             return useCudaSessionSpecialization
                     ? QStringLiteral(
@@ -118,7 +118,7 @@ QString SearchStageStatus(SearchProgressStage stage,
                               "kernel...")
                     : QStringLiteral("Loading the map onto CUDA...");
         }
-        return QStringLiteral("Loading replay into the simulation...");
+        return QStringLiteral("Loading the map into the simulation...");
     case SearchProgressStage::RestoringSimulation:
         if (cuda) {
             return QStringLiteral(

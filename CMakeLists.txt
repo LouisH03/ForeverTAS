@@ -68,7 +68,7 @@ set(FOREVERVALIDATOR_ENABLE_CUDA ${FOREVERTAS_ENABLE_CUDA} CACHE BOOL
 FetchContent_Declare(
     ForeverValidator
     GIT_REPOSITORY https://github.com/Skycrafter-dev/ForeverValidator.git
-    GIT_TAG 7c633f3a148a94a08f1add275aef07b597d7bf9c
+    GIT_TAG 5daff311b8493619b4cef69d2154cc0b9710d248
     GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(ForeverValidator)
 
@@ -674,6 +674,10 @@ if(BUILD_TESTING)
         "Replay used by the optional search smoke test")
     set(FOREVERTAS_TEST_SECOND_REPLAY "" CACHE FILEPATH
         "Distinct replay used by optional viewer reload tests")
+    set(FOREVERTAS_TEST_CHALLENGE_REPLAY "" CACHE FILEPATH
+        "Replay paired with FOREVERTAS_TEST_CHALLENGE")
+    set(FOREVERTAS_TEST_CHALLENGE "" CACHE FILEPATH
+        "Standalone Challenge.Gbx used by optional scenario tests")
     if(FOREVERTAS_TEST_PACK_DIRECTORY AND FOREVERTAS_TEST_REPLAY)
         add_executable(forevertas-search-smoke
             tests/search_smoke.cpp)
@@ -687,10 +691,18 @@ if(BUILD_TESTING)
             target_compile_options(forevertas-search-smoke PRIVATE
                 ${FOREVERTAS_WARNING_OPTIONS})
         endif()
+        set(FOREVERTAS_SEARCH_SMOKE_ARGUMENTS
+            "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+            "${FOREVERTAS_TEST_REPLAY}")
+        if(FOREVERTAS_TEST_CHALLENGE_REPLAY AND
+           FOREVERTAS_TEST_CHALLENGE)
+            list(APPEND FOREVERTAS_SEARCH_SMOKE_ARGUMENTS
+                "${FOREVERTAS_TEST_CHALLENGE_REPLAY}"
+                "${FOREVERTAS_TEST_CHALLENGE}")
+        endif()
         add_test(NAME forevertas-search-smoke
                  COMMAND forevertas-search-smoke
-                     "${FOREVERTAS_TEST_PACK_DIRECTORY}"
-                     "${FOREVERTAS_TEST_REPLAY}")
+                     ${FOREVERTAS_SEARCH_SMOKE_ARGUMENTS})
         if(FOREVERTAS_ENABLE_CUDA)
             set_tests_properties(forevertas-search-smoke PROPERTIES
                 RESOURCE_LOCK cuda)
@@ -801,6 +813,15 @@ if(BUILD_TESTING)
         set_tests_properties(forevertas-viewer PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 180)
+        if(FOREVERTAS_TEST_CHALLENGE)
+            add_test(NAME forevertas-viewer-challenge
+                     COMMAND forevertas-viewer-smoke
+                         "${FOREVERTAS_TEST_PACK_DIRECTORY}"
+                         "${FOREVERTAS_TEST_CHALLENGE}")
+            set_tests_properties(forevertas-viewer-challenge PROPERTIES
+                ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+                TIMEOUT 180)
+        endif()
 
         add_executable(forevertas-simulation-debugger-tests
             tests/simulation_debugger_tests.cpp)
